@@ -1,24 +1,31 @@
 ---
 name: review-pr
-description: Review a GitHub pull request or local Git range against QuestDB coding standards. Use when asked to review a PR, given a PR number or URL, or given --range=<base>..<head>, optionally with a review level 0..3. Performs an adversarial, blocking, evidence-gated code review.
+description: Review a GitHub pull request, a local Git range, or a PR's local commits against QuestDB coding standards. Use when asked to review a PR, given a PR number or URL, given --range=<base>..<head>, or given both, optionally with a review level 0..3. Performs an adversarial, blocking, evidence-gated code review.
 allowed-tools: bash read subagent
 metadata:
-  argument-hint: "[PR number or URL | --range=<base>..<head>] [--level=0..3]"
+  argument-hint: "[PR number or URL] [--range=<base>..<head>] [--level=0..3] [--body=<file>] [--prior=<file>,...]"
 ---
 
 # Review a QuestDB pull request
 
-**Usage:** `/review-pr [PR number or URL | --range=<base>..<head>] [--level=0..3]`
+**Usage:** `/review-pr [PR number or URL] [--range=<base>..<head>] [--level=0..3] [--body=<file>] [--prior=<file>,...]`
 
 Review the PR or local range identified by the invocation arguments. When this skill
 is run as `/skill:review-pr <args>`, the `<args>` are appended as a `User:` message;
-treat that text as `$ARGUMENTS`. Parse exactly one review target: a PR number/URL,
-or `--range=<base>..<head>`. The range head may be omitted (`--range=<base>..`) to
-review the working tree, including uncommitted changes. If both targets are supplied,
-stop and ask which was intended. If neither is supplied, ask for one.
+treat that text as `$ARGUMENTS`. The review target is a PR number/URL,
+`--range=<base>..<head>`, or both. The range head may be omitted (`--range=<base>..`)
+to review the working tree, including uncommitted changes. Both together review a
+PR's local commits, which may not be pushed yet, as `fix-pr` does: the PR supplies
+the title, body, labels and comments, and the range supplies the code (Step 1). If
+neither is supplied, ask for one.
+
+- `--body=<file>`: Step 2 checks this file as the PR body instead of the published
+  one, such as a draft that covers commits not pushed yet.
+- `--prior=<file>,...`: reports or finding lists from earlier reviews of the change.
+  Step 2.5f re-tests their findings.
 
 > Harness note: this skill runs inside **pi**. Use `bash` for read-only `gh`, `git`,
-> `rg`, `grep`, and `find` commands, `read` for files, and fresh-context `reviewer`
+> `rg`, `grep`, and `find` commands, `read` for files, and fresh-context `review-prober`
 > agents through `subagent(...)`. Do not edit files or push. Build and run tests
 > only in the scratch worktree of Step 2.6, never in the user's working tree.
 
@@ -57,13 +64,13 @@ You are a senior QuestDB engineer performing a blocking code review. QuestDB is 
 
 ## Review level
 
-Parse `$ARGUMENTS` for a level token: `--level=N`, `-lN`, or a bare single digit `0`-`3`. **If no level is given, default to 0.** Strip the level token and any `--range=` token before feeding the remainder (PR number or URL) to `gh` commands.
+Parse `$ARGUMENTS` for a level token: `--level=N`, `-lN`, or a bare single digit `0`-`3`. **If no level is given, default to 0.** Strip the level token and any `--range=`, `--body=` and `--prior=` tokens before feeding the remainder (PR number or URL) to `gh` commands.
 
 The level controls how much of the review below actually runs. Lower levels keep the same review *spirit* — adversarial, blocking, no praise — but cut the breadth of the analysis. Higher levels have significantly higher token cost; reserve level 3 for high-stakes PRs (replication, JNI boundary changes, on-disk format, public API, security/ACL).
 
 | Level | What runs |
 |-------|-----------|
-| **0 (default)** | Steps 1, 2, 2.4, 2.6, 4. Skip Step 2.5 and agent fanout. Review the diff inline for correctness, NULL handling, **algorithmic optimality**, tests, and QuestDB standards. Build the Step 2.6 coverage map inline. Every candidate still passes the Step 3b admission gate inline from a blank evidence form; do not draft severity, a fix, or report prose first. |
+| **0 (default)** | Steps 1, 2, 2.4, 2.5f, 2.6, 4. Skip the rest of Step 2.5 and agent fanout; re-test the earlier findings of 2.5f inline. Review the diff inline for correctness, NULL handling, **algorithmic optimality**, tests, and QuestDB standards. Build the Step 2.6 coverage map inline. Every candidate still passes the Step 3b admission gate inline from a blank evidence form; do not draft severity, a fix, or report prose first. |
 | **1** | Adds Step 2.5a and Step 2.5e when test code is present. Run Agent 1 plus at most **two** applicable roles chosen from Agents 3, 5, 6, 12, and 13. Run an independent falsification task for each surviving atomic candidate. |
 | **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-8 and 11-13. Run an independent falsification task for each surviving atomic candidate. |
 | **3** | Full Step 2.5 and the complete admission protocol. Select at most **six** applicable discovery roles from Agents 1-14: Agent 1 always; Agent 9 for changed symbols with out-of-diff callers; Agents 2-8 and 11 only when their domain is touched; Agents 12-14 only for changed tests or a fix claim; Agent 10 only when a distinct adversarial pass is warranted. Depth comes from producer/reachability evidence and independent falsification, not agent count. |
@@ -72,8 +79,13 @@ State the chosen level in one line at the start of the review so the user knows 
 
 ## Spawning review agents in pi
 
-Steps 3 and 3b use fresh-context `reviewer` agents through `subagent(...)`, one task
-per role or atomic falsification candidate. Each task is self-contained and read-only.
+Steps 3 and 3b use fresh-context `review-prober` agents through `subagent(...)`, one
+task per role or atomic falsification candidate. `review-prober`
+(`.pi/agents/review-prober.md`) is a read-only reviewer with a shell, so it can run
+the probes the evidence rules ask for; the builtin `reviewer` has no shell. Launch
+them as foreground calls (`async: false`; a parallel fanout still runs them at once)
+with `timeoutMs: 3600000`, since the 30-minute default cuts discovery short. Each task
+is self-contained and read-only.
 Discovery tasks receive the diff, Step 2.4 provenance verdicts, the Step 2.5 surface
 map, the Step 2.6 coverage map, role instructions, and the candidate contract. Agents
 10 and 11 are deliberate reduced-context exceptions. Step 3b falsifiers receive only
@@ -102,10 +114,18 @@ gh pr view "$PR" --comments
 BASE=$(gh pr view "$PR" --json baseRefOid --jq .baseRefOid)
 ```
 
+### PR with a local range
+
+When both a PR and `--range=<base>..<head>` are given, run the GitHub PR commands
+above except `gh pr diff` and the `BASE` line, then take `$BASE` and the diff from
+Git as in range mode below. `<head>` is the reviewed revision wherever a step names
+the PR head, such as Step 2.6's `REV`. Step 2 runs, on the `--body` file when one is
+given.
+
 ### Local range (`--range`)
 
-When `--range=<base>..<head>` is given there is no PR, no description, and no
-labels. Take the diff from Git instead:
+When only `--range=<base>..<head>` is given there is no PR, no description, and
+no labels. Take the diff from Git instead:
 
 ```bash
 BASE='<base from --range>'
@@ -121,18 +141,19 @@ files do not appear in `git diff` — list them with `git status --porcelain` an
 read any that are part of the change, especially new test files, or the coverage
 map in Step 2.6 will silently miss them.
 
-In range mode: **skip Step 2 entirely** (there is no title or description to
-check) and say so in the report. Every other step runs unchanged — the diff is
-still the entry point, callsite analysis still walks outward beyond the changed
-files, and findings are still classified by the same rubric. Restricting the
+In range mode without a PR: **skip Step 2 entirely** (there is no title or
+description to check) and say so in the report. Every other step runs
+unchanged — the diff is still the entry point, callsite analysis still walks
+outward beyond the changed files, and findings are still classified by the same
+rubric. Restricting the
 review to the changed files would disable the out-of-diff breakage analysis that
 is the most valuable part of this skill.
 
 ## Step 2: PR title and description
 
-**Skipped in `--range` mode** — a local range has no PR metadata. State that it was skipped and continue at Step 2.4.
+**Skipped in `--range` mode without a PR** — a local range has no PR metadata. State that it was skipped and continue at Step 2.4.
 
-Check the title, body and labels against CLAUDE.md "Git & PR Conventions". Read the title as a QuestDB user scanning the release notes, who never sees the code, and the body as a reviewer who has not opened the diff yet.
+Check the title, body and labels against CLAUDE.md "Git & PR Conventions". With `--body=<file>`, check that file as the body. Read the title as a QuestDB user scanning the release notes, who never sees the code, and the body as a reviewer who has not opened the diff yet.
 
 - **Type.** A change users can see (query results, SQL, configuration, error messages, wire or on-disk format, anything breaking) takes `feat`, `fix` or `perf`. Flag a technical type (`chore`, `ci`, `test`, `build`, `refactor`, `style`) on such a change and name what users see.
 - **User-facing title** (`feat`, `fix`, `perf`, `docs`). Would that user understand it and see what they gain? Flag class and method names, internal mechanisms and jargon, and a title that describes the code change instead of its effect. The description repeats the verb.
@@ -141,6 +162,7 @@ Check the title, body and labels against CLAUDE.md "Git & PR Conventions". Read 
   - a bullet that describes a code change instead of its effect;
   - an effect of the diff that no bullet states, above all a regression or a breaking change;
   - a bullet the diff does not support;
+  - a slowdown or tradeoff without its measured size;
   - a change made for speed, or one on a data path, without its JMH table;
   - anything else: a test plan, coverage, fuzz seeds, a walkthrough, narrative, selling.
 - **Labels** match the title (`perf(sql)` gets SQL and Performance).
@@ -238,6 +260,10 @@ Run this only when the PR adds or changes test code. It is the test-code counter
 - **Changed shared helpers as symbols:** if the PR changes a shared test base class, helper, or fixture, run the 2.5b callsite inventory for it too — a changed test base class can silently break every subclassing test.
 - **Exercised-symbol map:** for each new or changed test, list which production symbols from 2.5a it actually exercises, so Agents 12 and 14 can check efficacy and regression value.
 
+### 2.5f Earlier findings
+
+This sub-step runs at every level. Collect the findings of earlier reviews of this change: those in the PR's comments and reviews, and those in every `--prior` file. Give each one line in the surface map under "Earlier findings": its trigger, the symptom and size it claimed, and the commit that claims to fix it, if any. A claimed fix is a hypothesis, not evidence, so re-run every trigger at the reviewed revision and at the base. At level 1 and above, the Step 3 agent whose domain the finding touches re-runs it, such as Agent 3 for a slowdown and Agent 1 for wrong rows; at level 0, re-run it inline. A finding that still reproduces is a candidate like any other. One that no longer reproduces needs no line in the report.
+
 ## Step 2.6: Test coverage map (mandatory at every level)
 
 This step runs at EVERY review level, for EVERY PR that touches production code — including (especially) PRs that add or change no test code at all. A PR with zero test changes does not skip test scrutiny; it concentrates it here. At level 0, derive the behavioral-change rows directly from the diff (2.5a is skipped); at level 1+ use the 2.5a semantic deltas.
@@ -263,7 +289,7 @@ TMP=$(mktemp -d /tmp/review-pr-XXXXXX)
 WT="$TMP/src"
 # REV is the reviewed revision:
 #   PR:           git fetch origin "pull/<number>/head" "<baseRefName>"; REV=<headRefOid>
-#   range:        REV=<head>
+#   range:        REV=<head> (also with a PR)
 #   working tree: REV=$(git stash create); REV=${REV:-HEAD}
 #                 (a snapshot of the tracked changes; once the worktree exists,
 #                 copy the change's untracked files from Step 1 into it)
@@ -302,11 +328,11 @@ A bug-fix label or zero test changes triggers this analysis; neither predetermin
 
 ## Step 3: Change-specific candidate discovery
 
-Run this step with the `subagent` tool using fresh-context `reviewer` agents. Select only roles whose domain is materially touched, obey the level's discovery cap, and launch those roles as fresh-context, read-only `reviewer` tasks. Agent count is never evidence and unused roles are skipped.
+Run this step with the `subagent` tool using fresh-context `review-prober` agents. Select only roles whose domain is materially touched or that an earlier finding of 2.5f needs, obey the level's discovery cap, and launch those roles as fresh-context, read-only `review-prober` tasks. Agent count is never evidence and unused roles are skipped.
 
 Every selected agent receives:
 1. The PR or local-range diff
-2. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list)
+2. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list, earlier findings), with the earlier findings it must re-test
 3. The test coverage map from Step 2.6, with the path of its coverage report
 
 The diff plus surface map can be large — write them to a shared file (e.g., under a temp/chain dir) and point each task at it via its `reads`/task text, rather than pasting the whole payload into every task. Agents 10 and 11 are deliberate exceptions and receive reduced context (see their entries).
@@ -364,6 +390,9 @@ For every new or changed loop, traversal, data structure, or computation:
    count, config-key count, once per query compilation, once at startup). Say plainly whether the cost is on a data path
    the user waits for, or off it. The parent uses this to assign severity: scaling-with-data costs block the merge,
    bounded off-path costs do not. A finding with no magnitude cannot be classified and will be dropped.
+10. **Stated slowdowns:** measure every slowdown or tradeoff the PR body states, at realistic scale, at the reviewed
+    revision and at the base. One the body states without a size, or one larger than the body states, is a candidate
+    like any other.
 
 For changed symbols now reachable from new contexts (per 2.5d), check whether any of those new contexts is a hot path
 that amplifies an otherwise-acceptable cost.
@@ -882,7 +911,7 @@ If a behavioral candidate cannot name and execute a supported trigger with one o
 
 - **Merge mechanics.** The reviewed artifact is the code change, not the merge event. Submodule pin position, merge order between repos, branch existence, labels, and anything true only of the PR's in-flight state are properties of *how it lands*, not of *what it does*. A PR that bumps a vendored submodule pointer necessarily pins whatever commit it was built against — that is a property of the pointer, not a defect in the change.
 - **Tautologies.** Before filing, ask: *"would this finding appear on every PR of this shape?"* If yes, it describes the workflow, not this change. A finding that can never be absent is not a defect, and reporting it teaches the author to skim the report.
-- **Overridden project decisions.** When the project's own tooling explicitly permits something — a CI check that passes by design, a documented exception, a convention the PR body already names — that is a decision, not an oversight. Overriding it requires evidence the decision is *wrong*, not merely that it is permissive. "CI allows this but I would not" is not a finding.
+- **Overridden project decisions.** When the project's own tooling explicitly permits something — a CI check that passes by design, a documented exception, a convention the PR body already names — that is a decision, not an oversight. Overriding it requires evidence the decision is *wrong*, not merely that it is permissive. "CI allows this but I would not" is not a finding. A slowdown or tradeoff the PR body states is such a decision only when the body gives its measured size: measure it again (Agent 3, item 10), and treat one stated without a size, or one larger than stated, like any other candidate. Never tell discovery agents to skip what the body states; give them its stated sizes to check.
 - **Upstream submodule content.** Anything inside a submodule whose pointer move Step 2.4 classified **UPSTREAM-SYNC**. That code already landed on the submodule's default branch; this PR did not write it, did not review it, and cannot be asked to fix it. A breaking change discovered there is upstream's, released independently, and belongs in an issue against that repository — never a Critical against this PR. The one exception is an integration defect at a callsite *inside this diff*, which is filed against that callsite with its own symptom and trigger.
 
 **Moderate.** Admitted, attributable defects with bounded or developer-facing impact: a concrete changed-line standards violation, proved weak test, missing internal-path coverage, documentation defect, or bounded off-data-path cost. An unreachable runtime theory, unchanged residual hardening opportunity, or proposition that only supports another candidate is not Moderate; omit it.
@@ -892,7 +921,7 @@ If a behavioral candidate cannot name and execute a supported trigger with one o
 Do not inflate and do not deflate. Filing a real user-visible defect as Moderate is a review failure; so is filing a bounded compile-time micro-cost as Critical. Where two readings are defensible, pick the one you can evidence.
 
 ### Title and description
-Open the report with the Step 2 result: the title, then the body and labels, each `OK` or its problems with the ready-to-paste replacement. In `--range` mode, write "Skipped: no PR". These are not findings: they skip Step 3b, sit outside the severity rubric and the proportionality budget, and never affect the verdict.
+Open the report with the Step 2 result: the title, then the body and labels, each `OK` or its problems with the ready-to-paste replacement. In `--range` mode without a PR, write "Skipped: no PR". These are not findings: they skip Step 3b, sit outside the severity rubric and the proportionality budget, and never affect the verdict.
 
 ### Critical
 Blocking issues introduced or exposed by this PR, ordered worst user impact first. Each must include:

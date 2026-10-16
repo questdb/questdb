@@ -1,6 +1,6 @@
 ---
 name: fix-pr
-description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the list is done, run review-pr once as a backstop and treat what it finds the same way. Adjacent findings outside this PR's code become GitHub issues. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
+description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the queue is empty, run review-pr at level 3 over the whole PR, as before approval, and treat what it finds the same way until a review comes back clean. Adjacent findings outside this PR's code become GitHub issues. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
 allowed-tools: bash read edit write subagent ctx_execute ctx_execute_file
 metadata:
   argument-hint: "[--include-adjacent] [--no-issues] [--review-level=N] [--max-review-rounds=N] <items: features, bugs or review findings>"
@@ -29,11 +29,13 @@ to fix, or a finding from a review.
    it finds gaps, a fresh agent writes the missing tests. Commit.
 
 Tests are written while developing; the review at the end is the last resort,
-not the place where test cases get discovered. When the queue is empty, run
-`review-pr` once over all commits. Treat its Critical and Moderate findings,
-and Adjacent ones in code this PR added or changed, as new items: each is a
-test that should have existed. File the other Adjacent findings as GitHub
-issues.
+not the place where test cases get discovered. When the queue is empty, a
+helper runs `review-pr` at level 3 over the whole PR - the review the user
+runs before approving it. Its Critical and Moderate findings, and Adjacent
+ones in code this PR added or changed, become new items: each is a test that
+should have existed. The other Adjacent findings become GitHub issues. The
+review runs again after those items, until it finds nothing to fix or
+`--max-review-rounds` is reached.
 
 CLAUDE.md governs code, tests and commit messages. Its "Testing" section is the
 standard every item meets.
@@ -45,16 +47,17 @@ for them.
 
 - `--include-adjacent`: fix Adjacent review findings instead of filing them.
 - `--no-issues`: list Adjacent items instead of filing them.
-- `--review-level=N`: `review-pr` level for the backstop review; default `1`.
-- `--max-review-rounds=N`: default `2`.
+- `--review-level=N`: `review-pr` level of each backstop review; default `3`,
+  the level of the review before approval.
+- `--max-review-rounds=N`: default `2`. A level-3 round takes hours.
 
 ## Keep the main session small
 
 The main session only coordinates. Fresh helper agents analyze, build and test
-each item, write their details to files, and reply in a few lines. Read only
-those replies - never the files in the state directory, unless a reply is
-unclear or the user asks. A small main session is cheap to resume after
-waiting on a helper; a large one is not.
+each item and review the PR, write their details to files, and reply in a few
+lines. Read only those replies - never the files in the state directory, unless
+a reply is unclear or the user asks. A small main session is cheap to resume
+after waiting on a helper; a large one is not.
 
 Launch helpers one at a time as ordinary foreground `subagent` calls (never
 `async: true`) with `context: "fresh"` and the task templates at the end of
@@ -69,11 +72,19 @@ background helper loses the cache and pays to rebuild it.
 | Build | `worker` | `timeoutMs: 7200000`, `acceptance: { level: "none", reason: "fix-pr checks the commit" }` |
 | Test review | `reviewer` | none |
 | Test gaps | `worker` | `timeoutMs: 5400000`, `acceptance: { level: "none", reason: "fix-pr checks the commit" }` |
+| Review | `review-pr-runner` | `timeoutMs: 18000000`, `acceptance: { level: "none", reason: "fix-pr reads the report" }` |
+
+The review helper is the only one that launches agents of its own: the
+review's discovery agents and falsifiers. Its definition,
+`.pi/agents/review-pr-runner.md`, allows that. If it fails twice, run the
+review in the main session instead: read `.pi/skills/review-pr/SKILL.md` and
+follow it with the helper's arguments.
 
 ## Setup
 
-1. Record the repo root, the branch, `START=$(git rev-parse HEAD)`, and the PR
-   base: `git merge-base HEAD origin/<base>`, where `<base>` comes from
+1. Record the repo root, the branch, `START=$(git rev-parse HEAD)`, the PR
+   number if `gh pr view --json number` finds one, and the PR base:
+   `git merge-base HEAD origin/<base>`, where `<base>` comes from
    `gh pr view --json baseRefName`, else from
    `git symbolic-ref --short refs/remotes/origin/HEAD`.
 2. If tracked files have uncommitted changes, list them and ask whether to
@@ -85,7 +96,8 @@ background helper loses the cache and pays to rebuild it.
    Minor ones as not fixed (cosmetic) unless the user asks, and send the
    other Adjacent ones to the issue list unless `--include-adjacent`. Keep
    each item's text verbatim and give it a short ID (the user's or the
-   review's number, or I1, I2, ...).
+   review's number, or I1, I2, ...). Save the items, verbatim, to
+   `<state>/items.md`.
 5. Show the queue in a few lines and start. Don't wait for approval.
 
 ## Per item
@@ -144,28 +156,37 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
 
 ## Backstop review
 
-When the queue is empty:
+When the queue is empty, review the whole PR as the user does before
+approving it: every commit since the PR base, including those from before
+START, not only this run's. Number the rounds from 1.
 
-1. Read `.pi/skills/review-pr/SKILL.md` and follow it with
-   `--range=<START>..HEAD --level=<review-level>`. In a later round, review
-   only the new commits: `--range=<previous round's HEAD>..HEAD`. Its Step 2.6
-   measures the coverage of the whole range at HEAD, in a scratch worktree.
-   That catches what the per-item runs miss, since each measured one item's
-   files at its own commit: coverage a later item broke, lines a helper left
-   open, files an item didn't measure. It grades never-run code by what it
-   would break if it were wrong.
-2. Queue its Critical and Moderate findings, and Adjacent ones in code this
-   PR added or changed (compare with the PR base, not START), as new items
-   and run them through the per-item steps. Each one is a test the standard
-   should have produced: its test plan names the dimension of CLAUDE.md
-   "Testing" that missed it. List Minor findings. List the never-run lines
-   the review judged low-exposure as open coverage gaps. Send the other
-   Adjacent findings to the issue list; invoking this skill is the user's
-   request to file them.
-3. If a finding concerns an item this run already built or skipped, don't loop
+1. With a PR, write `<state>/pr-body.md` without reading it: in round 1 the
+   published body (`gh pr view <PR> --json body -q .body`), later the
+   previous round's `<state>/review<N-1>/pr-body.md`, followed by the EFFECT
+   bullet of each item built since, one `- ` line each. The review checks the
+   body the PR will get, not the published one.
+2. Launch the review helper for round N. It follows review-pr with
+   `<PR> --range=<PR base>..<HEAD sha> --level=<review-level>
+   --body=<state>/pr-body.md --prior=<files>`; without a PR, drop `<PR>` and
+   `--body`. The prior files are the `report.md` of every earlier round, and
+   `<state>/items.md` when the items came from a review: the review re-tests
+   their findings at HEAD. Its Step 2.6 measures the coverage of the whole PR
+   at HEAD, in a scratch worktree, and grades never-run code by what it would
+   break if it were wrong.
+3. Queue each FINDING line as a new item with the ID `R<N>-<ID>` and run it
+   through the per-item steps. Its verbatim text is the file
+   `<state>/review<N>/<ID>.md`: name that file in the analysis task instead of
+   quoting it. Each one is a test the standard should have produced: its test
+   plan names the dimension of CLAUDE.md "Testing" that missed it. Send the
+   ISSUE lines to the issue list, with their bodies in
+   `<state>/review<N>/issue-<slug>.md`, or queue them under
+   `--include-adjacent`; invoking this skill is the user's request to file
+   them.
+4. If a finding concerns an item this run already built or skipped, don't loop
    on it: list it for the user with both views.
-4. Repeat until a review finds no Critical or Moderate items, or
-   `--max-review-rounds` is reached.
+5. Repeat until a round queues no item, or `--max-review-rounds` rounds have
+   run. Build what the last round queued anyway: no review sees those items,
+   and the final summary says so.
 
 ## Issue list
 
@@ -203,6 +224,8 @@ Unless `--no-issues`, file each one:
   CLAUDE.md says.
 - Don't call a failure pre-existing or flaky without proof.
 - If a helper fails to launch or crashes, retry once; then stop and report.
+  The review helper is the exception: after it fails twice, the main
+  session runs the review itself ("Keep the main session small").
 
 ## Final summary
 
@@ -210,19 +233,24 @@ Unless `--no-issues`, file each one:
 |---|---|---|---|---|
 
 Outcome is `built <sha>` (plus `tests <sha>` when the test-gaps step added
-tests), `skipped: <reason>` or `blocked: <reason>`. Coverage is the final
-changed lines and branches covered, e.g. `42/42 L, 18/18 B`.
+tests), `skipped: <reason>` or `blocked: <reason>`; add `not reviewed` to an
+item built after the last review round. Coverage is the final changed lines
+and branches covered, e.g. `42/42 L, 18/18 B`.
 
-Then one line each: review rounds, what they found and the range's measured
-coverage; issues filed or matched (links); items left for the user (blocked,
-security-sensitive, unfiled `ADJACENT` bugs, Minor, disagreements, open
-coverage gaps); and
-`git log --oneline <START>..HEAD`. State that nothing was pushed. Then print
-in full each crash issue the Issue list could not file.
+Then one line each: review rounds, each with its verdict, what it found and
+the PR's measured coverage, and the path of the last round's report, which
+holds its Minor findings and the never-run lines it judged low-exposure;
+issues filed or matched (links); items left for the user (blocked,
+security-sensitive, unfiled `ADJACENT` bugs, disagreements, items not
+reviewed); and `git log --oneline <START>..HEAD`. State that nothing was
+pushed. Then print in full each crash issue the Issue list could not file.
 
-End with the PR body bullets, per CLAUDE.md "Git & PR Conventions": the
-EFFECT of each built item that isn't `none`, and any benchmark an EFFECT line
-names, whose JMH results go in the body. No test plan.
+End with the PR body, per CLAUDE.md "Git & PR Conventions". With a PR, print
+the last round's `<state>/review<N>/pr-body.md` plus the EFFECT bullet of each
+item built after that round, and the title and labels from that round's report
+when it changed them. Without a PR, print the EFFECT bullet of each built item.
+Skip EFFECT lines that are `none`, and add any benchmark an EFFECT line names,
+whose JMH results go in the body. No test plan.
 
 ## Task templates
 
@@ -489,4 +517,33 @@ RESULT: ADDED <sha> | NONE: <one line why>
 COVERAGE: <changed lines x/y, branches x/y; exceptions>
 TESTS: <tests added, each with the gap it closes; gaps skipped and why>
 OTHER: none | one line per bug, as in the analysis (write issue bodies the same way)
+```
+
+### Review
+
+```text
+Review round <N> of a fix-pr run in <repo>: the review the user runs before
+approving the PR. Read .pi/skills/review-pr/SKILL.md and follow it with these
+arguments:
+<PR> --range=<PR base>..<HEAD sha> --level=<review-level>
+  --body=<state>/pr-body.md --prior=<comma-separated prior files>
+[Without a PR: --range=<PR base>..<HEAD sha> --level=<review-level>
+  --prior=<comma-separated prior files>]
+You are the review's parent: launch its agents yourself. Write your files to
+<state>/review<N>/.
+
+When the review is done, write there:
+- report.md: the Step 4 report;
+- <ID>.md (C1, M1, A1, ... as numbered in the report): each Critical and
+  Moderate finding, and each Adjacent finding in code this PR added or
+  changed (compare with the PR base), verbatim;
+- issue-<slug>.md: the draft of each other Adjacent finding, ready to file;
+- pr-body.md: the body with Step 2's replacements applied (with a PR only).
+Reply with only these lines:
+VERDICT: approve | approve with comments | request changes | needs discussion
+FINDING: <ID> <Critical | Moderate | Adjacent> <one line>, one line each | none
+ISSUE: <slug> [security] [crash] <one line>, one line each | none
+MINOR: <count>
+METADATA: OK | changed: <title, body, labels> | no PR
+COVERAGE: <changed lines x/y, branches x/y of the whole PR>
 ```
