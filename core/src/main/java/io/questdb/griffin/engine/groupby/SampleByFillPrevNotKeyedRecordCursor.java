@@ -33,6 +33,8 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
 
 public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordSampleByCursor {
+    // true when the stride is in hours, minutes, seconds or a smaller unit, see isSubDayUnit()
+    private final boolean isSubDayUnit;
     private final SimpleMapValue value;
     private boolean isFirstRun = true;
 
@@ -53,7 +55,8 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             int sampleFromFuncPos,
             Function sampleToFunc,
             int sampleToFuncPos,
-            boolean isFromToUtc
+            boolean isFromToUtc,
+            boolean isSubDayUnit
     ) {
         super(
                 configuration,
@@ -74,6 +77,7 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
                 isFromToUtc
         );
         this.value = value;
+        this.isSubDayUnit = isSubDayUnit;
         record.of(value);
     }
 
@@ -136,5 +140,10 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             groupByFunctions.getQuick(i).setNull(value);
         }
+    }
+
+    @Override
+    protected boolean isSubDayUnit() {
+        return isSubDayUnit;
     }
 }

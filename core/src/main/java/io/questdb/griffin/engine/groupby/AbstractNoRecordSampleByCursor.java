@@ -418,18 +418,19 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         topNextDst = nextDstUtc;
         if (from != Long.MIN_VALUE) {
             // Set the top epoch to the first bucket: the bucket that holds FROM or, when a positive WITH
-            // OFFSET starts a UTC grid after FROM, the bucket at that start, see below. FROM and the
-            // sampler grid share one time coordinate, so FROM takes no time zone offset. For a stride in
+            // OFFSET starts a UTC grid after FROM, the bucket at that start, see below. For a stride in
             // days, weeks, months or years, code generation leaves FROM in local time, and the grid starts at
-            // FROM in local time. Adding the time zone offset read that local FROM as a UTC instant: a zone
-            // behind UTC then moved it into the bucket before FROM, and the month and year samplers, which
-            // floor, emitted that extra bucket (GitHub issue #7763). For a stride in a smaller unit, such as
-            // 24h, code generation converts FROM to UTC, and of() decides whether the cursor samples in UTC. A
-            // FROM that code generation read as NULL, such as a CASE WHEN now() > ... END without ELSE, stays
-            // in local time, as the grid does. A FROM that code generation converted takes the offset of the
-            // execution on top when the cursor samples in the time zone, see of().
+            // FROM in local time, so FROM takes no time zone offset: read as a UTC instant, a local FROM in a
+            // zone behind UTC falls into the bucket before FROM, and the month and year samplers, which floor,
+            // emit that extra bucket (GitHub issue #7763). For a stride in hours, minutes, seconds or a smaller
+            // unit, such as 24h, code generation converts FROM to UTC when it reads FROM as non-NULL, and of()
+            // decides whether the cursor samples in UTC. FROM takes no offset on the UTC grid. Any other FROM
+            // of such a stride takes the time zone offset of the first row: a converted FROM that the cursor
+            // samples in the time zone, see of(), and a FROM that code generation read as NULL, such as a CASE
+            // WHEN now() > ... END without ELSE. GitHub issue #7743 tracks the time coordinate of such a FROM.
             final long fromTimestamp = timestampDriver.from(from, sampleFromFuncType);
-            topLocalEpoch = timestampSampler.round(isFromUtc && !isUtcGrid ? fromTimestamp + tzOffset : fromTimestamp);
+            final boolean isFromOffset = isFromUtc ? !isUtcGrid : isSubDayUnit();
+            topLocalEpoch = timestampSampler.round(isFromOffset ? fromTimestamp + tzOffset : fromTimestamp);
             // set current epoch to be the floor of the starting timestamp
             localEpoch = timestampSampler.round(timestamp + tzOffset);
             if (isUtcGrid) {
@@ -453,6 +454,13 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
         areTimestampsInitialized = true;
         return hasNullBucket;
+    }
+
+    // Returns true when the stride is in hours, minutes, seconds or a smaller unit, also when it spans a day or
+    // more, such as 24h, see initTimestamps(). Only the not-keyed FILL(PREV), FILL(NULL) and FILL(value) cursors
+    // read FROM to start their fill, so only they report the unit.
+    protected boolean isSubDayUnit() {
+        return false;
     }
 
     protected void nextSamplePeriod(long timestamp) {

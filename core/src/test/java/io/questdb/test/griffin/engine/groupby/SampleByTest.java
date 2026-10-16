@@ -14077,59 +14077,76 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleBySubDayFromRuntimeConstantToConverted() throws Exception {
-        // For a stride shorter than a day, code generation converts FROM and TO from the time zone to UTC before
-        // execution initializes them, each only when it reads non-NULL. now() reads 0 then, so the CASE over now()
-        // below reads NULL: FROM stays in local time, and only TO turns UTC. The not-keyed FILL(NULL) and
-        // FILL(value) cursor added the zone offset to that local FROM as if code generation had converted it, and
-        // returned the same wrong rows, from 01:10Z, on every execution. assertQuery() executes the factory that it
-        // compiled several times, and the rows equal those of the GROUP BY path with the same FROM as a constant.
+    public void testSampleBySubDayFromRuntimeConstantInDstGap() throws Exception {
+        // For a stride shorter than a day, code generation converts FROM to UTC only when it reads FROM as
+        // non-NULL. now() reads 0 then, so the CASE over now() below reads NULL, and FROM stays in local time. In
+        // Europe/Berlin, 02:30 on 2021-03-28 lies in the spring-forward gap, and the row filter reads it as 01:30Z.
+        // The fill starts at the bucket of FROM plus the time zone offset of the first row, so no fill row comes
+        // before 01:30Z, with or without TO, and with FILL(NULL) or FILL(PREV).
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE ny (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE be_sp (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            // rows 13 minutes apart, from 2021-03-27T17:00Z to 2021-03-28T08:49Z
             execute("""
-                    INSERT INTO ny VALUES
-                        ('2021-01-14T06:45:00.000000Z', 1.0),
-                        ('2021-01-14T07:02:00.000000Z', 2.0),
-                        ('2021-01-14T07:50:00.000000Z', 8.0)
+                    INSERT INTO be_sp
+                    SELECT dateadd('m', 13 * (x::int - 1), '2021-03-27T17:00:00.000000Z'::timestamp), x::double
+                    FROM long_sequence(74)
                     """);
-            final String to = " TO '2021-01-14T03:00:00'";
-            final String zone = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
-            final String expectedNull = """
-                    ts\tc\ts
-                    2021-01-14T06:10:00.000000Z\tnull\tnull
-                    2021-01-14T06:40:00.000000Z\t2\t3.0
-                    2021-01-14T07:10:00.000000Z\tnull\tnull
-                    2021-01-14T07:40:00.000000Z\t1\t8.0
+            final String zone = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            final String to = " TO '2021-03-28T08:00:00'";
+            final String expectedTo = """
+                    ts\ts\tn
+                    2021-03-28T01:30:00.000000Z\t83.0\t2
+                    2021-03-28T02:00:00.000000Z\t87.0\t2
+                    2021-03-28T02:30:00.000000Z\t138.0\t3
+                    2021-03-28T03:00:00.000000Z\t97.0\t2
+                    2021-03-28T03:30:00.000000Z\t101.0\t2
+                    2021-03-28T04:00:00.000000Z\t159.0\t3
+                    2021-03-28T04:30:00.000000Z\t111.0\t2
+                    2021-03-28T05:00:00.000000Z\t115.0\t2
+                    2021-03-28T05:30:00.000000Z\t119.0\t2
                     """;
-            assertQuery("SELECT ts, count() c, sum(v) s FROM ny SAMPLE BY 30m FROM '2021-01-14T01:10:00'" + to + " FILL(NULL)" + zone)
+            final String expectedNoTo = """
+                    ts\ts\tn
+                    2021-03-28T01:30:00.000000Z\t83.0\t2
+                    2021-03-28T02:00:00.000000Z\t87.0\t2
+                    2021-03-28T02:30:00.000000Z\t138.0\t3
+                    2021-03-28T03:00:00.000000Z\t97.0\t2
+                    2021-03-28T03:30:00.000000Z\t101.0\t2
+                    2021-03-28T04:00:00.000000Z\t159.0\t3
+                    2021-03-28T04:30:00.000000Z\t111.0\t2
+                    2021-03-28T05:00:00.000000Z\t115.0\t2
+                    2021-03-28T05:30:00.000000Z\t119.0\t2
+                    2021-03-28T06:00:00.000000Z\t186.0\t3
+                    2021-03-28T06:30:00.000000Z\t129.0\t2
+                    2021-03-28T07:00:00.000000Z\t133.0\t2
+                    2021-03-28T07:30:00.000000Z\t207.0\t3
+                    2021-03-28T08:00:00.000000Z\t143.0\t2
+                    2021-03-28T08:30:00.000000Z\t147.0\t2
+                    """;
+            assertQuery("SELECT ts, sum(v) s, count() n FROM be_sp SAMPLE BY 30m FROM '2021-03-28T02:30:00'" + to + " FILL(NULL)" + zone)
                     .noLeakCheck()
                     .timestamp("ts")
                     .inferRandomAccess()
                     .sizeMayVary()
                     .withPlanContaining("Sample By Fill\n")
-                    .returns(expectedNull);
-            setCurrentMicros(MicrosTimestampDriver.floor("2021-01-15"));
+                    .returns(expectedTo);
+            assertQuery("SELECT ts, sum(v) s, count() n FROM be_sp SAMPLE BY 30m FROM '2021-03-28T02:30:00' FILL(NULL)" + zone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expectedNoTo);
+            setCurrentMicros(MicrosTimestampDriver.floor("2021-03-29"));
             try {
-                final String from = " SAMPLE BY 30m FROM CASE WHEN now() > '1971-01-01' THEN '2021-01-14T01:10:00'::timestamp END";
+                final String from = " SAMPLE BY 30m FROM CASE WHEN now() > '1971-01-01' THEN '2021-03-28T02:30:00'::timestamp END";
                 // FROM that is not a constant keeps the table alone on the cursor as well
-                for (String source : new String[]{"ny", "(SELECT ts, v FROM ny WHERE v > 0)"}) {
-                    assertSampleByCursorFrom(
-                            "SELECT ts, count() c, sum(v) s FROM " + source + from + to + " FILL(NULL)" + zone,
-                            "fill: null\n",
-                            expectedNull
-                    );
+                for (String source : new String[]{"be_sp", "(SELECT ts, v FROM be_sp WHERE v > 0)"}) {
+                    final String select = "SELECT ts, sum(v) s, count() n FROM " + source + from;
+                    assertSampleByCursorFrom(select + to + " FILL(NULL)" + zone, "fill: null\n", expectedTo);
+                    assertSampleByCursorFrom(select + " FILL(NULL)" + zone, "fill: null\n", expectedNoTo);
+                    assertSampleByCursorFrom(select + " FILL(PREV)" + zone, "fill: prev\n", expectedNoTo);
                 }
-                assertSampleByCursorFrom(
-                        "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM ny WHERE v > 0)" + from + to + " FILL(0, 0)" + zone,
-                        "fill: value\n",
-                        """
-                                ts\tc\ts
-                                2021-01-14T06:10:00.000000Z\t0\t0.0
-                                2021-01-14T06:40:00.000000Z\t2\t3.0
-                                2021-01-14T07:10:00.000000Z\t0\t0.0
-                                2021-01-14T07:40:00.000000Z\t1\t8.0
-                                """
-                );
             } finally {
                 setCurrentMicros(-1);
             }

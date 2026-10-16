@@ -266,4 +266,9 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
             prevFunctions.getQuick(i).setNull(value);
         }
     }
+
+    @Override
+    protected boolean isSubDayUnit() {
+        return isSubDayUnit;
+    }
 }

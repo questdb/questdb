@@ -9622,10 +9622,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // therefore take isSampleFromUtc and isSampleFromRuntimeUtc, and the FILL(NULL) and
             // FILL(value) factories take isSampleFromOrToUtc and isSampleFromOrToRuntimeUtc. The keyed
             // factories reject FROM and TO, and the FILL(LINEAR) and first/last index factories above
-            // do not use that cursor, so they take no flag. The FILL(NULL) and FILL(value) factories
-            // also take isSubDayUnit: their cursor starts the end fill from the local calendar grid
-            // only for a stride in days, weeks, months or years, see
-            // SampleByFillValueNotKeyedRecordCursor.hasNext().
+            // do not use that cursor, so they take no flag. The FILL(PREV), FILL(NULL) and FILL(value)
+            // factories also take isSubDayUnit: their cursor adds the time zone offset to a FROM that
+            // code generation left in local time only for a stride in hours, minutes, seconds or a
+            // smaller unit, see AbstractNoRecordSampleByCursor.initTimestamps(), and the FILL(NULL)
+            // and FILL(value) cursor starts the end fill from the local calendar grid only for a
+            // stride in days, weeks, months or years, see SampleByFillValueNotKeyedRecordCursor.hasNext().
             final boolean isSampleFromOrToUtc = isSampleFromUtc || isSampleToUtc;
             final boolean isSampleFromRuntimeUtc = isSampleFromUtc && !isSampleFromConstant;
             final boolean isSampleFromOrToRuntimeUtc = isSampleFromRuntimeUtc || (isSampleToUtc && !isSampleToConstant);
@@ -9666,7 +9668,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             sampleToFunc0,
                             sampleToFuncPos,
                             isSampleFromUtc,
-                            isSampleFromRuntimeUtc
+                            isSampleFromRuntimeUtc,
+                            isSubDayUnit
                     );
                 }
 

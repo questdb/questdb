@@ -307,6 +307,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         fixture.sampleToFunc,
                         0,
                         false,
+                        false,
                         false
                 )
         );
