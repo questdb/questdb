@@ -389,6 +389,35 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         assertShape(Shape.RIGHT_ON);
     }
 
+    // A filter on refunds, which the RIGHT join keeps whole, drops no row that the join NULL-extends on
+    // trades, so it proves nothing and the rewriter rejects the query at the RIGHT keyword: with a
+    // comparison against a constant or a bind variable, which the plan does not check at run time
+    // either, and with IN next to WHERE t.x = o.k, which lets the rewriter remove the outer-ref join.
+    // Per outer row, refunds 101 and 102 match no trade for outer key 1, and r.id > 0 keeps them.
+    @Test
+    public void testRightJoinWithCorrelatedOnAndRefundsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            Assert.assertEquals(
+                    List.of(
+                            "1\t10\t100", "1\tnull\t101", "1\tnull\t102",
+                            "2\t11\t101", "2\tnull\t100", "2\tnull\t102",
+                            "3\tnull\t100", "3\tnull\t101", "3\tnull\t102"
+                    ),
+                    run(referenceSql(Shape.RIGHT_ON, "r.id > 0"), "reference").rows
+            );
+            final String body = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid "
+                    + "FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE ";
+            final int position = body.indexOf("RIGHT JOIN");
+            assertException(body + "r.id > 0) l", position, OUTER_COLUMN_ERROR);
+            assertException(body + "t.x = o.k AND r.k IN (1, 2)) l", position, OUTER_COLUMN_ERROR);
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 0);
+            assertException(body + "r.id >= $1) l", position, OUTER_COLUMN_ERROR);
+            bindVariableService.clear();
+        });
+    }
+
     // WHERE t.x = o.k lets the rewriter remove the outer-ref join, and r.k = o.k in the ON clause then
     // needs a WHERE conjunct that drops the rows that the RIGHT join NULL-extends. A conjunct on
     // constants proves it, and so do < and > against a bind variable or a scalar sub-query whatever
@@ -433,6 +462,84 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     @Test
     public void testRightJoinWithCorrelatedWhereKey() throws Exception {
         assertShape(Shape.WHERE_KEY_RIGHT);
+    }
+
+    // Each RIGHT join needs a conjunct that drops the rows it NULL-extends: r.id >= ... for the join
+    // with xs, and t.id >= ... for the join with refunds, whose master side holds trades only. Each
+    // conjunct compares against its own scalar sub-query or bind variable, so the plan checks two
+    // values, and each check passes its value only to its own filter. Per outer row, only outer key 3
+    // matches refund 102, the largest id, which matches both trades, the smallest of them 10. A filter
+    // that read the value of the other check, r.id >= 10 or t.id >= 102, would return refunds 100 and
+    // 101 too, or no row. The r.id conjunct names its sub-query first: the rewriter compares checks
+    // without the sub-queries they read, and keeps one of two that look alike, which the t.id check
+    // covers anyway. A NULL value of the r.id check fails the query at that value. When t.id >= $1 is
+    // the only conjunct, both joins share its single check.
+    @Test
+    public void testRightJoinsWithTwoRuntimeNullChecks() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String body = "trades t RIGHT JOIN refunds r ON r.k = {K} RIGHT JOIN xs x ON x.k = r.k WHERE ";
+            final String key3 = """
+                    id\ttid\trid
+                    3\t10\t102
+                    3\t11\t102
+                    """;
+
+            final String subQueries = body + "(SELECT max(id) FROM refunds) <= r.id AND t.id >= (SELECT min(id) FROM trades)";
+            assertQuery("SELECT * FROM (" + referenceSql(subQueries) + ") ORDER BY 1, 2, 3").returns(key3);
+            assertQuery(lateralSql(subQueries))
+                    .withPlanContaining(
+                            "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor",
+                            "Frame forward scan on: trades [state-shared],__qdb_null_probe [thread-safe] >= cursor",
+                            "Frame forward scan on: refunds [state-shared]]"
+                    )
+                    .expectSize()
+                    .returns(key3);
+
+            // checks of different column types stay apart although their sub-queries look alike
+            final String timestampSubQuery = body + "r.ts >= (SELECT max(ts) FROM refunds) AND t.id >= (SELECT min(id) FROM trades)";
+            assertQuery("SELECT * FROM (" + referenceSql(timestampSubQuery) + ") ORDER BY 1, 2, 3").returns(key3);
+            assertQuery(lateralSql(timestampSubQuery))
+                    .withPlanContaining(
+                            "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor",
+                            "Frame forward scan on: trades [state-shared],__qdb_null_probe [thread-safe] >= cursor",
+                            "Frame backward scan on: refunds [state-shared]]"
+                    )
+                    .expectSize()
+                    .returns(key3);
+
+            final String bindVariables = body + "r.id >= $1 AND t.id >= $2";
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 102);
+            bindVariableService.setInt(1, 10);
+            assertQuery("SELECT * FROM (" + referenceSql(bindVariables) + ") ORDER BY 1, 2, 3").returns(key3);
+            assertQuery(lateralSql(bindVariables))
+                    .withPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$1::int,__qdb_null_probe>=$0::int]\n")
+                    .expectSize()
+                    .returns(key3);
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            final String nullCheckedSql = lateralSql(bindVariables);
+            assertException(nullCheckedSql, nullCheckedSql.indexOf("$1"), NULL_VALUE_SUFFIX);
+
+            final String sharedCheck = body + "t.id >= $1";
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 10);
+            final String allKeys = """
+                    id\ttid\trid
+                    1\t10\t100
+                    1\t11\t100
+                    2\t10\t101
+                    2\t11\t101
+                    3\t10\t102
+                    3\t11\t102
+                    """;
+            assertQuery("SELECT * FROM (" + referenceSql(sharedCheck) + ") ORDER BY 1, 2, 3").returns(allKeys);
+            assertQuery(lateralSql(sharedCheck))
+                    .withPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$0::int]\n")
+                    .expectSize()
+                    .returns(allKeys);
+            bindVariableService.clear();
+        });
     }
 
     private static void assertCheck(
@@ -594,6 +701,12 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                 || template.contains(" ~ ");
     }
 
+    // the body with the outer key o.k in place of {K}, ordered for a stable result
+    private static String lateralSql(String body) {
+        return "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM "
+                + body.replace("{K}", "o.k") + ") l ORDER BY 1, 2, 3";
+    }
+
     private static String lateralSql(Shape shape, Form form, Column column, String template) {
         final String filter = instantiate(template, form.columnRef.replace("{c}", column.name));
         final String table = form.table.replace("{c}", column.name).replace("{t}", column.type);
@@ -609,13 +722,18 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
 
     // the body once per outer row, with the outer key as a literal, over the table itself
     private static String referenceSql(Shape shape, String filter) {
+        return referenceSql(shape.body.replace("{T}", "trades").replace("{P}", filter));
+    }
+
+    // the body once per outer row, with the outer key in place of {K}
+    private static String referenceSql(String body) {
         final StringBuilder sb = new StringBuilder();
         for (int i = 0; i < OUTER_KEYS.length; i++) {
             if (i > 0) {
                 sb.append(" UNION ALL ");
             }
-            final String body = shape.body.replace("{T}", "trades").replace("{K}", OUTER_KEYS[i]).replace("{P}", filter);
-            sb.append("SELECT ").append(i + 1).append(" id, tid, rid FROM (SELECT t.id tid, r.id rid FROM ").append(body).append(')');
+            sb.append("SELECT ").append(i + 1).append(" id, tid, rid FROM (SELECT t.id tid, r.id rid FROM ")
+                    .append(body.replace("{K}", OUTER_KEYS[i])).append(')');
         }
         return sb.toString();
     }

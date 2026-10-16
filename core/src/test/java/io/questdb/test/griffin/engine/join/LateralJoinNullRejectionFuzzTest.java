@@ -45,11 +45,11 @@ import java.util.Map;
 /**
  * Fuzzes the filters after a RIGHT or FULL join in a correlated LATERAL body, see
  * {@link LateralJoinNullRejectionTest}, on random data: NULL and duplicate outer keys, random
- * typed values, random combinations of filters, random bind variable values, and scalar
- * sub-queries with a WHERE of their own. Each query must return the rows that the body returns per
- * outer row, or fail with the LateralJoinRewriter error that rejects the filter. A body that fails
- * on its own must fail because of its filter, so the filter must fail on the table alone, and the
- * query must fail too.
+ * typed values, random combinations of filters on trades and on refunds, random bind variable
+ * values, and scalar sub-queries with a WHERE of their own. Each query must return the rows that
+ * the body returns per outer row, or fail with the LateralJoinRewriter error that rejects the
+ * filter. A body that fails on its own must fail because of its filter, so the filter must fail on
+ * the table alone, and the query must fail too.
  * <p>
  * The rewriter may reject a query only when it cannot prove that the filter drops every
  * NULL-extended row. A query without OR whose filter holds a comparison, IN, BETWEEN or IS [NOT]
@@ -96,6 +96,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private static final String[] CORRELATED = {"t.id > {K}", "t.id >= {K}", "t.x = {K}", "t.id != {K}"};
     private static final String[] LATERAL_JOINS = {"JOIN LATERAL", "CROSS JOIN LATERAL", "LEFT JOIN LATERAL"};
     private static final int QUERIES_PER_ROUND = 40;
+    // bind variable values of a filter on refunds, whose ids start at 100
+    private static final Object[] REFUND_BIND_VALUES = {null, 0, 101};
+    private static final String[] REFUND_CONSTANTS = {"0", "1", "2", "101", "NULL"};
     // A FULL join whose ON clause reads the outer key on refunds also NULL-extends refunds, and no
     // filter on trades drops those rows, so the rewriter rejects every such query.
     private static final Shape[] SHAPES = {
@@ -247,6 +250,26 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         return rnd.nextDouble() < nullRate ? "NULL" : Integer.toString(rnd.nextInt(4));
     }
 
+    // A filter on refunds, which a RIGHT join keeps whole, drops no row that the join NULL-extends on
+    // trades, so the rewriter must not count it, and the rows-or-error check decides the query.
+    private static Predicate randomRefundsPredicate(Rnd rnd, Bind bind) {
+        final String ref = rnd.nextBoolean() ? "r.id" : "r.k";
+        if (rnd.nextInt(3) == 0) {
+            final StringBuilder sb = new StringBuilder(ref).append(" IN (");
+            for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                sb.append(i > 0 ? ", " : "").append(REFUND_CONSTANTS[rnd.nextInt(REFUND_CONSTANTS.length)]);
+            }
+            return new Predicate(sb.append(')').toString(), PredicateKind.UNPROVEN);
+        }
+        String operand = REFUND_CONSTANTS[rnd.nextInt(REFUND_CONSTANTS.length)];
+        if (bind.type == null && rnd.nextBoolean()) {
+            bind.type = "int";
+            bind.value = REFUND_BIND_VALUES[rnd.nextInt(REFUND_BIND_VALUES.length)];
+            operand = "$1";
+        }
+        return new Predicate(ref + ' ' + COMPARISONS[rnd.nextInt(COMPARISONS.length)] + ' ' + operand, PredicateKind.UNPROVEN);
+    }
+
     // A scalar sub-query that reads the column, which the plan runs once per execution. The code
     // generator generates it for the filter and again for the NULL check of the filter, and both
     // must read the value that the sub-query returns on its own: with its WHERE, its LIMIT, its
@@ -284,8 +307,10 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         return rows;
     }
 
+    // A filter on refunds reads r.id or r.k, which the table alone reads as t.id and t.x, the INT
+    // columns of trades, so the filter compiles and runs there as it does in the join.
     private static FilterOutcome runOnTableAlone(String filter, String bindSuffix) {
-        final String sql = "SELECT id FROM trades t WHERE " + filter;
+        final String sql = "SELECT id FROM trades t WHERE " + filter.replace("r.id", "t.id").replace("r.k", "t.x");
         try {
             final RecordCursorFactory factory;
             try {
@@ -519,6 +544,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     }
 
     private Predicate randomPredicate(Rnd rnd, Bind bind) {
+        if (rnd.nextInt(8) == 0) {
+            return randomRefundsPredicate(rnd, bind);
+        }
         final FuzzColumn column = COLUMNS[rnd.nextInt(COLUMNS.length)];
         final String ref = "t." + column.name;
         final String[] constants = column.constants;
