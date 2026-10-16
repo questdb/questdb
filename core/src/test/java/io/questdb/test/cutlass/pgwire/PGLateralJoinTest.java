@@ -153,6 +153,37 @@ public class PGLateralJoinTest extends BasePGTest {
         });
     }
 
+    // A prepared statement whose LATERAL body equates a.x to the outer key and compares a.id with it
+    // too. Per outer row, a.id > o.x + 0 keeps a row 10 of o.x = 1 and a row 11 of o.x = 3, and a
+    // NULL value makes the comparison false for every row. Each value runs twice.
+    @Test
+    public void testLateralWhereKeyAndCorrelatedComparisonPrepared() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE o (id INT, x INT)");
+                statement.execute("CREATE TABLE a (id INT, x INT)");
+                statement.execute("INSERT INTO o VALUES (1, 1), (2, NULL), (3, 3)");
+                statement.execute("INSERT INTO a VALUES (10, 1), (11, 3), (12, NULL), (0, 1)");
+            }
+            final String sql = "SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM a WHERE a.x = o.x AND a.id > o.x + ?) l ORDER BY 1, 2";
+            final String header = "id[INTEGER],aid[INTEGER]\n";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setInt(1, 0);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header + "1,10\n3,11\n", sink, rs);
+                    }
+                }
+                for (int i = 0; i < 2; i++) {
+                    statement.setNull(1, Types.INTEGER);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header, sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
     // Executes the statement, which must fail with the NULL value error at the 1-based position
     private static void assertNullValueError(PreparedStatement statement, int position) throws SQLException {
         try (ResultSet ignore = statement.executeQuery()) {

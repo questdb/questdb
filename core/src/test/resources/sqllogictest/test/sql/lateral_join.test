@@ -1394,3 +1394,72 @@ ORDER BY t1_or.a
 ----
 1 13
 2 50
+
+# ============================================================
+# WHERE key equality next to another condition on the outer column
+# QuestDB's = matches NULL to NULL, where DuckDB and PostgreSQL need
+# IS NOT DISTINCT FROM. Here the comparison with the NULL outer key
+# drops its rows either way, so plain = gives the same rows there.
+# ============================================================
+
+statement ok
+CREATE TABLE o_kc (id INT, x INT)
+
+statement ok
+INSERT INTO o_kc VALUES (1, 1), (2, NULL), (3, 3)
+
+statement ok
+CREATE TABLE a_kc (id INT, x INT)
+
+statement ok
+INSERT INTO a_kc VALUES (10, 1), (11, 3), (12, NULL), (0, 1)
+
+statement ok
+CREATE TABLE b_kc (id INT, k INT, x INT)
+
+statement ok
+INSERT INTO b_kc VALUES (20, 5, 1), (21, 1, 1), (22, 7, NULL), (23, 1, NULL), (24, 3, 3)
+
+query II nosort
+SELECT o.id, l.aid
+FROM o_kc o
+JOIN LATERAL (SELECT a.id aid FROM a_kc a WHERE a.x = o.x AND a.id > o.x) l
+ORDER BY 1, 2
+----
+1 10
+3 11
+
+query II nosort
+SELECT o.id, l.aid
+FROM o_kc o
+LEFT JOIN LATERAL (SELECT a.id aid FROM a_kc a WHERE a.x = o.x AND a.id > o.x) l
+ORDER BY 1, 2
+----
+1 10
+2 NULL
+3 11
+
+query II nosort
+SELECT o.id, l.n
+FROM o_kc o
+JOIN LATERAL (SELECT count(*) n FROM a_kc a WHERE a.x = o.x AND a.id > o.x) l
+ORDER BY 1
+----
+1 1
+2 0
+3 1
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, s.id sid
+    FROM a_kc a
+    RIGHT JOIN (SELECT id, k, x FROM b_kc WHERE x = o.x) s ON a.x = s.k
+    WHERE a.x = o.x AND s.id > o.x
+) l
+ORDER BY 1, 2, 3
+----
+1 0 21
+1 10 21
+3 11 24

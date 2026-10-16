@@ -709,6 +709,21 @@ class LateralJoinRewriter implements Mutable {
         };
     }
 
+    // For an equality between a column of the outer-ref join and another column, in either order,
+    // returns the other column, or null
+    private static ExpressionNode outerRefEqualityPartner(ExpressionNode node, CharSequence outerRefAlias) {
+        if (!Chars.equals(node.token, "=")) {
+            return null;
+        }
+        if (isOuterRefToken(node.lhs, outerRefAlias) && isSimpleColumnRef(node.rhs)) {
+            return node.rhs;
+        }
+        if (isOuterRefToken(node.rhs, outerRefAlias) && isSimpleColumnRef(node.lhs)) {
+            return node.lhs;
+        }
+        return null;
+    }
+
     private static void promoteToLeftOuterJoin(IQueryModel joinModel) {
         final int joinType = joinModel.getJoinType();
         if (joinType == IQueryModel.JOIN_CROSS || joinType == IQueryModel.JOIN_INNER) {
@@ -2856,6 +2871,9 @@ class LateralJoinRewriter implements Mutable {
                     // Example ON: a.order_id = o.id AND o.status = 'ACTIVE'
                     //  → mixed: a.order_id = __qdb_outer_ref__0_id (stays in ON)
                     //  → pure:  o.status = 'ACTIVE' (→ __qdb_outer_ref__0 criteria)
+                    // A pure outer predicate before a RIGHT, FULL or SPLICE join decides, per
+                    // outer row, whether the master side of that join is empty, so it stays in
+                    // its ON clause and is rewritten in place too.
                     innerJoinCorrelated.clear();
                     innerJoinNonCorrelated.clear();
                     extractCorrelatedPredicates(joinCriteria, innerJoinCorrelated, innerJoinNonCorrelated, depth);
@@ -2863,7 +2881,7 @@ class LateralJoinRewriter implements Mutable {
                     if (innerJoinCorrelated.size() > 0) {
                         for (int ci = 0, cn = innerJoinCorrelated.size(); ci < cn; ci++) {
                             ExpressionNode pred = innerJoinCorrelated.getQuick(ci);
-                            if (allLiteralsAreCorrelated(pred, depth)) {
+                            if (allLiteralsAreCorrelated(pred, depth) && isLastOuterJoin(inner.getJoinModels(), i)) {
                                 correlated.add(pred);
                             } else {
                                 ExpressionNode rewritten = rewriteOuterRefs(pred, outerToInnerAlias, depth);
@@ -3178,6 +3196,28 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    // True when a conjunct of the ON clause of the outer-ref join, other than the equalities that
+    // outerToInnerAlias holds, reads an outer-ref column that outerToInnerAlias maps to a column of
+    // another known type. Removing the outer-ref join would evaluate the conjunct on that column, and
+    // types whose values compare equal can still compute differently: + 1 adds a microsecond to a
+    // TIMESTAMP and a nanosecond to a TIMESTAMP_NS.
+    private boolean hasRetypedOuterRefFilter(
+            IQueryModel level,
+            IQueryModel outerRefSubquery,
+            ExpressionNode outerRefCriteria,
+            CharSequence outerRefAlias
+    ) {
+        splitAndPredicates(outerRefCriteria, joinConjuncts);
+        for (int i = 0, n = joinConjuncts.size(); i < n; i++) {
+            final ExpressionNode conjunct = joinConjuncts.getQuick(i);
+            if (!isOuterRefMapping(conjunct, outerRefAlias)
+                    && readsRetypedOuterRef(level, outerRefSubquery, conjunct, outerRefAlias)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // True when runtimeNullCheckOperand() accepts a conjunct of the WHERE filter, where = does not count
     private boolean hasRuntimeNullCheckConjunct(IQueryModel level, ExpressionNode where, int joinIndex) {
         splitAndPredicates(where, filterConjuncts);
@@ -3463,6 +3503,17 @@ class LateralJoinRewriter implements Mutable {
             return isFalseOnNullRecord(functionParser, createNullRejectionProbe(conjunct, column), columnType, executionContext);
         }
         return (isBetween || op == CMP_LT || op == CMP_GT) && !isTypeWithoutNull(columnType);
+    }
+
+    // True for an equality between a column of the outer-ref join and the column that
+    // outerToInnerAlias maps it to
+    private boolean isOuterRefMapping(ExpressionNode conjunct, CharSequence outerRefAlias) {
+        final ExpressionNode partner = outerRefEqualityPartner(conjunct, outerRefAlias);
+        if (partner == null) {
+            return false;
+        }
+        final ExpressionNode outerRef = partner == conjunct.rhs ? conjunct.lhs : conjunct.rhs;
+        return Chars.equalsIgnoreCase(outerToInnerAlias.get(outerRef.token), partner.token);
     }
 
     // True when the function parser, with no columns, makes the expression a constant, or a runtime
@@ -3815,6 +3866,21 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         join.setJoinCriteria(criteria);
+        level.setWhereClause(where);
+    }
+
+    // Moves into the WHERE clause of the level each conjunct of the ON clause of the outer-ref join
+    // other than the equalities that outerToInnerAlias holds, which the lateral join condition
+    // enforces once the rewriter removes the outer-ref join
+    private void moveOuterRefFilterIntoWhere(IQueryModel level, ExpressionNode outerRefCriteria, CharSequence outerRefAlias) {
+        splitAndPredicates(outerRefCriteria, joinConjuncts);
+        ExpressionNode where = level.getWhereClause();
+        for (int i = 0, n = joinConjuncts.size(); i < n; i++) {
+            final ExpressionNode conjunct = joinConjuncts.getQuick(i);
+            if (!isOuterRefMapping(conjunct, outerRefAlias)) {
+                where = where == null ? conjunct : createBinaryOp("and", where, conjunct);
+            }
+        }
         level.setWhereClause(where);
     }
 
@@ -4548,6 +4614,40 @@ class LateralJoinRewriter implements Mutable {
         return column;
     }
 
+    // True when the expression reads an outer-ref column whose type differs from the type of the
+    // column that outerToInnerAlias maps it to, where both types are known
+    private boolean readsRetypedOuterRef(
+            IQueryModel level,
+            IQueryModel outerRefSubquery,
+            ExpressionNode node,
+            CharSequence outerRefAlias
+    ) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            if (!matchesOuterRefAlias(node.token, outerRefAlias)) {
+                return false;
+            }
+            final CharSequence partner = lookupOuterRefAlias(node.token, outerRefAlias, outerToInnerAlias);
+            // the caller runs only when outerToInnerAlias maps every outer-ref column
+            assert partner != null;
+            final int partnerType = resolveColumnType(level, partner);
+            final int outerType = resolveSubQueryColumnType(outerRefSubquery, unqualify(node.token));
+            return partnerType >= 0 && outerType >= 0 && partnerType != outerType;
+        }
+        if (readsRetypedOuterRef(level, outerRefSubquery, node.lhs, outerRefAlias)
+                || readsRetypedOuterRef(level, outerRefSubquery, node.rhs, outerRefAlias)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (readsRetypedOuterRef(level, outerRefSubquery, node.args.getQuick(i), outerRefAlias)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void rebuildGroupingCols() {
         groupingCols.clear();
         ObjList<CharSequence> keys = outerToInnerAlias.keys();
@@ -4776,7 +4876,10 @@ class LateralJoinRewriter implements Mutable {
     // passes a table column through, under its name or another. Returns -1 for any other sub-query
     // column, such as a computed one, whose type is not known before code generation.
     private int resolveColumnType(IQueryModel level, ExpressionNode column) {
-        final CharSequence token = column.token;
+        return resolveColumnType(level, column.token);
+    }
+
+    private int resolveColumnType(IQueryModel level, CharSequence token) {
         final int index = resolveJoinModelIndex(level, token);
         if (index < 0) {
             return -1;
@@ -5450,12 +5553,9 @@ class LateralJoinRewriter implements Mutable {
                 }
                 node = node.lhs;
             } else {
-                if (Chars.equals(node.token, "=")) {
-                    if (isOuterRefToken(node.lhs, outerRefAlias) && isSimpleColumnRef(node.rhs)) {
-                        result.put(node.lhs.token, node.rhs.token);
-                    } else if (isOuterRefToken(node.rhs, outerRefAlias) && isSimpleColumnRef(node.lhs)) {
-                        result.put(node.rhs.token, node.lhs.token);
-                    }
+                final ExpressionNode partner = outerRefEqualityPartner(node, outerRefAlias);
+                if (partner != null) {
+                    result.put((partner == node.rhs ? node.lhs : node.rhs).token, partner.token);
                 }
                 node = sqlNodeStack.poll();
             }
@@ -5776,6 +5876,10 @@ class LateralJoinRewriter implements Mutable {
         if (!isAllEqualities && isComplexChain(branchTop, dataSourceLayer, outerRefAlias, outerToInnerAlias)) {
             return;
         }
+        // the outer-ref join stays, with the conjuncts that would read a column of another type
+        if (isAllEqualities && hasRetypedOuterRefFilter(dataSourceLayer, outerRefSubquery, joinCrit, outerRefAlias)) {
+            return;
+        }
         final IQueryModel alignedRightJoin = checkOuterJoinsAfterOuterRef(dataSourceLayer, outerRefJmIndex, outerRefAlias);
 
         ExpressionNode simpleChainCriteria = null;
@@ -5823,6 +5927,9 @@ class LateralJoinRewriter implements Mutable {
 
         if (alignedRightJoin != null) {
             moveAlignmentIntoWhere(dataSourceLayer, alignedRightJoin, outerRefAlias);
+        }
+        if (isAllEqualities) {
+            moveOuterRefFilterIntoWhere(dataSourceLayer, joinCrit, outerRefAlias);
         }
         rewriteOuterRefColumns(dataSourceLayer, outerRefAlias, outerToInnerAlias);
         rewriteOuterRefsInModelClauses(dataSourceLayer, outerToInnerAlias);

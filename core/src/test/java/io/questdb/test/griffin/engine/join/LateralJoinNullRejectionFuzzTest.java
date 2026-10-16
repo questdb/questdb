@@ -163,6 +163,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private int twoRightJoinsComparedCount;
     // queries whose filter is valid, so the reference ran and the query was checked against it
     private int validCount;
+    // queries of a shape with WHERE t.x = o.k and another condition on the outer key, whose LATERAL
+    // rows were compared with the reference rows
+    private int whereKeyCorrelatedComparedCount;
 
     @Test
     public void testFuzzDenseNulls() throws Exception {
@@ -519,14 +522,14 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             filter.append(isOr ? " OR " : " AND ").append(predicate.sql);
         }
         final Shape shape = SHAPES[rnd.nextInt(SHAPES.length)];
-        // The rewriter drops a correlated comparison next to WHERE t.x = o.k, whatever the join,
-        // which is a separate bug, so the shape with that key gets no correlated conjunct.
-        // t.x = o.k lets the rewriter remove the outer-ref join, and = against a runtime value then
-        // does not count.
+        // t.x = o.k, in the shape or as the correlated conjunct, lets the rewriter remove the
+        // outer-ref join, and = against a runtime value then does not count.
         boolean isOuterRefJoinKept = !shape.hasWhereKey;
-        if (!shape.hasWhereKey && rnd.nextInt(3) == 0) {
+        boolean hasWhereKeyCorrelated = false;
+        if (rnd.nextInt(3) == 0) {
             final String correlated = CORRELATED[rnd.nextInt(CORRELATED.length)];
-            isOuterRefJoinKept = !correlated.equals("t.x = {K}");
+            isOuterRefJoinKept = !shape.hasWhereKey && !correlated.equals("t.x = {K}");
+            hasWhereKeyCorrelated = shape.hasWhereKey && !correlated.equals("t.x = {K}");
             filter.insert(0, correlated + " AND ");
         }
         if (bind.type != null) {
@@ -609,6 +612,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             }
             if (hasNestedScalarSubQuery(filter)) {
                 nestedSubQueryComparedCount++;
+            }
+            if (hasWhereKeyCorrelated) {
+                whereKeyCorrelatedComparedCount++;
             }
             final List<String> actual = rowsOf(sink);
             Collections.sort(actual);
@@ -707,6 +713,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             mixedTypeVerdictCount = 0;
             nestedSubQueryComparedCount = 0;
             twoRightJoinsComparedCount = 0;
+            whereKeyCorrelatedComparedCount = 0;
             for (int round = 0; round < rounds; round++) {
                 createTables(rnd, nullRate, maxOuterRows, maxRows);
                 sink.clear();
@@ -732,14 +739,16 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                     + laterRuntimeVerdictCount + " by a later runtime-checked predicate, " + twoRightJoinsComparedCount
                     + " compared with two RIGHT joins, " + laterJoinRepairComparedCount
                     + " compared with a join after a repaired RIGHT join, " + mixedTypeVerdictCount + " proven by a computed column next to a runtime check, "
-                    + nestedSubQueryComparedCount + " compared with a nested sub-query";
+                    + nestedSubQueryComparedCount + " compared with a nested sub-query, " + whereKeyCorrelatedComparedCount
+                    + " compared with a WHERE key next to a correlated condition";
             LOG.info().$("lateral null rejection fuzz [queries=").$(queryCount).$(", valid=").$(validCount)
                     .$(", compared=").$(comparedCount).$(", rejected=").$(rejectedCount)
                     .$(", nullRejecting=").$(nullRejectingCount).$(", laterRuntimeVerdict=").$(laterRuntimeVerdictCount)
                     .$(", twoRightJoinsCompared=").$(twoRightJoinsComparedCount)
                     .$(", laterJoinRepairCompared=").$(laterJoinRepairComparedCount)
                     .$(", mixedTypeVerdict=").$(mixedTypeVerdictCount)
-                    .$(", nestedSubQueryCompared=").$(nestedSubQueryComparedCount).I$();
+                    .$(", nestedSubQueryCompared=").$(nestedSubQueryComparedCount)
+                    .$(", whereKeyCorrelatedCompared=").$(whereKeyCorrelatedComparedCount).I$();
             if (!failures.isEmpty()) {
                 Assert.fail(failures.size() + " of " + queryCount + " queries failed (" + counts + "):\n"
                         + String.join("\n", failures.subList(0, Math.min(20, failures.size()))));
@@ -764,6 +773,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // A generator that never nested a sub-query in the operand of a runtime check would not
             // show that the check shares a sub-query below the top of its operand with the filter.
             Assert.assertTrue("no query with a nested sub-query compared: " + counts, nestedSubQueryComparedCount > 0);
+            // A generator that never put a condition on the outer key next to WHERE t.x = o.k would
+            // not show that the rewriter keeps it when it removes the outer-ref join.
+            Assert.assertTrue("no query with a WHERE key next to a correlated condition compared: " + counts, whereKeyCorrelatedComparedCount > 0);
         });
     }
 
