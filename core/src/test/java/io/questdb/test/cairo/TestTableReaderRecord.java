@@ -27,7 +27,10 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -45,9 +48,25 @@ import org.jetbrains.annotations.Nullable;
  * Warning: this cursor only supports native partitions. It's only good to be used in tests.
  */
 public class TestTableReaderRecord implements Record, Sinkable {
+    private final BorrowedArray array = new BorrowedArray();
     private int columnBase;
     private TableReader reader;
     private long recordIndex = 0;
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        final long rowNum = getAdjustedRecordIndex(col);
+        if (rowNum < 0) {
+            // the row precedes the column top
+            array.ofNull();
+            return array;
+        }
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final MemoryCR dataMem = reader.getColumn(absoluteColumnIndex);
+        final MemoryCR auxMem = reader.getColumn(absoluteColumnIndex + 1);
+        array.of(columnType, auxMem.addressOf(0), auxMem.addressHi(), dataMem.addressOf(0), dataMem.addressHi(), rowNum);
+        return array;
+    }
 
     @Override
     public BinarySequence getBin(int col) {

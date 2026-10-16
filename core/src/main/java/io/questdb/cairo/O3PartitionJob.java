@@ -3316,6 +3316,29 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
 
+        if (openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
+            // An in-place append writes from srcDataMax into the partition's existing files. A reader sees rows
+            // past srcDataMax only if the partition shrank without a new version, as an O3 split does.
+            try {
+                tableWriter.notifyPartitionAppend(oldPartitionTimestamp, srcNameTxn, srcDataMax);
+            } catch (Throwable e) {
+                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+                LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                        .$(", e=").$(e)
+                        .I$();
+                O3CopyJob.closeColumnIdleQuick(
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter
+                );
+                throw e;
+            }
+        }
+
         tableWriter.addPhysicallyWrittenRows(
                 isOpenColumnModeForAppend(openColumnMode)
                         ? srcOooBatchRowSize

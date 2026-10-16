@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -41,6 +42,7 @@ import org.junit.Assert;
 import static io.questdb.std.datetime.microtime.Micros.DAY_MICROS;
 
 public class FuzzTransactionGenerator {
+    private static final int MAX_ANCHORS = 32;
     private static final int MAX_COLUMNS = 200;
 
     public static ObjList<FuzzTransaction> generateSet(
@@ -150,6 +152,14 @@ public class FuzzTransactionGenerator {
         }
 
         long estimatedTotalRows = rowCount + initialRowCount;
+
+        // Uniformly random timestamps almost never land on a timestamp that already exists in the table,
+        // so with this probability an O3 data block is anchored next to an earlier block's min or max row,
+        // sometimes followed by a resend of exactly that row. In-order runs keep their pure append workload.
+        final double probabilityOfAnchoredBlock = o3 && rnd.nextBoolean() ? 0.3 * rnd.nextDouble() : 0;
+        final LongList anchors = new LongList();
+        long lastAnchor = Long.MIN_VALUE;
+        long pendingResendTs = Long.MIN_VALUE;
 
         for (int i = 0; i < transactionCount; i++) {
             if (i == tableDropIteration) {
@@ -285,24 +295,55 @@ public class FuzzTransactionGenerator {
                 }
 
                 final long startTs, stopTs;
-                if (o3) {
-                    long offset = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * i);
-                    long jitter = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * rnd.nextDouble());
-                    if (rnd.nextBoolean()) {
-                        startTs = (minTimestamp + offset + jitter);
-                    } else {
-                        startTs = (minTimestamp + offset - jitter);
+                final boolean isResend = pendingResendTs != Long.MIN_VALUE;
+                final boolean isAnchored = isResend || (probabilityOfAnchoredBlock > 0 && anchors.size() > 0 && rnd.nextDouble() < probabilityOfAnchoredBlock);
+                if (isResend) {
+                    // the client resends the existing row the previous anchored block landed just above
+                    startTs = pendingResendTs;
+                    stopTs = pendingResendTs;
+                    pendingResendTs = Long.MIN_VALUE;
+                    blockRows = Math.min(blockRows, 1 + rnd.nextInt(16));
+                } else if (isAnchored) {
+                    // revisiting the previous anchor clusters late writes around one existing row
+                    if (lastAnchor == Long.MIN_VALUE || rnd.nextBoolean()) {
+                        lastAnchor = anchors.getQuick(rnd.nextInt(anchors.size()));
                     }
+                    if (rnd.nextBoolean()) {
+                        // rows just above an existing row; the next data block resends that row
+                        startTs = lastAnchor + 1;
+                        pendingResendTs = lastAnchor;
+                    } else {
+                        // just below, exactly at, or just above an existing row
+                        startTs = lastAnchor + rnd.nextInt(3) - 1;
+                    }
+                    final long width = switch (rnd.nextInt(3)) {
+                        case 0 -> 0; // every row at the same timestamp
+                        case 1 -> rnd.nextLong(1000);
+                        default -> (long) ((maxTimestamp - minTimestamp) / transactionCount * rnd.nextDouble());
+                    };
+                    stopTs = Math.max(startTs, Math.min(startTs + width, maxTimestamp));
+                    // a small block keeps the partition's existing prefix large enough to split
+                    blockRows = Math.min(blockRows, 1 + rnd.nextInt(16));
                 } else {
-                    long writeInterval = rnd.nextLong((maxTimestamp - minTimestamp) / transactionCount);
-                    startTs = lastTimestamp - writeInterval;
+                    if (o3) {
+                        long offset = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * i);
+                        long jitter = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * rnd.nextDouble());
+                        if (rnd.nextBoolean()) {
+                            startTs = (minTimestamp + offset + jitter);
+                        } else {
+                            startTs = (minTimestamp + offset - jitter);
+                        }
+                    } else {
+                        long writeInterval = rnd.nextLong((maxTimestamp - minTimestamp) / transactionCount);
+                        startTs = lastTimestamp - writeInterval;
+                    }
+                    long step = (maxTimestamp - minTimestamp) / transactionCount;
+                    if (o3) {
+                        //noinspection lossy-conversions
+                        step *= rnd.nextDouble();
+                    }
+                    stopTs = Math.min(startTs + step, maxTimestamp);
                 }
-                long step = (maxTimestamp - minTimestamp) / transactionCount;
-                if (o3) {
-                    //noinspection lossy-conversions
-                    step *= rnd.nextDouble();
-                }
-                stopTs = Math.min(startTs + step, maxTimestamp);
 
                 // Replace commits with TTL may result in partition drop, if the data is deleted from WAL table at the end
                 // it'll be the reason to drop prior partitions because of the TTL.
@@ -329,11 +370,39 @@ public class FuzzTransactionGenerator {
                         replaceInsert
                 );
                 rowCount -= blockRows;
-                lastTimestamp = stopTs;
+                // Drop and convert partition operations use lastTimestamp as their cutoff. An anchored block
+                // revisits older data, so it only moves lastTimestamp forward.
+                lastTimestamp = isAnchored ? Math.max(lastTimestamp, stopTs) : stopTs;
+                if (probabilityOfAnchoredBlock > 0) {
+                    addAnchors(transactionList.getLast(), anchors);
+                }
             }
         }
 
         return transactionList;
+    }
+
+    // keeps the min and max row timestamps of the most recent committed data blocks
+    private static void addAnchors(FuzzTransaction transaction, LongList anchors) {
+        if (transaction.rollback) {
+            return;
+        }
+        long minTs = Long.MAX_VALUE;
+        long maxTs = Long.MIN_VALUE;
+        for (int i = 0, n = transaction.operationList.size(); i < n; i++) {
+            if (transaction.operationList.getQuick(i) instanceof FuzzInsertOperation insert) {
+                minTs = Math.min(minTs, insert.getTimestamp());
+                maxTs = Math.max(maxTs, insert.getTimestamp());
+            }
+        }
+        if (minTs > maxTs) {
+            return;
+        }
+        if (anchors.size() >= MAX_ANCHORS) {
+            anchors.removeIndexBlock(0, 2);
+        }
+        anchors.add(minTs);
+        anchors.add(maxTs);
     }
 
     private static void copyColumnsExcept(RecordMetadata from, FuzzTestColumnMeta to, int columnIndex) {

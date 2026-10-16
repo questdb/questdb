@@ -3075,6 +3075,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public void notifyPartitionAppend(long partitionTimestamp, long partitionNameTxn, long fromRow) {
+        engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, partitionTimestamp, partitionNameTxn, fromRow);
+    }
+
     public void o3BumpErrorCount(boolean oom) {
         o3ErrorCount.incrementAndGet();
         if (oom) {
