@@ -38,6 +38,40 @@ import java.sql.Types;
 
 public class PGLateralJoinTest extends BasePGTest {
 
+    // A prepared statement whose LATERAL body holds a RIGHT join over a computed SHORT column runs with
+    // a NULL value: t.sid != 0 is false on the 0 that the join puts in the SHORT column, so it drops
+    // the rows that the join NULL-extends whatever the value of t.i = ?, and the plan needs no check.
+    // Trade 11 holds NULL in i, and NULL = NULL is true. The simple query mode sends NULL as a
+    // constant, which the rewriter decides on when it compiles the query, so only the extended modes
+    // run.
+    @Test
+    public void testRuntimeNullCheckNextToAComputedColumn() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp), (3, 3, 3::timestamp)");
+                statement.execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp), (102, 3, 3::timestamp)");
+                statement.execute("CREATE TABLE trades (id INT, x INT, i INT, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO trades VALUES (10, 1, 10, 1::timestamp), (11, 2, NULL, 2::timestamp)");
+            }
+            final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM "
+                    + "(SELECT id, x, i, CAST(id AS SHORT) sid FROM trades) t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k "
+                    + "WHERE t.i = ? AND t.sid != 0) l ORDER BY 1, 2, 3";
+            final String header = "id[INTEGER],tid[INTEGER],rid[INTEGER]\n";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setNull(1, Types.INTEGER);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(header + "2,11,101\n", sink, rs);
+                }
+                statement.setInt(1, 10);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(header + "1,10,100\n", sink, rs);
+                }
+            }
+        });
+    }
+
     // A prepared statement whose LATERAL body holds a RIGHT join checks, at each execution, the
     // values of the filter conjuncts that drop the rows the join NULL-extends only while their value
     // is not NULL. The conjuncts are ANDed, so the execution fails only when every value is NULL, at

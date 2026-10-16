@@ -112,6 +112,14 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     private static final String[] LATERAL_JOINS = {"JOIN LATERAL", "CROSS JOIN LATERAL", "LEFT JOIN LATERAL"};
     private static final Pattern LESS_OR_GREATER = Pattern.compile("^\\{C} [<>] .+$|^.+ [<>] \\{C}$");
     private static final String[] LONG256 = {"{C} = 0x01", "{C} != 0x01", "{C} < 0x05", "{C} > 0x00", "{C} >= 0x00", "{C} <= 0x05", "{C} IN (0x01)"};
+    // Over the trades of createAnyConjunctTables(), passes i, l, sy, ip and v through, whose types the
+    // rewriter knows, and computes sid, bid, cl, ci and ok, whose types only the code generator knows.
+    // Trade 10 has sid 10 and ok true. Trade 11 has i NULL, sid 11, cl 10, ci NULL and ok true. A row
+    // that a RIGHT join NULL-extends has sid 0, bid 0 and ok false, as SHORT, BYTE and BOOLEAN have no
+    // NULL, and cl and ci NULL.
+    private static final String MIXED_SELECT = "SELECT id, x, i, l, sy, ip, v, CAST(id AS SHORT) sid, CAST(id AS BYTE) bid,"
+            + " CAST(l AS LONG) cl, CAST(i AS INT) ci, id > 0 AS ok FROM trades";
+    private static final String MIXED_TABLE = "(" + MIXED_SELECT + ")";
     private static final String[] NULL_CHECKS = {"{C} IS NULL", "{C} IS NOT NULL", "{C} = NULL", "{C} != NULL", "NULL = {C}", "{C} IN (NULL)"};
     private static final String[] NUMERIC = {
             "{C} = 10", "10 = {C}", "{C} = 0", "{C} != 0", "{C} != 10", "{C} < 11", "11 > {C}", "{C} > 5",
@@ -475,6 +483,53 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         assertShape(Shape.WHERE_KEY_RIGHT);
     }
 
+    // A RIGHT join whose filter holds a conjunct on a column whose type only the code generator knows
+    // leaves the decision to the code generator, with the checks of the conjuncts on columns of known
+    // type. Over the UNION ALL table, the join with xs needs r.id >= $1 or t.l >= (SELECT ...), and the
+    // join with refunds the latter. max(l) is 10, so t.l >= 10 drops the rows that both joins
+    // NULL-extend on trades, also when $1 is NULL, and r.id >= NULL then drops every row.
+    //
+    // In the chain over the mixed table, the join with xs has refunds alone on its master side, so it
+    // keeps the check of r.id >= (SELECT ...) that the rewriter builds. The join with ys also needs
+    // t.cl >= $1, whose type only the code generator knows, and the code generator builds its group
+    // with a check of the same sub-query, which the plan holds once. min(id) is 100. Per outer row,
+    // outer key 1 matches refund 100 and trade 10, key 2 refund 101 and trade 11, and key 3 refund 102,
+    // which no trade matches.
+    @Test
+    public void testRightJoinsDeferARuntimeNullCheckNextToAComputedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createAnyConjunctTables();
+            final String union = "(SELECT id, x, i, l FROM trades UNION ALL SELECT id, x, i, l FROM trades WHERE id < 0)";
+            final String twoRightJoins = union + " t RIGHT JOIN refunds r ON r.k = {K} RIGHT JOIN xs x ON x.k = r.k"
+                    + " WHERE r.id >= $1 AND t.l >= (SELECT max(l) FROM trades)";
+            assertSteps(
+                    twoRightJoins,
+                    rowsStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), ""),
+                    rowsStep(() -> bindVariableService.setInt(0, 101), "2\t10\t101\n2\t11\t101\n3\t10\t102\n3\t11\t102")
+            );
+            final String twoRightJoinsPlan = planOf(lateralSql(twoRightJoins));
+            TestUtils.assertContains(twoRightJoinsPlan, "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor");
+            TestUtils.assertContains(twoRightJoinsPlan, "groups: [[0],[1,0]]\n");
+
+            execute("CREATE TABLE ys (k INT)");
+            execute("INSERT INTO ys VALUES (1), (2), (3)");
+            final String chain = "refunds r RIGHT JOIN xs x ON x.k = r.k AND r.k = {K} JOIN " + MIXED_TABLE + " t ON t.x = x.k"
+                    + " RIGHT JOIN ys y ON y.k = t.x WHERE r.id >= (SELECT min(id) FROM refunds) AND t.cl >= $1";
+            assertSteps(
+                    chain,
+                    rowsStep(() -> bindVariableService.setLong(0, 10), "1\t10\t100\n2\t11\t101"),
+                    rowsStep(() -> bindVariableService.setLong(0, Numbers.LONG_NULL), "")
+            );
+            final String chainPlan = planOf(lateralSql(chain));
+            TestUtils.assertContains(chainPlan, "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor");
+            // one check of the sub-query
+            final int subQueryCheck = chainPlan.indexOf("__qdb_null_probe [thread-safe] >= cursor");
+            Assert.assertEquals(chainPlan, -1, chainPlan.indexOf("__qdb_null_probe [thread-safe] >= cursor", subQueryCheck + 1));
+            TestUtils.assertContains(chainPlan, "__qdb_null_probe>=$0::long] groups: [[0],[0,1]]\n");
+            bindVariableService.clear();
+        });
+    }
+
     // Over a sub-query column of t, whose type only the code generator knows, both RIGHT joins defer
     // t.id >= (SELECT ...) to the code generator, which builds a check node per join. The plan holds
     // one check for both, which runs the sub-query once per execution and passes its value to the
@@ -533,8 +588,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     // executions and 0 in others, so an execution fails at the sub-query, as the join with refunds
     // then has no check that passes, or returns the rows of the filter with 0, never rows that the
     // filter computed with a value that the check did not see. A sub-query column of t, whose type only
-    // the code generator knows, gives the same outcomes, with the check of the join with xs on
-    // r.id >= $1 alone.
+    // the code generator knows, gives the same outcomes and groups: the code generator builds the
+    // group of the join with xs from both conjuncts.
     @Test
     public void testRightJoinsShareARandomSubQueryCheck() throws Exception {
         assertMemoryLeak(() -> {
@@ -545,8 +600,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     {"trades", "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor", "groups: [[0],[0,1]]"},
                     {
                             "(SELECT id, x FROM trades UNION ALL SELECT id, x FROM trades WHERE id < 0)",
-                            "Lateral Null Check checks: [__qdb_null_probe>=$0::int,__qdb_null_probe [thread-safe] >= cursor",
-                            "groups: [[0],[1]]"
+                            "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor",
+                            "groups: [[0],[0,1]]"
                     }
             };
             final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -674,6 +729,293 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     .withPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$0::int] groups: [[0]]\n")
                     .expectSize()
                     .returns(allKeys);
+            bindVariableService.clear();
+        });
+    }
+
+    // A conjunct on a column whose type only the code generator knows may drop the rows that a RIGHT
+    // join NULL-extends whatever the values of the other conjuncts, so the code generator decides on
+    // it together with the conjuncts that drop those rows only while their value is not NULL. In
+    // MIXED_TABLE, != 0 and != false are false on the 0 and false that the join puts in SHORT, BYTE
+    // and BOOLEAN, and so is > 5 on the NULL of LONG: the plan needs no check, and t.i = NULL keeps
+    // trade 11, as NULL = NULL is true. Against $2 or a sub-query, t.cl joins the group of t.i = $1,
+    // and the query fails only when both are NULL, at the first of them in the filter. On INT, NULL != 0
+    // is true, and BYTE has no NULL, so neither t.ci != 0 nor t.bid >= $2 drops those rows, and the
+    // group holds t.i = $1 alone. One compiled query runs with each value.
+    @Test
+    public void testRuntimeNullCheckNextToAComputedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createAnyConjunctTables();
+            final String body = MIXED_TABLE + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE ";
+            for (String computed : new String[]{"t.sid != 0", "t.bid != 0", "t.ok != false", "t.cl > 5"}) {
+                final String filter = body + "t.i = $1 AND " + computed;
+                assertSteps(
+                        filter,
+                        rowsStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "2\t11\t101"),
+                        // the NULL of INT
+                        rowsStep(() -> bindVariableService.setInt(0, -2_147_483_648), "2\t11\t101"),
+                        rowsStep(() -> bindVariableService.setInt(0, 10), "1\t10\t100"),
+                        rowsStep(() -> bindVariableService.setInt(0, 0), "")
+                );
+                Assert.assertFalse(planOf(lateralSql(filter)).contains("Lateral Null Check"));
+            }
+
+            final String twoChecks = body + "t.i = $1 AND t.cl >= $2";
+            assertSteps(
+                    twoChecks,
+                    rowsStep(() -> bindIntLong(Numbers.INT_NULL, 10), "2\t11\t101"),
+                    rowsStep(() -> bindIntLong(10, Numbers.LONG_NULL), ""),
+                    errorStep(() -> bindIntLong(Numbers.INT_NULL, Numbers.LONG_NULL), "$1"),
+                    rowsStep(() -> bindIntLong(10, 10), "1\t10\t100")
+            );
+            TestUtils.assertContains(
+                    planOf(lateralSql(twoChecks)),
+                    "Lateral Null Check checks: [__qdb_null_probe=$0::int,__qdb_null_probe>=$1::long] groups: [[0,1]]\n"
+            );
+            final String reversedChecks = body + "t.cl >= $2 AND t.i = $1";
+            assertSteps(
+                    reversedChecks,
+                    rowsStep(() -> bindIntLong(Numbers.INT_NULL, 10), "2\t11\t101"),
+                    errorStep(() -> bindIntLong(Numbers.INT_NULL, Numbers.LONG_NULL), "$2")
+            );
+            TestUtils.assertContains(
+                    planOf(lateralSql(reversedChecks)),
+                    "Lateral Null Check checks: [__qdb_null_probe>=$1::long,__qdb_null_probe=$0::int] groups: [[0,1]]\n"
+            );
+
+            assertSteps(
+                    body + "t.i = $1 AND t.cl >= (SELECT max(l) FROM trades)",
+                    rowsStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "2\t11\t101"),
+                    rowsStep(() -> bindVariableService.setInt(0, 10), "1\t10\t100")
+            );
+            assertSteps(
+                    body + "t.i = $1 AND t.cl >= (SELECT max(l) FROM trades WHERE id < 0)",
+                    errorStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "$1"),
+                    rowsStep(() -> bindVariableService.setInt(0, 10), "")
+            );
+
+            final String intColumn = body + "t.i = $1 AND t.ci != 0";
+            assertSteps(
+                    intColumn,
+                    errorStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "$1"),
+                    rowsStep(() -> bindVariableService.setInt(0, 10), "1\t10\t100")
+            );
+            TestUtils.assertContains(planOf(lateralSql(intColumn)), "Lateral Null Check checks: [__qdb_null_probe=$0::int] groups: [[0]]\n");
+            final String byteColumn = body + "t.i = $1 AND t.bid >= $2";
+            assertSteps(
+                    byteColumn,
+                    errorStep(() -> bindIntLong(Numbers.INT_NULL, 0), "$1"),
+                    rowsStep(() -> bindIntLong(10, 0), "1\t10\t100")
+            );
+            TestUtils.assertContains(planOf(lateralSql(byteColumn)), "Lateral Null Check checks: [__qdb_null_probe=$0::int] groups: [[0]]\n");
+
+            // each type of the column of known type, next to a computed SHORT column
+            assertSteps(
+                    body + "t.sy = $1 AND t.sid != 0",
+                    rowsStep(() -> bindVariableService.setStr(0, null), "2\t11\t101"),
+                    rowsStep(() -> bindVariableService.setStr(0, "abc"), "1\t10\t100")
+            );
+            assertSteps(
+                    body + "t.ip = $1 AND t.sid != 0",
+                    rowsStep(() -> bindVariableService.setStr(0, "0.0.0.0"), "2\t11\t101"),
+                    rowsStep(() -> bindVariableService.setStr(0, "1.1.1.1"), "1\t10\t100")
+            );
+            assertSteps(
+                    body + "t.v = $1 AND t.sid != 0",
+                    rowsStep(() -> bindVariableService.setStr(0, null), "2\t11\t101"),
+                    rowsStep(() -> bindVariableService.setStr(0, ""), "")
+            );
+            bindVariableService.clear();
+        });
+    }
+
+    // A compiled query reads new data: the sub-query is NULL while no trade has x = 3, so with $1 NULL
+    // both checks are true and the query fails. Trade 12 makes it 10, which drops every NULL-extended
+    // row, and its i, 5, does not equal NULL. TRUNCATE makes the sub-query NULL again.
+    @Test
+    public void testRuntimeNullCheckNextToAComputedColumnAfterDataChange() throws Exception {
+        assertMemoryLeak(() -> {
+            createAnyConjunctTables();
+            final String body = MIXED_TABLE + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K}"
+                    + " WHERE t.i = $1 AND t.cl >= (SELECT max(l) FROM trades WHERE x = 3)";
+            final String sql = lateralSql(body);
+            bindVariableService.clear();
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            try (RecordCursorFactory factory = select(sql)) {
+                final Outcome nullValueError = new Outcome(null, NULL_VALUE_ERROR, sql.indexOf("$1"));
+                Assert.assertEquals(nullValueError, runFactory(factory, sql));
+                execute("INSERT INTO trades (id, x, i, l, ts) VALUES (12, 3, 5, 10, 3::timestamp)");
+                assertReference("", body, """
+                        id\ttid\trid
+                        2\t11\t101
+                        """);
+                Assert.assertEquals(new Outcome(List.of("2\t11\t101"), null, -1), runFactory(factory, sql));
+                execute("TRUNCATE TABLE trades");
+                Assert.assertEquals(nullValueError, runFactory(factory, sql));
+            }
+            bindVariableService.clear();
+        });
+    }
+
+    // A conjunct on a column whose type only the code generator knows counts wherever the rewriter
+    // looks for a conjunct that drops the rows a RIGHT or FULL join NULL-extends: a later INNER join's
+    // ON clause, and a WHERE that lets the rewriter remove the outer-ref join, where = does not count,
+    // also next to a correlated sub-query. A conjunct on a column of known type that counts joins its
+    // group. Without a conjunct that
+    // counts, a WHERE that lets the rewriter remove the outer-ref join fails at the RIGHT keyword.
+    @Test
+    public void testRuntimeNullCheckNextToAComputedColumnOnEachPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createAnyConjunctTables();
+            // the body, and its rows when $1 is NULL and when it is 10
+            final String[][] shapes = {
+                    {"{T} t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE t.i = $1 AND t.sid != 0", "2\t11\t101", "1\t10\t100"},
+                    {
+                            "{T} t RIGHT JOIN refunds r ON r.k = {K} WHERE t.i = $1 AND t.sid != 0",
+                            "1\t11\t100\n2\t11\t101\n3\t11\t102",
+                            "1\t10\t100\n2\t10\t101\n3\t10\t102"
+                    },
+                    {
+                            "{T} t JOIN xs x ON x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE t.i = $1 AND t.sid != 0",
+                            "1\t11\t101\n2\t11\t101\n3\t11\t101",
+                            "1\t10\t100\n2\t10\t100\n3\t10\t100"
+                    },
+                    {
+                            "{T} t JOIN xs x ON x.k = {K} FULL JOIN refunds r ON t.x = r.k WHERE t.i = $1 AND t.sid != 0",
+                            "1\t11\t101\n2\t11\t101\n3\t11\t101",
+                            "1\t10\t100\n2\t10\t100\n3\t10\t100"
+                    },
+                    {
+                            "{T} t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} JOIN xs x ON x.k = r.k AND t.i >= $1 WHERE t.sid != 0",
+                            "2\t11\t101",
+                            "1\t10\t100"
+                    },
+                    {
+                            "{T} t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE t.x = {K} AND t.i <= $1 AND t.sid != 0",
+                            "2\t11\t101",
+                            "1\t10\t100"
+                    },
+                    // a correlated sub-query as the slave of the FULL join, and a RIGHT join after it
+                    {
+                            "{T} t FULL JOIN (SELECT id, k FROM refunds WHERE k = {K}) r ON t.x = r.k WHERE t.x = {K} AND t.i <= $1 AND t.sid != 0",
+                            "2\t11\t101",
+                            "1\t10\t100"
+                    },
+                    {
+                            "{T} t FULL JOIN (SELECT id, k FROM refunds WHERE k = {K}) r ON t.x = r.k RIGHT JOIN xs x ON x.k = t.x"
+                                    + " WHERE t.x = {K} AND t.i <= $1 AND t.sid != 0",
+                            "2\t11\t101",
+                            "1\t10\t100"
+                    }
+            };
+            // the CTE prefix, then the table
+            final String[][] tables = {{"", MIXED_TABLE}, {"WITH mt AS (" + MIXED_SELECT + ") ", "mt"}};
+            for (String lateralJoin : LATERAL_JOINS) {
+                for (String[] table : tables) {
+                    for (String[] shape : shapes) {
+                        final String body = shape[0].replace("{T}", table[1]);
+                        assertSteps(
+                                table[0],
+                                lateralJoin,
+                                body,
+                                body,
+                                rowsStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), shape[1]),
+                                rowsStep(() -> bindVariableService.setInt(0, 10), shape[2])
+                        );
+                        Assert.assertFalse(planOf(table[0] + lateralSql(body)).contains("Lateral Null Check"));
+                    }
+
+                    // the group lists the WHERE conjunct first
+                    final String innerOn = table[1] + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K}"
+                            + " JOIN xs x ON x.k = r.k AND t.i >= $1 WHERE t.cl >= $2";
+                    assertSteps(
+                            table[0],
+                            lateralJoin,
+                            innerOn,
+                            innerOn,
+                            rowsStep(() -> bindIntLong(Numbers.INT_NULL, 10), "2\t11\t101"),
+                            errorStep(() -> bindIntLong(Numbers.INT_NULL, Numbers.LONG_NULL), "$2"),
+                            rowsStep(() -> bindIntLong(10, Numbers.LONG_NULL), "")
+                    );
+                    TestUtils.assertContains(
+                            planOf(table[0] + lateralSql(innerOn)),
+                            "Lateral Null Check checks: [__qdb_null_probe>=$1::long,__qdb_null_probe>=$0::int] groups: [[0,1]]\n"
+                    );
+
+                    // = does not count where the rewriter removes the outer-ref join
+                    final String whereKeyEquality = table[1] + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K}"
+                            + " WHERE t.x = {K} AND t.i = $1 AND t.cl >= $2";
+                    assertSteps(
+                            table[0],
+                            lateralJoin,
+                            whereKeyEquality,
+                            whereKeyEquality,
+                            errorStep(() -> bindIntLong(10, Numbers.LONG_NULL), "$2"),
+                            rowsStep(() -> bindIntLong(10, 10), "1\t10\t100"),
+                            rowsStep(() -> bindIntLong(Numbers.INT_NULL, 10), "2\t11\t101")
+                    );
+                    TestUtils.assertContains(
+                            planOf(table[0] + lateralSql(whereKeyEquality)),
+                            "Lateral Null Check checks: [__qdb_null_probe>=$1::long] groups: [[0]]\n"
+                    );
+
+                    // NULL != 0 is true on INT
+                    final String whereKeySql = table[0] + "SELECT o.id, l.tid, l.rid FROM orders o " + lateralJoin
+                            + " (SELECT t.id tid, r.id rid FROM " + table[1] + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k"
+                            + " WHERE t.x = o.k AND t.ci != 0) l";
+                    assertException(whereKeySql, whereKeySql.indexOf("RIGHT JOIN"), OUTER_COLUMN_ERROR);
+                }
+            }
+            bindVariableService.clear();
+        });
+    }
+
+    // Without trades, both checks of t.i = $1 AND t.cl >= (SELECT max(l) FROM trades) are true, and
+    // the query fails, while t.sid != 0 needs no check, so the query returns no row. Without refunds,
+    // the RIGHT join has no row either.
+    @Test
+    public void testRuntimeNullCheckNextToAComputedColumnOnEmptyTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createAnyConjunctTables();
+            final String body = MIXED_TABLE + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE ";
+            execute("TRUNCATE TABLE trades");
+            assertSteps(
+                    body + "t.i = $1 AND t.cl >= (SELECT max(l) FROM trades)",
+                    errorStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "$1")
+            );
+            assertSteps(
+                    body + "t.i = $1 AND t.sid != 0",
+                    rowsStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "")
+            );
+            execute("INSERT INTO trades (id, x, i, l, ts) VALUES (10, 1, 10, 10, 1::timestamp), (11, 2, NULL, 10, 2::timestamp)");
+            execute("TRUNCATE TABLE refunds");
+            assertSteps(
+                    body + "t.i = $1 AND t.sid != 0",
+                    rowsStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "")
+            );
+            bindVariableService.clear();
+        });
+    }
+
+    // Every check of the query runs before the query decides, so the check of a sub-query that fails
+    // fails the query with the error that the filter gives on the table alone, also when the check of
+    // t.i = $1 is true. The next query runs.
+    @Test
+    public void testRuntimeNullCheckNextToAComputedColumnWithFailingSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createAnyConjunctTables();
+            bindVariableService.clear();
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            final Outcome alone = run("SELECT id FROM trades t WHERE t.l >= (SELECT l FROM trades)", "alone");
+            Assert.assertNotNull(alone.error);
+            final String sql = lateralSql(MIXED_TABLE + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE t.i = $1 AND t.cl >= (SELECT l FROM trades)");
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertEquals(alone.error, runFactory(factory, sql).error);
+            }
+            assertSteps(
+                    MIXED_TABLE + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE t.i = $1 AND t.cl >= $2",
+                    rowsStep(() -> bindIntLong(Numbers.INT_NULL, 10), "2\t11\t101")
+            );
             bindVariableService.clear();
         });
     }

@@ -39,8 +39,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Fuzzes the filters after a RIGHT or FULL join in a correlated LATERAL body, see
@@ -126,6 +128,10 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // queries that must return rows only because a runtime-checked predicate after the first one of
     // the filter drops every NULL-extended row
     private int laterRuntimeVerdictCount;
+    // queries over a mixed projection, see mixedProjection(), that returned rows and must, whose
+    // filter has a runtime-checked predicate on a column of known type and whose verdict needs a
+    // predicate on a computed column
+    private int mixedTypeVerdictCount;
     // queries that must return rows, as their filter provably drops every NULL-extended row
     private int nullRejectingCount;
     // queries with a valid filter that the rewriter rejected
@@ -142,7 +148,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testFuzzFewRows() throws Exception {
-        fuzz(9, 0.3, 2, 3);
+        fuzz(18, 0.3, 2, 3);
     }
 
     @Test
@@ -161,14 +167,14 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         } while (column.bindType == null || isTypeWithoutNull(column));
         bind.type = column.bindType;
         bind.value = rnd.nextBoolean() ? null : column.bindValues[rnd.nextInt(column.bindValues.length)];
-        predicates.add(new Predicate("t." + column.name + " = $1", PredicateKind.RUNTIME_CHECKED_EQUALITY));
+        predicates.add(new Predicate("t." + column.name + " = $1", PredicateKind.RUNTIME_CHECKED_EQUALITY, column.name));
         do {
             column = COLUMNS[rnd.nextInt(COLUMNS.length)];
         } while (column.bindType == null || column.bindType.equals("str") || isTypeWithoutNull(column));
         final String ref = "t." + column.name;
         final String subQuery = rnd.nextInt(4) > 0 ? "(SELECT max(" + column.name + ") FROM trades)" : randomScalarSubQuery(rnd, column);
         final String op = rnd.nextBoolean() ? "<=" : ">=";
-        predicates.add(new Predicate(rnd.nextBoolean() ? ref + ' ' + op + ' ' + subQuery : subQuery + ' ' + op + ' ' + ref, PredicateKind.RUNTIME_CHECKED));
+        predicates.add(new Predicate(rnd.nextBoolean() ? ref + ' ' + op + ' ' + subQuery : subQuery + ' ' + op + ' ' + ref, PredicateKind.RUNTIME_CHECKED, column.name));
     }
 
     // The body may fail only because of its filter, e.g. a filter that does not apply to the column
@@ -203,9 +209,23 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         }
     }
 
-    // True when only the code generator knows the column types of the table, see randomTable()
-    private static boolean isComputedTable(String table) {
-        return table.contains("CAST(") || table.contains(" UNION ALL ");
+    // True when the filter holds a predicate against a value known only when the query runs, which
+    // the rewriter counts, on a column whose type it knows, see LateralJoinRewriter.runtimeNullCheckOperand()
+    private static boolean hasCountedRuntimePredicateOnKnownType(
+            List<Predicate> predicates,
+            Set<String> computedColumns,
+            boolean isOuterRefJoinKept
+    ) {
+        for (int i = 0, n = predicates.size(); i < n; i++) {
+            final Predicate predicate = predicates.get(i);
+            if (predicate.column != null
+                    && !computedColumns.contains(predicate.column)
+                    && (predicate.kind == PredicateKind.RUNTIME_CHECKED
+                    || (predicate.kind == PredicateKind.RUNTIME_CHECKED_EQUALITY && isOuterRefJoinKept))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isEqualityOnlyType(FuzzColumn column) {
@@ -229,6 +249,23 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             case "BOOLEAN", "BYTE", "SHORT" -> true;
             default -> false;
         };
+    }
+
+    // passes each column through or computes it with a cast to its own type, and adds the names of
+    // the computed columns, whose types the rewriter does not know, to computedColumns. It passes
+    // knownColumn through and computes computedColumn, either of which may be null, and decides on
+    // the other columns at random.
+    private static String mixedProjection(Rnd rnd, Set<String> computedColumns, String knownColumn, String computedColumn) {
+        final StringBuilder sb = new StringBuilder("(SELECT id, x");
+        for (FuzzColumn column : COLUMNS) {
+            sb.append(", ");
+            if (!column.name.equals(knownColumn) && (column.name.equals(computedColumn) || rnd.nextBoolean())) {
+                sb.append("CAST(").append(column.name).append(" AS ").append(column.type).append(") ");
+                computedColumns.add(column.name);
+            }
+            sb.append(column.name);
+        }
+        return sb.append(" FROM trades)").toString();
     }
 
     // Decides whether the filter provably drops every row that the join NULL-extends on trades, so
@@ -269,6 +306,18 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         return isLaterRuntimeRejecting ? Verdict.PROVEN_BY_LATER_RUNTIME_PREDICATE : Verdict.UNPROVEN;
     }
 
+    // the predicates on refunds and on the columns that the table passes through
+    private static List<Predicate> onKnownTypes(List<Predicate> predicates, Set<String> computedColumns) {
+        final List<Predicate> result = new ArrayList<>();
+        for (int i = 0, n = predicates.size(); i < n; i++) {
+            final Predicate predicate = predicates.get(i);
+            if (predicate.column == null || !computedColumns.contains(predicate.column)) {
+                result.add(predicate);
+            }
+        }
+        return result;
+    }
+
     // passes every column through, or computes it with a cast to its own type, whose type the
     // rewriter does not know
     private static String projection(boolean isCast) {
@@ -300,16 +349,15 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
                 sb.append(i > 0 ? ", " : "").append(REFUND_CONSTANTS[rnd.nextInt(REFUND_CONSTANTS.length)]);
             }
-            return new Predicate(sb.append(')').toString(), PredicateKind.UNPROVEN);
+            return new Predicate(sb.append(')').toString(), PredicateKind.UNPROVEN, null);
         }
         String operand = REFUND_CONSTANTS[rnd.nextInt(REFUND_CONSTANTS.length)];
         if (bind.type == null && rnd.nextBoolean()) {
             bind.type = "int";
             bind.value = REFUND_BIND_VALUES[rnd.nextInt(REFUND_BIND_VALUES.length)];
-            bind.isOnRefunds = true;
             operand = "$1";
         }
-        return new Predicate(ref + ' ' + COMPARISONS[rnd.nextInt(COMPARISONS.length)] + ' ' + operand, PredicateKind.UNPROVEN);
+        return new Predicate(ref + ' ' + COMPARISONS[rnd.nextInt(COMPARISONS.length)] + ' ' + operand, PredicateKind.UNPROVEN, null);
     }
 
     // A scalar sub-query that reads the column, which the plan runs once per execution. The code
@@ -328,7 +376,13 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         };
     }
 
-    private static String randomTable(Rnd rnd) {
+    // Half of the queries read a mixed projection, see mixedProjection(), which passes knownColumn
+    // through and computes computedColumn, and whose computed columns computedColumns receives. Each
+    // run then has queries whose verdict needs a computed column next to a column of known type.
+    private static String randomTable(Rnd rnd, Set<String> computedColumns, String knownColumn, String computedColumn) {
+        if (rnd.nextBoolean()) {
+            return mixedProjection(rnd, computedColumns, knownColumn, computedColumn);
+        }
         return switch (rnd.nextInt(8)) {
             case 0 -> "(SELECT * FROM trades)";
             case 1 -> "(SELECT * FROM (SELECT * FROM trades))";
@@ -389,7 +443,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         bindVariableService.clear();
         final Bind bind = new Bind();
         final List<Predicate> predicates = new ArrayList<>();
-        if (rnd.nextBoolean()) {
+        final boolean isRuntimeCheckedPair = rnd.nextBoolean();
+        if (isRuntimeCheckedPair) {
             addRuntimeCheckedPair(rnd, bind, predicates);
         } else {
             predicates.add(randomPredicate(rnd, bind));
@@ -420,7 +475,12 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         if (bind.type != null) {
             setBindVariable(bind.type, bind.value);
         }
-        final String table = randomTable(rnd);
+        final Set<String> computedColumns = new HashSet<>();
+        // a mixed projection passes the column of = $1 of the pair through and computes the column
+        // of the sub-query comparison, so that the plan needs the latter while $1 is NULL
+        final String table = isRuntimeCheckedPair
+                ? randomTable(rnd, computedColumns, predicates.get(0).column, predicates.get(1).column)
+                : randomTable(rnd, computedColumns, null, null);
         final String lateralJoin = LATERAL_JOINS[rnd.nextInt(LATERAL_JOINS.length)];
         final String body = shape.body.replace("{T}", table).replace("{P}", filter);
         final String sql = "SELECT o.id, l.tid, l.rid FROM orders o " + lateralJoin
@@ -457,11 +517,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         }
         Collections.sort(expected);
         validCount++;
-        // The plan checks a filter on refunds against $1 for the join with xs, and the rewriter
-        // then leaves no filter on trades whose type it does not know to the code generator,
-        // which is a separate bug, so the oracle does not count those filters.
-        final boolean isTradesFilterUncounted = shape == TWO_RIGHT_JOINS && bind.isOnRefunds && isComputedTable(table);
-        final Verdict verdict = isTradesFilterUncounted ? Verdict.UNPROVEN : nullRejectionVerdict(shape, hasOr, isOuterRefJoinKept, predicates);
+        final Verdict verdict = nullRejectionVerdict(shape, hasOr, isOuterRefJoinKept, predicates);
         final boolean isNullRejecting = verdict != Verdict.UNPROVEN;
         if (isNullRejecting) {
             nullRejectingCount++;
@@ -469,6 +525,12 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         if (verdict == Verdict.PROVEN_BY_LATER_RUNTIME_PREDICATE) {
             laterRuntimeVerdictCount++;
         }
+        // the rewriter counts a runtime-checked predicate on a column of known type, and only a
+        // predicate on a computed column, whose type only the code generator knows, proves the verdict
+        final boolean isMixedTypeVerdict = isNullRejecting
+                && !computedColumns.isEmpty()
+                && hasCountedRuntimePredicateOnKnownType(predicates, computedColumns, isOuterRefJoinKept)
+                && nullRejectionVerdict(shape, hasOr, isOuterRefJoinKept, onKnownTypes(predicates, computedColumns)) == Verdict.UNPROVEN;
 
         try {
             sink.clear();
@@ -476,6 +538,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             comparedCount++;
             if (shape == TWO_RIGHT_JOINS) {
                 twoRightJoinsComparedCount++;
+            }
+            if (isMixedTypeVerdict) {
+                mixedTypeVerdictCount++;
             }
             final List<String> actual = rowsOf(sink);
             Collections.sort(actual);
@@ -570,6 +635,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             rejectedCount = 0;
             nullRejectingCount = 0;
             laterRuntimeVerdictCount = 0;
+            mixedTypeVerdictCount = 0;
             twoRightJoinsComparedCount = 0;
             for (int round = 0; round < rounds; round++) {
                 createTables(rnd, nullRate, maxOuterRows, maxRows);
@@ -594,11 +660,12 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             final String counts = queryCount + " queries, " + validCount + " with a valid filter, " + comparedCount
                     + " compared, " + rejectedCount + " rejected, " + nullRejectingCount + " provably NULL-rejecting, "
                     + laterRuntimeVerdictCount + " by a later runtime-checked predicate, " + twoRightJoinsComparedCount
-                    + " compared with two RIGHT joins";
+                    + " compared with two RIGHT joins, " + mixedTypeVerdictCount + " proven by a computed column next to a runtime check";
             LOG.info().$("lateral null rejection fuzz [queries=").$(queryCount).$(", valid=").$(validCount)
                     .$(", compared=").$(comparedCount).$(", rejected=").$(rejectedCount)
                     .$(", nullRejecting=").$(nullRejectingCount).$(", laterRuntimeVerdict=").$(laterRuntimeVerdictCount)
-                    .$(", twoRightJoinsCompared=").$(twoRightJoinsComparedCount).I$();
+                    .$(", twoRightJoinsCompared=").$(twoRightJoinsComparedCount)
+                    .$(", mixedTypeVerdict=").$(mixedTypeVerdictCount).I$();
             if (!failures.isEmpty()) {
                 Assert.fail(failures.size() + " of " + queryCount + " queries failed (" + counts + "):\n"
                         + String.join("\n", failures.subList(0, Math.min(20, failures.size()))));
@@ -614,6 +681,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // show that the plan checks the later ones too.
             Assert.assertTrue("no query provably NULL-rejecting by a later runtime-checked predicate: " + counts, laterRuntimeVerdictCount > 0);
             Assert.assertTrue("no query with two RIGHT joins compared: " + counts, twoRightJoinsComparedCount > 0);
+            // A generator that never put a computed column next to a column of known type would not
+            // show that the code generator decides on both together.
+            Assert.assertTrue("no query proven by a computed column next to a runtime check: " + counts, mixedTypeVerdictCount > 0);
         });
     }
 
@@ -628,21 +698,22 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         final boolean isEqualityOnly = isEqualityOnlyType(column);
         switch (isEqualityOnly ? 3 : rnd.nextInt(10)) {
             case 0:
-                return new Predicate(ref + (rnd.nextBoolean() ? " IS NULL" : " IS NOT NULL"), PredicateKind.PROVABLE);
+                return new Predicate(ref + (rnd.nextBoolean() ? " IS NULL" : " IS NOT NULL"), PredicateKind.PROVABLE, column.name);
             case 1: {
                 final boolean isNotIn = rnd.nextInt(4) == 0;
                 final StringBuilder sb = new StringBuilder(ref).append(isNotIn ? " NOT IN (" : " IN (");
                 for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
                     sb.append(i > 0 ? ", " : "").append(constants[rnd.nextInt(constants.length)]);
                 }
-                return new Predicate(sb.append(')').toString(), isNotIn ? PredicateKind.UNPROVEN : PredicateKind.PROVABLE);
+                return new Predicate(sb.append(')').toString(), isNotIn ? PredicateKind.UNPROVEN : PredicateKind.PROVABLE, column.name);
             }
             case 2: {
                 final boolean isNotBetween = rnd.nextInt(4) == 0;
                 return new Predicate(
                         ref + (isNotBetween ? " NOT BETWEEN " : " BETWEEN ")
                                 + constants[rnd.nextInt(constants.length)] + " AND " + constants[rnd.nextInt(constants.length)],
-                        isNotBetween ? PredicateKind.UNPROVEN : PredicateKind.PROVABLE
+                        isNotBetween ? PredicateKind.UNPROVEN : PredicateKind.PROVABLE,
+                        column.name
                 );
             }
             default: {
@@ -660,19 +731,19 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                 final String op = isEqualityOnly ? (rnd.nextBoolean() ? "=" : "!=") : COMPARISONS[rnd.nextInt(COMPARISONS.length)];
                 final String sql = rnd.nextBoolean() ? ref + ' ' + op + ' ' + operand : operand + ' ' + op + ' ' + ref;
                 if (!isRuntimeOperand) {
-                    return new Predicate(sql, PredicateKind.PROVABLE);
+                    return new Predicate(sql, PredicateKind.PROVABLE, column.name);
                 }
                 // against a value known only when the query runs, < and > drop the NULL of a type
                 // with NULL whatever the value, <= >= and = only while the value is not NULL, and
                 // != not provably
                 if (isTypeWithoutNull(column)) {
-                    return new Predicate(sql, PredicateKind.UNPROVEN);
+                    return new Predicate(sql, PredicateKind.UNPROVEN, column.name);
                 }
                 return switch (op) {
-                    case "<", ">" -> new Predicate(sql, PredicateKind.PROVABLE);
-                    case "<=", ">=" -> new Predicate(sql, PredicateKind.RUNTIME_CHECKED);
-                    case "=" -> new Predicate(sql, PredicateKind.RUNTIME_CHECKED_EQUALITY);
-                    default -> new Predicate(sql, PredicateKind.UNPROVEN);
+                    case "<", ">" -> new Predicate(sql, PredicateKind.PROVABLE, column.name);
+                    case "<=", ">=" -> new Predicate(sql, PredicateKind.RUNTIME_CHECKED, column.name);
+                    case "=" -> new Predicate(sql, PredicateKind.RUNTIME_CHECKED_EQUALITY, column.name);
+                    default -> new Predicate(sql, PredicateKind.UNPROVEN, column.name);
                 };
             }
         }
@@ -706,8 +777,6 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     }
 
     private static class Bind {
-        // the filter on refunds reads $1
-        boolean isOnRefunds;
         String type;
         Object value;
     }
@@ -716,7 +785,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                               Object[] bindValues) {
     }
 
-    private record Predicate(String sql, PredicateKind kind) {
+    // column: the name of the trades column that the predicate reads, or null for a predicate on refunds
+    private record Predicate(String sql, PredicateKind kind, String column) {
     }
 
     private record Shape(String body, boolean hasWhereKey, boolean hasKeyOnFullJoinedTable) {

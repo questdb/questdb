@@ -32,7 +32,9 @@ import io.questdb.std.ObjList;
  * NULL-extends on its master side, depending on the type of the master-side column they read. That
  * type is not known before code generation, for example for a computed sub-query column, so
  * LateralJoinRewriter leaves the decision to the code generator, which knows the type when it
- * generates the join. Each candidate holds:
+ * generates the join. The candidates also hold, with a NULL check and no probe, the conjuncts on columns of
+ * known type that drop those rows only while their value is not NULL, so the code generator decides on both
+ * kinds together. Each candidate holds:
  * <ul>
  *     <li>the column, as the filter reads it</li>
  *     <li>a probe, the conjunct with the column replaced, which the code generator evaluates on the
