@@ -334,7 +334,8 @@ qdbr toolchain; the script prints the command when it is missing.
   - Measure effects against the base branch: fixing a bug the PR itself
     introduced is not an effect.
   - Give each regression, tradeoff and breaking change its own bullet, as
-    plainly as the gains. Don't sell: no superlatives, no bold numbers.
+    plainly as the gains, and each slowdown its measured size, such as
+    `up to 3x slower`. Don't sell: no superlatives, no bold numbers.
   - A change made for speed, or one on a data path, adds its JMH results as a
     table: case, before, after, with the slower cases included.
   - Link tandem PRs on one line.
