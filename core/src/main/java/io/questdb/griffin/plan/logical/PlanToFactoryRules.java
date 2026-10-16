@@ -311,6 +311,17 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * True when the page frames of the scan follow the order advice of its consumer: a backward scan delivers its
+     * designated timestamp descending and no other key, so it follows a consumer that orders by that key alone.
+     */
+    public static boolean isPageFrameAdviceFollowed(ScanPlan scan) {
+        final SortKeys order = scan.getRequestedOrder();
+        return scan.getScanDirection() == SortDirection.DESCENDING && order.size() == 1
+                && order.getColumnIds().getQuick(0) == scan.getOutput().getTimestampColumnId()
+                && order.getDirections().getQuick(0) == SortDirection.DESCENDING;
+    }
+
+    /**
      * True when the generator builds a projection factory for the plan, which a parallel top-K can build over itself.
      */
     public static boolean isPeelableProjection(LogicalPlan plan) {

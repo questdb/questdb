@@ -60,7 +60,7 @@ public class EqStrCursorFunctionFactory extends AbstractStrCursorFunctionFactory
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != Chars.equalsNullable(leftFunc.getStrA(rec), value);
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -71,6 +71,10 @@ public class EqStrCursorFunctionFactory extends AbstractStrCursorFunctionFactory
         @Override
         protected String operator() {
             return " = ";
+        }
+
+        private boolean isMatch(Record rec) {
+            return negated != Chars.equalsNullable(leftFunc.getStrA(rec), value);
         }
     }
 }

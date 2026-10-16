@@ -814,6 +814,93 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // An ON condition reading the scalar body applies to the values the body takes over no rows (0 for a count,
+    // NULL for a sum, which equals a NULL outer value) unless it drops that row, when the join stays INNER.
+    @Test
+    public void testInnerLateralScalarCountOnReadsRestoredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n LONG, i INT, x LONG)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 2, 2, 21), (1, 0, 0, NULL), (2, 1, 1, 20), (3, 0, 0, NULL), (3, 1, 1, 1), (NULL, 1, 1, NULL), (4, 0, 0, 5)
+                    """);
+            execute("CREATE TABLE t2 (k INT, v LONG)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, 11), (2, 20), (NULL, 7), (0, 1)");
+
+            final String matchingCounts = """
+                    k\tn\tc
+                    null\t1\t1
+                    1\t2\t2
+                    2\t1\t1
+                    3\t0\t0
+                    4\t0\t0
+                    """;
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c = t1.n ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(matchingCounts);
+            assertQuery("SELECT t1.k, t1.i n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c = t1.i::LONG ORDER BY t1.k, t1.i")
+                    .noLeakCheck()
+                    .returns(matchingCounts);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c = t1.n AND t1.n < 2 ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            null\t1\t1
+                            2\t1\t1
+                            3\t0\t0
+                            4\t0\t0
+                            """);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c = t1.n ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            null\t1\t1
+                            1\t0\tnull
+                            1\t2\t2
+                            2\t1\t1
+                            3\t0\t0
+                            3\t1\tnull
+                            4\t0\t0
+                            """);
+            assertQuery("SELECT t1.k, t1.x, l.s FROM t1 JOIN LATERAL (SELECT sum(v) s FROM t2 WHERE t2.k = t1.k) l ON l.s = t1.x ORDER BY t1.k, t1.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx\ts
+                            1\t21\t21
+                            2\t20\t20
+                            3\tnull\tnull
+                            """);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c > 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.__qdb_outer_ref__0_k=t1.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t1
+                                    Hash
+                                        SelectedRecord
+                                            Filter filter: 0<c
+                                                GroupBy vectorized: true workers: 1
+                                                  keys: [k]
+                                                  values: [count(*)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c > 0 ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            null\t1\t1
+                            1\t0\t2
+                            1\t2\t2
+                            2\t1\t1
+                            """);
+        });
+    }
+
     @Test
     public void testInnerLateralScalarCountOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
@@ -1227,11 +1314,11 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Chain LIMITs on the per-side-eligible shape follow the general-path
-    // contracts: provably negative values and outer-column references over a
-    // scalar count are rejected, for LEFT and INNER laterals alike.
+    // Chain LIMITs on the per-side-eligible shape follow the general-path contracts:
+    // a negative constant LIMIT and an outer-column LIMIT over a scalar count apply per
+    // outer row, for LEFT and INNER laterals alike.
     @Test
-    public void testLateralChainLimitPerSideShapeRejections() throws Exception {
+    public void testLateralChainLimitPerSideShape() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (k INT, n INT)");
             execute("INSERT INTO t1 VALUES (1, 1), (2, 1), (3, 1)");
@@ -1239,50 +1326,128 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
             createT3("(1), (2), (3)");
 
-            String negativeLeft = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT -1) l ON true";
-            assertException(negativeLeft, negativeLeft.indexOf("-1"),
-                    "negative LIMIT is not supported in a correlated lateral sub-query");
-
-            String negativeInner = "SELECT t1.k, l.x FROM t1 JOIN LATERAL "
-                    + "(SELECT t2.k x FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT -1) l ON true";
-            assertException(negativeInner, negativeInner.indexOf("-1"),
-                    "negative LIMIT is not supported in a correlated lateral sub-query");
-
-            String outerColumn = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT t1.n) l ON true";
-            assertException(outerColumn, outerColumn.indexOf("t1.n"),
-                    "LIMIT referencing an outer column is not supported over a scalar count");
+            final String counts = """
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """;
+            assertQuery("""
+                    SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (
+                        SELECT count() c FROM t2
+                        JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k
+                        LIMIT -1
+                    ) l ON true ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns(counts);
+            assertQuery("""
+                    SELECT t1.k, l.x FROM t1 JOIN LATERAL (
+                        SELECT t2.k x FROM t2
+                        JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k
+                        LIMIT -1
+                    ) l ON true ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t1
+                            2\t2
+                            """);
+            assertQuery("""
+                    SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (
+                        SELECT count() c FROM t2
+                        JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k
+                        LIMIT t1.n
+                    ) l ON true ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns(counts);
         });
     }
 
-    // QuestDB's negative LIMIT means "last |N| rows", which LateralBinder.bindCorrelatedLimit cannot
-    // express (it emits `__lateral_rn <= limit`, a contradiction for N < 0). It used
-    // to silently empty the lateral body; it must now be rejected.
+    // The LIMIT reads o.k through the inner key it equals, also for the t2 rows with k = 0 that no outer row has,
+    // where o.k - 1 would be negative; the step rejects a negative LIMIT per outer row only.
     @Test
-    public void testLateralNegativeLimitRejected() throws Exception {
+    public void testLateralLimitOuterColumnCheckedPerOuterRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createT1("(1), (2), (3), (NULL), (4)");
+            execute("CREATE TABLE t2 (k INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, 11), (2, 20), (2, 21), (3, 30), (0, 1), (0, 2), (NULL, 7)");
+
+            final String cross = "SELECT t1.k, l.v FROM t1 CROSS JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT t1.k - 1) l ORDER BY t1.k, l.v";
+            final String left = "SELECT t1.k, l.v FROM t1 LEFT JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT t1.k - 1) l ON true ORDER BY t1.k, l.v";
+            assertQuery(cross)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            null\t7
+                            2\t20
+                            3\t30
+                            """);
+            assertQuery(left)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            null\t7
+                            1\tnull
+                            2\t20
+                            3\t30
+                            4\tnull
+                            """);
+            assertQuery("SELECT t1.k, l.v FROM t1 CROSS JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT t1.k - 1) l")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.__qdb_outer_ref__0_k=t1.k
+                                    Async Filter workers: 1
+                                      filter: __lateral_limit(k-1,0L)>=0
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t1
+                                    Hash
+                                        SelectedRecord
+                                            Filter filter: coalesce(k-1,9223372036854775807L)>=__lateral_rn
+                                                CachedWindowLight
+                                                  orderedFunctions: [[v] => [row_number() over (partition by [k])]]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """);
+
+            execute("INSERT INTO t1 VALUES (0)");
+            assertQuery(cross).noLeakCheck().failsWith("negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]");
+            assertQuery(left).noLeakCheck().failsWith("negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]");
+        });
+    }
+
+    // A negative LIMIT keeps the last rows of each outer row's body; over a scalar count
+    // it keeps the single row. An uncorrelated body and a non-lateral LIMIT apply it as is.
+    @Test
+    public void testLateralNegativeLimit() throws Exception {
         assertMemoryLeak(() -> {
             createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
-            // scalar-count body
-            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
-                    93, "negative LIMIT is not supported in a correlated lateral sub-query");
-            // plain row body - same defect, no count involved
-            assertException("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
-                    90, "negative LIMIT is not supported in a correlated lateral sub-query");
-            // an UNCORRELATED body is not decorrelated, so negative LIMIT still works
-            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT t2.k x FROM t2 LIMIT -1) l ON true ORDER BY t1.k")
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL (SELECT t2.k x FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t1
+                            2\t2
+                            3\tnull
+                            """);
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL (SELECT t2.k x FROM t2 LIMIT -1) l ON true ORDER BY t1.k")
                     .noLeakCheck()
                     .returns("""
                             k\tx
@@ -1290,11 +1455,194 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2\t2
                             3\t2
                             """);
-            // a non-lateral negative LIMIT is untouched
             assertQuery("SELECT k FROM t2 LIMIT -1").noLeakCheck().expectSize().returns("""
                     k
                     2
                     """);
+        });
+    }
+
+    // Every case keeps, per outer row, the rows the same body keeps for the outer value as a
+    // literal; the outer key 4 has no inner rows and the NULL key matches the NULL inner rows.
+    @Test
+    public void testLateralNegativeLimitMatchesOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createT1("(1), (2), (3), (NULL), (4)");
+            execute("CREATE TABLE t2 (k INT, v INT)");
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10), (1, 13), (1, 11), (1, 12), (2, 21), (2, 20), (3, 30), (NULL, 7), (NULL, 8)
+                    """);
+
+            assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT -2) l ON true")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.__qdb_outer_ref__0_k=t1.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t1
+                                    Hash
+                                        SelectedRecord
+                                            Filter filter: -2L<__lateral_rn-__lateral_count
+                                                CachedWindowLight
+                                                  orderedFunctions: [[v] => [row_number() over (partition by [k])]]
+                                                  unorderedFunctions: [count(*) over (partition by [k])]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -2", """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t12
+                    1\t13
+                    2\t20
+                    2\t21
+                    3\t30
+                    """);
+            final String lastButOne = """
+                    k\tv
+                    null\t7
+                    1\t11
+                    1\t12
+                    2\t20
+                    """;
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -3, -1", lastButOne);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -1, -3", lastButOne);
+            final String innerRows = """
+                    k\tv
+                    1\t11
+                    1\t12
+                    """;
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 1, -1", innerRows);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -0", "k\tv\n");
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -100", """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t10
+                    1\t11
+                    1\t12
+                    1\t13
+                    2\t20
+                    2\t21
+                    3\t30
+                    """);
+            assertLateralLimitMatchesOracle("LIMIT -2", """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t11
+                    1\t12
+                    2\t20
+                    2\t21
+                    3\t30
+                    """);
+
+            bindVariableService.setLong("lo", 1);
+            assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT :lo, -1) l ON true ORDER BY t1.k, l.v")
+                    .noLeakCheck()
+                    .returns(innerRows);
+            assertQuery("SELECT t1.k, l.v FROM t1 LEFT JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT -3, -1) l ON true ORDER BY t1.k, l.v")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            null\t7
+                            1\t11
+                            1\t12
+                            2\t20
+                            3\tnull
+                            4\tnull
+                            """);
+            assertQuery("SELECT t1.k, l.v FROM t1 LEFT JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k LIMIT -2) l ON true ORDER BY t1.k, l.v")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            null\t7
+                            null\t8
+                            1\t11
+                            1\t12
+                            2\t20
+                            2\t21
+                            3\t30
+                            4\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralNegativeLimitRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1, 0)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            final String negativePositive = "SELECT t1.k, l.x FROM t1 JOIN LATERAL (SELECT k x FROM t2 WHERE t2.k = t1.k LIMIT -1, 2) l ON true";
+            assertException(negativePositive, negativePositive.indexOf("-1"), "LIMIT <negative>, <positive> is not allowed");
+            final String countNegativePositive = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1, 2) l ON true";
+            assertException(countNegativePositive, countNegativePositive.indexOf("-1"), "LIMIT <negative>, <positive> is not allowed");
+            final String nonConstantUpper = "SELECT t1.k, l.x FROM t1 JOIN LATERAL (SELECT k x FROM t2 WHERE t2.k = t1.k LIMIT -2, t1.n) l ON true";
+            assertException(nonConstantUpper, nonConstantUpper.indexOf("t1.n"),
+                    "negative LIMIT with a non-constant upper bound is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // The single row of a scalar count over N = 1 rows: LIMIT -1 keeps it, with 0 where
+    // nothing matches, and LIMIT -2, -1 drops it. The step guard folds to a constant and
+    // the body ranks nothing.
+    @Test
+    public void testLateralNegativeLimitScalarCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createT1("(1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            final String counts = """
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """;
+            assertQuery("SELECT t1.k, l.c FROM t1 CROSS JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ORDER BY t1.k")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [k]
+                                VirtualRecord
+                                  functions: [t1.k,coalesce(l.c,0)]
+                                    Hash Left Outer Join Light
+                                      condition: l.__qdb_outer_ref__0_k=t1.k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t1
+                                        Hash
+                                            SelectedRecord
+                                                GroupBy vectorized: true workers: 1
+                                                  keys: [k]
+                                                  values: [count(*)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """)
+                    .returns(counts);
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(counts);
+            assertQuery("SELECT t1.k, l.c FROM t1 CROSS JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -2, -1) l ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("k\tc\n");
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -2, -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            """);
         });
     }
 
@@ -1808,9 +2156,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The pinned contract in testLateralScalarCountOuterColumnLimitRejected: only a
-    // LIMIT over the scalar count itself is rejected. The same LIMIT on a NON-count
-    // join branch inside the body must stay supported.
+    // An outer-column LIMIT on a NON-count join branch inside a scalar count body limits
+    // the branch per outer row.
     @Test
     public void testLateralScalarCountNonCountBranchOuterColumnLimitSupported() throws Exception {
         assertMemoryLeak(() -> {
@@ -1976,30 +2323,164 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // A LIMIT reading an outer column cannot be guarded: the guard is evaluated in the
-    // outer projection, where the body-local rewrite of that reference does not resolve.
+    // A LIMIT reading an outer column over a scalar count: the count's row exists for an
+    // outer row when its LIMIT keeps rank 1 (a NULL LIMIT keeps it), and reads 0 where
+    // nothing matches. t2 holds k = 0 rows no outer row has, whose LIMIT t1.k - 1 would be
+    // negative; the step guard evaluates the LIMIT per outer row only.
     @Test
-    public void testLateralScalarCountOuterColumnLimitRejected() throws Exception {
+    public void testLateralScalarCountOuterColumnLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (k INT, n INT)");
-            execute("INSERT INTO t1 VALUES (1,2), (2,2), (3,2)");
+            execute("INSERT INTO t1 VALUES (1, 0), (1, 1), (2, 2), (2, NULL), (3, 1), (3, 0), (NULL, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2), (0), (0), (NULL)");
+
+            final String keptRows = """
+                    k\tn\tc
+                    null\t1\t1
+                    1\t1\t2
+                    2\tnull\t1
+                    2\t2\t1
+                    3\t1\t0
+                    """;
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 CROSS JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(keptRows);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(keptRows);
+            final String leftRows = """
+                    k\tn\tc
+                    null\t1\t1
+                    1\t0\tnull
+                    1\t1\t2
+                    2\tnull\t1
+                    2\t2\t1
+                    3\t0\tnull
+                    3\t1\t0
+                    """;
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(leftRows);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT c FROM (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) x) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(leftRows);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON l.c < 2 ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            null\t1\t1
+                            1\t0\tnull
+                            1\t1\tnull
+                            2\tnull\t1
+                            2\t2\t1
+                            3\t0\tnull
+                            3\t1\t0
+                            """);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() + 1 c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            null\t1\t2
+                            1\t0\tnull
+                            1\t1\t3
+                            2\tnull\t2
+                            2\t2\t2
+                            3\t0\tnull
+                            3\t1\t1
+                            """);
+
+            final String leftKeyRows = """
+                    k\tn\tc
+                    null\t1\t1
+                    1\t0\tnull
+                    1\t1\tnull
+                    2\tnull\t1
+                    2\t2\t1
+                    3\t0\t0
+                    3\t1\t0
+                    """;
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [k, n]
+                                VirtualRecord
+                                  functions: [t1.k,t1.n,case([__lateral_limit(t1.k-1,9223372036854775807L)>=1,coalesce(l.c,0),null])]
+                                    Hash Left Outer Join Light
+                                      condition: l.__qdb_outer_ref__0_k=t1.k
+                                      filter: true
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t1
+                                        Hash
+                                            SelectedRecord
+                                                GroupBy vectorized: true workers: 1
+                                                  keys: [k]
+                                                  values: [count(*)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """)
+                    .returns(leftKeyRows);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT c FROM (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) x) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(leftKeyRows);
+            final String crossKeyRows = """
+                    k\tn\tc
+                    null\t1\t1
+                    2\tnull\t1
+                    2\t2\t1
+                    3\t0\t0
+                    3\t1\t0
+                    """;
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 CROSS JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) l ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(crossKeyRows);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 CROSS JOIN LATERAL (SELECT c FROM (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) x) l ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(crossKeyRows);
+            assertQuery("SELECT t1.k, t1.n, l.x FROM t1 LEFT JOIN LATERAL (SELECT t2.k x FROM t2 WHERE t2.k = t1.k ORDER BY t2.k LIMIT t1.n) l ON true ORDER BY t1.k, t1.n, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tx
+                            null\t1\tnull
+                            1\t0\tnull
+                            1\t1\t1
+                            2\tnull\t2
+                            2\t2\t2
+                            3\t0\tnull
+                            3\t1\tnull
+                            """);
+        });
+    }
+
+    // An INNER LATERAL keyed on the count joins the count's row before its LIMIT applies: a
+    // LIMIT that drops the row drops the outer row even where the key matches.
+    @Test
+    public void testLateralScalarCountOuterColumnLimitKeyedInner() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n LONG)");
+            execute("INSERT INTO t1 VALUES (1, 2), (2, 1)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
-            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true",
-                    93, "LIMIT referencing an outer column is not supported over a scalar count");
-
-            // the same LIMIT over a NON-count body stays supported
-            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k ORDER BY t2.k LIMIT t1.n) l ON true ORDER BY t1.k, l.x")
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT 2 - t1.n) l ON l.c = t1.n ORDER BY t1.k")
                     .noLeakCheck()
                     .returns("""
-                            k\tx
-                            1\t1
-                            1\t1
-                            2\t2
-                            3\tnull
+                            k\tn\tc
+                            2\t1\t1
+                            """);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT 0) l ON l.c = t1.n ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("k\tn\tc\n");
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON l.c = t1.n ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            1\t2\t2
+                            2\t1\t1
                             """);
         });
     }
@@ -2038,6 +2519,107 @@ public class LateralJoinTest extends AbstractCairoTest {
                     2\t1
                     3\t0
                     """);
+        });
+    }
+
+    // A step after the lateral reads the count before the projection over the join: through its key, its ON
+    // condition, a WHERE that becomes its key or as an outer column of its own body. The count reads 0 for the outer
+    // rows NULL and 7, which nothing matches, so they join the q row with n = 0.
+    @Test
+    public void testLateralScalarCountReadByLaterStep() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (ok INT)");
+            execute("INSERT INTO o VALUES (1), (2), (3), (NULL), (7)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1), (1), (2), (3), (5)");
+            execute("CREATE TABLE q (n LONG, qk INT)");
+            execute("INSERT INTO q VALUES (0, 7), (1, 1), (2, 2), (9, 9)");
+
+            final String matched = """
+                    ok\tc\tqk
+                    null\t0\t7
+                    1\t2\t2
+                    2\t1\t1
+                    3\t1\t1
+                    7\t0\t7
+                    """;
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b JOIN q ON q.n = b.c ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns(matched);
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b CROSS JOIN q WHERE q.n = b.c ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns(matched);
+            assertQuery("SELECT o.ok, b.c, z.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b CROSS JOIN LATERAL (SELECT qk FROM q WHERE q.n = b.c) z ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns(matched);
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b LEFT JOIN q ON q.n = b.c AND q.qk > 1 ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc\tqk
+                            null\t0\t7
+                            1\t2\t2
+                            2\t1\tnull
+                            3\t1\tnull
+                            7\t0\t7
+                            """);
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b LEFT JOIN q ON q.n <= b.c AND q.qk = 7 ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc\tqk
+                            null\t0\t7
+                            1\t2\t7
+                            2\t1\t7
+                            3\t1\t7
+                            7\t0\t7
+                            """);
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b JOIN q ON q.n < b.c + 1 ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc\tqk
+                            null\t0\t7
+                            1\t2\t1
+                            1\t2\t2
+                            1\t2\t7
+                            2\t1\t1
+                            2\t1\t7
+                            3\t1\t1
+                            3\t1\t7
+                            7\t0\t7
+                            """);
+
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b JOIN q ON q.qk = o.ok")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            VirtualRecord
+                              functions: [o.ok,coalesce(b.c,0),q.qk]
+                                Hash Join Light
+                                  condition: q.qk=o.ok
+                                    Hash Left Outer Join Light
+                                      condition: b.__qdb_outer_ref__0_ok=o.ok
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            SelectedRecord
+                                                GroupBy vectorized: true workers: 1
+                                                  keys: [k]
+                                                  values: [count(*)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: i
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: q
+                            """);
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b JOIN q ON q.qk = o.ok ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc\tqk
+                            1\t2\t1
+                            2\t1\t2
+                            7\t0\t7
+                            """);
         });
     }
 
@@ -2109,6 +2691,62 @@ public class LateralJoinTest extends AbstractCairoTest {
                     2\t1
                     3\t0
                     """);
+        });
+    }
+
+    @Test
+    public void testLateralScalarExpressionsOverNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("""
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+            final String body = """
+                    SELECT coalesce(sum(qty), -1) s, coalesce(max(qty), 0) mx, CASE WHEN sum(qty) IS NULL THEN 'none' ELSE 'some' END tag,
+                        sum(qty) + 1 inc, count() + coalesce(min(qty), 100) cm
+                    FROM trades WHERE order_id = o.id""";
+            final String expected = """
+                    id\ts\tmx\ttag\tinc\tcm
+                    1\t30\t20\tsome\t31\t12
+                    2\t30\t30\tsome\t31\t31
+                    3\t-1\t0\tnone\tnull\t100
+                    """;
+            for (String join : new String[]{"CROSS JOIN LATERAL (" + body + ")", "LEFT JOIN LATERAL (" + body + ")", "CROSS JOIN LATERAL (" + body + " LIMIT 1)",
+                    "CROSS JOIN LATERAL (" + body + " LIMIT o.id)"}) {
+                assertQuery("SELECT o.id, sub.s, sub.mx, sub.tag, sub.inc, sub.cm FROM orders o " + join + " sub ORDER BY o.id")
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+            assertQuery("SELECT o.id, sub.s, sub.mx, sub.tag, sub.inc, sub.cm FROM orders o LEFT JOIN LATERAL (" + body + ") sub ON sub.s < 0 ORDER BY o.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts\tmx\ttag\tinc\tcm
+                            1\tnull\tnull\t\tnull\tnull
+                            2\tnull\tnull\t\tnull\tnull
+                            3\t-1\t0\tnone\tnull\t100
+                            """);
+            for (String join : new String[]{"CROSS", "LEFT"}) {
+                assertQuery("SELECT o.id, sub.s, sub.n, sub.mx FROM orders o " + join + " JOIN LATERAL ("
+                        + "SELECT x.s, y.n, y.mx FROM (SELECT coalesce(sum(qty), -1) s FROM trades WHERE order_id = o.id) x "
+                        + "CROSS JOIN (SELECT count() n, coalesce(max(qty), 0) mx FROM trades WHERE order_id = o.id) y"
+                        + ") sub ORDER BY o.id")
+                        .noLeakCheck()
+                        .expectSize(join.equals("CROSS"))
+                        .returns("""
+                                id\ts\tn\tmx
+                                1\t30\t2\t20
+                                2\t30\t1\t30
+                                3\t-1\t0\t0
+                                """);
+            }
         });
     }
 
@@ -2513,7 +3151,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLeftLateralCoalesceSumBodyNotCompensated() throws Exception {
+    public void testLeftLateralCoalesceSumBodyCompensated() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             createOrders("""
@@ -2528,8 +3166,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // only zero-on-empty aggregates are compensated; a null-absorbing wrapper over
-            // sum() is not, so the unmatched row keeps NULL rather than coalesce(NULL, 0) = 0
             assertQuery("""
                     SELECT o.id, sub.s
                     FROM orders o
@@ -2543,7 +3179,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\ts
                             1\t30
                             2\t30
-                            3\tnull
+                            3\t0
                             """);
         });
     }
@@ -6981,11 +7617,10 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2\tnull\tnull
                             """);
 
-            // LIMIT reading an outer column (t0.a) cannot be guarded: the guard is
-            // evaluated in the outer projection, which does not carry that column.
-            // Answering NULL unconditionally would be wrong whenever the window keeps
-            // the row (a = 0 gives LIMIT 0,1, where a no-match outer row must yield 0).
-            assertException("""
+            // A LIMIT reading an outer column (t0.a) keeps the count's row only where it
+            // keeps rank 1: never for LIMIT a, a + 1 with a > 0, and for LIMIT 2 - a, 3 - a
+            // only at a = 2, where nothing matches and the count reads 0.
+            assertQuery("""
                     SELECT t0.a, l1.k, l1.cnt
                     FROM t0
                     LEFT JOIN LATERAL (
@@ -6999,7 +7634,34 @@ public class LateralJoinTest extends AbstractCairoTest {
                         ) l2
                     ) l1
                     ORDER BY t0.a
-                    """, 202, "LIMIT referencing an outer column is not supported over a scalar count");
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            """);
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                            LIMIT 2 - t0.a, 3 - t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\tnull\tnull
+                            2\t7\t0
+                            """);
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.cnt
@@ -8212,6 +8874,121 @@ public class LateralJoinTest extends AbstractCairoTest {
     // Adjacent pin: nested CROSS lateral sum with a skip-level unqualified
     // correlated ref. Every outer row matches, so no compensation fires; the
     // decorrelated aggregate must still evaluate per outer row.
+    // The innermost body's LIMIT reads g.m, an outer column two levels up; the rows match the same query with
+    // g.m substituted as a literal per row of g.
+    @Test
+    public void testNestedLateralLimitReadsOuterColumnTwoLevelsUp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (id INT, m INT)");
+            execute("INSERT INTO g VALUES (1, 1), (2, 2), (3, 0)");
+            execute("CREATE TABLE p (ok INT)");
+            execute("INSERT INTO p VALUES (1), (1), (2), (3), (NULL), (4)");
+            execute("CREATE TABLE t (k INT, v LONG)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 11), (2, 20), (2, 21), (NULL, 7), (0, 1)");
+
+            final String innerRows = """
+                    id\tok\tv
+                    1\tnull\t7
+                    1\t1\t10
+                    1\t1\t10
+                    1\t2\t20
+                    2\tnull\t7
+                    2\t1\t10
+                    2\t1\t10
+                    2\t1\t11
+                    2\t1\t11
+                    2\t2\t20
+                    2\t2\t21
+                    """;
+            final String cross = """
+                    SELECT g.id, x.ok, x.v FROM g CROSS JOIN LATERAL (
+                        SELECT p.ok, s.v FROM p CROSS JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT g.m) s
+                    ) x ORDER BY 1, 2, 3
+                    """;
+            assertQuery(cross).noLeakCheck().expectSize().returns(innerRows);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT 1 id, p.ok, s.v FROM p CROSS JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 1) s
+                        UNION ALL
+                        SELECT 2 id, p.ok, s.v FROM p CROSS JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 2) s
+                        UNION ALL
+                        SELECT 3 id, p.ok, s.v FROM p CROSS JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 0) s
+                    ) ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .returns(innerRows);
+
+            final String leftRows = """
+                    id\tok\tv
+                    1\tnull\t7
+                    1\t1\t10
+                    1\t1\t10
+                    1\t2\t20
+                    1\t3\tnull
+                    1\t4\tnull
+                    2\tnull\t7
+                    2\t1\t10
+                    2\t1\t10
+                    2\t1\t11
+                    2\t1\t11
+                    2\t2\t20
+                    2\t2\t21
+                    2\t3\tnull
+                    2\t4\tnull
+                    3\tnull\tnull
+                    3\t1\tnull
+                    3\t1\tnull
+                    3\t2\tnull
+                    3\t3\tnull
+                    3\t4\tnull
+                    """;
+            final String left = """
+                    SELECT g.id, x.ok, x.v FROM g LEFT JOIN LATERAL (
+                        SELECT p.ok, s.v FROM p LEFT JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT g.m) s ON true
+                    ) x ON true ORDER BY 1, 2, 3
+                    """;
+            assertQuery(left).noLeakCheck().returns(leftRows);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT 1 id, p.ok, s.v FROM p LEFT JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 1) s ON true
+                        UNION ALL
+                        SELECT 2 id, p.ok, s.v FROM p LEFT JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 2) s ON true
+                        UNION ALL
+                        SELECT 3 id, p.ok, s.v FROM p LEFT JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 0) s ON true
+                    ) ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .returns(leftRows);
+
+            assertQuery("""
+                    SELECT g.id, x.ok, x.c FROM g CROSS JOIN LATERAL (
+                        SELECT p.ok, s.c FROM p CROSS JOIN LATERAL (SELECT count() c FROM t WHERE t.k = p.ok LIMIT g.m) s
+                    ) x ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tok\tc
+                            1\tnull\t1
+                            1\t1\t2
+                            1\t1\t2
+                            1\t2\t2
+                            1\t3\t0
+                            1\t4\t0
+                            2\tnull\t1
+                            2\t1\t2
+                            2\t1\t2
+                            2\t2\t2
+                            2\t3\t0
+                            2\t4\t0
+                            """);
+
+            execute("INSERT INTO g VALUES (4, -1)");
+            assertQuery(cross).noLeakCheck().failsWith("negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]");
+            assertQuery(left).noLeakCheck().failsWith("negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]");
+        });
+    }
+
     @Test
     public void testNestedLateralSkipLevelAggregate() throws Exception {
         assertMemoryLeak(() -> {
@@ -16135,6 +16912,24 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2\t30.0\t2.0\t0.8
                             """);
         });
+    }
+
+    private void assertLateralLimitMatchesOracle(String limit, String expected) throws Exception {
+        assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k " + limit + ") l ON true ORDER BY t1.k, l.v")
+                .noLeakCheck()
+                .returns(expected);
+        final String[] keys = {"1", "2", "3", "NULL::INT", "4"};
+        final StringBuilder oracle = new StringBuilder("SELECT * FROM (");
+        for (int i = 0; i < keys.length; i++) {
+            if (i > 0) {
+                oracle.append(" UNION ALL ");
+            }
+            oracle.append("SELECT ").append(keys[i]).append(" k, v FROM (SELECT v FROM t2 WHERE t2.k = ").append(keys[i]).append(' ').append(limit).append(')');
+        }
+        assertQuery(oracle.append(") ORDER BY k, v").toString())
+                .noLeakCheck()
+                .sizeMayVary()
+                .returns(expected);
     }
 
     private void assertPlainScalarAggregateRuntimeLimit(

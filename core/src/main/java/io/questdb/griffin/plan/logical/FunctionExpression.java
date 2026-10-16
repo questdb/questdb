@@ -28,6 +28,7 @@ import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Published calls retain descriptions only; executable roots have a separate owner.
@@ -35,10 +36,19 @@ import io.questdb.std.ObjectFactory;
 public final class FunctionExpression extends BoundExpression {
     public static final ObjectFactory<FunctionExpression> FACTORY = FunctionExpression::new;
     private final IntList argumentPositions = new IntList();
-    private final ObjList<BoundExpression> arguments = new ObjList<>();
+    private final ObjList<BoundExpression> arguments;
     private boolean isProjectedOffset;
     private boolean isSetOperation;
     private FunctionFactoryDescriptor overload;
+
+    public FunctionExpression() {
+        arguments = new ObjList<>();
+    }
+
+    @TestOnly
+    public FunctionExpression(ObjList<BoundExpression> arguments) {
+        this.arguments = arguments;
+    }
 
     public BoundExpression argumentAt(int index) {
         return arguments.getQuick(index);

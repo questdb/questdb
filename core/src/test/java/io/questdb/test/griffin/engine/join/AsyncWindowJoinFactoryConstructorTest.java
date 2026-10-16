@@ -313,7 +313,7 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
                 masterFilter,
                 perWorkerMasterFilters,
                 new IntHashSet(),        // filterUsedColumnIndexes
-                false,                   // vectorized
+                null,                    // argumentColumnIndex
                 reduceTaskFactory,
                 1                        // workerCount
         );
@@ -365,7 +365,7 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
                 masterFilter,
                 perWorkerMasterFilters,
                 new IntHashSet(),        // filterUsedColumnIndexes
-                false,                   // vectorized
+                null,                    // argumentColumnIndex
                 reduceTaskFactory,
                 1                        // workerCount
         );

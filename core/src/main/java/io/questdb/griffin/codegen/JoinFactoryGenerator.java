@@ -115,6 +115,7 @@ import io.questdb.griffin.engine.table.ExtraNullColumnCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowContextImpl;
+import io.questdb.griffin.engine.window.WindowKeyExpressionIdentity;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -129,6 +130,7 @@ import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -146,6 +148,7 @@ import static io.questdb.cairo.ColumnType.*;
 final class JoinFactoryGenerator {
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = AsOfJoinRecordCursorFactory::new;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = LtJoinRecordCursorFactory::new;
+    private final CharSequenceIntHashMap argumentColumns = new CharSequenceIntHashMap();
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final StringSink conditionSink;
@@ -722,6 +725,39 @@ final class JoinFactoryGenerator {
             Misc.free(base, th);
             throw th;
         }
+    }
+
+    /**
+     * The column that holds the batch argument of each aggregate of a vectorized window join. Aggregates share a column
+     * when their arguments render one bound identity and materialize as one type. An argument with no identity, such as
+     * a bind variable or a non-deterministic call, gets a column of its own.
+     */
+    private IntList windowJoinArgumentColumns(ObjList<FunctionExpression> aggregates, ObjList<GroupByFunction> groupByFunctions, OutputSchema scope) {
+        final IntList columnIndex = new IntList(groupByFunctions.size());
+        argumentColumns.clear();
+        int columnCount = 0;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction function = groupByFunctions.getQuick(i);
+            final Function argument = function.getComputeBatchArg();
+            conditionSink.clear();
+            if (argument == null) {
+                conditionSink.putAscii('_');
+            } else {
+                conditionSink.put(ColumnType.tagOf(function.getComputeBatchArgType())).putAscii(':');
+                if (!WindowKeyExpressionIdentity.render(aggregates.getQuick(i).argumentAt(0), argument, scope, conditionSink)) {
+                    columnIndex.add(columnCount++);
+                    continue;
+                }
+            }
+            final int keyIndex = argumentColumns.keyIndex(conditionSink);
+            if (keyIndex < 0) {
+                columnIndex.add(argumentColumns.valueAt(keyIndex));
+            } else {
+                argumentColumns.putAt(keyIndex, conditionSink, columnCount);
+                columnIndex.add(columnCount++);
+            }
+        }
+        return columnIndex;
     }
 
     static void resolveKeys(OutputSchema input, IntList ids, IntList indexes) {
@@ -2066,7 +2102,8 @@ final class JoinFactoryGenerator {
                 }
             }
 
-            final boolean isVectorized = joinFilter == null && isWindowJoinVectorized(plan, stepIndex, groupByFunctions, splitIndex);
+            final IntList argumentColumnIndex = joinFilter == null && isWindowJoinVectorized(plan, stepIndex, groupByFunctions, splitIndex)
+                    ? windowJoinArgumentColumns(aggregates, groupByFunctions, scope) : null;
 
             final int workerCount = executionContext.getSharedQueryWorkerCount();
             final boolean isParallel = step.getAlgorithm() == WindowJoinStep.Algorithm.PARALLEL
@@ -2138,7 +2175,7 @@ final class JoinFactoryGenerator {
                             ownedJoinMetadata, outerMetadata, columnIndex, ownedMaster, ownedSlave, ownedJoinFilter, workerJoinFilters,
                             step.isIncludePrevailing(), leftSymbolIndex, rightSymbolIndex, lo, hi, valueTypes,
                             ownedGroupByFunctions, workerGroupByFunctions, compiledFilter, bindVarMemory, bindVarFunctions,
-                            masterFilter, workerMasterFilters, masterFilterUsedColumnIndexes, isVectorized,
+                            masterFilter, workerMasterFilters, masterFilterUsedColumnIndexes, argumentColumnIndex,
                             reduceTaskFactory, workerCount
                     )
                             : new AsyncWindowJoinRecordCursorFactory(
@@ -2148,7 +2185,7 @@ final class JoinFactoryGenerator {
                             step.getLoSign(), step.getHiSign(), step.getLoTimeUnit(), step.getHiTimeUnit(),
                             isDynamicWindow ? timestampDriver : null, valueTypes, ownedGroupByFunctions, workerGroupByFunctions,
                             compiledFilter, bindVarMemory, bindVarFunctions, masterFilter, workerMasterFilters,
-                            masterFilterUsedColumnIndexes, isVectorized, reduceTaskFactory, workerCount
+                            masterFilterUsedColumnIndexes, argumentColumnIndex, reduceTaskFactory, workerCount
                     );
                 } catch (Throwable th) {
                     if (!isWorkersAdopted) {
@@ -2180,7 +2217,7 @@ final class JoinFactoryGenerator {
             master = leftSymbolIndex != -1
                     ? new WindowJoinFastRecordCursorFactory(asm, configuration, outerMetadata, ownedJoinMetadata, ownedMaster, ownedSlave,
                     columnIndex, step.isIncludePrevailing(), lo, hi, ownedGroupByFunctions, valueTypes, rightSymbolIndex, leftSymbolIndex,
-                    ownedJoinFilter, isVectorized)
+                    ownedJoinFilter, argumentColumnIndex)
                     : new WindowJoinRecordCursorFactory(asm, configuration, outerMetadata, ownedJoinMetadata, ownedMaster, ownedSlave,
                     step.isIncludePrevailing(), columnIndex, lo, hi, ownedLo, ownedHi, step.getLoSign(), step.getHiSign(),
                     step.getLoTimeUnit(), step.getHiTimeUnit(), isDynamicWindow ? timestampDriver : null,

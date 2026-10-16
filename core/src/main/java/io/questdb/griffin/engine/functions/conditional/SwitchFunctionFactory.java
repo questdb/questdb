@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -33,22 +35,31 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_BYTE = SwitchFunctionFactory::getByte;
@@ -57,6 +68,41 @@ public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_INT = SwitchFunctionFactory::getInt;
     private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
     private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
+
+    /**
+     * Whether a WHEN constant of the switch over these arguments is one the switch does not look the key up by:
+     * its type does not convert to the key type, or its value does not. The binder binds such a switch as the
+     * CASE of key = constant instead, whose = decides the result or the error.
+     */
+    public static boolean requiresEquality(
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final int keyType = args.getQuick(0).getType();
+        if (!isKeyType(keyType)) {
+            return true;
+        }
+        for (int i = 1, n = (args.size() & 1) == 0 ? args.size() - 1 : args.size(); i < n; i += 2) {
+            final Function constant = args.getQuick(i);
+            if (!constant.isConstant()) {
+                continue;
+            }
+            if (!isConvertibleKey(constant.getType(), keyType)) {
+                return true;
+            }
+            try {
+                final Function key = getKey(keyType, constant, argPositions.getQuick(i), configuration, sqlExecutionContext);
+                if (key != null) {
+                    readKey(keyType, key);
+                }
+            } catch (SqlException | ImplicitCastException e) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     @Override
     public int getResultType(IntList argTypes) {
@@ -111,22 +157,13 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPositions.getQuick(i), "constant expected");
             }
 
-            if (!ColumnType.isConvertibleFrom(keyArgType, keyType)) {
+            if (!isConvertibleKey(keyArgType, keyType)) {
                 throw SqlException.position(argPositions.getQuick(i))
                         .put("type mismatch [expected=").put(ColumnType.nameOf(keyType))
                         .put(", actual=").put(ColumnType.nameOf(keyArgType))
                         .put(']');
             }
-            args.setQuick(
-                    i,
-                    CaseCommon.getCastFunction(
-                            args.getQuick(i),
-                            argPositions.getQuick(i),
-                            keyType,
-                            configuration,
-                            sqlExecutionContext
-                    )
-            );
+            args.setQuick(i, getKey(keyType, keyFunc, argPositions.getQuick(i), configuration, sqlExecutionContext));
 
             returnType = CaseCommon.getCommonType(returnType, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
         }
@@ -134,7 +171,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         for (int i = 2; i < n; i += 2) {
             args.setQuick(
                     i,
-                    CaseCommon.getCastFunction(
+                    CaseCommon.getValueCastFunction(
                             args.getQuick(i),
                             argPositions.getQuick(i),
                             returnType,
@@ -145,7 +182,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
 
         if (elseBranch != null) {
-            elseBranch = CaseCommon.getCastFunction(
+            elseBranch = CaseCommon.getValueCastFunction(
                     elseBranch,
                     elseBranchPosition,
                     returnType,
@@ -224,6 +261,62 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return function.getInt(record);
     }
 
+    /**
+     * The constant of the key's type the branch of an integer or temporal WHEN constant matches, or null when no
+     * key value equals it: a narrowing that is not exact, e.g. 1_000 for a BYTE key, matches nothing, as with =.
+     */
+    private static Function getIntegralKey(int keyType, int constantType, long value) {
+        final short keyTag = ColumnType.tagOf(keyType);
+        if (value == Numbers.LONG_NULL) {
+            return keyTag == ColumnType.BYTE || keyTag == ColumnType.SHORT ? null : Constants.getNullConstant(keyType);
+        }
+        if (isTemporal(keyType) && isTemporal(constantType) && keyType != constantType) {
+            final TimestampDriver driver = keyType == ColumnType.DATE ? MillisTimestampDriver.INSTANCE : ColumnType.getTimestampDriver(keyType);
+            if (!driver.isExactFrom(value, constantType)) {
+                return null;
+            }
+            value = driver.ceilFrom(value, constantType);
+        }
+        return switch (keyTag) {
+            case ColumnType.BYTE -> value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE ? ByteConstant.newInstance((byte) value) : null;
+            case ColumnType.SHORT -> value >= Short.MIN_VALUE && value <= Short.MAX_VALUE ? ShortConstant.newInstance((short) value) : null;
+            case ColumnType.INT -> value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE ? IntConstant.newInstance((int) value) : null;
+            case ColumnType.LONG -> LongConstant.newInstance(value);
+            case ColumnType.DATE -> DateConstant.newInstance(value);
+            default -> TimestampConstant.newInstance(value, keyType);
+        };
+    }
+
+    /**
+     * The constant the switch looks the key up by for a WHEN constant, or null when no key value equals the WHEN
+     * constant. Integer and temporal constants, and timestamp text for a temporal key, convert exactly, as = compares
+     * them; a NULL text matches no BYTE or SHORT key; any other constant takes the CASE value cast.
+     */
+    private static Function getKey(
+            int keyType,
+            Function constant,
+            int position,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final int constantType = constant.getType();
+        final short keyTag = ColumnType.tagOf(keyType);
+        if (isIntegral(keyTag) || isTemporal(keyType)) {
+            if (ColumnType.isNull(constantType) || isIntegral(ColumnType.tagOf(constantType)) || isTemporal(constantType)) {
+                return getIntegralKey(keyType, constantType, ColumnType.isNull(constantType) ? Numbers.LONG_NULL : constant.getLong(null));
+            }
+            if (isTemporal(keyType) && ColumnType.isVarcharOrString(constantType)) {
+                final Function timestamp = parseTimestamp(constant.getStrA(null));
+                if (timestamp != null) {
+                    return getIntegralKey(keyType, timestamp.getType(), timestamp.getTimestamp(null));
+                }
+            } else if ((keyTag == ColumnType.BYTE || keyTag == ColumnType.SHORT) && isText(constantType) && constant.getStrA(null) == null) {
+                return null;
+            }
+        }
+        return CaseCommon.getCastFunction(constant, position, keyType, configuration, sqlExecutionContext);
+    }
+
     private static long getLong(Function function, Record record) {
         return function.getLong(record);
     }
@@ -234,6 +327,73 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
     private static CharSequence getString(Function function, Record record) {
         return function.getStrA(record);
+    }
+
+    private static boolean isConvertibleKey(int keyArgType, int keyType) {
+        if (!ColumnType.isConvertibleFrom(keyArgType, keyType)) {
+            return false;
+        }
+        if (ColumnType.isToSameOrWider(keyArgType, keyType) || keyType < ColumnType.BYTE || keyType > ColumnType.LONG) {
+            return true;
+        }
+        // the getter of an integral key type does not narrow a value other than text, e.g. DOUBLE has no getInt()
+        return ColumnType.isStringyType(keyArgType) || keyArgType == ColumnType.CHAR || CaseCommon.hasCastFactory(keyArgType, keyType);
+    }
+
+    private static boolean isIntegral(short tag) {
+        return tag == ColumnType.BYTE || tag == ColumnType.SHORT || tag == ColumnType.INT || tag == ColumnType.LONG;
+    }
+
+    private static boolean isKeyType(int keyType) {
+        return switch (ColumnType.tagOf(keyType)) {
+            case ColumnType.CHAR, ColumnType.INT, ColumnType.IPv4, ColumnType.BYTE, ColumnType.SHORT, ColumnType.LONG, ColumnType.FLOAT,
+                 ColumnType.DOUBLE, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.STRING, ColumnType.VARCHAR,
+                 ColumnType.SYMBOL -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isTemporal(int type) {
+        return type == ColumnType.DATE || ColumnType.isTimestamp(type);
+    }
+
+    private static boolean isText(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * The TIMESTAMP constant text converts to when = compares it with a TIMESTAMP or DATE, or null when the text
+     * spells no timestamp.
+     */
+    private static @Nullable Function parseTimestamp(@Nullable CharSequence text) {
+        try {
+            return FunctionResolver.timestampConstant(text, ColumnType.TIMESTAMP_MICRO);
+        } catch (NumericException e) {
+            return null;
+        }
+    }
+
+    private static void readKey(int keyType, Function key) {
+        switch (ColumnType.tagOf(keyType)) {
+            case ColumnType.CHAR -> key.getChar(null);
+            case ColumnType.INT, ColumnType.IPv4 -> key.getInt(null);
+            case ColumnType.BYTE -> key.getByte(null);
+            case ColumnType.SHORT -> key.getShort(null);
+            case ColumnType.LONG -> key.getLong(null);
+            case ColumnType.FLOAT -> key.getFloat(null);
+            case ColumnType.DOUBLE -> key.getDouble(null);
+            case ColumnType.DATE -> key.getDate(null);
+            case ColumnType.TIMESTAMP -> key.getTimestamp(null);
+            case ColumnType.BOOLEAN -> key.getBool(null);
+            default -> key.getStrA(null);
+        }
+    }
+
+    private static void removeBranch(ObjList<Function> args, int keyIndex) {
+        args.setQuick(keyIndex + 1, Misc.free(args.getQuick(keyIndex + 1)));
     }
 
     private Function getCharSequenceKeyedFunction(
@@ -313,15 +473,25 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final LongObjHashMap<Function> map = new LongObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
+        Function zeroBranch = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final long key = Double.doubleToLongBits(getDouble(fun, null));
+            final double value = getDouble(fun, null);
+            final long key = Double.doubleToLongBits(value);
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
             }
             map.putAt(index, key, args.getQuick(i + 1));
             argsToPoke.add(args.getQuick(i + 1));
+            if (value == 0 && zeroBranch == null) {
+                zeroBranch = args.getQuick(i + 1);
+            }
+        }
+        // = finds 0.0 and -0.0 equal, so either zero takes the first zero branch
+        if (zeroBranch != null) {
+            map.put(Double.doubleToLongBits(0.0), zeroBranch);
+            map.put(Double.doubleToLongBits(-0.0), zeroBranch);
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
@@ -353,15 +523,25 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final IntObjHashMap<Function> map = new IntObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
+        Function zeroBranch = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final int key = Float.floatToIntBits(getFloat(fun, null));
+            final float value = getFloat(fun, null);
+            final int key = Float.floatToIntBits(value);
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
             }
             map.putAt(index, key, args.getQuick(i + 1));
             argsToPoke.add(args.getQuick(i + 1));
+            if (value == 0 && zeroBranch == null) {
+                zeroBranch = args.getQuick(i + 1);
+            }
+        }
+        // = finds 0.0 and -0.0 equal, so either zero takes the first zero branch
+        if (zeroBranch != null) {
+            map.put(Float.floatToIntBits(0.0f), zeroBranch);
+            map.put(Float.floatToIntBits(-0.0f), zeroBranch);
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
@@ -452,6 +632,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
+            if (fun == null) {
+                removeBranch(args, i);
+                continue;
+            }
             final int key = intMethod.getKey(fun, null);
             final int index = map.keyIndex(key);
             if (index < 0) {
@@ -490,6 +674,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
+            if (fun == null) {
+                removeBranch(args, i);
+                continue;
+            }
             final long key = longMethod.getKey(fun, null);
             final int index = map.keyIndex(key);
             if (index < 0) {
@@ -607,6 +795,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
         long key;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
+            if (fun == null) {
+                removeBranch(args, i);
+                continue;
+            }
             int funType = fun.getType();
             key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType));
             final int index = map.keyIndex(key);
@@ -748,11 +940,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             return keyFunction.getInt(rec) == resolvedKey ? longThenValue : longElseValue;
-        }
-
-        @Override
-        public boolean isEquivalentTo(Function other) {
-            return this == other;
         }
 
         @Override

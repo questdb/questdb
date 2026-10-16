@@ -78,9 +78,11 @@ public class CaseCommon {
             ObjList<Function> args = tlArgs.get();
             args.clear();
             args.add(arg);
+            args.add(Constants.getTypeConstant(toType));
 
             IntList argPositions = tlArgPositions.get();
             argPositions.clear();
+            argPositions.add(argPosition);
             argPositions.add(argPosition);
             return factory.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
         }
@@ -175,6 +177,29 @@ public class CaseCommon {
         return type == LongIntHashMap.NO_ENTRY_VALUE ? UNDEFINED : type;
     }
 
+    static boolean hasCastFactory(int fromType, int toType) {
+        return castFactories.keyIndex(Numbers.encodeLowHighInts(fromType, toType)) < 0;
+    }
+
+    /**
+     * Casts a CASE-like value to the common type of all the values. The common type folds in one value at a time,
+     * and a later value can lift it to a type an earlier value does not convert to: CHAR folds into VARCHAR and
+     * VARCHAR into UUID, but CHAR does not convert to UUID.
+     */
+    static Function getValueCastFunction(
+            Function value,
+            int valuePosition,
+            int commonType,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final int valueType = value.getType();
+        if (valueType != commonType && getCommonTypeOrUndefined(commonType, valueType) == UNDEFINED) {
+            throw SqlException.inconvertibleTypes(valuePosition, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
+        }
+        return getCastFunction(value, valuePosition, commonType, configuration, sqlExecutionContext);
+    }
+
     static {
         // self for all
         castFactories.put(Numbers.encodeLowHighInts(BYTE, LONG256), new CastByteToLong256FunctionFactory());
@@ -184,18 +209,21 @@ public class CaseCommon {
         castFactories.put(Numbers.encodeLowHighInts(BYTE, CHAR), new CastByteToCharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(BYTE, DATE), new CastByteToDateFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(BYTE, TIMESTAMP_MICRO), new CastByteToTimestampFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(BYTE, TIMESTAMP_NANO), new CastByteToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, LONG256), new CastCharToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, STRING), new CastCharToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, VARCHAR), new CastCharToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), new CastCharToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, DATE), new CastCharToDateFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, TIMESTAMP_MICRO), new CastCharToTimestampFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(CHAR, TIMESTAMP_NANO), new CastCharToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, LONG256), new CastShortToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, STRING), new CastShortToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, VARCHAR), new CastShortToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, SYMBOL), new CastShortToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, DATE), new CastShortToDateFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, TIMESTAMP_MICRO), new CastShortToTimestampFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(SHORT, TIMESTAMP_NANO), new CastShortToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(INT, LONG256), new CastIntToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(INT, STRING), new CastIntToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(INT, VARCHAR), new CastIntToVarcharFunctionFactory());

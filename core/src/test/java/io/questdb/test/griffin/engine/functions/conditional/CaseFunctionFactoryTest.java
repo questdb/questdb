@@ -595,6 +595,23 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharOrSymbolBeforeUuidOrIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x, 'a'::char c, 'abc' s, 'abc'::symbol sym, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid u, '1.2.3.4'::ipv4 ip
+                        FROM long_sequence(1)
+                    )""");
+            assertQuery("SELECT CASE WHEN x > 0 THEN c WHEN x > 1 THEN s ELSE u END FROM t")
+                    .noLeakCheck()
+                    .fails(28, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+            assertQuery("SELECT CASE WHEN x > 0 THEN sym WHEN x > 1 THEN s ELSE ip END FROM t")
+                    .noLeakCheck()
+                    .fails(28, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+        });
+    }
+
+    @Test
     public void testCharToVarcharCast() throws Exception {
         assertQuery("""
                 select\s

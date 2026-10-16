@@ -98,7 +98,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             cursor = new PageFrameRecordCursorImpl(
                     configuration,
                     metadata,
-                    new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx),
+                    orderByKeyColumn ? new KeyOrderedSequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx)
+                            : new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx),
                     false,
                     filter
             );

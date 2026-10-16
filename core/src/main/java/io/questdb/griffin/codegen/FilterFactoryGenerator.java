@@ -486,7 +486,7 @@ final class FilterFactoryGenerator {
         if (frame.masterSuffixScan == null || frame.masterSuffixScan.getOutput() != input) {
             return limit;
         }
-        return frame.masterSuffixLimit = new MasterSuffixLimitFunction(limit);
+        return frame.masterSuffixLimit = new MasterSuffixLimitFunction(limit, configuration.getSqlMaxNegativeLimit());
     }
 
     /**

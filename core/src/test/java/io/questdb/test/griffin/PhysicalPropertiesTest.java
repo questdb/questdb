@@ -648,7 +648,14 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
             createTable();
             execute("CREATE TABLE s (ts TIMESTAMP, sym SYMBOL INDEX, x LONG) TIMESTAMP(ts) PARTITION BY NONE");
             execute("INSERT INTO s VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1), ('2024-01-01T01:00:00.000000Z', 'b', 2)");
+            execute("CREATE TABLE n (ts TIMESTAMP, ts2 TIMESTAMP, x LONG)");
+            execute("INSERT INTO n SELECT ts, ts, x FROM t");
+            execute("CREATE TABLE r AS (SELECT * FROM n) TIMESTAMP(ts) PARTITION BY DAY");
             assertTimeFrame(Capability.YES, "SELECT ts, x FROM t");
+            assertTimeFrame(Capability.YES, "SELECT ts, x FROM n TIMESTAMP(ts)");
+            assertTimeFrame(Capability.YES, "SELECT ts2, x FROM n TIMESTAMP(ts2)");
+            assertTimeFrame(Capability.NO, "SELECT ts, x FROM n");
+            assertTimeFrame(Capability.NO, "SELECT ts2, x FROM r TIMESTAMP(ts2)");
             assertTimeFrame(Capability.YES, "SELECT ts, x FROM t WHERE ts IN '2024-01-01'");
             assertTimeFrame(Capability.NO, "SELECT ts, x FROM t WHERE x > 1");
             assertTimeFrame(Capability.NO, "SELECT x FROM t");

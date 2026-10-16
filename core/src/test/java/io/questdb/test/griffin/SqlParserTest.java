@@ -6790,141 +6790,135 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExcelODBCQ2() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery(
-                    """
-                            select
-                              ta.attname,
-                              ia.attnum,
-                              ic.relname,
-                              n.nspname,
-                              tc.relname
-                            from
-                              pg_catalog.pg_attribute ta,
-                              pg_catalog.pg_attribute ia,
-                              pg_catalog.pg_class tc,
-                              pg_catalog.pg_index i,
-                              pg_catalog.pg_namespace n,
-                              pg_catalog.pg_class ic
-                            where
-                              tc.relname = 'telemetry_config'
-                              AND n.nspname = 'public'
-                              AND tc.oid = i.indrelid
-                              AND n.oid = tc.relnamespace
-                              AND i.indisprimary = 't'
-                              AND ia.attrelid = i.indexrelid
-                              AND ta.attrelid = i.indrelid
-                              AND ta.attnum = i.indkey [ ia.attnum -1 ]
-                              AND (NOT ta.attisdropped)
-                              AND (NOT ia.attisdropped)
-                              AND ic.oid = i.indexrelid
-                            order by
-                              ia.attnum
-                            ;
-                            """
-            )
-                    .noLeakCheck()
-                    .expectSize()
-                    .withPlan("""
-                            Encode sort
-                              keys: [attnum]
-                                SelectedRecord
+        assertQuery(
+                """
+                        select
+                          ta.attname,
+                          ia.attnum,
+                          ic.relname,
+                          n.nspname,
+                          tc.relname
+                        from
+                          pg_catalog.pg_attribute ta,
+                          pg_catalog.pg_attribute ia,
+                          pg_catalog.pg_class tc,
+                          pg_catalog.pg_index i,
+                          pg_catalog.pg_namespace n,
+                          pg_catalog.pg_class ic
+                        where
+                          tc.relname = 'telemetry_config'
+                          AND n.nspname = 'public'
+                          AND tc.oid = i.indrelid
+                          AND n.oid = tc.relnamespace
+                          AND i.indisprimary = 't'
+                          AND ia.attrelid = i.indexrelid
+                          AND ta.attrelid = i.indrelid
+                          AND ta.attnum = i.indkey [ ia.attnum -1 ]
+                          AND (NOT ta.attisdropped)
+                          AND (NOT ia.attisdropped)
+                          AND ic.oid = i.indexrelid
+                        order by
+                          ia.attnum
+                        ;
+                        """
+        )
+                .expectSize()
+                .withPlan("""
+                        Encode sort
+                          keys: [attnum]
+                            SelectedRecord
+                                Hash Join
+                                  condition: ic.oid=i.indexrelid
                                     Hash Join
-                                      condition: ic.oid=i.indexrelid
-                                        Hash Join
-                                          condition: n.oid=tc.relnamespace
-                                            Filter filter: ta.attnum=i.indkey[ia.attnum-1]
-                                                Hash Join
-                                                  condition: ia.attrelid=i.indexrelid
-                                                    Hash Join Light
-                                                      condition: i.indrelid=ta.attrelid
-                                                        Hash Join
-                                                          condition: tc.oid=ta.attrelid
-                                                            Filter filter: not (attisdropped)
-                                                                pg_attribute()
-                                                            Hash
-                                                                Filter filter: relname='telemetry_config'
-                                                                    pg_class
-                                                        Hash
-                                                            Filter filter: indisprimary=true
-                                                                Empty table
-                                                    Hash
+                                      condition: n.oid=tc.relnamespace
+                                        Filter filter: ta.attnum=i.indkey[ia.attnum-1]
+                                            Hash Join
+                                              condition: ia.attrelid=i.indexrelid
+                                                Hash Join Light
+                                                  condition: i.indrelid=ta.attrelid
+                                                    Hash Join
+                                                      condition: tc.oid=ta.attrelid
                                                         Filter filter: not (attisdropped)
                                                             pg_attribute()
-                                            Hash
-                                                Filter filter: nspname='public'
-                                                    GenericRecord
+                                                        Hash
+                                                            Filter filter: relname='telemetry_config'
+                                                                pg_class
+                                                    Hash
+                                                        Filter filter: indisprimary=true
+                                                            Empty table
+                                                Hash
+                                                    Filter filter: not (attisdropped)
+                                                        pg_attribute()
                                         Hash
-                                            pg_class
-                            """)
-                    .returns("attname\tattnum\trelname\tnspname\trelname1\n");
-        });
+                                            Filter filter: nspname='public'
+                                                GenericRecord
+                                    Hash
+                                        pg_class
+                        """)
+                .returns("attname\tattnum\trelname\tnspname\trelname1\n");
     }
 
     @Test
     public void testExcelODBCQ3() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery(
-                    """
-                            select
-                              ta.attname,
-                              ia.attnum,
-                              ic.relname,
-                              n.nspname,
-                              NULL
-                            from
-                              pg_catalog.pg_attribute ta,
-                              pg_catalog.pg_attribute ia,
-                              pg_catalog.pg_class ic,
-                              pg_catalog.pg_index i,
-                              pg_catalog.pg_namespace n
-                            where
-                              ic.relname = 'telemetry_config_pkey'
-                              AND n.nspname = 'public'
-                              AND ic.oid = i.indexrelid
-                              AND n.oid = ic.relnamespace
-                              AND ia.attrelid = i.indexrelid
-                              AND ta.attrelid = i.indrelid
-                              AND ta.attnum = i.indkey [ ia.attnum -1 ]
-                              AND (NOT ta.attisdropped)
-                              AND (NOT ia.attisdropped)
-                            order by
-                              ia.attnum
-                            ;
-                            """
-            )
-                    .noLeakCheck()
-                    .expectSize()
-                    .withPlan("""
-                            Encode sort
-                              keys: [attnum]
-                                VirtualRecord
-                                  functions: [ta.attname,ia.attnum,ic.relname,n.nspname,null]
+        assertQuery(
+                """
+                        select
+                          ta.attname,
+                          ia.attnum,
+                          ic.relname,
+                          n.nspname,
+                          NULL
+                        from
+                          pg_catalog.pg_attribute ta,
+                          pg_catalog.pg_attribute ia,
+                          pg_catalog.pg_class ic,
+                          pg_catalog.pg_index i,
+                          pg_catalog.pg_namespace n
+                        where
+                          ic.relname = 'telemetry_config_pkey'
+                          AND n.nspname = 'public'
+                          AND ic.oid = i.indexrelid
+                          AND n.oid = ic.relnamespace
+                          AND ia.attrelid = i.indexrelid
+                          AND ta.attrelid = i.indrelid
+                          AND ta.attnum = i.indkey [ ia.attnum -1 ]
+                          AND (NOT ta.attisdropped)
+                          AND (NOT ia.attisdropped)
+                        order by
+                          ia.attnum
+                        ;
+                        """
+        )
+                .expectSize()
+                .withPlan("""
+                        Encode sort
+                          keys: [attnum]
+                            VirtualRecord
+                              functions: [ta.attname,ia.attnum,ic.relname,n.nspname,null]
+                                Hash Join
+                                  condition: n.oid=ic.relnamespace
                                     Hash Join
-                                      condition: n.oid=ic.relnamespace
-                                        Hash Join
-                                          condition: ic.oid=ia.attrelid
-                                            Filter filter: ta.attnum=i.indkey[ia.attnum-1]
-                                                Hash Join
-                                                  condition: ia.attrelid=i.indexrelid
-                                                    Hash Join Light
-                                                      condition: i.indrelid=ta.attrelid
-                                                        Filter filter: not (attisdropped)
-                                                            pg_attribute()
-                                                        Hash
-                                                            Empty table
+                                      condition: ic.oid=ia.attrelid
+                                        Filter filter: ta.attnum=i.indkey[ia.attnum-1]
+                                            Hash Join
+                                              condition: ia.attrelid=i.indexrelid
+                                                Hash Join Light
+                                                  condition: i.indrelid=ta.attrelid
+                                                    Filter filter: not (attisdropped)
+                                                        pg_attribute()
                                                     Hash
-                                                        Filter filter: not (attisdropped)
-                                                            pg_attribute()
-                                            Hash
-                                                Filter filter: relname='telemetry_config_pkey'
-                                                    pg_class
+                                                        Empty table
+                                                Hash
+                                                    Filter filter: not (attisdropped)
+                                                        pg_attribute()
                                         Hash
-                                            Filter filter: nspname='public'
-                                                GenericRecord
-                            """)
-                    .returns("attname\tattnum\trelname\tnspname\tNULL\n");
-        });
+                                            Filter filter: relname='telemetry_config_pkey'
+                                                pg_class
+                                    Hash
+                                        Filter filter: nspname='public'
+                                            GenericRecord
+                        """)
+                .returns("attname\tattnum\trelname\tnspname\tNULL\n");
     }
 
     @Test
@@ -15400,15 +15394,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testProjectionCanReferenceOwnFunctionsVanilla() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c from long_sequence(100);")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            VirtualRecord
-                              functions: [memoize(rnd_double_array(2,0,ignored,2,10)),a[0,0]]
-                                long_sequence count: 100
-                            """);
-        });
+        assertQuery("select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c from long_sequence(100);")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [memoize(rnd_double_array(2,0,ignored,2,10)),a[0,0]]
+                            long_sequence count: 100
+                        """);
     }
 
     @Test
@@ -20994,15 +20985,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testUtfStringConstants() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("SELECT rnd_str('Raphaël', 'Léo') FROM long_sequence(200);")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            VirtualRecord
-                              functions: [rnd_str([Raphaël,Léo])]
-                                long_sequence count: 200
-                            """);
-        });
+        assertQuery("SELECT rnd_str('Raphaël', 'Léo') FROM long_sequence(200);")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [rnd_str([Raphaël,Léo])]
+                            long_sequence count: 200
+                        """);
     }
 
     @Test

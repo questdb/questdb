@@ -150,6 +150,62 @@ public class OrderPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDescendingOrderedInputWindowScansBackward() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowTable();
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts DESC RANGE 2 SECONDS PRECEDING) a FROM w")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [avg(v) over (range between 2000000 preceding and current row)]
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: w
+                            """)
+                    .returns("""
+                            ts	v	a
+                            2024-01-01T00:00:09.000000Z	10.0	10.0
+                            2024-01-01T00:00:08.000000Z	9.0	9.5
+                            2024-01-01T00:00:07.000000Z	8.0	9.0
+                            2024-01-01T00:00:06.000000Z	7.0	8.0
+                            2024-01-01T00:00:05.000000Z	6.0	7.0
+                            2024-01-01T00:00:04.000000Z	5.0	6.0
+                            2024-01-01T00:00:03.000000Z	4.0	5.0
+                            2024-01-01T00:00:02.000000Z	3.0	4.0
+                            2024-01-01T00:00:01.000000Z	2.0	3.0
+                            2024-01-01T00:00:00.000000Z	1.0	2.0
+                            """);
+            final String firstRows = """
+                    ts	v	a
+                    2024-01-01T00:00:00.000000Z	1.0	2.0
+                    2024-01-01T00:00:01.000000Z	2.0	3.0
+                    2024-01-01T00:00:02.000000Z	3.0	4.0
+                    """;
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts DESC RANGE 2 SECONDS PRECEDING) a FROM w WHERE ts IN '2024-01-01' ORDER BY v LIMIT 3")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                Encode sort
+                                  keys: [v]
+                                    Window
+                                      functions: [avg(v) over (range between 2000000 preceding and current row)]
+                                        PageFrame
+                                            Row backward scan
+                                            Interval backward scan on: w
+                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns(firstRows);
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts DESC RANGE 2 SECONDS PRECEDING) a FROM w WHERE ts IN '2024-01-01' ORDER BY ts LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(firstRows);
+        });
+    }
+
+    @Test
     public void testDescendingScanThroughProjection() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -274,6 +330,292 @@ public class OrderPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderedInputWindowReadsIndexInTimestampOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowTable();
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w WHERE s IN ('S1', 'S2')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlan("""
+                            Window
+                              functions: [avg(v) over (range between 2000000 preceding and current row)]
+                                FilterOnValues
+                                    Table-order scan
+                                        Index forward scan on: s deferred: true
+                                          filter: s='S2'
+                                        Index forward scan on: s deferred: true
+                                          filter: s='S1'
+                                    Frame forward scan on: w
+                            """)
+                    .returns("""
+                            ts	v	a
+                            2024-01-01T00:00:00.000000Z	1.0	1.0
+                            2024-01-01T00:00:01.000000Z	2.0	1.5
+                            2024-01-01T00:00:03.000000Z	4.0	3.0
+                            2024-01-01T00:00:04.000000Z	5.0	4.5
+                            2024-01-01T00:00:06.000000Z	7.0	6.0
+                            2024-01-01T00:00:07.000000Z	8.0	7.5
+                            2024-01-01T00:00:09.000000Z	10.0	9.0
+                            """);
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w WHERE s IN ('S1', 'S2') ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns("""
+                            ts	v	a
+                            2024-01-01T00:00:09.000000Z	10.0	9.0
+                            2024-01-01T00:00:07.000000Z	8.0	7.5
+                            2024-01-01T00:00:06.000000Z	7.0	6.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderedInputWindowUnderDescendingOrderScansForward() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowTable();
+            final String expected = """
+                    ts	v	a
+                    2024-01-01T00:00:09.000000Z	10.0	9.0
+                    2024-01-01T00:00:08.000000Z	9.0	8.0
+                    2024-01-01T00:00:07.000000Z	8.0	7.0
+                    """;
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: 3 skip-rows: 0 take-rows: 3
+                                Encode sort
+                                  keys: [ts desc]
+                                    Window
+                                      functions: [avg(v) over (range between 2000000 preceding and current row)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: w
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w ORDER BY 1 DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT ts, v, avg(v) OVER w1 a FROM w WINDOW w1 AS (ORDER BY ts RANGE 2 SECONDS PRECEDING) ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("WITH q AS (SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w) SELECT * FROM q ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT * FROM (SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w) ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT ts t2, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w ORDER BY t2 DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("t2")
+                    .expectSize()
+                    .returns("""
+                            t2	v	a
+                            2024-01-01T00:00:09.000000Z	10.0	9.0
+                            2024-01-01T00:00:08.000000Z	9.0	8.0
+                            2024-01-01T00:00:07.000000Z	8.0	7.0
+                            """);
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w WHERE v > 3 ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns("""
+                            ts	v	a
+                            2024-01-01T00:00:09.000000Z	10.0	9.0
+                            2024-01-01T00:00:08.000000Z	9.0	8.0
+                            2024-01-01T00:00:07.000000Z	8.0	7.0
+                            2024-01-01T00:00:06.000000Z	7.0	6.0
+                            2024-01-01T00:00:05.000000Z	6.0	5.0
+                            2024-01-01T00:00:04.000000Z	5.0	4.5
+                            2024-01-01T00:00:03.000000Z	4.0	4.0
+                            """);
+            assertQuery("""
+                    SELECT ts, sum(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) sm,
+                        count(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) c,
+                        first_value(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) f,
+                        max(v) OVER (PARTITION BY s ORDER BY ts RANGE 5 SECONDS PRECEDING) mx,
+                        stddev_samp(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) sd,
+                        last_value(v) OVER (ORDER BY ts) l
+                    FROM w ORDER BY ts DESC LIMIT 3""")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns("""
+                            ts	sm	c	f	mx	sd	l
+                            2024-01-01T00:00:09.000000Z	27.0	3	8.0	10.0	1.0	10.0
+                            2024-01-01T00:00:08.000000Z	24.0	3	7.0	9.0	1.0	9.0
+                            2024-01-01T00:00:07.000000Z	21.0	3	6.0	8.0	1.0	8.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderedInputWindowUnderMultiKeyOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowTable();
+            final String lastRows = """
+                    ts	v	a
+                    2024-01-01T00:00:09.000000Z	10.0	9.0
+                    2024-01-01T00:00:08.000000Z	9.0	8.0
+                    2024-01-01T00:00:07.000000Z	8.0	7.0
+                    """;
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w ORDER BY ts DESC, v LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: 3 skip-rows: 0 take-rows: 3
+                                Encode sort
+                                  keys: [ts desc, v]
+                                    Window
+                                      functions: [avg(v) over (range between 2000000 preceding and current row)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: w
+                            """)
+                    .returns(lastRows);
+            assertQuery("SELECT ts, v, avg(v) OVER w1 a FROM w WINDOW w1 AS (ORDER BY ts RANGE 2 SECONDS PRECEDING) ORDER BY ts DESC, v LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(lastRows);
+            assertQuery("WITH q AS (SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w) SELECT * FROM q ORDER BY ts DESC, v LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(lastRows);
+            assertQuery("SELECT * FROM (SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w) ORDER BY v DESC, ts LIMIT 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastRows);
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w ORDER BY ts, v LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts	v	a
+                            2024-01-01T00:00:00.000000Z	1.0	1.0
+                            2024-01-01T00:00:01.000000Z	2.0	1.5
+                            2024-01-01T00:00:02.000000Z	3.0	2.0
+                            """);
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w WHERE v > 3 ORDER BY v DESC, ts DESC")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v desc, ts desc]
+                                Window
+                                  functions: [avg(v) over (range between 2000000 preceding and current row)]
+                                    Async JIT Filter workers: 1
+                                      filter: 3<v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: w
+                            """)
+                    .returns("""
+                            ts	v	a
+                            2024-01-01T00:00:09.000000Z	10.0	9.0
+                            2024-01-01T00:00:08.000000Z	9.0	8.0
+                            2024-01-01T00:00:07.000000Z	8.0	7.0
+                            2024-01-01T00:00:06.000000Z	7.0	6.0
+                            2024-01-01T00:00:05.000000Z	6.0	5.0
+                            2024-01-01T00:00:04.000000Z	5.0	4.5
+                            2024-01-01T00:00:03.000000Z	4.0	4.0
+                            """);
+            assertQuery("""
+                    SELECT s, ts, avg(v) OVER (PARTITION BY s ORDER BY ts RANGE 3 SECONDS PRECEDING) a,
+                        avg(v) OVER (PARTITION BY s ORDER BY ts ROWS 1 PRECEDING) r
+                    FROM w ORDER BY s, ts DESC""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [s, ts desc]
+                                Window
+                                  functions: [avg(v) over (partition by [s] range between 3000000 preceding and current row),avg(v) over (partition by [s] rows between 1 preceding and current row)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: w
+                            """)
+                    .returns("""
+                            s	ts	a	r
+                            S0	2024-01-01T00:00:08.000000Z	7.5	7.5
+                            S0	2024-01-01T00:00:05.000000Z	4.5	4.5
+                            S0	2024-01-01T00:00:02.000000Z	3.0	3.0
+                            S1	2024-01-01T00:00:09.000000Z	8.5	8.5
+                            S1	2024-01-01T00:00:06.000000Z	5.5	5.5
+                            S1	2024-01-01T00:00:03.000000Z	2.5	2.5
+                            S1	2024-01-01T00:00:00.000000Z	1.0	1.0
+                            S2	2024-01-01T00:00:07.000000Z	6.5	6.5
+                            S2	2024-01-01T00:00:04.000000Z	3.5	3.5
+                            S2	2024-01-01T00:00:01.000000Z	2.0	2.0
+                            """);
+            assertQuery("""
+                    SELECT ts, v, sum(v) OVER w1 sm, count(v) OVER w1 c, avg(v) OVER (ORDER BY ts ROWS 2 PRECEDING) r,
+                        row_number() OVER (ORDER BY ts) rn
+                    FROM w WINDOW w1 AS (ORDER BY ts RANGE 2 SECONDS PRECEDING) ORDER BY ts DESC, v LIMIT 3""")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns("""
+                            ts	v	sm	c	r	rn
+                            2024-01-01T00:00:09.000000Z	10.0	27.0	3	9.0	10
+                            2024-01-01T00:00:08.000000Z	9.0	24.0	3	8.0	9
+                            2024-01-01T00:00:07.000000Z	8.0	21.0	3	7.0	8
+                            """);
+            assertQuery("""
+                    SELECT ts, v, avg(v) OVER (ORDER BY ts DESC RANGE 2 SECONDS PRECEDING) ad, avg(v) OVER (ORDER BY ts ROWS 2 PRECEDING) r
+                    FROM w ORDER BY ts, v LIMIT 4""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: 4
+                              keys: [ts, v]
+                                CachedWindowLight
+                                  orderedFunctions: [[ts] => [avg(v) over ( rows between 2 preceding and current row)]]
+                                  unorderedFunctions: [avg(v) over (range between 2000000 preceding and current row)]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: w
+                            """)
+                    .returns("""
+                            ts	v	ad	r
+                            2024-01-01T00:00:00.000000Z	1.0	2.0	1.0
+                            2024-01-01T00:00:01.000000Z	2.0	3.0	1.5
+                            2024-01-01T00:00:02.000000Z	3.0	4.0	2.0
+                            2024-01-01T00:00:03.000000Z	4.0	5.0	3.0
+                            """);
+            assertQuery("""
+                    SELECT ts, v, avg(v) OVER (ORDER BY ts DESC RANGE 2 SECONDS PRECEDING) ad, avg(v) OVER (ORDER BY ts ROWS 2 PRECEDING) r
+                    FROM w ORDER BY v DESC, ts""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	v	ad	r
+                            2024-01-01T00:00:09.000000Z	10.0	10.0	9.0
+                            2024-01-01T00:00:08.000000Z	9.0	9.5	8.0
+                            2024-01-01T00:00:07.000000Z	8.0	9.0	7.0
+                            2024-01-01T00:00:06.000000Z	7.0	8.0	6.0
+                            2024-01-01T00:00:05.000000Z	6.0	7.0	5.0
+                            2024-01-01T00:00:04.000000Z	5.0	6.0	4.0
+                            2024-01-01T00:00:03.000000Z	4.0	5.0	3.0
+                            2024-01-01T00:00:02.000000Z	3.0	4.0	2.0
+                            2024-01-01T00:00:01.000000Z	2.0	3.0	1.5
+                            2024-01-01T00:00:00.000000Z	1.0	2.0	1.0
+                            """);
+        });
+    }
+
+    @Test
     public void testPostingIndexDistinct() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE p (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -298,6 +640,59 @@ public class OrderPlanningTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWindowWithoutOrderedInputUnderDescendingOrderScansBackward() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowTable();
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts ROWS 2 PRECEDING) a FROM w ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .withPlan("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                CachedWindowLight
+                                  orderedFunctions: [[ts] => [avg(v) over ( rows between 2 preceding and current row)]]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: w
+                            """)
+                    .returns("""
+                            ts	v	a
+                            2024-01-01T00:00:09.000000Z	10.0	9.0
+                            2024-01-01T00:00:08.000000Z	9.0	8.0
+                            2024-01-01T00:00:07.000000Z	8.0	7.0
+                            """);
+            assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts DESC RANGE 2 SECONDS PRECEDING) a FROM w ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: 3 skip-rows: 0 take-rows: 3
+                                Window
+                                  functions: [avg(v) over (range between 2000000 preceding and current row)]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: w
+                            """)
+                    .returns("""
+                            ts	v	a
+                            2024-01-01T00:00:09.000000Z	10.0	10.0
+                            2024-01-01T00:00:08.000000Z	9.0	9.5
+                            2024-01-01T00:00:07.000000Z	8.0	9.0
+                            """);
+            assertQuery("SELECT ts, v, avg(v, 'second', 2) OVER (ORDER BY ts) e FROM w ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                CachedWindowLight
+                                  orderedFunctions: [[ts] => [avg(v, 'second', 2.0) over (rows between unbounded preceding and current row)]]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: w
+                            """);
+        });
+    }
+
     private static void createTable() throws Exception {
         execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
         execute("""
@@ -307,5 +702,9 @@ public class OrderPlanningTest extends AbstractCairoTest {
                     ('2024-01-01T02:00:00.000000Z', 'b', 3),
                     ('2024-01-02T00:00:00.000000Z', 'a', 4)
                 """);
+    }
+
+    private static void createWindowTable() throws Exception {
+        execute("CREATE TABLE w AS (SELECT x::DOUBLE v, ('S' || (x % 3))::SYMBOL s, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(10)), INDEX(s) TIMESTAMP(ts) PARTITION BY HOUR");
     }
 }

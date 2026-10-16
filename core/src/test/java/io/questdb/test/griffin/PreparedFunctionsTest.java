@@ -41,8 +41,6 @@ import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-
 public class PreparedFunctionsTest {
     @Test
     public void testEmptyAndClosedLeavesNeedNoDescription() {
@@ -129,12 +127,12 @@ public class PreparedFunctionsTest {
     }
 
     @Test
-    public void testReadLeafValidationVisitsWideExpressionLinearly() throws Exception {
+    public void testReadLeafValidationVisitsWideExpressionLinearly() {
         for (int count = 64; count <= 128; count *= 2) {
             final PreparedFunctions prepared = new PreparedFunctions(4);
-            final FunctionExpression expression = wideExpression(count, 0);
-            final PreparedFunctions.Entry entry = prepare(prepared, expression);
-            final CountingArguments arguments = countArguments(expression);
+            final CountingArguments arguments = new CountingArguments();
+            final PreparedFunctions.Entry entry = prepare(prepared, wideExpression(arguments, count, 0));
+            arguments.reads = 0;
             Assert.assertTrue(PreparedFunctions.hasOnlyReadLeaves(entry));
             assertLinearReads(arguments, count);
             prepared.clear();
@@ -142,16 +140,16 @@ public class PreparedFunctionsTest {
     }
 
     @Test
-    public void testRelocationVisitsWideExpressionLinearly() throws Exception {
+    public void testRelocationVisitsWideExpressionLinearly() {
         for (int count = 64; count <= 128; count *= 2) {
             final PreparedFunctions prepared = new PreparedFunctions(4);
-            final FunctionExpression expression = wideExpression(count, 0);
-            final PreparedFunctions.Entry entry = prepare(prepared, expression);
+            final CountingArguments arguments = new CountingArguments();
+            final PreparedFunctions.Entry entry = prepare(prepared, wideExpression(arguments, count, 0));
             final OutputSchema input = new OutputSchema();
             for (int i = 0; i < count; i++) {
                 input.add(i, "c" + i, ColumnType.INT, true);
             }
-            final CountingArguments arguments = countArguments(expression);
+            arguments.reads = 0;
             Assert.assertTrue(entry.isRelocatable(input, null));
             assertAssertionReads(arguments, count);
             prepared.clear();
@@ -159,12 +157,13 @@ public class PreparedFunctionsTest {
     }
 
     @Test
-    public void testRetargetVisitsWideExpressionLinearly() throws Exception {
+    public void testRetargetVisitsWideExpressionLinearly() {
         for (int count = 64; count <= 128; count *= 2) {
             final PreparedFunctions prepared = new PreparedFunctions(4);
-            final FunctionExpression expression = wideExpression(count, 0);
-            final FunctionExpression replacement = wideExpression(count, count);
-            final PreparedFunctions.Entry entry = prepare(prepared, expression);
+            final CountingArguments arguments = new CountingArguments();
+            final CountingArguments replacementArguments = new CountingArguments();
+            final FunctionExpression replacement = wideExpression(replacementArguments, count, count);
+            final PreparedFunctions.Entry entry = prepare(prepared, wideExpression(arguments, count, 0));
             final ScanPlan scan = new ScanPlan();
             final ProjectPlan projection = new ProjectPlan().of(scan, 0);
             for (int i = 0; i < count; i++) {
@@ -172,8 +171,7 @@ public class PreparedFunctionsTest {
                 projection.getOutput().add(i, "c" + i, ColumnType.INT, true);
                 projection.getExpressions().add(column(count + i));
             }
-            final CountingArguments arguments = countArguments(expression);
-            final CountingArguments replacementArguments = countArguments(replacement);
+            arguments.reads = 0;
             prepared.retarget(entry, replacement, projection);
             Assert.assertSame(replacement, entry.getExpression());
             Assert.assertFalse(entry.isRebuildRequired);
@@ -209,15 +207,6 @@ public class PreparedFunctionsTest {
         return new ColumnExpression().of(id, ColumnType.INT, 0);
     }
 
-    private static CountingArguments countArguments(FunctionExpression expression) throws Exception {
-        final CountingArguments arguments = new CountingArguments();
-        arguments.addAll(expression.getArguments());
-        final Field field = FunctionExpression.class.getDeclaredField("arguments");
-        field.setAccessible(true);
-        field.set(expression, arguments);
-        return arguments;
-    }
-
     private static BindableColumn leaf(int id) {
         return BindableColumn.newInstance(id, ColumnType.INT, false);
     }
@@ -231,10 +220,10 @@ public class PreparedFunctionsTest {
         return entry;
     }
 
-    private static FunctionExpression wideExpression(int count, int firstId) {
-        final FunctionExpression expression = new FunctionExpression();
+    private static FunctionExpression wideExpression(CountingArguments arguments, int count, int firstId) {
+        final FunctionExpression expression = new FunctionExpression(arguments);
         for (int i = 0; i < count; i++) {
-            expression.getArguments().add(column(firstId + i));
+            arguments.add(column(firstId + i));
         }
         return expression;
     }

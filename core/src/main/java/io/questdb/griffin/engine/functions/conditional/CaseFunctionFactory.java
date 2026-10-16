@@ -106,7 +106,7 @@ public class CaseFunctionFactory implements FunctionFactory {
 
         // next calculate cast functions
         for (int i = 1; i < n; i += 2) {
-            vars.setQuick(i, CaseCommon.getCastFunction(
+            vars.setQuick(i, CaseCommon.getValueCastFunction(
                     vars.getQuick(i),
                     argPositions.getQuick(i),
                     returnType,
@@ -116,7 +116,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         }
 
         if (elseBranch != null) {
-            elseBranch = CaseCommon.getCastFunction(elseBranch, elseBranchPosition, returnType, configuration, sqlExecutionContext);
+            elseBranch = CaseCommon.getValueCastFunction(elseBranch, elseBranchPosition, returnType, configuration, sqlExecutionContext);
         }
 
         final int argsLen = vars.size();

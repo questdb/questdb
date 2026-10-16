@@ -767,14 +767,15 @@ final class OperatorPlanning implements Mutable {
     private void planWindow(WindowPlan window) {
         final LogicalPlan input = window.getChild();
         final SortKeys queryOrder = window.getQueryOrder();
-        final boolean isAdviceFollowed = isAdviceFollowed(input);
+        final boolean isAdviceFollowed = isAdviceFollowed(input) && PlanToFactoryRules.hasAdvisedInput(input);
         final int timestampIndex = PhysicalProperties.timestampIndex(input);
         final PhysicalProperties.ScanDirection direction = PhysicalProperties.scanDirection(input);
         boolean isDirectionRead = false;
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
             final WindowSpec spec = window.getSpecs().getQuick(i);
             final IntList order = spec.getOrderByColumnIds();
-            final boolean isTimestampKey = order.size() == 1 && queryOrder.size() < 2
+            final boolean isTimestampKey = order.size() == 1
+                    && (queryOrder.size() < 2 || (window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.ORDERED_INPUT) != 0)
                     && input.getOutput().getColumnIndexById(order.getQuick(0)) == timestampIndex;
             final boolean isOrderDelivered = isAdviceFollowed && spec.isQueryOrderPrefix(queryOrder)
                     || isTimestampKey && direction == PhysicalProperties.ScanDirection.of(spec.getOrderByDirections().getQuick(0));

@@ -144,16 +144,13 @@ final class OuterJoinCarriers implements Mutable {
             return;
         }
         final AggregatePlan domain = carrierDomain(isMarked, position);
-        final JoinPlan crossed = domains.crossDomain(input.getInput(), domain, position);
-        final JoinInput domainStep = crossed.getInputs().getQuick(1);
+        final JoinInput domainStep = domains.crossInto(join, input, domain, position).getInputs().getQuick(1);
         for (int i = 0, n = outerIds.size(); i < n; i++) {
             final int columnId = keys.deferredColumn(input, outerIds.getQuick(i), deferredBase);
             if (columnId > -1) {
                 addCarrierKey(domainStep, columnId, slaveIds.getQuick(i), ctx.outerRefName(outerIds.getQuick(i)));
             }
         }
-        input.setInput(crossed);
-        join.addMissingInputColumns();
     }
 
     /**
@@ -193,8 +190,9 @@ final class OuterJoinCarriers implements Mutable {
     }
 
     /**
-     * Reads, in the step's ON condition, key filter and, when {@code isFilterRead}, post-join filter, each outer column
-     * a WHERE equality maps through its mapped column and each other outer column through {@code carriers}.
+     * Reads, in the step's ON condition, key filter, UNNEST arguments and, when {@code isFilterRead}, post-join filter,
+     * each outer column a WHERE equality maps through its mapped column and each other outer column through
+     * {@code carriers}.
      */
     private void remap(JoinInput step, IntList carriers, int base, boolean isFilterRead) {
         ctx.loadMappedSubstitution(base);
@@ -204,7 +202,7 @@ final class OuterJoinCarriers implements Mutable {
                 ctx.substitution.put(outerIds.getQuick(i), carriers.getQuick(i));
             }
         }
-        ctx.remapStepConditions(step, isFilterRead);
+        ctx.remapStepReads(step, isFilterRead);
     }
 
     /**

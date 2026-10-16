@@ -62,10 +62,17 @@ import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
  * Restores the values a keyless aggregate takes over no rows once decorrelation keys it by the outer columns:
  * counts read zero, and a LIMIT or ON condition guards the restored values, as does a row marker of the inputs
  * before the step when a later step null-extends them.
+ * <p>
+ * The LIMIT of a scalar body of the step keeps or drops the body's single row at the step, per outer row, so the
+ * body ranks nothing. The rule by which a correlated LIMIT keeps a row by its rank among the rows of its outer row
+ * lives here too, with the check per outer row of the non-constant bounds the body ranks by.
  */
 final class ScalarCompensation implements Mutable {
-    static final String OUTER_LIMIT_OVER_COUNT = "LIMIT referencing an outer column is not supported over a scalar count in a correlated lateral sub-query; use a constant or bind variable";
     private static final String CARRIER_PREFIX = "__qdb_count_carrier__";
+    private static final String CHECKED_BOUND = "__lateral_limit";
+    private static final String NEGATIVE_LIMIT_OVER_NON_CONSTANT = "negative LIMIT with a non-constant upper bound is not supported in a correlated lateral sub-query";
+    private static final String NEGATIVE_POSITIVE_LIMIT = "LIMIT <negative>, <positive> is not allowed";
+    private static final String UNCHECKED_BOUND = "coalesce";
     final IntList compensatedIds = new IntList();
     final ObjList<CharSequence> compensatedNames = new ObjList<>();
     final ObjList<ProjectPlan> compensatedScalars = new ObjList<>();
@@ -83,6 +90,7 @@ final class ScalarCompensation implements Mutable {
     private final IntList markerColumnIds = new IntList();
     private final ConjunctTest uncompensatedConjuncts = this::keepsUncompensatedConjunct;
     AggregatePlan scalarAggregate;
+    private BoundExpression boundChecks;
     private BoundExpression pendingConjuncts;
     private ProjectPlan scalarProjection;
 
@@ -106,6 +114,7 @@ final class ScalarCompensation implements Mutable {
         markerColumnIds.clear();
         scalarAggregates.clear();
         uncompensatedScalars.clear();
+        boundChecks = null;
         pendingConjuncts = null;
         scalarAggregate = null;
         scalarProjection = null;
@@ -199,6 +208,18 @@ final class ScalarCompensation implements Mutable {
         };
     }
 
+    private static boolean isNegativeConstant(BoundExpression bound) {
+        return bound instanceof ConstantExpression && LogicalPlans.mayBeNegativeLimit(bound);
+    }
+
+    /**
+     * Whether the expression reads NULL over no rows whenever the aggregates it reads do: it reads no count, through
+     * null-propagating arithmetic.
+     */
+    private static boolean isNullOnEmpty(BoundExpression expression, AggregatePlan aggregate) {
+        return !hasZeroOnEmpty(expression, aggregate) && isNullPropagating(expression);
+    }
+
     private static boolean isZeroOnEmpty(FunctionExpression aggregate) {
         final String name = aggregate.getName();
         return Chars.equalsIgnoreCase(name, "count") || Chars.equalsIgnoreCase(name, "count_distinct")
@@ -254,6 +275,16 @@ final class ScalarCompensation implements Mutable {
         return node instanceof ProjectPlan project ? project : null;
     }
 
+    private void addBoundCheck(BoundExpression bound) throws SqlException {
+        if (bound == null || bound instanceof ConstantExpression) {
+            return;
+        }
+        final int position = bound.getPosition();
+        final BoundExpression check = limitComparison(">=", CHECKED_BOUND, ctx.masterExpression(bound), 0, ctx.planNodes.constants.next().ofInt(0, position),
+                ctx.master.getOutput());
+        boundChecks = boundChecks == null ? check : ctx.context.getRewriter().combineConjunction(boundChecks, check, position);
+    }
+
     private CharSequence carrierName() {
         final CharacterStoreEntry name = ctx.characterStore.newEntry();
         name.put(CARRIER_PREFIX).put(ctx.carrierSequence++);
@@ -264,7 +295,7 @@ final class ScalarCompensation implements Mutable {
      * The value a visible column of the projection over a keyless aggregate takes over no rows, over
      * {@code input}: counts read zero, other aggregates read their carried value (NULL), and the columns
      * {@link DecorrelationContext#substitution} holds read their substitutes. Null when the column reads aggregates none of which
-     * counts: the LEFT join's NULL is then the value.
+     * counts through null-propagating arithmetic: the LEFT join's NULL is then the value.
      */
     private BoundExpression emptyValue(ProjectPlan project, int index, OutputSchema input) throws SqlException {
         final BoundExpression expression = project.getExpressions().getQuick(index);
@@ -274,7 +305,7 @@ final class ScalarCompensation implements Mutable {
                     ? zeroCoalesce(ctx.planNodes.columns.next().of(project.getOutput().getColumnId(index), column.getDataType(), column.getPosition()), input)
                     : null;
         }
-        if (!hasZeroOnEmpty(expression, aggregate) && hasAggregateColumn(expression, aggregate)) {
+        if (hasAggregateColumn(expression, aggregate) && isNullOnEmpty(expression, aggregate)) {
             return null;
         }
         if (expression instanceof ColumnExpression column && isZeroOnEmptyColumn(column.getColumnId(), aggregate)) {
@@ -354,14 +385,53 @@ final class ScalarCompensation implements Mutable {
         return true;
     }
 
-    private BoundExpression limitComparison(CharSequence operator, BoundExpression limit, long nullLimit, BoundExpression rank, OutputSchema input)
-            throws SqlException {
+    private BoundExpression limitComparison(CharSequence operator, CharSequence boundFunction, BoundExpression limit, long nullLimit, BoundExpression rank,
+                                            OutputSchema input) throws SqlException {
         final int position = limit.getPosition();
         ctx.context.getCallArguments().clear();
         ctx.context.getCallArguments().add(limit);
         ctx.context.getCallArguments().add(ctx.planNodes.constants.next().ofLong(nullLimit, position));
-        final BoundExpression bound = ctx.context.bindCall("__lateral_limit", position, input);
+        final BoundExpression bound = ctx.context.bindCall(boundFunction, position, input);
         return ctx.context.bindCall(operator, position, bound, rank, input);
+    }
+
+    /**
+     * Whether the LIMIT keeps the row at the 1-based rank of the {@code size} rows. A lone bound keeps the ranks up to
+     * it, or every rank when it is NULL; two bounds keep the ranks after the first up to the second, each reading 0
+     * when NULL. A negative constant bound counts from the end of the rows, and so does the second bound after a
+     * negative first one, which must then be a constant of at most 0; two negative bounds apply in ascending order.
+     * Reads {@code size} only when {@link #isTailLimit} holds; {@code boundFunction} reads any other bound with its
+     * NULL substitute.
+     */
+    private BoundExpression limitPredicate(BoundExpression lo, BoundExpression hi, BoundExpression rank, BoundExpression size, CharSequence boundFunction,
+                                           OutputSchema input) throws SqlException {
+        final int position = lo.getPosition();
+        if (!isNegativeConstant(lo)) {
+            if (hi == null) {
+                return limitComparison(">=", boundFunction, lo, Long.MAX_VALUE, rank, input);
+            }
+            final BoundExpression upper = isNegativeConstant(hi) ? tailComparison(">=", hi, rank, size, input) : limitComparison(">=", boundFunction, hi, 0, rank, input);
+            return ctx.context.getRewriter().combineConjunction(limitComparison("<", boundFunction, lo, 0, rank, input), upper, position);
+        }
+        final long first = LogicalPlans.limitValue((ConstantExpression) lo);
+        long second = 0;
+        if (hi != null) {
+            if (!(hi instanceof ConstantExpression constant)) {
+                throw SqlException.$(hi.getPosition(), NEGATIVE_LIMIT_OVER_NON_CONSTANT);
+            }
+            second = LogicalPlans.limitValue(constant);
+            if (second == Numbers.LONG_NULL) {
+                second = 0;
+            } else if (second > 0) {
+                throw SqlException.$(position, NEGATIVE_POSITIVE_LIMIT);
+            }
+        }
+        final BoundExpression lower = tailComparison("<", ctx.planNodes.constants.next().ofLong(Math.min(first, second), position), rank, size, input);
+        if (Math.max(first, second) == 0) {
+            return lower;
+        }
+        final BoundExpression upper = tailComparison(">=", ctx.planNodes.constants.next().ofLong(Math.max(first, second), position), rank, size, input);
+        return ctx.context.getRewriter().combineConjunction(lower, upper, position);
     }
 
     /**
@@ -446,6 +516,16 @@ final class ScalarCompensation implements Mutable {
         return index > -1 && isScalarCount(index) ? index : -1;
     }
 
+    /**
+     * Compares a negative constant bound with the rank counted from the end of the {@code size} rows, from
+     * {@code 1 - size} to 0.
+     */
+    private BoundExpression tailComparison(CharSequence operator, BoundExpression bound, BoundExpression rank, BoundExpression size, OutputSchema input)
+            throws SqlException {
+        final int position = bound.getPosition();
+        return ctx.context.bindCall(operator, position, bound, ctx.context.bindCall("-", position, rank, size, input), input);
+    }
+
     private BoundExpression zeroCoalesce(ColumnExpression value, OutputSchema input) throws SqlException {
         return ctx.context.bindCall("coalesce", value.getPosition(), value, ctx.planNodes.constants.next().ofInt(0, value.getPosition()), input);
     }
@@ -475,11 +555,11 @@ final class ScalarCompensation implements Mutable {
                 && isNullPropagating(call.argumentAt(0)) && isNullPropagating(call.argumentAt(1));
     }
 
-    static BoundExpression outerLimit(LimitPlan limit) {
-        if (limit.getLo() != null && LogicalPlans.hasOuterColumn(limit.getLo())) {
-            return limit.getLo();
-        }
-        return limit.getHi() != null && LogicalPlans.hasOuterColumn(limit.getHi()) ? limit.getHi() : null;
+    /**
+     * True when a bound of the LIMIT counts from the end of the rows it limits: the bound is a negative constant.
+     */
+    static boolean isTailLimit(BoundExpression lo, BoundExpression hi) {
+        return isNegativeConstant(lo) || hi != null && isNegativeConstant(hi);
     }
 
     static boolean rejectsZeroCount(BoundExpression predicate, ProjectPlan scalar) {
@@ -514,6 +594,15 @@ final class ScalarCompensation implements Mutable {
             return left <= right;
         }
         return Chars.equals(name, ">=") && left < right;
+    }
+
+    /**
+     * Records, for the step being decorrelated, a check per outer row of each non-constant bound of a LIMIT the body
+     * ranks, which rejects a negative value: the ranking reads the bound over keys that may belong to no outer row.
+     */
+    void addBoundChecks(LimitPlan limit) throws SqlException {
+        addBoundCheck(limit.getLo());
+        addBoundCheck(limit.getHi());
     }
 
     ProjectPlan compensableScalar(LogicalPlan plan) {
@@ -650,8 +739,8 @@ final class ScalarCompensation implements Mutable {
 
     /**
      * Records, for the projection over the join, the empty-input value of each visible column of the scalar
-     * body, guarded by the body's LIMIT and by the ON condition of a LEFT LATERAL. The outer columns the body
-     * maps read the master's columns.
+     * body, guarded by the LIMIT and the ON condition of a LEFT LATERAL. The outer columns the body maps read
+     * the master's columns.
      */
     void compensateStep(JoinInput step, ProjectPlan body, int base, BoundExpression guard, BoundExpression on) throws SqlException {
         final OutputSchema bodyOutput = body.getOutput();
@@ -791,7 +880,7 @@ final class ScalarCompensation implements Mutable {
         final int keyCount = aggregate.getGroupingExpressions().size();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             final BoundExpression expression = project.getExpressions().getQuick(i);
-            if (!output.isVisible(i) || expression instanceof ColumnExpression || !hasZeroOnEmpty(expression, aggregate)) {
+            if (!output.isVisible(i) || expression instanceof ColumnExpression || isNullOnEmpty(expression, aggregate)) {
                 continue;
             }
             final int columnBase = ctx.tmpColumnIds.size();
@@ -810,18 +899,6 @@ final class ScalarCompensation implements Mutable {
             }
             ctx.tmpColumnIds.setPos(columnBase);
         }
-    }
-
-    boolean hasZeroOnEmptyColumn(ProjectPlan project) {
-        final AggregatePlan aggregate = scalarAggregateBelow(project);
-        assert aggregate != null;
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (project.getOutput().isVisible(i) && project.getExpressions().getQuick(i) instanceof ColumnExpression column
-                    && isZeroOnEmptyColumn(column.getColumnId(), aggregate)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -849,6 +926,15 @@ final class ScalarCompensation implements Mutable {
     }
 
     /**
+     * True when the ON condition or WHERE of the step drops the row the scalar body yields over no rows, which then
+     * needs no restoring: a conjunct compares a bare count of the body with a constant that 0 fails.
+     */
+    boolean isEmptyRowRejected(JoinInput step, ProjectPlan scalar) {
+        return scalar.getChild() instanceof AggregatePlan
+                && (rejectsZeroCount(step.getOnResidual(), scalar) || rejectsZeroCount(step.getPostJoinFilter(), scalar));
+    }
+
+    /**
      * True when the projection reads a keyless aggregate, or one keyed only by outer columns, of a correlated
      * block, and selects only its aggregates.
      */
@@ -868,33 +954,37 @@ final class ScalarCompensation implements Mutable {
     }
 
     /**
-     * Whether the body's LIMIT keeps the single row a scalar body yields.
+     * True when the LIMIT tops the body of the step being decorrelated and the body is scalar: the step guards the
+     * body's single row with {@link #limitGuard}, so the body needs no ranking.
+     */
+    boolean isStepGuarded(LimitPlan limit, LogicalPlan input) {
+        return ctx.master.getInputs().getQuick(ctx.masterLimit).getInput() == limit && scalarBody(input) != null;
+    }
+
+    /**
+     * Whether the body's LIMIT keeps the single row a scalar body yields, per outer row or outer value; a negative
+     * non-constant bound fails.
      */
     BoundExpression limitGuard(BoundExpression lo, BoundExpression hi, OutputSchema input) throws SqlException {
-        return limitPredicate(lo, hi, ctx.planNodes.constants.next().ofInt(1, lo.getPosition()), input);
+        final int position = lo.getPosition();
+        return limitPredicate(lo, hi, ctx.planNodes.constants.next().ofInt(1, position), ctx.planNodes.constants.next().ofInt(1, position),
+                CHECKED_BOUND, input);
     }
 
     /**
      * The LIMIT of a scalar aggregate keyed per outer row, which keeps the one row of each key or none.
      */
     LogicalPlan limitGuardFilter(LimitPlan limit, LogicalPlan input) throws SqlException {
-        final BoundExpression outerLimit = outerLimit(limit);
-        if (outerLimit != null) {
-            throw SqlException.$(outerLimit.getPosition(), OUTER_LIMIT_OVER_COUNT);
-        }
         return ctx.planNodes.filters.next().of(input, limitGuard(limit.getLo(), limit.getHi(), input.getOutput()), limit.getPosition());
     }
 
     /**
-     * Whether the LIMIT keeps the row at the 1-based rank. A lone bound keeps the ranks up to it, or every rank when
-     * it is NULL; two bounds keep the ranks after the first up to the second, each reading 0 when NULL.
+     * Whether the LIMIT keeps the row at the 1-based rank among the {@code size} rows of its key in the body. A key may
+     * belong to no outer row, so a bound only substitutes NULL here; {@link #addBoundChecks} rejects a negative one.
      */
-    BoundExpression limitPredicate(BoundExpression lo, BoundExpression hi, BoundExpression rank, OutputSchema input) throws SqlException {
-        if (hi == null) {
-            return limitComparison(">=", lo, Long.MAX_VALUE, rank, input);
-        }
-        final BoundExpression upper = limitComparison(">=", hi, 0, rank, input);
-        return ctx.context.getRewriter().combineConjunction(limitComparison("<", lo, 0, rank, input), upper, lo.getPosition());
+    BoundExpression rankPredicate(BoundExpression lo, BoundExpression hi, BoundExpression rank, BoundExpression size, OutputSchema input)
+            throws SqlException {
+        return limitPredicate(lo, hi, rank, size, UNCHECKED_BOUND, input);
     }
 
     AggregatePlan scalarAggregateBelow(ProjectPlan project) {
@@ -911,6 +1001,15 @@ final class ScalarCompensation implements Mutable {
     ProjectPlan scalarBody(LogicalPlan body) {
         final ProjectPlan project = topProjection(body);
         return project != null && scalarAggregate != null && scalarAggregateBelow(project) != null ? project : null;
+    }
+
+    /**
+     * The checks {@link #addBoundChecks} recorded for the step, which it then forgets.
+     */
+    BoundExpression takeBoundChecks() {
+        final BoundExpression checks = boundChecks;
+        boundChecks = null;
+        return checks;
     }
 
     /**

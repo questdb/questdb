@@ -55,12 +55,14 @@ import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.BindableColumn;
+import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalOperation;
@@ -123,6 +125,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final LongList parsedIntervals;
     private final IntList positionStack = new IntList();
     private final FunctionResolver resolver;
+    private final ObjList<BoundExpression> switchArguments = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo;
     private final ObjList<BoundExpression> unconstructed = new ObjList<>();
     private final ObjObjHashMap<BoundExpression, BoundExpression> unconstructedIndex = new ObjObjHashMap<>();
@@ -618,6 +621,11 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return node.paramCount == 1 && SqlKeywords.isNotKeyword(node.token) ? node.rhs : node;
     }
 
+    private static int windowContextFlags(WindowContext context) {
+        return (context.isDesignatedTimestampRead() ? BoundExpression.DESIGNATED_TIMESTAMP : 0)
+                | (context.isTimestampOrderRead() ? BoundExpression.ORDERED_INPUT : 0);
+    }
+
     private void beginArguments(int count) {
         arguments.clear();
         argumentLeafMarks.clear();
@@ -674,8 +682,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     private void bindCallArguments(CharSequence name, int position, ObjList<? extends BoundExpression> args) throws SqlException {
         for (int i = args.size() - 1; i >= 0; i--) {
-            final BoundExpression argument = args.getQuick(i);
-            pushFunction(pushReplacement(argument, argument.getPosition()), argument.getPosition());
+            pushArgument(args.getQuick(i));
         }
         pushFunction(resolveCall(name, position, isGroupBy(name) ? CALL_AGGREGATE_ROOT : CALL_ROOT, false, args.size()), position);
     }
@@ -763,6 +770,31 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             clearUnconstructed(unconstructedMark);
             ctx.planNodes.staticTypes.rewind(staticTypeMark);
         }
+    }
+
+    /**
+     * Binds a switch whose WHEN arguments its keyed lookup cannot match as = does, over its bound arguments, as the
+     * CASE of key = constant it stands for: the searched CASE the parser rewrote into it, or a simple CASE.
+     */
+    private Function bindSwitchAsCase(int position, int role, boolean isSetOperation, ObjList<Function> args) throws SqlException {
+        final int count = args.size();
+        switchArguments.clear();
+        switchArguments.addAll(arguments);
+        Misc.freeObjList(args);
+        dropLeaves(callLeafMark(), leafMark());
+        final boolean hasElse = (count & 1) == 0;
+        if (hasElse) {
+            pushArgument(switchArguments.getLast());
+        }
+        final int operandRole = role == CALL_WINDOW_ARGUMENT ? CALL_WINDOW_ARGUMENT : CALL_ARGUMENT;
+        for (int i = hasElse ? count - 2 : count - 1; i > 0; i -= 2) {
+            final BoundExpression constant = switchArguments.getQuick(i - 1);
+            pushArgument(switchArguments.getQuick(i));
+            pushArgument(constant);
+            pushArgument(switchArguments.getQuick(0));
+            pushFunction(resolveCall("=", constant.getPosition(), operandRole, false, 2), constant.getPosition());
+        }
+        return resolveCall("case", position, role, isSetOperation, count - 1);
     }
 
     /**
@@ -1217,8 +1249,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 // A connective with a constant operand returns its other operand.
                 expression = arguments.getQuick(function == first ? 0 : 1);
             } else {
-                final int flags = role == CALL_WINDOW_ROOT && sqlExecutionContext.getWindowContext().isDesignatedTimestampRead()
-                        ? callFlags(function, arguments) | BoundExpression.DESIGNATED_TIMESTAMP : callFlags(function, arguments);
+                final int flags = role == CALL_WINDOW_ROOT ? callFlags(function, arguments) | windowContextFlags(sqlExecutionContext.getWindowContext())
+                        : callFlags(function, arguments);
                 expression = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, function.getType(), flags, position);
             }
             pushCall(name, role, isSetOperation, expression);
@@ -1275,7 +1307,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * conjuncts left to right, or null.
      */
     private ExpressionNode findTimestampBetweenLowerBound(ExpressionNode node) {
-        if (node != null && node.token != null && SqlKeywords.isAndKeyword(node.token)) {
+        if (node.paramCount == 2 && SqlKeywords.isAndKeyword(node.token)) {
             final ExpressionNode lo = findTimestampBetweenLowerBound(node.lhs);
             return lo != null ? lo : findTimestampBetweenLowerBound(node.rhs);
         }
@@ -1511,6 +1543,10 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         expressionLeafMarks.add(leafMark);
     }
 
+    private void pushArgument(BoundExpression argument) throws SqlException {
+        pushFunction(pushReplacement(argument, argument.getPosition()), argument.getPosition());
+    }
+
     private BoundExpression pushCall(CharSequence name, int role, boolean isSetOperation, BoundExpression expression) {
         if (isSetOperation && expression instanceof FunctionExpression call && SqlKeywords.isInKeyword(name)) {
             call.markSetOperation();
@@ -1535,7 +1571,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final OutputSchema input = scope.expressionInput;
         if (!(replacement instanceof ColumnExpression column)) {
             // Leaves of a reconstructed subtree carry this layout's indexes.
-            if (replacement instanceof FunctionExpression || replacement instanceof CursorExpression) {
+            if (replacement instanceof FunctionExpression || replacement instanceof CursorExpression || replacement instanceof OuterColumnExpression) {
                 scope.currentPreparation.isRebuildRequired = true;
             }
             final Function function = ctx.functionInstantiator.rebuild(replacement, input, sqlExecutionContext);
@@ -1649,6 +1685,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         validateFactory(overload, role, position, args);
         resolver.coerceArguments(overload, position, name, args, positions, this, sqlExecutionContext);
         captureImplicitConversions(args, positions);
+        if (overload.isSwitch() && SwitchFunctionFactory.requiresEquality(args, positions, resolver.getConfiguration(), sqlExecutionContext)) {
+            return bindSwitchAsCase(position, role, isSetOperation, args);
+        }
         return createFunction(overload, name, position, role, isSetOperation, args, positions);
     }
 

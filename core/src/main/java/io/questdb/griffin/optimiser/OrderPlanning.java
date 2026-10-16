@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.optimiser;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.plan.logical.AggregatePlan;
@@ -78,18 +79,18 @@ final class OrderPlanning implements OptimiserPass {
         return TreeWalk.CONTINUE;
     };
     private final IntHashSet columnIds;
+    private final CairoConfiguration configuration;
     private final FunctionFactoryCache functionFactoryCache;
-    private final int maxNegativeLimit;
     private final ObjectPool<SortPlan> sorts;
     private boolean isJoinSlaveInput;
     private boolean isRandomAccessRequired;
     private boolean isReorderedTimestampRead;
 
-    OrderPlanning(FunctionFactoryCache functionFactoryCache, ObjectPool<SortPlan> sorts, IntHashSet columnIds, int maxNegativeLimit) {
+    OrderPlanning(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache, ObjectPool<SortPlan> sorts, IntHashSet columnIds) {
+        this.configuration = configuration;
         this.columnIds = columnIds;
         this.functionFactoryCache = functionFactoryCache;
         this.sorts = sorts;
-        this.maxNegativeLimit = maxNegativeLimit;
     }
 
     @Override
@@ -143,6 +144,21 @@ final class OrderPlanning implements OptimiserPass {
             final ColumnExpression column = (ColumnExpression) project.getExpressions().getQuick(i);
             if (!column.isDirectReference() || column.isCast() || column.getColumnId() != inner.getOutput().getColumnId(i)
                     || !Chars.equals(project.getOutput().getColumnName(i), inner.getOutput().getColumnName(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when the input order, {@code orderColumnId} in {@code direction}, is the order of each window whose function
+     * requires its input in the order of the window.
+     */
+    private static boolean isOrderedInputServed(WindowPlan window, int orderColumnId, SortDirection direction) {
+        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
+            final WindowSpec spec = window.getSpecs().getQuick(i);
+            if ((window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.ORDERED_INPUT) != 0
+                    && (spec.getOrderByColumnIds().getQuick(0) != orderColumnId || spec.getOrderByDirections().getQuick(0) != direction)) {
                 return false;
             }
         }
@@ -227,6 +243,18 @@ final class OrderPlanning implements OptimiserPass {
      */
     private static void markMarkoutHorizons(LogicalPlan plan) {
         plan.walkBottomUp(MARKOUT_HORIZONS);
+    }
+
+    /**
+     * The window of the first function that requires its input in the order of its window, or null when none does.
+     */
+    private static WindowSpec orderedInputSpec(WindowPlan window) {
+        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
+            if ((window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.ORDERED_INPUT) != 0) {
+                return window.getSpecs().getQuick(i);
+            }
+        }
+        return null;
     }
 
     private static void requireScan(ScanPlan scan, SortDirection direction, SortPlan order, LimitPlan limit, boolean isRowOrderRequired) {
@@ -349,11 +377,12 @@ final class OrderPlanning implements OptimiserPass {
     }
 
     /**
-     * True when a parallel filter stops at the LIMIT instead of rejecting it: a constant LIMIT within the negative LIMIT
-     * the filter accepts.
+     * True when a parallel filter cannot hold the last rows a constant negative LIMIT selects, which the LIMIT then
+     * applies over all rows of the filter instead.
      */
-    private boolean isFilterLimit(LimitPlan limit) {
-        return limit.getLo() instanceof ConstantExpression lo && LogicalPlans.limitValue(lo) >= -maxNegativeLimit;
+    private boolean isPastFilterCapacity(LimitPlan limit) {
+        return limit.getLo() instanceof ConstantExpression lo && LogicalPlans.mayBeNegativeLimit(lo)
+                && LogicalPlans.limitValue(lo) < -configuration.getSqlMaxNegativeLimit();
     }
 
     /**
@@ -478,9 +507,8 @@ final class OrderPlanning implements OptimiserPass {
      * A plain LIMIT reaches the master of a join that emits at least one row for each master row, in master order:
      * the first or last {@code n} joined rows come from the first or last {@code n} master rows. A LIMIT that may be
      * negative reaches the master of the join under it that may emit no row for a master row, see
-     * {@link PlanToFactoryRules#masterSuffixJoin}. A constant LIMIT the input's filter accepts reaches the last input of
-     * a CROSS join without a filter as well: the first or last {@code n} joined rows join the first or last {@code n}
-     * of its rows.
+     * {@link PlanToFactoryRules#masterSuffixJoin}. A constant LIMIT reaches the last input of a CROSS join without a
+     * filter as well: the first or last {@code n} joined rows join the first or last {@code n} of its rows.
      */
     private void requireJoin(JoinPlan join, int orderColumnId, SortDirection direction, SortPlan order, LimitPlan limit, boolean isRowOrderRequired) {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
@@ -509,7 +537,7 @@ final class OrderPlanning implements OptimiserPass {
                 if (step.getJoinType() != JoinKind.UNNEST) {
                     isRandomAccessRequired = step.getJoinType() == JoinKind.SPLICE;
                     final boolean isLimited = order == null && limit != null && i == n - 1 && step.getJoinType() == JoinKind.CROSS
-                            && step.getPostJoinFilter() == null && isFilterLimit(limit);
+                            && step.getPostJoinFilter() == null && limit.getLo() instanceof ConstantExpression;
                     require(step.getInput(), -1, null, null, isLimited ? limit : null, step.getJoinType().isTemporal() || isRowOrderRequired);
                 }
             }
@@ -563,7 +591,7 @@ final class OrderPlanning implements OptimiserPass {
                 inputOrderColumnId = orderColumnId;
                 inputDirection = direction;
                 inputOrder = order;
-                inputLimit = filter.getChild() instanceof ScanPlan ? limit : null;
+                inputLimit = filter.getChild() instanceof ScanPlan && limit != null && !isPastFilterCapacity(limit) ? limit : null;
             }
             case ProjectPlan project -> {
                 project.setRequestedOrderColumnId(orderColumnId);
@@ -638,10 +666,22 @@ final class OrderPlanning implements OptimiserPass {
                 inputDirection = specDirection;
             }
         }
-        window.getQueryOrder().of(isQueryOrder ? order : null);
-        require(input, inputOrderColumnId, inputOrderColumnId < 0 ? null : inputDirection,
-                hasColumns(input.getOutput(), order) ? order : null, null,
-                !isQueryOrder && isRowOrderRequired && !hasGroupByWindowFunction(window));
+        final WindowSpec orderedInput = orderedInputSpec(window);
+        final boolean isInputOrderServed = isOrderedInputServed(window, inputOrderColumnId, inputDirection);
+        window.getQueryOrder().of(isInputOrderServed && isQueryOrder ? order : null);
+        if (isInputOrderServed) {
+            require(input, inputOrderColumnId, inputOrderColumnId < 0 ? null : inputDirection,
+                    hasColumns(input.getOutput(), order) ? order : null, null,
+                    orderedInput != null || !isQueryOrder && isRowOrderRequired && !hasGroupByWindowFunction(window));
+            return;
+        }
+        final int orderedInputColumnId = orderedInput.getOrderByColumnIds().getQuick(0);
+        final SortDirection orderedInputDirection = orderedInput.getOrderByDirections().getQuick(0);
+        if (isOrderedInputServed(window, orderedInputColumnId, orderedInputDirection)) {
+            require(input, orderedInputColumnId, orderedInputDirection, null, null, true);
+        } else {
+            requireNothing(input);
+        }
     }
 
     private void requireWindowJoin(WindowJoinPlan windowJoin) {

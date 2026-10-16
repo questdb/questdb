@@ -257,10 +257,10 @@ public class PlanTablesTest extends AbstractCairoTest {
             execute("CREATE TABLE t2 (k INT)");
             final String sql = """
                     WITH p AS (cities PIVOT (SUM(population) FOR year IN (SELECT DISTINCT year FROM cities) GROUP BY country))
-                    SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true
+                    SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1, 2) l ON true
                     CROSS JOIN p
                     """;
-            assertCompileFailureReleasesReaders(sql, sql.indexOf("t1.n"), "LIMIT referencing an outer column is not supported over a scalar count", false);
+            assertCompileFailureReleasesReaders(sql, sql.indexOf("-1"), "LIMIT <negative>, <positive> is not allowed", false);
         });
     }
 

@@ -146,7 +146,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             @Nullable Function masterFilter,
             @Nullable ObjList<Function> perWorkerMasterFilters,
             @Nullable IntHashSet filterUsedColumnIndexes,
-            boolean vectorized,
+            @Nullable IntList argumentColumnIndex,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount
     ) {
@@ -207,7 +207,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     masterFilter,
                     perWorkerMasterFilters,
                     filterUsedColumnIndexes,
-                    vectorized,
+                    argumentColumnIndex,
                     masterTsScale,
                     slaveTsScale,
                     workerCount

@@ -3163,6 +3163,42 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinSlaveNoDesignatedTimestampDeclared() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s AS (SELECT x v, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(10))");
+            execute("CREATE TABLE sd AS (SELECT * FROM s) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE sn AS (SELECT x v, ((x - 6) * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(10))");
+            execute("CREATE TABLE m AS (SELECT x l, (x * 3_600_000_000 + 1_800_000_000)::TIMESTAMP ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE VIEW s_view AS (SELECT * FROM s TIMESTAMP(ts))");
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String slave : new String[]{"sd", "(s TIMESTAMP(ts))", "(s TIMESTAMP(ts) WHERE v > 1)", "(SELECT * FROM s TIMESTAMP(ts))", "s_view"}) {
+                    assertQuery("SELECT h.offset, count(x.v) n, sum(x.v) sv FROM m HORIZON JOIN " + slave + " x LIST (0s, 1h) AS h ORDER BY h.offset")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(slave.contains("WHERE") ? """
+                                    offset\tn\tsv
+                                    0\t4\t14
+                                    3600000000\t5\t20
+                                    """ : """
+                                    offset\tn\tsv
+                                    0\t5\t15
+                                    3600000000\t5\t20
+                                    """);
+                }
+                assertQuery("SELECT h.offset, count(x.v) n, sum(x.v) sv FROM m HORIZON JOIN (sn TIMESTAMP(ts)) x LIST (-3h, 0s) AS h ORDER BY h.offset")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                offset\tn\tsv
+                                -10800000000\t5\t30
+                                0\t5\t44
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinSlaveNoTimeFrameWithFilter() throws Exception {
         // Slave subquery doesn't support time frames, error after filter stealing — verifies no resource leak
         assertMemoryLeak(() -> {

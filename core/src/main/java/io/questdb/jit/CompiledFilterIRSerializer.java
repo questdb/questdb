@@ -121,6 +121,10 @@ public class CompiledFilterIRSerializer implements Mutable {
     // Operator codes
     public static final int NEG = 4; // -a
     public static final int NOT = 5; // !a
+    public static final int NOT_GE = 26; // !(a >= b)
+    public static final int NOT_GT = 25; // !(a >  b)
+    public static final int NOT_LE = 24; // !(a <= b)
+    public static final int NOT_LT = 23; // !(a <  b)
     public static final int OR = 7; // a || b
     public static final int OR_SC = 19;  // short-circuit OR: if true, jump to label[payload] (0 = next_row)
     // Opcodes:
@@ -2078,6 +2082,10 @@ public class CompiledFilterIRSerializer implements Mutable {
                 case LE:
                 case GT:
                 case GE:
+                case NOT_LT:
+                case NOT_LE:
+                case NOT_GT:
+                case NOT_GE:
                 case ADD:
                 case SUB:
                 case MUL:
@@ -2088,8 +2096,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                             || isWideLaneUnharmonisedPairing(rhsType, lhsType)) {
                         return true;
                     }
-                    final boolean isComparison = opCode == EQ || opCode == NE || opCode == LT
-                            || opCode == LE || opCode == GT || opCode == GE;
+                    final boolean isComparison = opCode != ADD && opCode != SUB && opCode != MUL && opCode != DIV;
                     // A comparison yields a lane mask, not a value of either operand's width. An
                     // arithmetic result keeps a width but drops the immediate marker: whatever the
                     // frontend chose for the operands, what the operator leaves behind is a value
@@ -4549,6 +4556,24 @@ public class CompiledFilterIRSerializer implements Mutable {
         putOperator(EQ);
     }
 
+    // The instruction before a NOT produced its operand. When that is an ordering comparison, its
+    // complement replaces both: the backends compute it as one comparison, NULL and NaN included.
+    private void putNot() {
+        final long offset = memory.getAppendOffset() - INSTRUCTION_SIZE;
+        final int complement = offset < 0 ? UNDEFINED_CODE : switch (memory.getInt(offset)) {
+            case LT -> NOT_LT;
+            case LE -> NOT_LE;
+            case GT -> NOT_GT;
+            case GE -> NOT_GE;
+            default -> UNDEFINED_CODE;
+        };
+        if (complement != UNDEFINED_CODE) {
+            memory.putInt(offset, complement);
+        } else {
+            putOperator(NOT);
+        }
+    }
+
     private void putOperand(int opcode, int type, long payload) {
         memory.putInt(opcode);
         memory.putInt(type);
@@ -5511,7 +5536,7 @@ public class CompiledFilterIRSerializer implements Mutable {
             }
         }
         if (SqlKeywords.isNotKeyword(token)) {
-            putOperator(NOT);
+            putNot();
             return;
         }
         if (SqlKeywords.isAndKeyword(token)) {

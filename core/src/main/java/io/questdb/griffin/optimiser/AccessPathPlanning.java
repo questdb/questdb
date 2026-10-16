@@ -247,7 +247,7 @@ final class AccessPathPlanning {
         final int orderCount = order.size();
         final int timestampId = output.getTimestampColumnId();
         ScanPlan.IndexOrder indexOrder = ScanPlan.IndexOrder.NONE;
-        SortDirection indexDirection = SortDirection.ASCENDING;
+        SortDirection indexDirection = keyCount == 1 ? scan.getScanDirection() : SortDirection.ASCENDING;
         boolean isTimestampDropped = false;
         if (isSinglePartition && !isTimestampRequired && orderCount > 0 && orderCount < 3 && order.getColumnIds().getQuick(0) == keyId) {
             isTimestampDropped = true;
@@ -256,6 +256,7 @@ final class AccessPathPlanning {
             } else if (order.getColumnIds().getQuick(1) == timestampId) {
                 indexOrder = ScanPlan.IndexOrder.KEY;
                 indexDirection = order.getDirections().getQuick(1);
+                scan.setScanDirection(indexDirection);
             }
         }
         if (indexOrder == ScanPlan.IndexOrder.NONE && orderCount == 1 && order.getColumnIds().getQuick(0) == timestampId) {
@@ -612,8 +613,10 @@ final class AccessPathPlanning {
             scan.setSinglePartition(true);
             scan.setTimestampDropped(true);
             scan.setIndex(output.getColumnId(sortedKeyIndex), ScanPlan.IndexRead.INDEX);
-            scan.setIndexOrder(ScanPlan.IndexOrder.KEY, scan.getRequestedOrder().size() == 2
-                    ? scan.getRequestedOrder().getDirections().getQuick(1) : SortDirection.ASCENDING);
+            final SortDirection indexDirection = scan.getRequestedOrder().size() == 2
+                    ? scan.getRequestedOrder().getDirections().getQuick(1) : SortDirection.ASCENDING;
+            scan.setScanDirection(indexDirection);
+            scan.setIndexOrder(ScanPlan.IndexOrder.KEY, indexDirection);
             scan.setAccessPath(ScanPlan.AccessPath.SORTED_SYMBOL_INDEX, isLiveView ? liveViewResidual : null);
         } else {
             scan.setAccessPath(ScanPlan.AccessPath.PAGE_FRAMES, isLiveView ? liveViewResidual : residual);

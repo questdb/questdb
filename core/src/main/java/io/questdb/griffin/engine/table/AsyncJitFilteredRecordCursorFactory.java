@@ -47,6 +47,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
@@ -80,6 +81,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private AsyncFilteredRecordCursor cursor;
     private Function filter;
     private PageFrameSequence<AsyncJitFilterAtom> frameSequence;
+    private LimitRecordCursorFactory.LimitRecordCursor lastRowsCursor;
     private AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private DirectLongList negativeLimitRows;
 
@@ -247,11 +249,19 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         if (order != baseOrder && rowsRemaining != Long.MAX_VALUE) {
-            // A negative limit is negated above; -Long.MIN_VALUE overflows back to a negative value,
-            // so reject rowsRemaining < 0 too instead of letting it slip past the maxNegativeLimit
-            // bound and produce an empty cursor.
-            if (rowsRemaining < 0 || rowsRemaining > maxNegativeLimit) {
-                throw SqlException.position(limitLoPos).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
+            if (rowsRemaining > maxNegativeLimit) {
+                // The buffer cannot hold the last rows the limit selects, so read all rows and skip to the last ones.
+                cursor.of(execute(executionContext, collectSubSeq, baseOrder), Long.MAX_VALUE);
+                if (lastRowsCursor == null) {
+                    lastRowsCursor = new LimitRecordCursorFactory.LimitRecordCursor(null, limitLoFunction, null, limitLoPos, null);
+                }
+                try {
+                    lastRowsCursor.of(cursor, executionContext);
+                } catch (Throwable th) {
+                    cursor.close();
+                    throw th;
+                }
+                return lastRowsCursor;
             }
             if (negativeLimitRows == null) {
                 negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
@@ -323,9 +333,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 order = baseOrder;
             } else if (rowsRemaining > -1) {
                 order = baseOrder;
-            } else {
+            } else if (rowsRemaining >= -maxNegativeLimit) {
                 order = reverse(baseOrder);
                 rowsRemaining = -rowsRemaining;
+            } else {
+                order = baseOrder;
             }
         } else {
             rowsRemaining = Long.MAX_VALUE;

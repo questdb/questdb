@@ -126,9 +126,7 @@ public class WindowMapSpecTest {
         // resolved column beside the literal constant.
         Assert.assertEquals("!+/2(#2:" + ColumnType.DOUBLE + ",=1)", left.getPartitionKeyIdentity());
 
-        // The operation is part of the identity rather than only its operands, which is the
-        // one thing Function.isEquivalentTo cannot say - two BinaryFunctions over one pair of
-        // columns answer true to it whether they add or subtract.
+        // The operation is part of the identity rather than only its operands.
         assertDistinct(left, builder().partitionBy(difference(literal("x"), constant("1"))));
         // ... and so are the operands, their order, and every constant in them.
         assertDistinct(left, builder().partitionBy(sum(literal("x"), constant("2"))));

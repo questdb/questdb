@@ -356,7 +356,24 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     public void testBranchTypeMismatch() throws Exception {
         assertQuery("SELECT CASE u WHEN 123 THEN 'a' ELSE 'b' END FROM test")
                 .ddl("CREATE TABLE test AS (SELECT rnd_uuid4() u FROM long_sequence(5))")
-                .fails(19, "type mismatch [expected=UUID, actual=INT]");
+                .fails(19, "there is no matching operator `=` with the argument types: UUID = INT");
+    }
+
+    @Test
+    public void testBranchTypeNotConvertibleToLaterBranchType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x, 'a'::char c, 'abc' s, 'abc'::symbol sym, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid u, '1.2.3.4'::ipv4 ip
+                        FROM long_sequence(1)
+                    )""");
+            assertQuery("SELECT CASE x WHEN 1 THEN c WHEN 2 THEN u ELSE s END FROM t")
+                    .noLeakCheck()
+                    .fails(26, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+            assertQuery("SELECT CASE x WHEN 1 THEN sym WHEN 2 THEN ip ELSE s END FROM t")
+                    .noLeakCheck()
+                    .fails(26, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+        });
     }
 
     @Test
@@ -695,12 +712,21 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDecimalSwitchKeyRejected() throws Exception {
-        // CaseCommon routes decimal targets to DecimalUtil.getImplicitCastFunction, which
-        // has no CHAR arm; 'switch' then rejects the decimal key type itself.
-        assertQuery("SELECT CASE d WHEN 'a' THEN 1 ELSE 2 END FROM test")
-                .ddl("CREATE TABLE test (d DECIMAL(10,2))")
-                .fails(12, "type DECIMAL(10,2) is not supported in 'switch' type of 'case' statement");
+    public void testDecimalKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::decimal(10,2) d FROM long_sequence(2))");
+            assertQuery("SELECT d, CASE d WHEN 1.00m THEN 'one' WHEN 2.5m THEN 'two' ELSE 'other' END k FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\tk
+                            1.00\tone
+                            2.00\tother
+                            """);
+            assertQuery("SELECT CASE d WHEN 'a' THEN 1 ELSE 2 END FROM test")
+                    .noLeakCheck()
+                    .fails(19, "there is no matching operator `=` with the argument types: DECIMAL(10,2) = CHAR");
+        });
     }
 
     @Test
@@ -761,7 +787,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         null\t936627841\t326010667\t-667031149\t1
                         null\t-1870444467\t-2034804966\t171200398\t1
                         0.0\t1637847416\t-419093579\t-1819240775\t4
-                        -0.0\t-1533414895\t-1787109293\t-66297136\t5
+                        -0.0\t-1533414895\t-1787109293\t-66297136\t4
                         """);
     }
 
@@ -788,6 +814,32 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")")
                 .fails(145, "duplicate branch");
+    }
+
+    @Test
+    public void testDoubleKeyMatchesExactly() throws Exception {
+        assertQuery("""
+                SELECT d, CASE d
+                    WHEN 1.0 THEN 'one'
+                    WHEN 1.00000000001 THEN 'near'
+                    WHEN 0.0 THEN 'zero'
+                    WHEN -0.0 THEN 'negative zero'
+                    WHEN 2 THEN 'two'
+                    WHEN null THEN 'null'
+                END k
+                FROM t""")
+                .ddl("CREATE TABLE t AS (SELECT CASE x WHEN 1 THEN 1.0 WHEN 2 THEN 1.00000000001 WHEN 3 THEN 1.5 WHEN 4 THEN -0.0 WHEN 5 THEN 0.0 WHEN 6 THEN 2.0 END d FROM long_sequence(7))")
+                .expectSize()
+                .returns("""
+                        d\tk
+                        1.0\tone
+                        1.00000000001\tnear
+                        1.5\t
+                        -0.0\tzero
+                        0.0\tzero
+                        2.0\ttwo
+                        null\tnull
+                        """);
     }
 
     @Test
@@ -849,7 +901,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         null\t936627841\t326010667\t-667031149\t1
                         null\t-1870444467\t-2034804966\t171200398\t1
                         0.0\t1637847416\t-419093579\t-1819240775\t4
-                        -0.0\t-1533414895\t-1787109293\t-66297136\t5
+                        -0.0\t-1533414895\t-1787109293\t-66297136\t4
                         """);
     }
 
@@ -934,7 +986,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         null\t-1272693194\t68265578\t1036510002\t1
                         null\t-2002373666\t44173540\t458818940\t1
                         0.0\t410717394\t-2144581835\t1978144263\t4
-                        -0.0\t-1418341054\t-1162267908\t2031014705\t5
+                        -0.0\t-1418341054\t-1162267908\t2031014705\t4
                         """);
     }
 
@@ -1008,8 +1060,27 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         null\t-1272693194\t68265578\t1036510002\t1
                         null\t-2002373666\t44173540\t458818940\t1
                         0.0\t410717394\t-2144581835\t1978144263\t4
-                        -0.0\t-1418341054\t-1162267908\t2031014705\t5
+                        -0.0\t-1418341054\t-1162267908\t2031014705\t4
                         """);
+    }
+
+    @Test
+    public void testIPv4KeyWithTextConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::int::ipv4 ip FROM long_sequence(3))");
+            assertQuery("SELECT ip, CASE ip WHEN '0.0.0.1' THEN 'one' WHEN '0.0.0.3' THEN 'three' END k FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ip\tk
+                            0.0.0.1\tone
+                            0.0.0.2\t
+                            0.0.0.3\tthree
+                            """);
+            assertQuery("SELECT CASE ip WHEN 'abc' THEN 1 END FROM t")
+                    .noLeakCheck()
+                    .failsWith("invalid IPv4 format: abc");
+        });
     }
 
     @Test
@@ -1308,27 +1379,19 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLong256OrElse() throws Exception {
-        assertQuery("""
-                select\s
-                    x,
-                    a,
-                    b,
-                    c,
-                    case x
-                        when cast('0x00' as long256) then a
-                        when cast('0x00' as long256) then c
-                        when cast('0x00' as long256) then 350
-                        else b
-                    end k
-                from tanc""")
-                .ddl("create table tanc as (" +
-                        "select rnd_long256() x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")")
-                .fails(45, "type LONG256 is not supported in 'switch' type of 'case' statement");
+        assertQuery("SELECT x, CASE x WHEN '0x01'::long256 THEN 'one' WHEN '0x01'::long256 THEN 'again' ELSE 'other' END k FROM tanc")
+                .ddl("""
+                        CREATE TABLE tanc AS (
+                            SELECT CASE WHEN x = 1 THEN '0x01'::long256 WHEN x = 2 THEN '0x02'::long256 END x
+                            FROM long_sequence(3)
+                        )""")
+                .expectSize()
+                .returns("""
+                        x\tk
+                        0x01\tone
+                        0x02\tother
+                        \tother
+                        """);
     }
 
     @Test
@@ -1426,6 +1489,32 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")")
                 .fails(109, "constant expected");
+    }
+
+    @Test
+    public void testNarrowingWhenConstantMatchesAsEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT '1'::char c, (-24)::byte b, 1 i, '1970-01-01T00:00:00.000001Z'::timestamp ts
+                        FROM long_sequence(1)
+                    )""");
+            assertQuery("""
+                    SELECT
+                        CASE b WHEN 1000 THEN 'wrapped' END b,
+                        CASE c WHEN 1L THEN 'one' END c,
+                        CASE c WHEN '1970-01-01T00:00:00.000001Z'::timestamp THEN 'one' END cts,
+                        CASE i WHEN 1.5 THEN 'fraction' WHEN 1.0 THEN 'one' END i,
+                        CASE ts WHEN 1.5 THEN 'fraction' WHEN 1.0 THEN 'one' END ts,
+                        CASE WHEN c = 1 THEN 'one' END searched
+                    FROM t""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\tc\tcts\ti\tts\tsearched
+                            \tone\tone\tone\tone\tone
+                            """);
+        });
     }
 
     @Test
@@ -2264,6 +2353,24 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTextWhenConstantOnNumericKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::int i, x::date dt FROM long_sequence(2))");
+            assertQuery("SELECT i, CASE i WHEN 'a' THEN 'a' WHEN '2' THEN 'two' END k FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tk
+                            1\t
+                            2\ttwo
+                            """);
+            assertQuery("SELECT CASE dt WHEN 'abc' THEN 1 END FROM t")
+                    .noLeakCheck()
+                    .fails(20, "Invalid date [str=abc]");
+        });
+    }
+
+    @Test
     public void testTimestampDuplicateBranch() throws Exception {
         assertQuery("SELECT CASE ts WHEN '2020-01-01' THEN a WHEN '2020-01-02' THEN b WHEN '2020-01-01' THEN c END k FROM tanc")
                 .ddl("CREATE TABLE tanc AS (" +
@@ -2274,6 +2381,36 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " FROM long_sequence(5)" +
                         ")")
                 .fails(70, "duplicate branch");
+    }
+
+    @Test
+    public void testTimestampKeyFromCharByteShort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::timestamp ts, x::timestamp_ns tn FROM long_sequence(4))");
+            assertQuery("""
+                    SELECT ts, CASE ts WHEN '1' THEN 'one' WHEN 2::byte THEN 'two' WHEN 3::short THEN 'three' ELSE 'other' END k,
+                        tn, CASE tn WHEN '1' THEN 'one' WHEN 2::byte THEN 'two' WHEN 3::short THEN 'three' ELSE 'other' END kn
+                    FROM t""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tk\ttn\tkn
+                            1970-01-01T00:00:00.000001Z\tone\t1970-01-01T00:00:00.000000001Z\tone
+                            1970-01-01T00:00:00.000002Z\ttwo\t1970-01-01T00:00:00.000000002Z\ttwo
+                            1970-01-01T00:00:00.000003Z\tthree\t1970-01-01T00:00:00.000000003Z\tthree
+                            1970-01-01T00:00:00.000004Z\tother\t1970-01-01T00:00:00.000000004Z\tother
+                            """);
+            assertQuery("SELECT CASE ts WHEN 'a' THEN 1 ELSE 0 END k FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k
+                            0
+                            0
+                            0
+                            0
+                            """);
+        });
     }
 
     @Test
@@ -2322,5 +2459,24 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         1970-01-01T00:00:01.800000Z\tB\tE\tO\tE
                         1970-01-01T00:00:01.900000Z\tU\tO\tJ\tZ
                         """);
+    }
+
+    @Test
+    public void testTimestampTextConstants() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tanc AS (SELECT timestamp_sequence('2020-01-01', 100_000_000) ts, x FROM long_sequence(3))");
+            assertQuery("SELECT ts, CASE ts WHEN '2020-01-01' THEN 'a' WHEN '2020-01-01T00:01:40' THEN 'b' WHEN '2020-01-01T00:00:00.000000001Z' THEN 'c' END k FROM tanc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tk
+                            2020-01-01T00:00:00.000000Z\ta
+                            2020-01-01T00:01:40.000000Z\tb
+                            2020-01-01T00:03:20.000000Z\t
+                            """);
+            assertQuery("SELECT CASE ts WHEN 'abc' THEN 1 END k FROM tanc")
+                    .noLeakCheck()
+                    .fails(20, "invalid timestamp");
+        });
     }
 }

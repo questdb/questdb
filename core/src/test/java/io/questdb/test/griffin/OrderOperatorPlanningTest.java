@@ -1403,6 +1403,80 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowMultiKeyOrderOverTimestampOrderedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ties AS (SELECT x::DOUBLE v, (x / 3 * 1_000_000)::TIMESTAMP ts FROM long_sequence(9)) TIMESTAMP(ts) PARTITION BY DAY");
+            final String expected = """
+                    ts\tv\trn
+                    1970-01-01T00:00:03.000000Z\t9.0\t1
+                    1970-01-01T00:00:02.000000Z\t6.0\t2
+                    1970-01-01T00:00:02.000000Z\t7.0\t3
+                    1970-01-01T00:00:02.000000Z\t8.0\t4
+                    1970-01-01T00:00:01.000000Z\t3.0\t5
+                    """;
+            final String scanned = "SELECT ts, v, row_number() OVER (ORDER BY ts DESC, v) rn FROM ties ORDER BY ts DESC, v LIMIT 5";
+            assertPlanned(engine, sqlExecutionContext, scanned, WindowPlan.class, window -> Assert.assertFalse(window.getSpecs().getQuick(0).isOrderDelivered()));
+            assertQuery(scanned)
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: 5 partiallySorted: true
+                              keys: [ts desc, v]
+                                CachedWindowLight
+                                  orderedFunctions: [[ts desc, v] => [row_number()]]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: ties
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY ts DESC, v) rn FROM ties WHERE ts IN '1970-01-01' ORDER BY ts DESC, v LIMIT 5")
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: 5 partiallySorted: true
+                              keys: [ts desc, v]
+                                CachedWindowLight
+                                  orderedFunctions: [[ts desc, v] => [row_number()]]
+                                    PageFrame
+                                        Row backward scan
+                                        Interval backward scan on: ties
+                                          intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns(expected);
+            assertQuery("""
+                    SELECT ts, v, row_number() OVER (ORDER BY ts DESC, v) rn
+                    FROM (SELECT v, ts FROM ties UNION ALL SELECT v + 100, ts FROM ties) ORDER BY ts DESC, v LIMIT 5""")
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: 5 partiallySorted: true
+                              keys: [ts desc, v]
+                                CachedWindow
+                                  orderedFunctions: [[ts desc, v] => [row_number()]]
+                                    Union All Merge
+                                      order: [ts desc]
+                                      branches: 2
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: ties
+                                        VirtualRecord
+                                          functions: [v+100,ts]
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: ties
+                            """)
+                    .returns("""
+                            ts\tv\trn
+                            1970-01-01T00:00:03.000000Z\t9.0\t1
+                            1970-01-01T00:00:03.000000Z\t109.0\t2
+                            1970-01-01T00:00:02.000000Z\t6.0\t3
+                            1970-01-01T00:00:02.000000Z\t7.0\t4
+                            1970-01-01T00:00:02.000000Z\t8.0\t5
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowOrderDelivered() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

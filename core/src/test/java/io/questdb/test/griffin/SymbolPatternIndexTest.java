@@ -2260,19 +2260,12 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     .withPlanNotContaining("AdaptiveSymbolPattern")
                     .returns("sym\tv\nab\t3\naa\t1\n");
 
-            final int maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
-            final String overflowQuery = "SELECT sym, v FROM t WHERE sym LIKE 'a%' LIMIT -" + (maxNegativeLimit + 1);
-            try (RecordCursorFactory factory = engine.select(overflowQuery, sqlExecutionContext)) {
-                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    Assert.fail("negative LIMIT above the configured maximum must fail");
-                }
-            } catch (SqlException e) {
-                TestUtils.assertContains(
-                        e.getFlyweightMessage(),
-                        "absolute LIMIT value is too large, maximum allowed value: " + maxNegativeLimit
-                );
-                Assert.assertEquals(overflowQuery.indexOf('-'), e.getPosition());
-            }
+            // no filter holds the last rows a constant past the maximum selects, so the LIMIT reads all rows the
+            // pattern index returns
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' LIMIT -" + (configuration.getSqlMaxNegativeLimit() + 1))
+                    .expectSize()
+                    .withPlanContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\naa\t1\nab\t3\nac\t6\nad\t8\n");
         });
     }
 

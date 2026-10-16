@@ -187,10 +187,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     // opcodes::Inv in core/src/main/c/share/jit/common.h. The serializer's own constant
     // is package-private, so the value is repeated here.
     private static final int IR_OPCODE_INV = -1;
-    // One past opcodes::Sx_I64, the highest value the opcodes enum in common.h defines. It stands
+    // One past opcodes::Not_Ge, the highest value the opcodes enum in common.h defines. It stands
     // for the opcode a corrupted stream, or a frontend that has grown one this backend has not,
     // presents to emit_bin_op's default arm.
-    private static final int IR_OPCODE_OUT_OF_ENUM = 23;
+    private static final int IR_OPCODE_OUT_OF_ENUM = 27;
     // The eight-row LONG column writeProbeIr()'s stream runs against, plus the row ids and the
     // match count a correctly compiled filter must answer with for each comparison that stream can
     // spell. A backend that abandoned code generation and then fell into scalar_tail's
@@ -7502,6 +7502,86 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitScalarAndVectorMatchJava("select rn from zm where i + 0 > 16777216.0 and l = 5 and rn <= 3", "rn\n2\n");
             // Control: a bound whose rounding cannot reach any INT row is not a source either.
             assertJitScalarAndVectorMatchJava("select rn from zm where i > 1.1 and l = 5 and rn <= 3", "rn\n2\n3\n");
+        });
+    }
+
+    @Test
+    public void testNegatedOrderingComparisonEveryTypeAndOperator() throws Exception {
+        // v1 and v2 are NULL on different rows (x % 10 and x % 11), so the column pairs hold rows
+        // where neither, one or both operands are NULL. 1_003 rows leave a scalar tail behind the
+        // vector loop at every lane width.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE neg_cmp AS (
+                        SELECT
+                            x k,
+                            v1::BYTE b, v2::BYTE b2,
+                            v1::SHORT s, v2::SHORT s2,
+                            v1::INT i, v2::INT i2,
+                            v1 l, v2 l2,
+                            v1::FLOAT f, v2::FLOAT f2,
+                            v1::DOUBLE d, v2::DOUBLE d2,
+                            v1::DATE dt, v2::DATE dt2,
+                            v1::TIMESTAMP ts, v2::TIMESTAMP ts2,
+                            v1::TIMESTAMP_NS tn, v2::TIMESTAMP_NS tn2,
+                            (v1 + 167_772_165)::INT::IPv4 ip, (v2 + 167_772_165)::INT::IPv4 ip2,
+                            CASE x % 5 WHEN 0 THEN NULL WHEN 1 THEN 'a' WHEN 2 THEN 'b' ELSE 'c' END c,
+                            CASE x % 7 WHEN 0 THEN NULL WHEN 1 THEN 'a' WHEN 2 THEN 'b' ELSE 'c' END c2
+                        FROM (
+                            SELECT
+                                x,
+                                CASE WHEN x % 10 = 0 THEN NULL ELSE x % 10 - 5 END v1,
+                                CASE WHEN x % 11 = 0 THEN NULL ELSE x % 11 - 5 END v2
+                            FROM long_sequence(1_003)
+                        )
+                    )""");
+
+            // {column, second column of the same type, constants...}
+            final String[][] operands = {
+                    {"b", "b2", "1", "1e-10", "-1e-10"},
+                    {"s", "s2", "1", "1e-10", "-1e-10"},
+                    {"i", "i2", "1", "1e-10", "-1e-10", "NULL"},
+                    {"l", "l2", "1", "1e-10", "-1e-10", "NULL"},
+                    {"f", "f2", "1", "1e-10", "-1e-10", "NULL"},
+                    {"d", "d2", "1", "1e-10", "-1e-10", "NULL"},
+                    {"dt", "dt2", "'1970-01-01T00:00:00.000Z'", "NULL"},
+                    {"ts", "ts2", "'1970-01-01T00:00:00.000000Z'", "NULL"},
+                    {"tn", "tn2", "'1970-01-01T00:00:00.000000000Z'", "NULL"},
+                    {"ip", "ip2", "'10.0.0.5'", "NULL"},
+                    {"c", "c2", "'b'"},
+            };
+            final String[] mixedPairs = {"b %s i2", "s %s l2", "i %s l2", "i %s f2", "i %s d2", "l %s d2", "f %s d2"};
+            for (String op : new String[]{"<", "<=", ">", ">="}) {
+                for (String[] row : operands) {
+                    assertJitMatchesJavaInAllModes("SELECT k FROM neg_cmp WHERE NOT (" + row[0] + ' ' + op + ' ' + row[1] + ')');
+                    for (int j = 2; j < row.length; j++) {
+                        assertJitMatchesJavaInAllModes("SELECT k FROM neg_cmp WHERE NOT (" + row[0] + ' ' + op + ' ' + row[j] + ')');
+                        assertJitMatchesJavaInAllModes("SELECT k FROM neg_cmp WHERE NOT (" + row[j] + ' ' + op + ' ' + row[0] + ')');
+                    }
+                }
+                for (String pair : mixedPairs) {
+                    assertJitMatchesJavaInAllModes("SELECT k FROM neg_cmp WHERE NOT (" + String.format(pair, op) + ')');
+                }
+            }
+
+            // NOT keeps the NULL rows the comparison drops, and a pair of NULLs satisfies <= and >=.
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (i < 0)", "count\n600\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (i <= 0)", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (i > 0)", "count\n603\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (i >= 0)", "count\n503\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (i < i2)", "count\n598\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (i <= i2)", "count\n499\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (i > i2)", "count\n677\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (i >= i2)", "count\n578\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (d < d2)", "count\n598\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (d <= d2)", "count\n499\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (d > d2)", "count\n677\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (d >= d2)", "count\n578\n");
+            // The rows holding 0 sit exactly DOUBLE_TOLERANCE from the bound, so they count as equal to it.
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (d < -1e-10)", "count\n600\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (d <= -1e-10)", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (d > 1e-10)", "count\n603\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_cmp WHERE NOT (d >= 1e-10)", "count\n503\n");
         });
     }
 

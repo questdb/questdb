@@ -48,6 +48,7 @@ import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.optimiser.DecorrelationContext.isTrue;
 import static io.questdb.griffin.optimiser.ScalarCompensation.isImplicitlyKeyedByOuterColumns;
+import static io.questdb.griffin.optimiser.ScalarCompensation.isTailLimit;
 
 /**
  * Rewrites the chain of a body block to read mapped columns. A correlation enters a block at its source or at a
@@ -61,7 +62,9 @@ import static io.questdb.griffin.optimiser.ScalarCompensation.isImplicitlyKeyedB
  * <li>Sort: none, a LIMIT above it, across filters and distincts, ranks in its order; commutes with a filter.</li>
  * <li>Distinct: none, its tuples hold the mapped columns; commutes with a filter.</li>
  * <li>Fill: none, it fills per the keys of the grouping below it; ends a filter's chain.</li>
- * <li>Limit: numbers the rows of each mapped key and keeps the ones the limit selects; ends a filter's chain.</li>
+ * <li>Limit: numbers the rows of each mapped key, counts them too for a negative constant bound, and keeps the ones
+ * the limit selects, while the step checks a non-constant bound per outer row; over a scalar body of the step, none,
+ * the step guards the body's row; ends a filter's chain.</li>
  * <li>LatestBy: ranks the rows of each latest key and mapped key by timestamp; ends a filter's chain.</li>
  * <li>Aggregate and SampleBy: group by the mapped columns; end a filter's chain.</li>
  * <li>Window: partitions by the mapped columns; ends a filter's chain.</li>
@@ -244,17 +247,32 @@ final class CorrelatedChainRewriter {
             throws SqlException {
         final WindowPlan window = ctx.planNodes.windowPlans.next().of(input, position);
         window.getOutput().copyFrom(input.getOutput());
-        final FunctionExpression rowNumber = ctx.context.getRewriter().describeWindowCall("row_number", position);
-        final int rowNumberId = ctx.context.newColumnId();
-        window.getFunctions().add(rowNumber);
+        final ColumnExpression rank = windowColumn(window, "row_number", 0, spec, name, position);
+        if (lo == null) {
+            return ctx.planNodes.filters.next().of(window,
+                    ctx.context.bindCall("=", position, rank, ctx.planNodes.constants.next().ofInt(1, position), window.getOutput()), position);
+        }
+        ColumnExpression size = null;
+        if (isTailLimit(lo, hi)) {
+            final WindowSpec partition = ctx.planNodes.windowSpecs.next().ofFrame(spec);
+            partition.getPartitionBy().addAll(spec.getPartitionBy());
+            size = windowColumn(window, "count", BoundExpression.MULTI_PASS, partition, "__lateral_count", position);
+        }
+        return ctx.planNodes.filters.next().of(window, compensation.rankPredicate(lo, hi, rank, size, window.getOutput()), position);
+    }
+
+    /**
+     * Adds the argument-free window function with the function flags to the window as a hidden column; returns that
+     * column.
+     */
+    private ColumnExpression windowColumn(WindowPlan window, CharSequence function, int flags, WindowSpec spec, CharSequence name, int position) {
+        final FunctionExpression call = ctx.context.getRewriter().describeWindowCall(function, flags, position);
+        final int columnId = ctx.context.newColumnId();
+        window.getFunctions().add(call);
         window.getSpecs().add(spec);
-        window.getFunctionColumnIds().add(rowNumberId);
-        window.getOutput().add(rowNumberId, name, rowNumber.getDataType(), false);
-        final ColumnExpression rank = ctx.planNodes.columns.next().of(rowNumberId, rowNumber.getDataType(), position);
-        final BoundExpression predicate = lo == null
-                ? ctx.context.bindCall("=", position, rank, ctx.planNodes.constants.next().ofInt(1, position), window.getOutput())
-                : compensation.limitPredicate(lo, hi, rank, window.getOutput());
-        return ctx.planNodes.filters.next().of(window, predicate, position);
+        window.getFunctionColumnIds().add(columnId);
+        window.getOutput().add(columnId, name, call.getDataType(), false);
+        return ctx.planNodes.columns.next().of(columnId, call.getDataType(), position);
     }
 
     /**
@@ -287,9 +305,19 @@ final class CorrelatedChainRewriter {
                 compensation.scalarAggregates.add(aggregate);
             }
             final ProjectPlan scalar = isUncompensated || i != chainBase ? null : compensation.compensableScalar(input);
-            if (node instanceof LimitPlan limit && (scalar != null || compensation.compensatedScalars.indexOf(input) > -1)) {
-                input = compensation.limitGuardFilter(limit, scalar != null ? compensation.compensateBlock(scalar, base) : input);
-                continue;
+            if (node instanceof LimitPlan limit) {
+                if (scalar != null || compensation.compensatedScalars.indexOf(input) > -1) {
+                    final LogicalPlan compensated = scalar != null ? compensation.compensateBlock(scalar, base) : input;
+                    ctx.remapMapped(limit, base);
+                    input = compensation.limitGuardFilter(limit, compensated);
+                    continue;
+                }
+                if (compensation.isStepGuarded(limit, input)) {
+                    continue;
+                }
+                if (ctx.mappedOuterIds.size() > base) {
+                    compensation.addBoundChecks(limit);
+                }
             }
             ctx.remapMapped(node, base);
             input = rewriteChainNode((UnaryPlan) node, input, base);

@@ -172,13 +172,13 @@ public class TimestampEndpointRecordCursorFactory extends AbstractRecordCursorFa
 
         private class TimestampEndpointRecord implements Record {
             @Override
-            public long getRowId() {
-                return 0;
+            public long getLong(int col) {
+                return value;
             }
 
             @Override
-            public long getTimestamp(int col) {
-                return value;
+            public long getRowId() {
+                return 0;
             }
         }
     }

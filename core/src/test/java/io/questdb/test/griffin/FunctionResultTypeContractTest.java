@@ -27,11 +27,16 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -48,13 +53,16 @@ import java.util.List;
  * {@code getResultType} throws, when the {@code -ea} check in {@code FunctionResolver.createFunction} finds a
  * built type other than the declared one, when a call the binder left unconstructed builds into a function
  * with other semantics than the binder recorded, or when compiling a call throws anything other than a
- * SqlException, CairoException or ImplicitCastException that is not a known crash master shares.
+ * SqlException, CairoException or ImplicitCastException that is not a known crash master shares. Every call
+ * that builds a {@link ComparisonFunction} also runs beside its NOT over rows holding NULLs and values, and
+ * fails when the folded NOT does not return the negation of the comparison.
  */
 public class FunctionResultTypeContractTest extends AbstractCairoTest {
     private static final int MAX_BASE_COMBINATIONS = 3_000;
     private static final int MAX_VALUE_COMBINATIONS = 300;
     private static final int MAX_VAR_ARGS = 3;
     private static final HashSet<String> knownMasterCrashes = new HashSet<>();
+    private static final ObjList<String> cursors = new ObjList<>();
     private static final ObjList<Form> forms = new ObjList<>();
     private final HashSet<String> crashes = new HashSet<>();
     private final ObjList<String> failures = new ObjList<>();
@@ -75,6 +83,19 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
                         bin BINARY, u UUID, ip IPV4, vc VARCHAR, d8 DECIMAL(2,1), d16 DECIMAL(4,1), d32 DECIMAL(9,2),
                         d64 DECIMAL(18,2), d128 DECIMAL(38,2), d256 DECIMAL(76,2), da DOUBLE[], da2 DOUBLE[][], ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                         null, null, null, null, null, null, null, null, null, null, null, null, '2020-01-01T00:00:00.000000Z'),
+                        (true, 1, 1, 'a', 1, 1, '2020-01-01', '2020-01-01T00:00:00.000000000Z', 1.5, 1.5, 'abc', 'abc',
+                         to_long256(1, 2, 3, 4), #s, #sp, #sp05, #sp052w92, null, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+                         '1.2.3.4', 'abc', 1.5m, 1.5m, 1.5m, 1.5m, 1.5m, 1.5m, ARRAY[1.0, 2.0], ARRAY[[1.0, 2.0]],
+                         '2020-01-01T00:00:01.000000Z'),
+                        (false, 2, 3, 'z', 3, 3, '2021-01-01', '2021-01-01T00:00:00.000000000Z', -2.5, -2.5, 'xyz', 'xyz',
+                         to_long256(4, 3, 2, 1), #u, #u3, #u33d, #u33d8b12, null, 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12',
+                         '5.6.7.8', 'xyz', -2.5m, -2.5m, -2.5m, -2.5m, -2.5m, -2.5m, ARRAY[3.0], ARRAY[[3.0]],
+                         '2020-01-01T00:00:02.000000Z')
                     """);
             final List<FunctionFactoryDescriptor> descriptors = new ArrayList<>();
             engine.getFunctionFactoryCache().getFactories().forEach((name, overloads) -> {
@@ -280,17 +301,20 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         }
         final String sql = "SELECT " + call + " FROM t";
         bindVariableService.clear();
-        try (RecordCursorFactory ignore = select(sql)) {
+        String comparison = null;
+        try (RecordCursorFactory factory = select(sql)) {
             compiled++;
+            final RecordCursorFactory base = factory instanceof QueryProgress progress ? progress.getBaseFactory() : factory;
+            if (base instanceof VirtualRecordCursorFactory virtual && virtual.getFunctions().getQuick(0) instanceof ComparisonFunction function) {
+                comparison = function.getClass().getName();
+            }
         } catch (SqlException | CairoException | ImplicitCastException e) {
             rejected++;
         } catch (Throwable e) {
-            final String crash = crashKey(functionName, e);
-            if (!isContractViolation(e) && knownMasterCrashes.contains(crash)) {
-                rejected++;
-            } else if (crashes.add(crash)) {
-                failures.add(crash + " :: " + sql + " -> " + e);
-            }
+            recordCrash(sql, e);
+        }
+        if (comparison != null) {
+            checkComplement(call, comparison);
         }
     }
 
@@ -320,6 +344,26 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
             }
             checkCall("CASE " + args.getQuick(0) + " THEN " + args.getQuick(1) + " ELSE " + args.getQuick(2) + " END");
             checkCall("CASE " + args.getQuick(0) + " THEN " + args.getQuick(1) + " END");
+        }
+    }
+
+    private void checkComplement(String call, String comparison) {
+        final String sql = "SELECT " + call + ", NOT (" + call + ") FROM t";
+        bindVariableService.clear();
+        try (RecordCursorFactory factory = select(sql)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    if (record.getBool(0) == record.getBool(1) && crashes.add(comparison)) {
+                        failures.add(comparison + " :: NOT does not negate " + call);
+                        return;
+                    }
+                }
+            } catch (SqlException | CairoException | ImplicitCastException e) {
+                // a value read at run time can fail its cast, leaving no result to negate
+            }
+        } catch (Throwable e) {
+            recordCrash(sql, e);
         }
     }
 
@@ -354,9 +398,14 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
                 values.add(new ObjList<>());
                 continue;
             }
+            final short sigTag = FunctionFactoryDescriptor.toTypeTag(sigType);
+            if (sigTag == ColumnType.CURSOR) {
+                base.add(cursors);
+                values.add(new ObjList<>());
+                continue;
+            }
             final ObjList<String> positionBase = new ObjList<>();
             final ObjList<String> positionValues = new ObjList<>();
-            final short sigTag = FunctionFactoryDescriptor.toTypeTag(sigType);
             for (int j = 0, m = forms.size(); j < m; j++) {
                 final Form form = forms.getQuick(j);
                 if (accepts(sigType, form)) {
@@ -407,6 +456,15 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
     private record Form(String sql, short tag, boolean isConstant, boolean isValue) {
     }
 
+    private void recordCrash(String sql, Throwable e) {
+        final String crash = crashKey(functionName, e);
+        if (!isContractViolation(e) && knownMasterCrashes.contains(crash)) {
+            rejected++;
+        } else if (crashes.add(crash)) {
+            failures.add(crash + " :: " + sql + " -> " + e);
+        }
+    }
+
     private void sample(String name, boolean isWindow, ObjList<ObjList<String>> base, int count) {
         final ObjList<String> args = new ObjList<>();
         for (int k = 0; k < count; k++) {
@@ -433,10 +491,6 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
     static {
         // Each entry is a crash master raises with the same exception class for the same SQL (probe-confirmed);
         // the key is the function name, the exception class and the throwing frame.
-        // IPv4 bitwise/arithmetic operators read a SYMBOL operand as IPv4, which SymbolFunction does not support.
-        knownMasterCrashes.add("& UnsupportedOperationException at SymbolFunction.getIPv4");
-        knownMasterCrashes.add("- UnsupportedOperationException at SymbolFunction.getIPv4");
-        knownMasterCrashes.add("| UnsupportedOperationException at SymbolFunction.getIPv4");
         // VARCHAR string functions fold a constant IPv4 or SYMBOL argument through getVarcharA/getVarcharSize.
         knownMasterCrashes.add("lpad UnsupportedOperationException at IPv4Function.getVarcharA");
         knownMasterCrashes.add("rpad UnsupportedOperationException at IPv4Function.getVarcharA");
@@ -445,10 +499,8 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         knownMasterCrashes.add("split_part UnsupportedOperationException at IPv4Function.getVarcharA");
         knownMasterCrashes.add("starts_with UnsupportedOperationException at IPv4Function.getVarcharA");
         knownMasterCrashes.add("length_bytes UnsupportedOperationException at IPv4Function.getVarcharSize");
-        knownMasterCrashes.add("length_bytes UnsupportedOperationException at SymbolFunction.getVarcharSize");
-        // nullif over IPv4 reads a CHAR or SYMBOL operand as IPv4, or an IPv4 operand as VARCHAR.
+        // nullif over IPv4 reads a CHAR operand as IPv4, or an IPv4 operand as VARCHAR.
         knownMasterCrashes.add("nullif UnsupportedOperationException at CharFunction.getIPv4");
-        knownMasterCrashes.add("nullif UnsupportedOperationException at SymbolFunction.getIPv4");
         knownMasterCrashes.add("nullif UnsupportedOperationException at IPv4Function.getVarcharA");
         // A timestamp IN list holding an interval reads its first list element as an interval.
         knownMasterCrashes.add("in UnsupportedOperationException at DateFunction.getInterval");
@@ -466,7 +518,6 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         knownMasterCrashes.add("l2price UnsupportedOperationException at IPv4Function.getDouble");
         knownMasterCrashes.add("l2price UnsupportedOperationException at IntervalFunction.getDouble");
         knownMasterCrashes.add("l2price UnsupportedOperationException at Long256Function.getDouble");
-        knownMasterCrashes.add("l2price UnsupportedOperationException at SymbolFunction.getDouble");
         knownMasterCrashes.add("l2price UnsupportedOperationException at UuidFunction.getDouble");
         // matmul over constant 1-D arrays asks for a second dimension.
         knownMasterCrashes.add("matmul AssertionError at ArrayView.getDimLen");
@@ -600,5 +651,11 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         addValue("'0.0.0.0'::ipv4", ColumnType.IPv4);
         addValue("0::decimal(9,2)", ColumnType.getDecimalType(9, 2));
         addValue("ARRAY[]::double[]", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+
+        // a sub-query over the first row reads NULLs, one over the last row reads values
+        for (String column : new String[]{"b", "sh", "i", "l", "f", "d", "dt", "ts", "tn", "s", "sym", "vc"}) {
+            cursors.add("(SELECT " + column + " FROM t LIMIT 1)");
+            cursors.add("(SELECT " + column + " FROM t LIMIT -1)");
+        }
     }
 }

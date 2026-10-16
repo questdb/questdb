@@ -97,8 +97,8 @@ final class CorrelationKeys implements Mutable {
 
     /**
      * True when the column of the source join can carry the outer column: no step that can emit the column as NULL
-     * matches depending on the outer row, and the join orders the column's input no later than the first step whose
-     * condition reads the outer column, or, when a step of the join null-extends its master, the first deferred input
+     * matches depending on the outer row, and the join orders the column's input no later than the first step that
+     * reads the outer column, or, when a step of the join null-extends its master, the first deferred input
      * that maps it. A step matches depending on the outer row when its ON condition reads an outer column, it is a
      * deferred nullable input, or it null-extends its master after a step that reads an outer column. Without a step
      * that null-extends its master, a deferred input joins after the input that provides its key instead.
@@ -304,8 +304,9 @@ final class CorrelationKeys implements Mutable {
 
     /**
      * The ordered position of the first step of the join that reads one of the outer columns: through its ON
-     * condition or key filter, through its post-join filter when the step precedes {@code filterLimit}, or, when
-     * {@code isDeferredRead}, as a deferred input that maps one of them. Integer.MAX_VALUE when no step does.
+     * condition, key filter or UNNEST arguments, through its post-join filter when the step precedes
+     * {@code filterLimit}, or, when {@code isDeferredRead}, as a deferred input that maps one of them.
+     * Integer.MAX_VALUE when no step does.
      */
     int firstOuterRead(JoinPlan join, IntList outerIds, int filterLimit, boolean isDeferredRead) {
         final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
@@ -318,8 +319,7 @@ final class CorrelationKeys implements Mutable {
         }
         for (int i = 0, n = Math.min(steps.size(), first); i < n; i++) {
             final JoinInput step = steps.getQuick(i);
-            if (ctx.readsAnyOuter(step.getOnResidual(), outerIds) || ctx.readsAnyOuter(step.getKeyFilter(), outerIds)
-                    || i < filterLimit && ctx.readsAnyOuter(step.getPostJoinFilter(), outerIds)) {
+            if (ctx.readsAnyOuter(step, outerIds) || i < filterLimit && ctx.readsAnyOuter(step.getPostJoinFilter(), outerIds)) {
                 return i;
             }
         }

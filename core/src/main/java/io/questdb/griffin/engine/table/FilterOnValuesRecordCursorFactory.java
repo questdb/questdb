@@ -89,7 +89,8 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             }
             if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
                 heapCursorUsed = false;
-                rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+                rowCursorFactory = orderByKeyColumn ? new KeyOrderedSequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx)
+                        : new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
             } else {
                 heapCursorUsed = true;
                 rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);

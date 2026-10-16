@@ -760,6 +760,38 @@ namespace questdb::avx2 {
         return {cmp_le(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
     }
 
+    jit_value_t cmp_not_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        reject_mask_operands(c, lhs, rhs);
+        auto dt = lhs.dtype();
+        auto dk = dst_kind(lhs, rhs);
+        auto mt = mask_type(dt);
+        return {cmp_not_lt(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
+    }
+
+    jit_value_t cmp_not_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        reject_mask_operands(c, lhs, rhs);
+        auto dt = lhs.dtype();
+        auto dk = dst_kind(lhs, rhs);
+        auto mt = mask_type(dt);
+        return {cmp_not_le(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
+    }
+
+    jit_value_t cmp_not_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        reject_mask_operands(c, lhs, rhs);
+        auto dt = lhs.dtype();
+        auto dk = dst_kind(lhs, rhs);
+        auto mt = mask_type(dt);
+        return {cmp_not_gt(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
+    }
+
+    jit_value_t cmp_not_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        reject_mask_operands(c, lhs, rhs);
+        auto dt = lhs.dtype();
+        auto dk = dst_kind(lhs, rhs);
+        auto mt = mask_type(dt);
+        return {cmp_not_ge(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
+    }
+
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
@@ -995,6 +1027,18 @@ namespace questdb::avx2 {
                 break;
             case opcodes::Le:
                 values.append(arena, cmp_le(c, lhs, rhs, ncheck));
+                break;
+            case opcodes::Not_Lt:
+                values.append(arena, cmp_not_lt(c, lhs, rhs, ncheck));
+                break;
+            case opcodes::Not_Le:
+                values.append(arena, cmp_not_le(c, lhs, rhs, ncheck));
+                break;
+            case opcodes::Not_Gt:
+                values.append(arena, cmp_not_gt(c, lhs, rhs, ncheck));
+                break;
+            case opcodes::Not_Ge:
+                values.append(arena, cmp_not_ge(c, lhs, rhs, ncheck));
                 break;
             case opcodes::Add:
                 values.append(arena, add(c, lhs, rhs, ncheck));

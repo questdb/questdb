@@ -92,5 +92,11 @@ public interface WindowContext {
 
     boolean isOrderedByDesignatedTimestamp();
 
+    /**
+     * Whether a window function factory read {@link #isOrderedByDesignatedTimestamp()} since the context was
+     * configured: the function it built requires its input in the order of the window.
+     */
+    boolean isTimestampOrderRead();
+
     void validate(int position, boolean supportTNullsDesc) throws SqlException;
 }

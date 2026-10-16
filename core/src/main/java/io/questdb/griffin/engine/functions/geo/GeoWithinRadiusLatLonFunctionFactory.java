@@ -252,21 +252,6 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof ConstCenterGeoWithinRadiusLatLonFunction that) {
-                return centerLat == that.centerLat
-                        && centerLon == that.centerLon
-                        && radius == that.radius
-                        && latFunc.isEquivalentTo(that.latFunc)
-                        && lonFunc.isEquivalentTo(that.lonFunc);
-            }
-            return false;
-        }
-
-        @Override
         public boolean isNonDeterministic() {
             return latFunc.isNonDeterministic() || lonFunc.isNonDeterministic();
         }
@@ -434,21 +419,6 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
                     && centerLatFunc.isConstant()
                     && centerLonFunc.isConstant()
                     && radiusFunc.isConstant();
-        }
-
-        @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof GeoWithinRadiusLatLonFunction that) {
-                return latFunc.isEquivalentTo(that.latFunc)
-                        && lonFunc.isEquivalentTo(that.lonFunc)
-                        && centerLatFunc.isEquivalentTo(that.centerLatFunc)
-                        && centerLonFunc.isEquivalentTo(that.centerLonFunc)
-                        && radiusFunc.isEquivalentTo(that.radiusFunc);
-            }
-            return false;
         }
 
         @Override

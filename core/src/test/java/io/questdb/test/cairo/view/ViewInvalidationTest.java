@@ -336,29 +336,24 @@ public class ViewInvalidationTest extends AbstractViewTest {
     }
 
     @Test
-    public void testPersistedLateralNegativeLimitViewFailsClosedAndCascades() throws Exception {
-        // Upgrade-break regression (intended break): older binaries accepted a negative LIMIT in a
-        // correlated lateral body and silently produced wrong rows -- LateralBinder.bindCorrelatedLimit rewrites the
-        // LIMIT into `__lateral_rn <= limit`, which is unsatisfiable for a negative bound. This
-        // binary rejects the shape, so a stored definition carrying it must fail visibly.
+    public void testPersistedLateralNegativePositiveLimitViewFailsClosedAndCascades() throws Exception {
+        // A correlated lateral body rejects LIMIT <negative>, <positive> at compile time, as the
+        // LIMIT operator does at run time, so a stored definition carrying it must fail visibly.
         assertPersistedLateralViewFailsClosed(
                 "select t1.ts, t1.k, l.c from " + TABLE1 + " t1 left join lateral ("
-                        + "select count() c from " + TABLE2 + " t2 where t2.k = t1.k limit -1) l on true",
-                "negative LIMIT is not supported in a correlated lateral sub-query"
+                        + "select count() c from " + TABLE2 + " t2 where t2.k = t1.k limit -1, 2) l on true",
+                "LIMIT <negative>, <positive> is not allowed"
         );
     }
 
     @Test
-    public void testPersistedLateralOuterColumnLimitViewFailsClosedAndCascades() throws Exception {
-        // The other half of the narrowed scalar-count contract: a run-time LIMIT reading an outer
-        // column cannot be evaluated in the outer projection, so the count compensation guard
-        // cannot be built and the stored definition must be rejected rather than silently
-        // dropping the compensation.
+    public void testPersistedLateralNonConstantUpperLimitViewFailsClosedAndCascades() throws Exception {
+        // A negative lower LIMIT bound counts from the end of each outer row's rows only over a
+        // constant upper bound, so a stored definition with a run-time upper bound must fail visibly.
         assertPersistedLateralViewFailsClosed(
                 "select t1.ts, t1.k, l.c from " + TABLE1 + " t1 left join lateral ("
-                        + "select count() c from " + TABLE2 + " t2 where t2.k = t1.k limit t1.v) l on true",
-                "LIMIT referencing an outer column is not supported over a scalar count "
-                        + "in a correlated lateral sub-query; use a constant or bind variable"
+                        + "select count() c from " + TABLE2 + " t2 where t2.k = t1.k limit -1, t1.v) l on true",
+                "negative LIMIT with a non-constant upper bound is not supported in a correlated lateral sub-query"
         );
     }
 

@@ -199,22 +199,6 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof ConstBoxGeoWithinBoxFunction that) {
-                return minX == that.minX
-                        && minY == that.minY
-                        && maxX == that.maxX
-                        && maxY == that.maxY
-                        && xFunc.isEquivalentTo(that.xFunc)
-                        && yFunc.isEquivalentTo(that.yFunc);
-            }
-            return false;
-        }
-
-        @Override
         public boolean isNonDeterministic() {
             return xFunc.isNonDeterministic() || yFunc.isNonDeterministic();
         }
@@ -342,22 +326,6 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
                     && minYFunc.isConstant()
                     && maxXFunc.isConstant()
                     && maxYFunc.isConstant();
-        }
-
-        @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof GeoWithinBoxFunction that) {
-                return xFunc.isEquivalentTo(that.xFunc)
-                        && yFunc.isEquivalentTo(that.yFunc)
-                        && minXFunc.isEquivalentTo(that.minXFunc)
-                        && minYFunc.isEquivalentTo(that.minYFunc)
-                        && maxXFunc.isEquivalentTo(that.maxXFunc)
-                        && maxYFunc.isEquivalentTo(that.maxYFunc);
-            }
-            return false;
         }
 
         @Override

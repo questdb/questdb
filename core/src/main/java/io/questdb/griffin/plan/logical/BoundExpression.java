@@ -65,6 +65,12 @@ public abstract sealed class BoundExpression implements Mutable
      */
     public static final int NO_RANDOM_ACCESS = 32;
     /**
+     * The window function of the call requires its input in the order of its window, which orders by the designated
+     * timestamp: its factory read whether the window orders by it. The binder records it from the window context, the
+     * function does not report it.
+     */
+    public static final int ORDERED_INPUT = 8192;
+    /**
      * The function, or a function under it, returns random values.
      */
     public static final int RANDOM = 16;

@@ -4440,10 +4440,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
 
-                    // while it's possible to declare ascending designated timestamp order, it's not possible to declare descending order
                     assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts desc range between 4 preceding and current row) from nodts timestamp(ts)".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
                             .noLeakCheck()
-                            .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
+                            .assertsPlanContaining("Frame backward scan on: nodts");
 
                     assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by j desc range between unbounded preceding and 10 microsecond preceding) ".replace("#FUNCT_NAME", func).replace("#COLUMN", column) +
                             "from tab order by ts desc")
@@ -4473,7 +4472,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                     assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by otherTs desc range 10 microsecond preceding) from tab timestamp(otherTs)".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
                             .noLeakCheck()
-                            .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
+                            .assertsPlanContaining("Frame backward scan on: tab");
                 }
             }
         });

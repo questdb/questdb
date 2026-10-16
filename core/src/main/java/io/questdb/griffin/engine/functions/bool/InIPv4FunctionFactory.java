@@ -123,9 +123,7 @@ public final class InIPv4FunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                    // SymbolFunction.getIPv4 is final and throws UnsupportedOperationException,
-                    // so SYMBOL elements must go through the type-agnostic string getter.
-                    set.add(SqlUtil.implicitCastStrAsIPv4(func.getStrA(null)));
+                    set.add(func.getIPv4(null));
                     break;
                 case ColumnType.VARCHAR:
                     set.add(SqlUtil.implicitCastStrAsIPv4(func.getVarcharA(null)));

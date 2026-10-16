@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -1388,6 +1388,55 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitBindVariablePastMaxNegativeLimit() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            // a filter learns a bind variable's value only once it runs, and past the most rows it holds it reads all
+            // of them forward and keeps the last ones
+            bindVariableService.clear();
+            bindVariableService.setLong(0, -5);
+            assertQuery("SELECT i FROM t WHERE i > 5 LIMIT $1")
+                    .noLeakCheck()
+                    .assertsPlanContaining("limit: -5", "Row forward scan");
+            final String[] filters = {
+                    "SELECT i FROM t WHERE i > 5",
+                    "SELECT * FROM (SELECT i FROM t WHERE i > 5)",
+                    "WITH a AS (SELECT i FROM t WHERE i > 5) SELECT * FROM a",
+            };
+            for (String query : filters) {
+                printSql(query);
+                final String all = sink.toString();
+                try (RecordCursorFactory factory = select(query + " LIMIT $1")) {
+                    for (long n : new long[]{-5, -3, -7}) {
+                        bindVariableService.setLong(0, n);
+                        assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns(lastRows(all, (int) -n));
+                    }
+                }
+            }
+            final String[] joins = {
+                    "SELECT a.ts, a.i, b.v FROM t a LEFT JOIN sp b ON a.l = b.l WHERE a.i > 5",
+                    "SELECT a.ts, a.i, b.v FROM (SELECT * FROM t WHERE i > 5) a LEFT JOIN sp b ON a.l = b.l",
+                    "SELECT a.ts, a.i, b.v FROM t a ASOF JOIN sp b ON (l) WHERE a.i > 5",
+                    "SELECT a.ts, a.i, b.v FROM (SELECT * FROM t WHERE i > 5) a ASOF JOIN sp b ON (l)",
+                    "SELECT a.ts, a.i, b.v FROM (SELECT * FROM t WHERE i > 5) a LT JOIN sp b ON (l)",
+            };
+            for (String query : joins) {
+                printSql(query);
+                final String all = sink.toString();
+                bindVariableService.setLong(0, -5);
+                try (RecordCursorFactory factory = select(query + " LIMIT $1")) {
+                    for (long n : new long[]{-5, -3, -7}) {
+                        bindVariableService.setLong(0, n);
+                        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().noRandomAccess().expectSize()
+                                .returns(lastRows(all, (int) -n));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNegativeLimitEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");
@@ -1792,6 +1841,215 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitOverJoinBuildsSlaveOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT (100 + x)::INT k FROM long_sequence(3))");
+            execute("CREATE TABLE sn AS (SELECT (2_000 + x)::INT k FROM long_sequence(3))");
+            // the slave filter counts the slave rows each build of the hash table reads; the master suffix grows from
+            // the last two filtered master rows to all of them before the join emits two rows
+            final String query = "SELECT m.i, s.k FROM m JOIN (SELECT k FROM s WHERE test_latched_counter()) s ON m.i = s.k WHERE m.i > 0 LIMIT -2";
+            assertSlaveRowReads(query, 3);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: s.k=m.i
+                                        Async JIT Filter workers: 1
+                                          limit: 2
+                                          filter: 0<i
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: m
+                                        Hash
+                                            Async Filter workers: 1
+                                              filter: test_latched_counter()
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: s
+                            """)
+                    .returns("""
+                            i\tk
+                            102\t102
+                            103\t103
+                            """);
+            final String noMatch = "SELECT m.i, s.k FROM m JOIN (SELECT k FROM sn WHERE test_latched_counter()) s ON m.i = s.k WHERE m.i > 0 LIMIT -1";
+            assertSlaveRowReads(noMatch, 3);
+            assertQuery(noMatch)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("i\tk\n");
+        });
+    }
+
+    @Test
+    public void testNegativeLimitOverJoinPastMaxNegativeLimitBuildsSlaveTwice() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT (100 + x)::INT k FROM long_sequence(3))");
+            // the last 100 filtered master rows, the most the master filter holds, join no slave row, so the join runs
+            // once more over all master rows
+            final String query = "SELECT m.i, s.k FROM m JOIN (SELECT k FROM s WHERE test_latched_counter()) s ON m.i = s.k WHERE m.i > 0 LIMIT -2";
+            assertSlaveRowReads(query, 6);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tk
+                            102\t102
+                            103\t103
+                            """);
+        });
+    }
+
+    @Test
+    public void testNegativeLimitOverJoinsReturnsLastJoinedRows() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, x % 7 l, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT (x * 37)::INT k, x % 7 l, x v, (x * 37_000_000 + 500_000)::TIMESTAMP ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            // each join emits rows for some master rows only, so a LIMIT reads a growing suffix of the master rows under
+            // the open join, and past the 100 rows the master filter holds, all of them
+            final String[] joins = {
+                    "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k WHERE m.l > 0",
+                    "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k AND m.l = s.l WHERE m.l > 0 AND s.v > 2",
+                    "SELECT m.i, s.v FROM m LEFT JOIN s ON m.i = s.k WHERE m.l > 0 AND s.v > 2",
+                    "SELECT m.i, s.v FROM m ASOF JOIN s ON (l) WHERE m.l > 0 AND s.v > 18",
+                    "SELECT m.i, s.v FROM m LT JOIN s ON (l) WHERE m.l > 0 AND s.v > 18",
+                    "SELECT m.i, s.v FROM m CROSS JOIN s WHERE m.l > 0 AND m.i = s.k + 1",
+                    "SELECT m.i, s.v FROM m JOIN s ON m.i > s.k AND m.i < s.k + 3 WHERE m.l > 0",
+            };
+            for (String join : joins) {
+                printSql(join);
+                final String all = sink.toString();
+                for (int n : new int[]{1, 3, 64, 100}) {
+                    final String query = join + " LIMIT -" + n;
+                    assertQuery(query).noLeakCheck().assertsPlanContaining("limit: " + n);
+                    assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(lastRows(all, n));
+                    assertQuery(query).noLeakCheck().noRandomAccess().expectSize().fullFatJoins().returns(lastRows(all, n));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNegativeLimitPastMaxNegativeLimitOverFilteredInputs() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            execute("CREATE TABLE c AS (SELECT x::INT c FROM long_sequence(2))");
+            // no filter can hold the last five rows, so each LIMIT reads all rows of its input
+            final String lastFive = """
+                    i
+                    16
+                    17
+                    18
+                    19
+                    20
+                    """;
+            assertQuery("SELECT * FROM (SELECT i FROM t WHERE i > 5) LIMIT -5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastFive);
+            assertQuery("SELECT i FROM t WHERE i > 5 LIMIT -5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastFive);
+            final String innerLastFive = """
+                    ts\tl\tv
+                    1970-01-01T00:00:15.000000Z\t0\t100
+                    1970-01-01T00:00:16.000000Z\t1\t102
+                    1970-01-01T00:00:17.000000Z\t2\t103
+                    1970-01-01T00:00:20.000000Z\t0\t101
+                    1970-01-01T00:00:20.000000Z\t0\t100
+                    """;
+            assertQuery("SELECT a.ts, a.l, b.v FROM (SELECT * FROM t WHERE i > 5) a JOIN sp b ON a.l = b.l LIMIT -5")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(innerLastFive);
+            assertQuery("WITH a AS (SELECT * FROM t WHERE i > 5) SELECT a.ts, a.l, b.v FROM a JOIN sp b ON a.l = b.l LIMIT -5")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(innerLastFive);
+            assertQuery("SELECT a.i, b.v FROM (SELECT * FROM t WHERE i > 5) a LEFT JOIN sp b ON a.l = b.l LIMIT -5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tv
+                            17\t103
+                            18\tnull
+                            19\tnull
+                            20\t101
+                            20\t100
+                            """);
+            assertQuery("SELECT a.i, c.c FROM (SELECT * FROM t WHERE i > 5) a CROSS JOIN c LIMIT -5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tc
+                            18\t2
+                            19\t1
+                            19\t2
+                            20\t1
+                            20\t2
+                            """);
+            assertQuery("SELECT a.i, b.v, c.c FROM (SELECT * FROM t WHERE i > 5) a JOIN sp b ON a.l = b.l CROSS JOIN c LIMIT -5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tv\tc
+                            17\t103\t2
+                            20\t101\t1
+                            20\t101\t2
+                            20\t100\t1
+                            20\t100\t2
+                            """);
+
+            // a filter learns a bind variable's value only once it runs, and reads all rows past the most it holds
+            bindVariableService.clear();
+            bindVariableService.setLong(0, -5);
+            assertQuery("SELECT a.ts, a.l, b.v FROM (SELECT * FROM t WHERE i > 5) a JOIN sp b ON a.l = b.l LIMIT $1")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(innerLastFive);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT $1")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(innerLastFive);
+            assertQuery("SELECT a.i, c.c FROM (SELECT * FROM t WHERE i > 5) a CROSS JOIN c LIMIT $1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tc
+                            18\t2
+                            19\t1
+                            19\t2
+                            20\t1
+                            20\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testNegativeLimitReachesAsOfJoinMasterUnderSlaveFilter() throws Exception {
         assertMemoryLeak(() -> {
             createJoinLimitTables();
@@ -1802,7 +2060,7 @@ public class LimitTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .withPlan("""
-                            Limit value: -3 skip-rows: 6 take-rows: 3
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
                                 SelectedRecord
                                     Filter filter: 100<b.v
                                         AsOf Join Fast
@@ -1829,7 +2087,7 @@ public class LimitTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .withPlan("""
-                            Limit value: -3 skip-rows: 6 take-rows: 3
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
                                 SelectedRecord
                                     Filter filter: 100<b.v
                                         Lt Join Light
@@ -1864,7 +2122,7 @@ public class LimitTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .withPlan("""
-                            Limit value: -3 skip-rows: 9 take-rows: 3
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
                                 SelectedRecord
                                     Hash Join Light
                                       condition: b.l=a.l
@@ -1998,7 +2256,7 @@ public class LimitTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .withPlan("""
-                            Limit value: -2 skip-rows: 1 take-rows: 2
+                            Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
                                 SelectedRecord
                                     Hash Join Light
                                       condition: k.ki=m.i
@@ -2038,9 +2296,35 @@ public class LimitTest extends AbstractCairoTest {
                             1970-01-01T00:00:20.000000Z\t0\t101
                             1970-01-01T00:00:20.000000Z\t0\t100
                             """);
+            // the master filter cannot hold the last five rows, so the LIMIT reads all rows of the join
             assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT -5")
                     .noLeakCheck()
-                    .fails(74, "absolute LIMIT value is too large, maximum allowed value: 4");
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: b.l=a.l
+                                        Async JIT Filter workers: 1
+                                          filter: 5<i
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:15.000000Z\t0\t100
+                            1970-01-01T00:00:16.000000Z\t1\t102
+                            1970-01-01T00:00:17.000000Z\t2\t103
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            1970-01-01T00:00:20.000000Z\t0\t100
+                            """);
         });
     }
 
@@ -2054,7 +2338,7 @@ public class LimitTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .withPlan("""
-                            Limit value: -3 skip-rows: 6 take-rows: 3
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
                                 SelectedRecord
                                     Filter filter: 100<b.v
                                         Hash Left Outer Join Light
@@ -2878,6 +3162,28 @@ public class LimitTest extends AbstractCairoTest {
         testLimit(expected, expected, query);
     }
 
+    private static void assertSlaveRowReads(String query, int expectedReads) throws SqlException {
+        TestLatchedCounterFunctionFactory.reset(null);
+        try (
+                RecordCursorFactory factory = select(query);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            while (cursor.hasNext()) {
+                cursor.getRecord();
+            }
+        }
+        Assert.assertEquals(expectedReads, TestLatchedCounterFunctionFactory.getCount());
+    }
+
+    private static String lastRows(String rows, int count) {
+        final int headerEnd = rows.indexOf('\n');
+        int start = rows.length() - 1;
+        for (int i = 0; i < count && start > headerEnd; i++) {
+            start = rows.lastIndexOf('\n', start - 1);
+        }
+        return rows.substring(0, headerEnd + 1) + rows.substring(start + 1);
+    }
+
     private static void setLimitBindVariable(int type, long value) throws SqlException {
         switch (type) {
             case ColumnType.LONG -> bindVariableService.setLong(0, value);
@@ -2913,18 +3219,8 @@ public class LimitTest extends AbstractCairoTest {
                     " from long_sequence(100)" +
                     ") timestamp(timestamp)");
 
-            String expectedMessage = "absolute LIMIT value is too large, maximum allowed value: " + maxLimit;
-            int expectedPosition = 34;
-
-            String query = "select * from y where i > 0 limit -" + (maxLimit + 1);
-            try (final RecordCursorFactory factory = select(query)) {
-                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    Assert.fail();
-                }
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
-                Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
-            }
+            // the filter cannot hold the last rows a constant past the maximum selects, so the LIMIT reads all rows
+            assertRowCount("select * from y where i > 0 limit -" + (maxLimit + 1), 100);
 
             // Numbers.LONG_NULL IS Long.MIN_VALUE, so that bit pattern is not a negative limit of
             // magnitude 2^63 - it is a NULL limit, which means "no limit". The unfiltered path has
@@ -2941,15 +3237,9 @@ public class LimitTest extends AbstractCairoTest {
             assertRowCount("select * from y where i > 0 limit null::long", 100);
             assertRowCount("select * from y limit null::long", 100);
 
-            // A genuinely over-large negative limit is still rejected.
-            String tooLarge = "select * from y where i > 0 limit -" + (maxLimit + 1);
-            try (final RecordCursorFactory factory = select(tooLarge)) {
-                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    Assert.fail();
-                }
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
-            }
+            // past the maximum, a filter given a bind variable's value reads all rows and keeps the last ones
+            sqlExecutionContext.getBindVariableService().setLong("lim", -(maxLimit + 1));
+            assertRowCount("select * from y where i > 0 limit :lim", 100);
         });
     }
 

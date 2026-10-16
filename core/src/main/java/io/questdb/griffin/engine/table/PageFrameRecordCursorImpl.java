@@ -44,10 +44,14 @@ import org.jetbrains.annotations.Nullable;
 public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final boolean entityCursor;
     private final Function filter;
+    private final @Nullable KeyOrderedRowCursorFactory keyOrderedFactory;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
+    private int keyCount;
+    private int keyHi;
+    private int keyLo;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
     private RowCursor rowCursor;
     private long rowsProducedSinceSkip;
@@ -62,6 +66,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     ) {
         super(configuration, metadata);
         this.rowCursorFactory = rowCursorFactory;
+        this.keyOrderedFactory = rowCursorFactory instanceof KeyOrderedRowCursorFactory keyOrdered ? keyOrdered : null;
         this.entityCursor = entityCursor;
         this.filter = filter;
     }
@@ -77,6 +82,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (!frameCursor.supportsSizeCalculation()
                 || filter != null
                 || rowCursorFactory.isUsingIndex()
+                || keyCount > 1
                 || frameCursor.hasActivePushdownFilter()) {
             while (hasNext()) {
                 counter.inc();
@@ -130,7 +136,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             }
 
             PageFrame frame;
-            while ((frame = frameCursor.next()) != null) {
+            while ((frame = nextFrame()) != null) {
                 // Consult the breaker once per page frame, so a long multi-frame scan stays cancellable.
                 // Use the time-throttled variant rather than the count-throttled statefulThrowExceptionIfTripped()
                 // (whose 2M-consultation window would skip ~2M frames between real checks, disabling mid-scan
@@ -146,7 +152,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 final int inFrameHi = (int) Math.min(Math.min(frameSize, remaining), Integer.MAX_VALUE);
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++, inFrameHi);
                 rowCursor = Misc.free(rowCursor);
-                rowCursor = rowCursorFactory.getCursor(frame, frameMemory);
+                rowCursor = keyCount > 1 ? keyOrderedFactory.getCursor(frame, frameMemory, keyLo, keyHi)
+                        : rowCursorFactory.getCursor(frame, frameMemory);
                 if (rowCursor.hasNext()) {
                     recordA.init(frameMemory);
                     recordA.setRowIndex(rowCursor.next());
@@ -230,7 +237,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         //   so the metadata-only frame-size accounting below would count physical rows the cursor
         //   never yields and land the skip short (re-reading already-consumed rows). The row-by-row
         //   walk skips exactly the rows hasNext() yields, matching the pruned scan.
-        if (filter != null || rowCursorFactory.isUsingIndex() || frameCursor.hasActivePushdownFilter()) {
+        if (filter != null || rowCursorFactory.isUsingIndex() || keyCount > 1 || frameCursor.hasActivePushdownFilter()) {
             // hasNext() charges every row it yields against the clamp, but the rows this loop
             // walks are the skip itself, not reads after it. So walk unclamped and arm the
             // clamp only once the skip lands, mirroring ReadParquetRecordCursor.isInSkipRows.
@@ -311,12 +318,32 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         isExhausted = false;
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
+        keyLo = 0;
+        keyHi = Math.min(keyCount, 1);
         super.toTop();
+    }
+
+    /**
+     * The next page frame. A read ordered by keys passes over the page frames once for each key, or, when there is a
+     * single page frame, once for the first key and once for all the others.
+     */
+    private @Nullable PageFrame nextFrame() {
+        PageFrame frame = frameCursor.next();
+        while (frame == null && keyHi < keyCount && frameCount > 0) {
+            keyLo = keyHi;
+            keyHi = frameCount > 1 ? keyHi + 1 : keyCount;
+            super.toTop();
+            frame = frameCursor.next();
+        }
+        return frame;
     }
 
     private void prepareRowCursorFactory() {
         if (!areCursorsPrepared) {
             rowCursorFactory.prepareCursor(frameCursor);
+            keyCount = keyOrderedFactory != null ? keyOrderedFactory.getKeyCount() : 0;
+            keyLo = 0;
+            keyHi = Math.min(keyCount, 1);
             areCursorsPrepared = true;
         }
     }

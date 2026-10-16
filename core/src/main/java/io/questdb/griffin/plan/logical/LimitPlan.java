@@ -82,7 +82,7 @@ public final class LimitPlan extends ForwardingPlan {
         OPERATOR,
         /**
          * A LIMIT operator over a join whose master's parallel filter returns the master's last rows: when the join
-         * emits fewer rows than a negative LIMIT selects, the operator runs the join again over more master rows,
+         * emits fewer rows than a negative LIMIT selects, the operator rewinds the join over more master rows,
          * until it emits enough or reads them all, see {@link PlanToFactoryRules#masterSuffixJoin}.
          */
         MASTER_SUFFIX,

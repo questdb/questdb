@@ -425,12 +425,14 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public boolean supportsTimeFrameCursor() {
         // Time frames are supported only for full table scan cursors, i.e. "x" queries, that designate
-        // the table's own timestamp: the frames follow its partitions.
+        // the table's own timestamp, or any timestamp of a table that has none: the frames follow the
+        // table's partitions, and a table without a designated timestamp has only one.
         final int timestampIndex = getMetadata().getTimestampIndex();
+        final int tableTimestampIndex = partitionFrameCursorFactory.getMetadata().getTimestampIndex();
         return framingSupported && supportsRandomAccess
                 && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex()
                 && timestampIndex != -1
-                && columnIndexes.getQuick(timestampIndex) == partitionFrameCursorFactory.getMetadata().getTimestampIndex()
+                && (tableTimestampIndex == -1 || columnIndexes.getQuick(timestampIndex) == tableTimestampIndex)
                 && partitionFrameCursorFactory.getOrder() == ORDER_ASC
                 && filter == null;
     }

@@ -95,6 +95,27 @@ public class StrCursorFunctionFactoryTest extends AbstractCursorFunctionFactoryT
     }
 
     @Test
+    public void testNotNegatesEquality() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("""
+                    SELECT id, NOT (s = (SELECT s FROM t WHERE id = 2)) n_eq, NOT (vc != (SELECT vc FROM t WHERE id = 2)) n_ne,
+                        NOT (sym = (SELECT sym FROM t WHERE id = 4)) n_null
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id	n_eq	n_ne	n_null
+                            1	true	false	true
+                            2	false	true	true
+                            3	true	false	true
+                            4	true	false	false
+                            """);
+        });
+    }
+
+    @Test
     public void testNullAndEmptySubQuery() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

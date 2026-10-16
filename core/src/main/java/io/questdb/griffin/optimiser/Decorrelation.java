@@ -80,27 +80,33 @@ import static io.questdb.griffin.optimiser.ScalarCompensation.*;
  * the body itself and reads no aggregate, or when every outer column of the block is equated), or by a
  * decorrelation domain: the distinct values of the outer columns, read from a copy of the master input or
  * prefix, joined to the block's source. The satisfying column flows up the body as a hidden column:
- * aggregates group by it, windows partition by it, a LIMIT becomes a per-key row number, LATEST ON a per-key
- * ranking, set-operation branches align on it. The step joins on outer column = exposed column.
+ * aggregates group by it, windows partition by it, a LIMIT becomes a per-key row number (and row count, for a
+ * negative constant bound), LATEST ON a per-key ranking, set-operation branches align on it. The step joins on
+ * outer column = exposed column. A key may belong to no outer row, so the body's ranking only substitutes NULL
+ * for a non-constant LIMIT bound, and the step rejects a negative one per outer row. A window or horizon join is a
+ * block source whose master and slaves are blocks of their own: each slave joins the master on the columns that
+ * satisfy the outer columns it reads, through a window join step filter or a horizon join key.
  * <p>
  * A keyless aggregate yields one row even over no rows. For the body itself, or a body that wraps it in
  * null-propagating arithmetic, the step becomes a LEFT join and a projection over the join restores the
- * empty-input values (zero for counts), applies the body's LIMIT and, for a LEFT LATERAL with an ON condition,
- * that condition over the restored values; when a later step null-extends the step, a row marker of the inputs
- * before it keeps those rows NULL. Consumers of the join read the projection's renamed columns. In the
+ * empty-input values (zero for counts). A LEFT LATERAL applies the body's LIMIT and its ON condition over the
+ * restored values; any other LATERAL filters the joined rows on them, or keeps its join when its ON or WHERE
+ * drops the empty row. Either evaluates the LIMIT per outer row, which the body then does not rank. When a later
+ * step null-extends the step, a row marker of the inputs before it keeps those rows NULL. Consumers of the join
+ * read the projection's renamed columns; a later step that reads the body's values through its keys, ON condition
+ * or own body precedes that projection, so the body then restores them itself. In the
  * body of a LEFT LATERAL, a count joined without a condition joins LEFT to the column its outer columns map to
  * and the body's projection restores its values. A WHERE or ON that drops the empty row needs no restoring.
  * Any other keyless aggregate restores its empty values with a LEFT join from its own domain.
  */
 final class Decorrelation implements OptimiserPass {
-    private static final String HORIZON_SLAVE_CORRELATION = "outer column reference in a HORIZON JOIN slave is not supported in a LATERAL sub-query";
     private static final String SOURCE_CORRELATION = "outer column reference in this source is not supported in a LATERAL sub-query";
-    private static final String STANDALONE_UNNEST_CORRELATION = "outer column reference in UNNEST without a table before it is not supported in a LATERAL sub-query";
     private static final ExpressionVisitor NON_NULLABLE_OUTER_COLUMNS = expression -> expression instanceof OuterColumnExpression outer
             && (ColumnType.isArray(outer.getDataType()) || ColumnType.isGeoHash(outer.getDataType()) || ColumnType.isCursor(outer.getDataType()))
             ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private static final ExpressionVisitor UNLIFTABLE_NODES = expression -> expression instanceof FunctionExpression call && (call.isWindow() || call.isAggregate())
             || expression instanceof CursorExpression ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    private final PlanVisitor bodyOuterReads = this::findBodyOuterColumn;
     private final OuterJoinCarriers carriers;
     private final ScalarCompensation compensation;
     private final DecorrelationContext ctx;
@@ -117,6 +123,7 @@ final class Decorrelation implements OptimiserPass {
     private int liftBase;
     private final ConjunctTest bodyConjuncts = this::keepsBodyConjunct;
     private JoinPlan pendingJoin;
+    private OutputSchema readBody;
 
     Decorrelation(
             OptimiserContext context,
@@ -165,6 +172,7 @@ final class Decorrelation implements OptimiserPass {
         liftedSelections.clear();
         branchTop = null;
         pendingJoin = null;
+        readBody = null;
         ctx.clear();
         domains.clear();
         keys.clear();
@@ -351,7 +359,8 @@ final class Decorrelation implements OptimiserPass {
                 }
                 ctx.tmpColumnIds.setPos(keyedBase);
             }
-            return rewriter.rewriteChain(source, chainBase, base, isBodyTop || isBranch);
+            final boolean isUncompensated = isBranch || isBodyTop && !isBodyReadLater(ctx.master, ctx.master.getInputs().getQuick(ctx.masterLimit));
+            return rewriter.rewriteChain(source, chainBase, base, isUncompensated);
         } finally {
             ctx.chain.setPos(chainBase);
             ctx.chainOuterIds.setPos(chainOuterBase);
@@ -427,9 +436,6 @@ final class Decorrelation implements OptimiserPass {
                 final int lastMasterNulling = LogicalPlans.lastMasterNullingStep(join);
                 for (int i = 0, n = join.getInputs().size(); i < n; i++) {
                     final JoinInput input = join.getInputs().getQuick(i);
-                    if (input.getUnnest() != null && input.getUnnest().isStandalone() && readsMasterOuterColumn(input.getUnnest().getExpressions())) {
-                        throw SqlException.$(input.getPosition(), STANDALONE_UNNEST_CORRELATION);
-                    }
                     if (input.getInput() != null && hasMasterOuterColumn(input.getInput())) {
                         final int inputBase = ctx.mappedOuterIds.size();
                         final ProjectPlan driven = i > 0 && consumer != null && LogicalPlans.orderedSteps(join).indexOf(input) > lastMasterNulling
@@ -464,21 +470,9 @@ final class Decorrelation implements OptimiserPass {
             case SetOperationPlan operation -> {
                 return decorrelateSetOperation(operation, base);
             }
-            case WindowJoinPlan windowJoin -> {
-                windowJoin.replaceInput(0, decorrelateBlock(windowJoin.getMaster(), false, base));
-                decorrelateWindowJoinSteps(windowJoin, base);
-                return windowJoin;
-            }
-            case HorizonJoinPlan horizon -> {
-                final ObjList<HorizonJoinSlave> slaves = horizon.getSlaves();
-                for (int i = 0, n = slaves.size(); i < n; i++) {
-                    if (hasMasterOuterColumn(slaves.getQuick(i).getInput())) {
-                        throw SqlException.$(slaves.getQuick(i).getPosition(), HORIZON_SLAVE_CORRELATION);
-                    }
-                }
-                horizon.replaceInput(0, decorrelateBlock(horizon.getMaster(), false, base));
-                ctx.realign(horizon);
-                return horizon;
+            case WindowJoinPlan _, HorizonJoinPlan _ -> {
+                decorrelateTemporalJoin(source, base);
+                return source;
             }
             case UnaryPlan block -> {
                 return decorrelateBlock(block, false, base);
@@ -515,14 +509,14 @@ final class Decorrelation implements OptimiserPass {
             liftedSelections.clear();
             markedSelectionIds.clear();
             final LimitPlan limit = step.getInput() instanceof LimitPlan l ? l : null;
-            final BoundExpression outerLimit = limit == null ? null : outerLimit(limit);
             final BoundExpression limitLo = limit == null ? null : limit.getLo();
             final BoundExpression limitHi = limit == null ? null : limit.getHi();
             final boolean isLeft = step.getJoinType() == JoinKind.LEFT_OUTER;
             final int conditionKeyCount = step.getMasterKeyColumnIds().size();
             final boolean isTrivialCondition = conditionKeyCount == 0 && isTrue(step.getOnResidual());
             final ProjectPlan rejecting = isLeft ? null : compensation.zeroRejectingScalar(step.getInput());
-            final ProjectPlan wrapped = isLeft || !isTrivialCondition || rejecting != null ? null : compensation.wrappedScalar(step.getInput());
+            final ProjectPlan wrapped = isLeft || !isTrivialCondition || rejecting != null || isBodyReadLater(join, step) ? null
+                    : compensation.wrappedScalar(step.getInput());
             if (rejecting != null || wrapped != null) {
                 compensation.uncompensatedScalars.add(rejecting != null ? rejecting : wrapped);
             }
@@ -531,9 +525,6 @@ final class Decorrelation implements OptimiserPass {
             step.setInput(body);
             final ProjectPlan scalarBody = wrapped != null ? compensation.wrappedBody(body, wrapped) : compensation.scalarBody(body);
             if (scalarBody != null && wrapped == null) {
-                if (outerLimit != null && compensation.hasZeroOnEmptyColumn(scalarBody)) {
-                    throw SqlException.$(outerLimit.getPosition(), OUTER_LIMIT_OVER_COUNT);
-                }
                 compensation.exposeCarriers(scalarBody);
                 ctx.realignAbove(body, scalarBody);
             }
@@ -556,16 +547,19 @@ final class Decorrelation implements OptimiserPass {
             join.addMissingInputColumns();
             if (scalarBody != null) {
                 final BoundExpression guard = limit == null ? null : compensation.limitGuard(ctx.masterExpression(limitLo), ctx.masterExpression(limitHi), join.getOutput());
-                if (!isLeft && isTrivialCondition) {
-                    step.setJoinType(JoinKind.LEFT_OUTER);
-                    compensation.compensateStep(step, scalarBody, base, null, null);
-                    if (!isTrue(guard)) {
-                        step.setPostJoinFilter(ctx.context.getRewriter().combineConjunction(step.getPostJoinFilter(), guard, guard.getPosition()));
-                    }
+                if (isLeft) {
+                    compensation.compensateStep(step, scalarBody, base, guard, keys.stepCondition(join, step, conditionKeyCount));
                 } else {
-                    compensation.compensateStep(step, scalarBody, base, guard, isLeft ? keys.stepCondition(join, step, conditionKeyCount) : null);
+                    if (!compensation.isEmptyRowRejected(step, scalarBody)) {
+                        final BoundExpression condition = keys.stepCondition(join, step, conditionKeyCount);
+                        step.setJoinType(JoinKind.LEFT_OUTER);
+                        compensation.compensateStep(step, scalarBody, base, null, null);
+                        filterStep(step, condition);
+                    }
+                    filterStep(step, guard);
                 }
             }
+            filterStep(step, compensation.takeBoundChecks());
             ctx.mappedOuterIds.setPos(base);
             ctx.mappedColumnIds.setPos(base);
         } finally {
@@ -578,15 +572,17 @@ final class Decorrelation implements OptimiserPass {
     }
 
     /**
-     * Rewrites the slaves of the window join's steps. Each step joins its slave's rows on the columns that satisfy the
-     * outer columns the slave reads: the master's, or those of a domain crossed with the master, which the step's own
-     * reads of outer columns read as well.
+     * Rewrites a window or horizon join: its master as a block, then each slave that reads outer columns. A slave joins
+     * the master on the columns that satisfy the outer columns it maps: the master's, or those of a domain crossed with
+     * the master, which the join's own reads of outer columns read as well. A window join step filters on their
+     * equality; a horizon join slave keys on them.
      */
-    private void decorrelateWindowJoinSteps(WindowJoinPlan windowJoin, int base) throws SqlException {
+    private void decorrelateTemporalJoin(LogicalPlan join, int base) throws SqlException {
+        join.replaceInput(0, decorrelateBlock(join.inputAt(0), false, base));
         final int slaveBase = ctx.mappedOuterIds.size();
-        for (int i = 1, n = windowJoin.inputCount(); i < n; i++) {
-            if (hasMasterOuterColumn(windowJoin.inputAt(i))) {
-                windowJoin.replaceInput(i, decorrelateBlock(windowJoin.inputAt(i), false, ctx.mappedOuterIds.size()));
+        for (int i = 1, n = join.inputCount(); i < n; i++) {
+            if (hasMasterOuterColumn(join.inputAt(i))) {
+                join.replaceInput(i, decorrelateBlock(join.inputAt(i), false, ctx.mappedOuterIds.size()));
             }
         }
         final int domainBase = ctx.mappedOuterIds.size();
@@ -595,36 +591,46 @@ final class Decorrelation implements OptimiserPass {
             addUnmappedOuterId(ctx.mappedOuterIds.getQuick(i), base, slaveBase);
         }
         final int readBase = ctx.tmpColumnIds.size();
-        ctx.outerColumnReads.collect(windowJoin, ctx.tmpColumnIds);
+        ctx.outerColumnReads.collect(join, ctx.tmpColumnIds);
         for (int i = readBase, n = ctx.tmpColumnIds.size(); i < n; i++) {
             addUnmappedOuterId(ctx.tmpColumnIds.getQuick(i), base, slaveBase);
         }
         ctx.tmpColumnIds.setPos(readBase);
-        final int position = windowJoin.getPosition();
+        final int position = join.getPosition();
         if (domains.domainOuterIds.size() > 0) {
-            windowJoin.replaceInput(0, domains.crossDomain(windowJoin.getMaster(), domains.buildDomain(position), position));
+            join.replaceInput(0, domains.crossDomain(join.inputAt(0), domains.buildDomain(position), position));
         }
-        ctx.realign(windowJoin);
-        final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
+        ctx.realign(join);
         for (int i = slaveBase; i < domainBase; i++) {
             final int outerId = ctx.mappedOuterIds.getQuick(i);
             final int slaveId = ctx.mappedColumnIds.getQuick(i);
             final int masterId = ctx.mappedColumn(outerId, base, slaveBase) > -1 ? ctx.mappedColumn(outerId, base, slaveBase)
                     : ctx.mappedColumn(outerId, domainBase, ctx.mappedOuterIds.size());
-            int s = 0;
-            while (steps.getQuick(s).getSlave().getOutput().getColumnIndexById(slaveId) < 0) {
+            int s = 1;
+            while (join.inputAt(s).getOutput().getColumnIndexById(slaveId) < 0) {
                 s++;
             }
-            final WindowJoinStep step = steps.getQuick(s);
-            final OutputSchema scope = step.getScope();
-            final BoundExpression equality = ctx.context.bindCall("=", position, ctx.column(scope, slaveId, position), ctx.column(scope, masterId, position), scope);
-            step.setFilter(step.getFilter() == null ? equality : ctx.context.getRewriter().combineConjunction(step.getFilter(), equality, position));
+            switch (join) {
+                case WindowJoinPlan windowJoin -> {
+                    final WindowJoinStep step = windowJoin.getSteps().getQuick(s - 1);
+                    final OutputSchema scope = step.getScope();
+                    final BoundExpression equality = ctx.context.bindCall("=", position, ctx.column(scope, slaveId, position), ctx.column(scope, masterId, position), scope);
+                    step.setFilter(step.getFilter() == null ? equality : ctx.context.getRewriter().combineConjunction(step.getFilter(), equality, position));
+                }
+                case HorizonJoinPlan horizon -> {
+                    final HorizonJoinSlave slave = horizon.getSlaves().getQuick(s - 1);
+                    slave.getMasterKeyColumnIds().add(masterId);
+                    slave.getSlaveKeyColumnIds().add(slaveId);
+                    slave.getKeyPositions().add(slave.getPosition());
+                }
+                default -> throw new IllegalStateException("not a window or horizon join");
+            }
         }
         for (int i = domainBase - 1; i >= slaveBase; i--) {
             ctx.mappedOuterIds.removeIndex(i);
             ctx.mappedColumnIds.removeIndex(i);
         }
-        ctx.remapMapped(windowJoin, base);
+        ctx.remapMapped(join, base);
     }
 
     private void exposeLiftedColumns(ProjectPlan project, BoundExpression expression) {
@@ -654,6 +660,26 @@ final class Decorrelation implements OptimiserPass {
         ctx.tmpColumnIds.setPos(columnBase);
     }
 
+    /**
+     * Adds the condition, unless it holds on every row, to the post-join filter of the step.
+     */
+    private void filterStep(JoinInput step, BoundExpression condition) throws SqlException {
+        if (!isTrue(condition)) {
+            step.setPostJoinFilter(ctx.context.getRewriter().combineConjunction(step.getPostJoinFilter(), condition, condition.getPosition()));
+        }
+    }
+
+    private int findBodyOuterColumn(LogicalPlan plan) {
+        final int base = ctx.tmpColumnIds.size();
+        ctx.outerColumnReads.collect(plan, ctx.tmpColumnIds);
+        boolean isFound = false;
+        for (int i = base, n = ctx.tmpColumnIds.size(); i < n && !isFound; i++) {
+            isFound = readBody.getColumnIndexById(ctx.tmpColumnIds.getQuick(i)) > -1;
+        }
+        ctx.tmpColumnIds.setPos(base);
+        return isFound ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    }
+
     private int findMasterOuterColumn(LogicalPlan plan) {
         final int base = ctx.tmpColumnIds.size();
         ctx.outerColumnReads.collect(plan, ctx.tmpColumnIds);
@@ -677,6 +703,35 @@ final class Decorrelation implements OptimiserPass {
 
     private boolean hasMasterOuterColumn(LogicalPlan plan) {
         return !plan.walkTopDown(masterOuterReads);
+    }
+
+    /**
+     * True when a step after {@code step} reads a column of its body through its join keys, key filter or ON
+     * condition, or as an outer column of its own body: such a read precedes the projection over the join, so the
+     * body restores its own values over no rows.
+     */
+    private boolean isBodyReadLater(JoinPlan join, JoinInput step) {
+        final OutputSchema body = step.getInput().getOutput();
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+        for (int i = steps.indexOf(step) + 1, n = steps.size(); i < n; i++) {
+            final JoinInput input = steps.getQuick(i);
+            final IntList masterKeys = input.getMasterKeyColumnIds();
+            for (int k = 0, m = masterKeys.size(); k < m; k++) {
+                if (body.getColumnIndexById(masterKeys.getQuick(k)) > -1) {
+                    return true;
+                }
+            }
+            if (ctx.readsAnyColumn(input.getOnResidual(), body) || ctx.readsAnyColumn(input.getKeyFilter(), body)) {
+                return true;
+            }
+            readBody = body;
+            final boolean isRead = input.isDependent() && input.getInput() != null && !input.getInput().walkTopDown(bodyOuterReads);
+            readBody = null;
+            if (isRead) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -843,15 +898,6 @@ final class Decorrelation implements OptimiserPass {
         return entry.toImmutable();
     }
 
-    private boolean readsMasterOuterColumn(ObjList<BoundExpression> expressions) {
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            if (ctx.readsAnyOuter(expressions.getQuick(i), ctx.masterOuterIds)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /**
      * Satisfies the outer columns the block chain reads and the mapping does not: by WHERE equalities when
      * the block allows it, otherwise by a domain joined to the block source.
@@ -927,9 +973,7 @@ final class Decorrelation implements OptimiserPass {
             return crossed;
         }
         if (keys.deferredInputs.size() > deferredBase || LogicalPlans.hasBarrierInput(join)) {
-            final JoinInput first = join.getOrderedInputs().getQuick(0);
-            first.setInput(domains.crossDomain(first.getInput(), domain, source.getPosition()));
-            join.addMissingInputColumns();
+            domains.crossInto(join, join.getOrderedInputs().getQuick(0), domain, source.getPosition());
         } else {
             final int inputCount = join.getInputs().size();
             final JoinInput step = domains.insertDomainStep(join, domain, join.getOrderedInputs().size(), source.getPosition());

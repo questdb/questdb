@@ -144,11 +144,6 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isEquivalentTo(Function other) {
-            return other instanceof ConstNaNFunction;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val("NaN");
         }
@@ -238,20 +233,6 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
         @Override
         public boolean isConstant() {
             return lat2Func.isConstant() && lon2Func.isConstant();
-        }
-
-        @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof ConstPoint1GeoDistanceFunction that) {
-                return lat1 == that.lat1
-                        && lon1 == that.lon1
-                        && lat2Func.isEquivalentTo(that.lat2Func)
-                        && lon2Func.isEquivalentTo(that.lon2Func);
-            }
-            return false;
         }
 
         @Override
@@ -389,20 +370,6 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
                     && lon1Func.isConstant()
                     && lat2Func.isConstant()
                     && lon2Func.isConstant();
-        }
-
-        @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof GeoDistanceFunction that) {
-                return lat1Func.isEquivalentTo(that.lat1Func)
-                        && lon1Func.isEquivalentTo(that.lon1Func)
-                        && lat2Func.isEquivalentTo(that.lat2Func)
-                        && lon2Func.isEquivalentTo(that.lon2Func);
-            }
-            return false;
         }
 
         @Override

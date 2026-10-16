@@ -40,6 +40,32 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoalesceCharOrSymbolBeforeUuidOrIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT 'a'::char c, 'abc' s, 'abc'::symbol sym, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid u, '1.2.3.4'::ipv4 ip
+                        FROM long_sequence(1)
+                    )""");
+            assertQuery("SELECT coalesce(null::varchar, 'a', null::uuid)")
+                    .noLeakCheck()
+                    .fails(31, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+            assertQuery("SELECT coalesce(s, c, u) FROM t")
+                    .noLeakCheck()
+                    .fails(19, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+            assertQuery("SELECT coalesce(s, sym, u) FROM t")
+                    .noLeakCheck()
+                    .fails(19, "inconvertible types: SYMBOL -> UUID [from=SYMBOL, to=UUID]");
+            assertQuery("SELECT coalesce(s, c, ip) FROM t")
+                    .noLeakCheck()
+                    .fails(19, "inconvertible types: CHAR -> IPv4 [from=CHAR, to=IPv4]");
+            assertQuery("SELECT coalesce(s, sym, ip) FROM t")
+                    .noLeakCheck()
+                    .fails(19, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+        });
+    }
+
+    @Test
     public void testCoalesceDecimal128() throws Exception {
         assertQuery("select coalesce(null::decimal(24, 1), 12.34m) c")
                 .noLeakCheck()

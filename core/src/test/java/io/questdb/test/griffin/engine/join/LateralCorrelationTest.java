@@ -1402,6 +1402,126 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOverCorrelatedSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            execute("INSERT INTO o VALUES (5, NULL)");
+            execute("INSERT INTO e VALUES (9, NULL, 'a', '2024-01-01T08:00:00.000000Z')");
+            execute("INSERT INTO q VALUES ('a', NULL, 50.0, '2024-01-01T07:30:00.000000Z')");
+            final String keyedBody = "SELECT count() n, sum(q.bid) b FROM e HORIZON JOIN (SELECT * FROM q WHERE k = %1$s) q ON (s) LIST (0) AS h WHERE e.k = %1$s";
+            assertOverCorrelatedHorizonSlave(
+                    keyedBody,
+                    """
+                            id\tn\tb
+                            1\t3\t10.0
+                            2\t3\t40.0
+                            3\t2\t30.0
+                            4\t0\tnull
+                            5\t1\t50.0
+                            """
+            );
+            assertOverCorrelatedHorizonSlave(
+                    "SELECT count() n, sum(q.bid) b FROM e HORIZON JOIN (SELECT * FROM q WHERE k = %1$s) q LIST (0) AS h WHERE e.k = %1$s",
+                    """
+                            id\tn\tb
+                            1\t3\t50.0
+                            2\t3\t60.0
+                            3\t2\t60.0
+                            4\t0\tnull
+                            5\t1\t50.0
+                            """
+            );
+            assertOverCorrelatedHorizonSlave(
+                    "SELECT count() n, sum(q.bid) b, sum(r.bid) rb FROM e HORIZON JOIN (SELECT * FROM q WHERE k = %1$s) q ON (s) HORIZON JOIN q r ON (s) LIST (0) AS h WHERE e.k = %1$s",
+                    """
+                            id\tn\tb\trb
+                            1\t3\t10.0\t30.0
+                            2\t3\t40.0\t70.0
+                            3\t2\t30.0\t50.0
+                            4\t0\tnull\tnull
+                            5\t1\t50.0\t50.0
+                            """
+            );
+            final String groupedBody = "SELECT e.x, sum(q.bid) b FROM e HORIZON JOIN (q WHERE k = %1$s) q ON (s) LIST (0) AS h WHERE e.k = %1$s";
+            final String groupedRows = """
+                    1\t1\tnull
+                    1\t2\tnull
+                    1\t7\t10.0
+                    2\t3\tnull
+                    2\t4\t20.0
+                    2\t8\t20.0
+                    3\t5\t30.0
+                    3\t6\tnull
+                    """;
+            assertOverCorrelatedHorizonSlave(groupedBody, "id\tx\tb\n" + groupedRows + "5\t9\t50.0\n");
+            assertQuery("SELECT o.id, d.* FROM o LEFT JOIN LATERAL (" + groupedBody.formatted("o.k") + ") d ON true ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .returns("id\tx\tb\n" + groupedRows + "4\tnull\tnull\n5\t9\t50.0\n");
+            assertQuery("SELECT o.id, d.n, d.b FROM o JOIN LATERAL (" + keyedBody.formatted("o.k") + ") d")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [o.id, coalesce(d.n, 0) AS n, d.b]
+                              Join
+                                Master o
+                                  Scan
+                                    table: o
+                                    columns: [id, k]
+                                LEFT d
+                                  keys: [d.__qdb_outer_ref__0_k = o.k]
+                                  Project
+                                    columns: [n, b, __qdb_outer_ref__0_k]
+                                    Aggregate
+                                      keys: [k AS __qdb_outer_ref__0_k]
+                                      values: [count() AS n, sum(bid) AS b]
+                                      HorizonJoin
+                                        offsets: [0]
+                                        Scan
+                                          table: e
+                                          columns: [k, s, ts]
+                                        keys: [s = s, __qdb_outer_ref__0_k = k]
+                                        Project
+                                          columns: [s, bid, ts, k AS __qdb_outer_ref__0_k]
+                                          Scan
+                                            table: q
+                                            columns: [s, bid, ts, k]
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOverCorrelatedSlaveNeedingDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            final String unmappedByMaster = """
+                    SELECT o.id, d.n FROM o JOIN LATERAL (
+                        SELECT count() n FROM e HORIZON JOIN (SELECT * FROM q WHERE k = o.k) q ON (s) LIST (0) AS h
+                    ) d
+                    """;
+            assertQuery(unmappedByMaster)
+                    .noLeakCheck()
+                    .fails(unmappedByMaster.indexOf("HORIZON"), "left-hand side of HORIZON JOIN can only be a table with an optional filter");
+            final String nonEquality = """
+                    SELECT o.id, d.n FROM o JOIN LATERAL (
+                        SELECT count() n FROM e HORIZON JOIN (SELECT * FROM q WHERE k > o.k) q ON (s) LIST (0) AS h WHERE e.k = o.k
+                    ) d
+                    """;
+            assertQuery(nonEquality)
+                    .noLeakCheck()
+                    .fails(nonEquality.indexOf("HORIZON"), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+            execute("CREATE TABLE ol (id INT, k LONG)");
+            final String typeMismatch = """
+                    SELECT o.id, d.n FROM ol o JOIN LATERAL (
+                        SELECT count() n FROM e HORIZON JOIN (SELECT * FROM q WHERE k = o.k) q ON (s) LIST (0) AS h WHERE e.x = o.id
+                    ) d
+                    """;
+            assertQuery(typeMismatch)
+                    .noLeakCheck()
+                    .fails(typeMismatch.indexOf("HORIZON"), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+        });
+    }
+
+    @Test
     public void testInnerJoinKeysSharingColumnNamesInBody() throws Exception {
         // #7716
         assertMemoryLeak(() -> {
@@ -2802,7 +2922,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             """, """
                             k\tc
                             1\t1
-                            """);
+                            """, isFullFat, true);
                     assertQueryReturns(compiler, """
                             SELECT m.k, l.c FROM m
                             INNER JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l ON l.c = 0 ORDER BY m.k
@@ -2829,14 +2949,14 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             """, """
                             k\tc
                             1\t1
-                            """);
+                            """, isFullFat, true);
                     assertQueryReturns(compiler, """
                             SELECT m.k, l.c FROM m
                             INNER JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l ON true WHERE l.c > 0 ORDER BY m.k
                             """, """
                             k\tc
                             1\t1
-                            """);
+                            """, isFullFat, true);
                     assertQueryReturns(compiler, """
                             SELECT m.k, l.s FROM m
                             INNER JOIN LATERAL (SELECT sum(v) s FROM s WHERE s.k = m.k LIMIT 1) l ON l.s > 0 ORDER BY m.k
@@ -2857,7 +2977,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             """, """
                             k\tc
                             1\t1
-                            """);
+                            """, isFullFat, true);
                     assertQueryReturns(compiler, """
                             SELECT m.k, l.c FROM m
                             CROSS JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 0) l ORDER BY m.k
@@ -2904,8 +3024,17 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testNegativeLimitAboveOrBelowCorrelation() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelationPointTables();
-            final String correlated = "SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM t WHERE k = o.k ORDER BY x LIMIT -2) d";
-            assertQuery(correlated).noLeakCheck().fails(correlated.indexOf("-2"), "negative LIMIT is not supported in a correlated lateral sub-query");
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM t WHERE k = o.k ORDER BY x LIMIT -2) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx
+                            1\t2
+                            1\t7
+                            2\t4
+                            2\t8
+                            3\t5
+                            3\t6
+                            """);
             final String lastThree = """
                     id\tx
                     1\t7
@@ -3692,14 +3821,30 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             2\tnull\t100
                             2\t2\t7
                             """);
-            final String correlatedThroughNestedBody = """
+            final String lastTwoPerOuterRow = """
+                    id\tk\tv
+                    1\tnull\t15
+                    1\t2\t15
+                    2\tnull\t7
+                    2\t2\t7
+                    """;
+            assertQuery("""
                     SELECT o.id, x.k, x.v FROM o JOIN LATERAL (
                         SELECT q.k, l.v FROM g3 q JOIN LATERAL (SELECT sum(v) v FROM g1 q2 WHERE q2.k = o.id) l ORDER BY q.ts LIMIT -2
-                    ) x
-                    """;
-            assertQuery(correlatedThroughNestedBody)
+                    ) x ORDER BY 1, 2
+                    """)
                     .noLeakCheck()
-                    .fails(correlatedThroughNestedBody.indexOf("-2"), "negative LIMIT is not supported in a correlated lateral sub-query");
+                    .returns(lastTwoPerOuterRow);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT 1 id, k, v FROM (SELECT q.k, l.v FROM g3 q JOIN LATERAL (SELECT sum(v) v FROM g1 q2 WHERE q2.k = 1) l ORDER BY q.ts LIMIT -2)
+                        UNION ALL
+                        SELECT 2 id, k, v FROM (SELECT q.k, l.v FROM g3 q JOIN LATERAL (SELECT sum(v) v FROM g1 q2 WHERE q2.k = 2) l ORDER BY q.ts LIMIT -2)
+                    ) ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastTwoPerOuterRow);
         });
     }
 
@@ -5016,6 +5161,119 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStandaloneUnnestBeforeCorrelatedJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            final String expected = """
+                    id\tn
+                    1\t14
+                    2\t12
+                    3\t10
+                    4\t0
+                    """;
+            assertQuery("""
+                    SELECT o.id, d.n FROM o JOIN LATERAL (
+                        SELECT count() n FROM UNNEST(ARRAY[1.0, 2.0]) u(v) CROSS JOIN t WHERE t.x > o.k
+                    ) d ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, d.n FROM o JOIN LATERAL (
+                        SELECT count() n FROM long_sequence(1) CROSS JOIN UNNEST(ARRAY[1.0, 2.0]) u(v) CROSS JOIN t WHERE t.x > o.k
+                    ) d ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testStandaloneUnnestOfOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE arrs (id INT, arr DOUBLE[], w DOUBLE[])");
+            execute("""
+                    INSERT INTO arrs VALUES
+                    (1, ARRAY[1.0, 2.0], ARRAY[10.0]),
+                    (2, ARRAY[3.0], ARRAY[30.0, 31.0]),
+                    (3, ARRAY[]::DOUBLE[], NULL),
+                    (4, NULL, ARRAY[40.0])
+                    """);
+            final String standalone = "SELECT o.id, d.v FROM arrs o JOIN LATERAL (SELECT u.v FROM UNNEST(o.arr) u(v)) d";
+            final String crossJoined = "SELECT o.id, d.v FROM arrs o JOIN LATERAL (SELECT u.v FROM long_sequence(1) CROSS JOIN UNNEST(o.arr) u(v)) d";
+            final String values = """
+                    id\tv
+                    1\t1.0
+                    1\t2.0
+                    2\t3.0
+                    """;
+            assertQuery(standalone + " ORDER BY o.id, d.v").noLeakCheck().expectSize().returns(values);
+            assertQuery(crossJoined + " ORDER BY o.id, d.v").noLeakCheck().expectSize().returns(values);
+            final String plan = """
+                    SelectedRecord
+                        Hash Join
+                          condition: d.__qdb_outer_ref__0_arr=o.arr
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: arrs
+                            Hash
+                                SelectedRecord
+                                    Unnest
+                                      columns: [v]
+                                        Cross Join
+                                            long_sequence count: 1
+                                            Async Group By workers: 1
+                                              keys: [__qdb_outer_ref__0_arr]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: arrs
+                    """;
+            assertQuery(standalone).noLeakCheck().assertsPlan(plan);
+            assertQuery(crossJoined).noLeakCheck().assertsPlan(plan);
+            assertQuery("SELECT * FROM arrs o JOIN LATERAL (SELECT * FROM UNNEST(o.arr) u(v)) d ORDER BY o.id, d.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tarr\tw\tv
+                            1\t[1.0,2.0]\t[10.0]\t1.0
+                            1\t[1.0,2.0]\t[10.0]\t2.0
+                            2\t[3.0]\t[30.0,31.0]\t3.0
+                            """);
+            assertQuery("SELECT o.id, d.* FROM arrs o JOIN LATERAL (SELECT * FROM UNNEST(o.arr, o.w) WITH ORDINALITY u(v, w, n)) d ORDER BY o.id, d.n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tw\tn
+                            1\t1.0\t10.0\t1
+                            1\t2.0\tnull\t2
+                            2\t3.0\t30.0\t1
+                            2\tnull\t31.0\t2
+                            4\tnull\t40.0\t1
+                            """);
+            assertQuery("SELECT o.id, d.v FROM arrs o LEFT JOIN LATERAL (SELECT u.v FROM UNNEST(o.arr) u(v)) d ON true ORDER BY o.id, d.v")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t1.0
+                            1\t2.0
+                            2\t3.0
+                            3\tnull
+                            4\tnull
+                            """);
+            assertQuery("SELECT o.id, d.n, d.s FROM arrs o JOIN LATERAL (SELECT count() n, sum(u.v) s FROM UNNEST(o.arr) u(v)) d ORDER BY o.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tn\ts
+                            1\t2\t3.0
+                            2\t1\t3.0
+                            3\t0\tnull
+                            4\t0\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testTwoInnerJoinedCorrelatedSubQueries() throws Exception {
         // #7803 section 4
         assertMemoryLeak(() -> {
@@ -5042,22 +5300,65 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUncrossableCorrelatedSourcesRejected() throws Exception {
+    public void testUnnestReadingOuterColumnBeforeEquatedInput() throws Exception {
         assertMemoryLeak(() -> {
-            createCorrelationPointTables();
-            final String horizonSlave = """
-                    SELECT o.id, d.n FROM o JOIN LATERAL (
-                        SELECT count() n FROM e HORIZON JOIN (SELECT * FROM q WHERE k = o.k) q ON (s) LIST (0) AS h
-                    ) d
+            createOuterArrays();
+            final String expected = """
+                    id\tv
+                    1\t1.0
+                    1\t2.0
+                    2\t3.0
+                    5\t9.0
                     """;
-            assertQuery(horizonSlave)
+            assertQuery("SELECT o.id, d.v FROM arrs o JOIN LATERAL (SELECT u.v FROM UNNEST(o.arr) u(v) CROSS JOIN arrs t WHERE t.arr = o.arr) d ORDER BY 1, 2")
                     .noLeakCheck()
-                    .fails(horizonSlave.indexOf("HORIZON"), "outer column reference in a HORIZON JOIN slave is not supported in a LATERAL sub-query");
-            execute("CREATE TABLE arrs (id INT, arr DOUBLE[])");
-            final String standaloneUnnest = "SELECT o.id, d.v FROM arrs o JOIN LATERAL (SELECT u.v FROM UNNEST(o.arr) u(v)) d";
-            assertQuery(standaloneUnnest)
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, d.v FROM arrs o JOIN LATERAL (
+                        SELECT u.v FROM long_sequence(1) CROSS JOIN UNNEST(o.arr) u(v) CROSS JOIN arrs t WHERE t.arr = o.arr
+                    ) d ORDER BY 1, 2
+                    """)
                     .noLeakCheck()
-                    .fails(standaloneUnnest.indexOf("UNNEST"), "outer column reference in UNNEST without a table before it is not supported in a LATERAL sub-query");
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testUnnestReadingOuterColumnBeforeRightOrFullJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterArrays();
+            execute("CREATE TABLE t (x DOUBLE)");
+            execute("INSERT INTO t VALUES (1.0), (2.0), (3.0), (5.0)");
+            final String rightRows = """
+                    id\tv\tx
+                    1\t1.0\t1.0
+                    1\t2.0\t2.0
+                    1\tnull\t3.0
+                    1\tnull\t5.0
+                    2\tnull\t1.0
+                    2\tnull\t2.0
+                    2\t3.0\t3.0
+                    2\tnull\t5.0
+                    3\tnull\t1.0
+                    3\tnull\t2.0
+                    3\tnull\t3.0
+                    3\tnull\t5.0
+                    4\tnull\t1.0
+                    4\tnull\t2.0
+                    4\tnull\t3.0
+                    4\tnull\t5.0
+                    5\tnull\t1.0
+                    5\tnull\t2.0
+                    5\tnull\t3.0
+                    5\tnull\t5.0
+                    """;
+            assertOverOuterArrays("SELECT u.v, t.x FROM UNNEST(%s) u(v) RIGHT JOIN t ON t.x = u.v", rightRows);
+            assertOverOuterArrays("SELECT u.v, t.x FROM long_sequence(1) CROSS JOIN UNNEST(%s) u(v) RIGHT JOIN t ON t.x = u.v", rightRows);
+            final String fullRows = rightRows + "5\t9.0\tnull\n";
+            assertOverOuterArrays("SELECT u.v, t.x FROM UNNEST(%s) u(v) FULL JOIN t ON t.x = u.v", fullRows);
+            assertOverOuterArrays("SELECT u.v, t.x FROM long_sequence(1) CROSS JOIN UNNEST(%s) u(v) FULL JOIN t ON t.x = u.v", fullRows);
         });
     }
 
@@ -5551,6 +5852,24 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         execute("DROP TABLE d");
     }
 
+    private void assertOverCorrelatedHorizonSlave(String body, String expected) throws Exception {
+        assertQuery("SELECT o.id, d.* FROM o JOIN LATERAL (" + body.formatted("o.k") + ") d ORDER BY 1, 2")
+                .noLeakCheck()
+                .returns(expected);
+        assertQuery("""
+                SELECT * FROM (
+                    SELECT 1 id, * FROM (%s)
+                    UNION ALL SELECT 2, * FROM (%s)
+                    UNION ALL SELECT 3, * FROM (%s)
+                    UNION ALL SELECT 4, * FROM (%s)
+                    UNION ALL SELECT 5, * FROM (%s)
+                ) ORDER BY 1, 2
+                """.formatted(body.formatted("1"), body.formatted("2"), body.formatted("3"), body.formatted("10"), body.formatted("NULL")))
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
+    }
+
     private void assertOverCorrelatedSlave(String body, String expected) throws Exception {
         assertQuery("SELECT a.k, l.id, l.x FROM a JOIN LATERAL (" + body.formatted("a.k") + ") l ORDER BY 1, 2")
                 .noLeakCheck()
@@ -5573,6 +5892,25 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                 """.formatted(body.formatted("1"), body.formatted("2"), body.formatted("3"), body.formatted("NULL")))
                 .noLeakCheck()
                 .expectSize()
+                .returns(expected);
+    }
+
+    private void assertOverOuterArrays(String body, String expected) throws Exception {
+        assertQuery("SELECT o.id, d.v, d.x FROM arrs o JOIN LATERAL (" + body.formatted("o.arr") + ") d ORDER BY 1, 3, 2")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
+        assertQuery("""
+                SELECT * FROM (
+                    SELECT 1 id, v, x FROM (%s)
+                    UNION ALL SELECT 2, v, x FROM (%s)
+                    UNION ALL SELECT 3, v, x FROM (%s)
+                    UNION ALL SELECT 4, v, x FROM (%s)
+                    UNION ALL SELECT 5, v, x FROM (%s)
+                ) ORDER BY 1, 3, 2
+                """.formatted(body.formatted("ARRAY[1.0, 2.0]"), body.formatted("ARRAY[3.0]"), body.formatted("ARRAY[]::DOUBLE[]"),
+                body.formatted("NULL::DOUBLE[]"), body.formatted("ARRAY[9.0]")))
+                .noLeakCheck()
                 .returns(expected);
     }
 
@@ -5655,6 +5993,18 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     private void createOuter(String rows) throws Exception {
         execute("CREATE TABLE o (id INT, x INT)");
         execute("INSERT INTO o VALUES " + rows);
+    }
+
+    private void createOuterArrays() throws Exception {
+        execute("CREATE TABLE arrs (id INT, arr DOUBLE[])");
+        execute("""
+                INSERT INTO arrs VALUES
+                (1, ARRAY[1.0, 2.0]),
+                (2, ARRAY[3.0]),
+                (3, ARRAY[]::DOUBLE[]),
+                (4, NULL),
+                (5, ARRAY[9.0])
+                """);
     }
 
     private void createOuterKeyed(String rows) throws Exception {

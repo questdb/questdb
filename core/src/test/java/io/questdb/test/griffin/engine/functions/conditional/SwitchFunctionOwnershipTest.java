@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
-import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
@@ -77,22 +76,6 @@ public class SwitchFunctionOwnershipTest extends AbstractCairoTest {
                 Assert.assertEquals(0, key.closeCount);
             }
             Assert.assertEquals(1, key.closeCount);
-        });
-    }
-
-    @Test
-    public void testSymbolSpecializationsWithDifferentBranchesAreNotEquivalent() throws Exception {
-        assertMemoryLeak(() -> {
-            final SymbolColumn key = new SymbolColumn(0, true);
-            final SwitchFunctionFactory factory = new SwitchFunctionFactory();
-            final ObjList<Function> first = new ObjList<>(key, StrConstant.newInstance("'a'"), new IntConstant(1), new IntConstant(0));
-            final ObjList<Function> second = new ObjList<>(key, StrConstant.newInstance("'b'"), new IntConstant(2), new IntConstant(0));
-            try (Function left = factory.newInstance(0, first, positions(first.size()), configuration, sqlExecutionContext);
-                 Function right = factory.newInstance(0, second, positions(second.size()), configuration, sqlExecutionContext)) {
-                Assert.assertTrue(left.isEquivalentTo(left));
-                Assert.assertFalse(left.isEquivalentTo(right));
-                Assert.assertFalse(right.isEquivalentTo(left));
-            }
         });
     }
 

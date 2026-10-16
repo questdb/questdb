@@ -2475,6 +2475,23 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4EqSymbolConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT '1.2.3.4'::ipv4 ip FROM long_sequence(1))");
+            assertQuery("SELECT ip = '1.2.3.4'::symbol eq, ip = '1.2.3.5'::symbol ne, ip & '255.0.0.0'::symbol masked FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            eq\tne\tmasked
+                            true\tfalse\t1.0.0.0
+                            """);
+            assertQuery("SELECT ip = 'abc'::symbol FROM x")
+                    .noLeakCheck()
+                    .fails(0, "invalid IPv4 format: abc");
+        });
+    }
+
+    @Test
     public void testIPv4Except() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (col1 ipv4)");

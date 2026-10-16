@@ -78,6 +78,10 @@ enum class opcodes : int32_t {
     Begin_Sc = 20, // Create label at index payload.lo
     End_Sc = 21,   // Bind label at index payload.lo
     Sx_I64 = 22,   // Sign-extend top of stack to i64
+    Not_Lt = 23,   // !(a < b)
+    Not_Le = 24,   // !(a <= b)
+    Not_Gt = 25,   // !(a > b)
+    Not_Ge = 26,   // !(a >= b)
 };
 
 struct instruction_t {

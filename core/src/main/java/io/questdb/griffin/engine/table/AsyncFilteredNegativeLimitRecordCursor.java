@@ -72,6 +72,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
     private int frameIndex;
     private int frameLimit;
     private PageFrameSequence<?> frameSequence;
+    private boolean hasOlderRows;
     private boolean isOpen;
     private PageFrameMemoryRecord recordB;
     private long rowCount;
@@ -236,6 +237,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
                     frameIndex = task.getFrameIndex();
 
                     if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isActive()) {
+                        final long frameStartRowCount = rowCount;
                         // Copy rows into the buffer.
                         if (hasDescendingOrder) {
                             for (long i = 0; i < frameRowCount && rowCount < rowLimit; i++, rowCount++) {
@@ -248,6 +250,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
                         }
 
                         if (rowCount >= rowLimit) {
+                            hasOlderRows = rowCount - frameStartRowCount < frameRowCount || frameIndex < frameLimit;
                             frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                         }
                     }
@@ -281,15 +284,31 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
         }
     }
 
+    private void reset(long rowLimit) {
+        this.rowLimit = rowLimit;
+        frameIndex = -1;
+        rowIndex = rows.getCapacity();
+        rowCount = 0;
+        hasOlderRows = false;
+    }
+
+    long getRowLimit() {
+        return rowLimit;
+    }
+
+    /**
+     * True when the cursor read as many rows as its limit, and rows before them may pass the filter.
+     */
+    boolean hasOlderRows() {
+        return isOpen && hasOlderRows;
+    }
+
     void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) {
         this.isOpen = true;
         this.frameSequence = frameSequence;
-        this.frameIndex = -1;
         this.frameLimit = -1;
-        this.rowLimit = rowLimit;
         this.rows = negativeLimitRows;
-        this.rowIndex = negativeLimitRows.getCapacity();
-        this.rowCount = 0;
+        reset(rowLimit);
         frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
         ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
@@ -297,5 +316,14 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource());
         }
+    }
+
+    /**
+     * Rewinds the cursor to filter its last {@code rowLimit} rows again.
+     */
+    void readLastRows(long rowLimit) {
+        ((AsyncFilterAtom) frameSequence.getAtom()).getFilter(-1).toTop();
+        frameSequence.toTop();
+        reset(rowLimit);
     }
 }

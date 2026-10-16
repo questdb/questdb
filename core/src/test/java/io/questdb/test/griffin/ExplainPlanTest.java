@@ -147,6 +147,7 @@ import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDateFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
@@ -6193,6 +6194,40 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitOverJoinReadsNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, x * 0.001 d, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (k INT)");
+            // the master filter counts the master rows it reads; the plan is the same whether the last master rows
+            // join a slave row or not
+            final String query = "SELECT m.i, s.k FROM (SELECT * FROM m WHERE d < 0.9 AND test_latched_counter()) m JOIN s ON m.i = s.k LIMIT -10";
+            final String plan = """
+                    Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                        SelectedRecord
+                            Hash Join Light
+                              condition: s.k=m.i
+                                SelectedRecord
+                                    Async Filter workers: 1
+                                      limit: 10
+                                      filter: (d<0.9 and test_latched_counter())
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: m
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: s
+                    """;
+            TestLatchedCounterFunctionFactory.reset(null);
+            execute("INSERT INTO s SELECT (2_000 + x)::INT FROM long_sequence(3)");
+            assertQuery(query).noLeakCheck().assertsPlan(plan);
+            execute("INSERT INTO s SELECT (890 - x)::INT FROM long_sequence(20)");
+            assertQuery(query).noLeakCheck().assertsPlan(plan);
+            assertEquals(0, TestLatchedCounterFunctionFactory.getCount());
+        });
+    }
+
+    @Test
     public void testNestedLoopLeftJoinWithSort1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
@@ -10498,7 +10533,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             DeferredSingleSymbolFilterPageFrame
                                 Index backward scan on: s1 deferred: true
                                   filter: s1='S1'
-                                Interval forward scan on: a
+                                Interval backward scan on: a
                                   intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);
         });
@@ -10518,7 +10553,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                       filter: s1='S1'
                                     Index backward scan on: s1 deferred: true
                                       filter: s1='S2'
-                                Interval forward scan on: a
+                                Interval backward scan on: a
                                   intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);
         });

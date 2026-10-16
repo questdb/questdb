@@ -176,17 +176,17 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
-     * Describes the argument-free window function {@code name}, such as {@code row_number}, without preparing
-     * it; the generator builds windows under their final window context.
+     * Describes the argument-free window function {@code name}, such as {@code row_number}, with the function flags
+     * the function it builds has, without preparing it; the generator builds windows under their final window context.
      */
-    public FunctionExpression describeWindowCall(CharSequence name, int position) {
+    public FunctionExpression describeWindowCall(CharSequence name, int flags, int position) {
         final ObjList<FunctionFactoryDescriptor> overloads = functionFactoryCache.getOverloadList(name);
         for (int i = 0, n = overloads == null ? 0 : overloads.size(); i < n; i++) {
             final FunctionFactoryDescriptor overload = overloads.getQuick(i);
             if (overload.getSigArgCount() == 0 && overload.getFactory().isWindow()) {
                 tmpArguments.clear();
                 tmpPositions.clear();
-                return functions.next().of(overload, tmpArguments, tmpPositions, ColumnType.LONG, 0, position);
+                return functions.next().of(overload, tmpArguments, tmpPositions, ColumnType.LONG, flags, position);
             }
         }
         throw new IllegalStateException("window function is not registered");

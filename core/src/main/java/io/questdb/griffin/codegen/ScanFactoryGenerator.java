@@ -457,7 +457,7 @@ final class ScanFactoryGenerator {
             Misc.free(frames, th);
             throw th;
         }
-        final RecordCursorFactory factory = generateScan(frames, metadata, order, order == PartitionFrameCursorFactory.ORDER_DESC,
+        final RecordCursorFactory factory = generateScan(frames, metadata, order, PlanToFactoryRules.isPageFrameAdviceFollowed(scan),
                 indexes, shifts, scan.isRandomAccess());
         if (residual == null) {
             return factory;

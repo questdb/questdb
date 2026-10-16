@@ -529,17 +529,17 @@ public final class PhysicalProperties {
 
     /**
      * Time frames follow the partitions of the table's own designated timestamp, so a scan that designates another
-     * column has none.
+     * column has none. A table without a designated timestamp has a single partition, which any timestamp follows.
      */
     private static Capability pageFrameTimeFrame(ScanPlan scan, boolean isRandomAccess) {
         return Capability.of(isRandomAccess && scanTimestampIndex(scan) >= 0 && scan.getScanDirection() != SortDirection.DESCENDING
-                && scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId());
+                && (scan.getNativeTimestampColumnId() == -1 || scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId()));
     }
 
     private static int pageFrames(ScanPlan scan) {
         final ScanDirection direction = ScanDirection.of(scan.getScanDirection());
-        return properties(Capability.of(scan.isRandomAccess()), Capability.YES, Capability.NO, Capability.of(direction == ScanDirection.BACKWARD),
-                direction, Capability.NO);
+        return properties(Capability.of(scan.isRandomAccess()), Capability.YES, Capability.NO,
+                Capability.of(PlanToFactoryRules.isPageFrameAdviceFollowed(scan)), direction, Capability.NO);
     }
 
     /**

@@ -1680,6 +1680,29 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnSlaveWithoutDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s AS (SELECT x v, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(10))");
+            execute("CREATE TABLE m AS (SELECT x l, (x * 3_600_000_000 + 1_800_000_000)::TIMESTAMP ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY");
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT m.l, x.v FROM m " + join + " JOIN (s TIMESTAMP(ts)) x")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining(join.equals("ASOF") ? "AsOf Join Fast" : "Lt Join Fast")
+                        .returns("""
+                                l\tv
+                                1\t1
+                                2\t2
+                                3\t3
+                                4\t4
+                                5\t5
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnTripleSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler _ = engine.getSqlCompiler()) {

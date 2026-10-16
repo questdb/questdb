@@ -155,7 +155,7 @@ public final class SqlOptimiser implements Mutable {
                 columnIds, tmpPlans, tmpPlanPath, tmpSchema));
         passes.add(projectionMerge);
         passes.add(new NegativeLimitReversal(constants, sorts, tmpIndexes, tmpPlans));
-        passes.add(new OrderPlanning(functionFactoryCache, sorts, columnIds, configuration.getSqlMaxNegativeLimit()));
+        passes.add(new OrderPlanning(configuration, functionFactoryCache, sorts, columnIds));
         operatorPlanning = new OperatorPlanning(configuration, context, tmpIndexes, tmpValues, tmpSteps);
         accessPathPlanning = new AccessPathPlanning(configuration, context, operatorPlanning, tmpConjuncts, tmpExpressions, tmpKeys, tmpValues,
                 intervalText, parsedIntervals);

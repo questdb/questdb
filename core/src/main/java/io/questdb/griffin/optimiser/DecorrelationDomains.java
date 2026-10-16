@@ -35,6 +35,7 @@ import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.UnnestSpec;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
@@ -44,7 +45,8 @@ import static io.questdb.griffin.optimiser.DecorrelationContext.OUTER_REF_PREFIX
 
 /**
  * Builds decorrelation domains: the distinct values of outer columns, read from a copy of the master input or
- * prefix and shared with the master where the generator can re-read it.
+ * prefix and shared with the master where the generator can re-read it. Crosses them into the inputs of block
+ * sources.
  */
 final class DecorrelationDomains implements Mutable {
     final ObjList<JoinInput> decorrelatedSteps;
@@ -180,6 +182,24 @@ final class DecorrelationDomains implements Mutable {
         join.getOutput().addMissingColumnsFrom(domain.getOutput());
         join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, 2));
         return join;
+    }
+
+    /**
+     * Crosses the domain into an input of the join and adds, hidden, the columns the join's output lacks. A standalone
+     * UNNEST after the input then keeps its master's columns: the domain's and the one-row base's own, hidden.
+     */
+    JoinPlan crossInto(JoinPlan join, JoinInput input, AggregatePlan domain, int position) {
+        final JoinPlan crossed = crossDomain(input.getInput(), domain, position);
+        input.setInput(crossed);
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        for (int i = ordered.indexOf(input) + 1, n = ordered.size(); i < n; i++) {
+            final UnnestSpec unnest = ordered.getQuick(i).getUnnest();
+            if (unnest != null && unnest.isStandalone()) {
+                unnest.keepMasterColumns();
+            }
+        }
+        join.addMissingInputColumns();
+        return crossed;
     }
 
     /**

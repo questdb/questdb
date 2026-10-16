@@ -35,7 +35,6 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -87,12 +86,6 @@ final class OrderBinder implements Mutable {
             return input.getColumnIndexById(column.getColumnId());
         }
         throw new IllegalStateException("source order over a computed projection");
-    }
-
-    private static void validateCorrelatedLimit(ExpressionNode limit, BoundExpression bound) throws SqlException {
-        if (bound instanceof ConstantExpression constant && constant.getLongValue() < 0 && constant.getLongValue() != Numbers.LONG_NULL) {
-            throw SqlException.$(limit.position, "negative LIMIT is not supported in a correlated lateral sub-query");
-        }
     }
 
     private static void validateLimitType(int type, boolean isConstantOrRuntimeConstant, int position) throws SqlException {
@@ -480,10 +473,6 @@ final class OrderBinder implements Mutable {
         final int position = model.getLimitLo() != null ? model.getLimitLo().position : model.getLimitHi().position;
         final BoundExpression lo = model.getLimitLo() == null ? ctx.planNodes.constants.next().ofLong(0, position) : bindLimit(model.getLimitLo(), executionContext);
         final BoundExpression hi = model.getLimitHi() == null ? null : bindLimit(model.getLimitHi(), executionContext);
-        if (ctx.outerColumnReads.isScopeReadBy(input, ctx.scope().outerScopes, ctx.tmpOuterColumns)) {
-            validateCorrelatedLimit(model.getLimitLo(), lo);
-            validateCorrelatedLimit(model.getLimitHi(), hi);
-        }
         final LimitPlan limit = ctx.planNodes.limits.next().of(input, lo, hi, position);
         limit.deriveOutput();
         ctx.stopTimestampIntrinsics(limit.getOutput());

@@ -296,6 +296,20 @@ public class IntervalExtractionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegatedNullBoundOverProjectedOffsetKeepsEveryRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows(false);
+            final String shifted = "SELECT id FROM (SELECT id, dateadd('h', -1, ts) shifted FROM lp_interval) WHERE ";
+            assertQuery(shifted + "NOT (shifted > NULL::timestamp)")
+                    .noLeakCheck()
+                    .returns("id\n1\n2\n3\n4\n5\n");
+            assertQuery(shifted + "shifted > NULL::timestamp")
+                    .noLeakCheck()
+                    .returns("id\n");
+        });
+    }
+
+    @Test
     public void testOrAndMixedPrecisionColumnsRemainResidual() throws Exception {
         assertMemoryLeak(() -> {
             createRows(true);

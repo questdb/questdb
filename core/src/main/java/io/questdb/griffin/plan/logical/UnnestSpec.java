@@ -80,8 +80,18 @@ public final class UnnestSpec implements Mutable {
         return hasOrdinality;
     }
 
+    /**
+     * True when the step drops the columns of its master, the one-row base {@code FROM UNNEST(...)} stands on.
+     */
     public boolean isStandalone() {
         return isStandalone;
+    }
+
+    /**
+     * Keeps the master's columns in the step's output: decorrelation has made the master carry outer values.
+     */
+    public void keepMasterColumns() {
+        isStandalone = false;
     }
 
     public UnnestSpec of(boolean isStandalone, boolean hasOrdinality) {

@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -213,7 +214,7 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
                     0,                       // rightSymbolIndex
                     0,                       // leftSymbolIndex
                     joinFilter,
-                    allVectorized            // allVectorized
+                    allVectorized ? new IntList() : null
             );
         }
         return new WindowJoinRecordCursorFactory(

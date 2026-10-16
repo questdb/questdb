@@ -4343,6 +4343,130 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVectorizedAggregatesKeepDistinctArgumentExpressions() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (sym SYMBOL, a INT, b INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1, 'A', '2024-01-01T00:00:01.000000Z'),
+                        (2, 'B', '2024-01-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO s VALUES
+                        ('A', 1, 2, 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('B', 3, 2, 2.0, '2024-01-01T00:00:01.000000Z'),
+                        ('A', NULL, 2, 4.0, '2024-01-01T00:00:02.000000Z'),
+                        ('B', 2, 2, 8.0, '2024-01-01T00:00:03.000000Z')
+                    """);
+            final String select = """
+                    SELECT m.x, sum((s.a < s.b)::int) lt, sum((NOT (s.a < s.b))::int) nlt, sum((s.a >= s.b)::int) ge,
+                        sum((s.a = s.b)::int) eq, sum((s.a != s.b)::int) ne, sum(s.v + 1) plus, sum(s.v - 1) minus
+                    FROM m WINDOW JOIN s
+                    """;
+            final String window = " RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING EXCLUDE PREVAILING ORDER BY m.x";
+            assertQuery(select + window)
+                    .noLeakCheck()
+                    .withPlanContaining("vectorized: true")
+                    .sizeMayVary()
+                    .returns("""
+                            x	lt	nlt	ge	eq	ne	plus	minus
+                            1	1	2	1	0	3	10.0	4.0
+                            2	0	3	2	1	2	17.0	11.0
+                            """);
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                assertQuery(select + "ON (m.sym = s.sym)" + window)
+                        .noLeakCheck()
+                        .withPlanContaining("vectorized: true")
+                        .sizeMayVary()
+                        .returns("""
+                                x	lt	nlt	ge	eq	ne	plus	minus
+                                1	1	1	0	0	2	7.0	3.0
+                                2	0	2	2	1	1	12.0	8.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testVectorizedAggregatesNeverShareArgumentsDifferingInConstants() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (sym SYMBOL, a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1, 'A', '2024-01-01T00:00:01.000000Z'),
+                        (2, 'B', '2024-01-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO s VALUES
+                        ('A', 3, '2024-01-01T00:00:00.000000Z'),
+                        ('B', 7, '2024-01-01T00:00:01.000000Z'),
+                        ('A', 10, '2024-01-01T00:00:02.000000Z'),
+                        ('B', 8, '2024-01-01T00:00:03.000000Z')
+                    """);
+            final String select = """
+                    SELECT m.x, sum((s.sym = 'A')::int) sa, sum((s.sym = 'B')::int) sb, sum((s.a IN (3, 7))::int) i37,
+                        sum((s.a IN (8, 9))::int) i89, max(timestamp_floor('s', s.ts)) fs, max(timestamp_floor('d', s.ts)) fd
+                    FROM m WINDOW JOIN s
+                    """;
+            final String window = " RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING EXCLUDE PREVAILING ORDER BY m.x";
+            assertQuery(select + window)
+                    .noLeakCheck()
+                    .withPlanContaining("vectorized: true")
+                    .sizeMayVary()
+                    .returns("""
+                            x	sa	sb	i37	i89	fs	fd
+                            1	2	1	2	0	2024-01-01T00:00:02.000000Z	2024-01-01T00:00:00.000000Z
+                            2	1	2	1	1	2024-01-01T00:00:03.000000Z	2024-01-01T00:00:00.000000Z
+                            """);
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                assertQuery(select + "ON (m.sym = s.sym)" + window)
+                        .noLeakCheck()
+                        .withPlanContaining("vectorized: true")
+                        .sizeMayVary()
+                        .returns("""
+                                x	sa	sb	i37	i89	fs	fd
+                                1	2	0	1	0	2024-01-01T00:00:02.000000Z	2024-01-01T00:00:00.000000Z
+                                2	0	2	1	1	2024-01-01T00:00:03.000000Z	2024-01-01T00:00:00.000000Z
+                                """);
+            }
+
+            sqlExecutionContext.setParallelWindowJoinEnabled(true);
+            final String shared = """
+                    SELECT m.x, sum(s.a) s1, max(s.a) m1, sum(s.a + 1) s2, max(s.a + 1) m2, sum(s.a - 1) s3, count() c,
+                        sum((s.sym = 'A')::int) sa, sum((s.sym = 'B')::int) sb
+                    FROM m WINDOW JOIN s
+                    """;
+            assertQuery(shared + window)
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("""
+                            x	s1	m1	s2	m2	s3	c	sa	sb
+                            1	20	10	23	11	17	3	2	1
+                            2	25	10	28	11	22	3	1	2
+                            """);
+            for (String on : new String[]{"", "ON (m.sym = s.sym)"}) {
+                try (RecordCursorFactory factory = select(shared + on + " RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING EXCLUDE PREVAILING")) {
+                    RecordCursorFactory base = factory;
+                    while (!(base instanceof AsyncWindowJoinRecordCursorFactory) && !(base instanceof AsyncWindowJoinFastRecordCursorFactory)) {
+                        base = base.getBaseFactory();
+                    }
+                    final AsyncWindowJoinAtom atom = base instanceof AsyncWindowJoinRecordCursorFactory general
+                            ? general.getAtom() : ((AsyncWindowJoinFastRecordCursorFactory) base).getAtom();
+                    Assert.assertEquals(on, "[0,0,1,1,2,3,4,5]", atom.getGroupByFunctionToColumnIndex().toString());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testVectorizedWindowJoin() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -6840,6 +6964,63 @@ public class WindowJoinTest extends AbstractCairoTest {
                     configuration,
                     LOG
             );
+        });
+    }
+
+    @Test
+    public void testWindowJoinSlaveWithoutDesignatedTimestamp() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s AS (SELECT x v, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(10))");
+            execute("CREATE TABLE sd AS (SELECT * FROM s) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE sn AS (SELECT x v, ((x - 6) * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(10))");
+            execute("CREATE TABLE m AS (SELECT x l, (x * 3_600_000_000 + 1_800_000_000)::TIMESTAMP ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE VIEW s_view AS (SELECT * FROM s TIMESTAMP(ts))");
+            for (String slave : new String[]{"sd", "(s TIMESTAMP(ts))", "(SELECT * FROM s TIMESTAMP(ts))", "s_view"}) {
+                for (String prevailing : new String[]{"INCLUDE", "EXCLUDE"}) {
+                    assertQuery("SELECT m.l, count(x.v) c, sum(x.v) sv FROM m WINDOW JOIN " + slave + " x "
+                            + "RANGE BETWEEN 1 HOUR PRECEDING AND 1 HOUR FOLLOWING " + prevailing + " PREVAILING")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns(prevailing.equals("INCLUDE") ? """
+                                    l\tc\tsv
+                                    1\t2\t3
+                                    2\t3\t6
+                                    3\t3\t9
+                                    4\t3\t12
+                                    5\t3\t15
+                                    """ : """
+                                    l\tc\tsv
+                                    1\t2\t3
+                                    2\t2\t5
+                                    3\t2\t7
+                                    4\t2\t9
+                                    5\t2\t11
+                                    """);
+                }
+            }
+            for (String prevailing : new String[]{"INCLUDE", "EXCLUDE"}) {
+                assertQuery("SELECT m.l, count(x.v) c, sum(x.v) sv FROM m WINDOW JOIN (sn TIMESTAMP(ts)) x "
+                        + "RANGE BETWEEN 3 HOUR PRECEDING AND 2 HOUR PRECEDING " + prevailing + " PREVAILING")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(prevailing.equals("INCLUDE") ? """
+                                l\tc\tsv
+                                1\t2\t9
+                                2\t2\t11
+                                3\t2\t13
+                                4\t2\t15
+                                5\t2\t17
+                                """ : """
+                                l\tc\tsv
+                                1\t1\t5
+                                2\t1\t6
+                                3\t1\t7
+                                4\t1\t8
+                                5\t1\t9
+                                """);
+            }
         });
     }
 

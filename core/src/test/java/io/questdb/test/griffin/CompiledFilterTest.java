@@ -740,6 +740,30 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeywordNamedBooleanColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, \"and\" BOOLEAN, \"not\" BOOLEAN, \"or\" BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, true, true, false, '2024-01-01T00:00:00.000000Z'),
+                        (2, true, false, true, '2024-01-01T00:00:01.000000Z'),
+                        (3, false, true, true, '2024-01-01T00:00:02.000000Z'),
+                        (4, false, false, false, '2024-01-01T00:00:03.000000Z')
+                    """);
+            final String[] filters = {"\"and\" AND \"not\"", "\"not\" AND \"and\"", "\"and\" AND NOT \"not\"", "NOT \"not\"", "\"or\" OR \"not\""};
+            final String[] expectedIds = {"1\n", "1\n", "2\n", "2\n4\n", "1\n2\n3\n"};
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                for (int i = 0; i < filters.length; i++) {
+                    assertQuery("SELECT id FROM x WHERE " + filters[i])
+                            .noLeakCheck()
+                            .returns("id\n" + expectedIds[i]);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLatestByDeferredSymbolConstants() throws Exception {
         assertQuery("SELECT v FROM latest_symbols WHERE filter_sym='B' OR filter_sym='D' LATEST ON ts PARTITION BY s,t")
                 .ddl(

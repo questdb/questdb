@@ -37,6 +37,7 @@ import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -46,6 +47,7 @@ import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.UniqueColumnNames;
+import io.questdb.griffin.plan.logical.UnnestSpec;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
@@ -163,6 +165,28 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
+     * Lays out a horizon join over its decorrelated inputs: master columns, the horizon offset and timestamp, then each
+     * slave's columns.
+     */
+    private void alignHorizonJoin(HorizonJoinPlan horizon) {
+        final OutputSchema output = horizon.getOutput();
+        final OutputSchema master = horizon.getMaster().getOutput();
+        alignColumns(output, master);
+        final OutputSchema copy = tmpSchema;
+        copy.copyFrom(output);
+        output.clear();
+        for (int i = 0, n = master.getColumnCount() + 2; i < n; i++) {
+            output.addColumnFrom(copy, i);
+        }
+        for (int s = 0, m = horizon.getSlaves().size(); s < m; s++) {
+            final HorizonJoinSlave slave = horizon.getSlaves().getQuick(s);
+            output.addColumnsFrom(slave.getInput().getOutput(), slave.getAlias());
+        }
+        output.setTimestampColumnId(copy.getTimestampColumnId());
+        copy.clear();
+    }
+
+    /**
      * Lays out a window join over its decorrelated master: master columns, then the step aggregates, with each
      * step's scopes rebuilt over that layout.
      */
@@ -201,12 +225,18 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
-     * Records, as carriers of the step, the columns {@link #substitution} maps the outer columns its ON condition and
-     * key filter read to.
+     * Records, as carriers of the step, the columns {@link #substitution} maps the outer columns its ON condition, key
+     * filter and UNNEST arguments read to.
      */
     private void recordCarriers(JoinInput step) {
         recordCarriers(step, step.getOnResidual());
         recordCarriers(step, step.getKeyFilter());
+        final UnnestSpec unnest = step.getUnnest();
+        if (unnest != null) {
+            for (int i = 0, n = unnest.getExpressions().size(); i < n; i++) {
+                recordCarriers(step, unnest.getExpressions().getQuick(i));
+            }
+        }
     }
 
     private void recordCarriers(JoinInput step, BoundExpression expression) {
@@ -430,7 +460,8 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
-     * The expression over the master columns: outer columns read the master columns they stand for.
+     * The expression over the master columns: the outer columns of the master read the master columns they stand
+     * for, those of an enclosing LATERAL stay outer columns.
      */
     BoundExpression masterExpression(BoundExpression expression) {
         if (expression == null || !LogicalPlans.hasOuterColumn(expression)) {
@@ -440,7 +471,10 @@ final class DecorrelationContext implements Mutable {
         outerColumnReads.collect(expression, tmpColumnIds);
         substitution.clear();
         for (int i = columnBase, n = tmpColumnIds.size(); i < n; i++) {
-            substitution.put(tmpColumnIds.getQuick(i), masterColumn(tmpColumnIds.getQuick(i)));
+            final int outerId = tmpColumnIds.getQuick(i);
+            if (masterInput(outerId) > -1) {
+                substitution.put(outerId, masterColumn(outerId));
+            }
         }
         tmpColumnIds.setPos(columnBase);
         return context.getRewriter().remapColumns(expression, substitution);
@@ -507,6 +541,23 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
+     * True when the step reads one of the outer columns as it joins: in its ON condition, key filter or UNNEST
+     * arguments.
+     */
+    boolean readsAnyOuter(JoinInput step, IntList outerIds) {
+        if (readsAnyOuter(step.getOnResidual(), outerIds) || readsAnyOuter(step.getKeyFilter(), outerIds)) {
+            return true;
+        }
+        final UnnestSpec unnest = step.getUnnest();
+        for (int i = 0, n = unnest != null ? unnest.getExpressions().size() : 0; i < n; i++) {
+            if (readsAnyOuter(unnest.getExpressions().getQuick(i), outerIds)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * True when the expression reads an outer column of the master that no mapping above {@code base} satisfies.
      */
     boolean readsUnmappedOuter(BoundExpression expression, int base) {
@@ -515,13 +566,14 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
-     * Lays the node's output out again over the changed output of its input.
+     * Lays the node's output out again over the changed outputs of its inputs.
      */
     void realign(LogicalPlan node) {
         switch (node) {
             case ForwardingPlan forwarding -> forwarding.deriveOutput();
             case WindowJoinPlan windowJoin -> alignWindowJoin(windowJoin);
-            case WindowPlan _, HorizonJoinPlan _ -> alignColumns(node.getOutput(), node.inputAt(0).getOutput());
+            case HorizonJoinPlan horizon -> alignHorizonJoin(horizon);
+            case WindowPlan _ -> alignColumns(node.getOutput(), node.inputAt(0).getOutput());
             default -> {
             }
         }
@@ -567,15 +619,22 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
-     * Records the step's carriers and renames, in its ON condition, key filter and, when {@code isFilterRead}, post-join
-     * filter, the columns {@link #substitution} holds.
+     * Records the step's carriers and renames, in its ON condition, key filter, UNNEST arguments and, when
+     * {@code isFilterRead}, post-join filter, the columns {@link #substitution} holds.
      */
-    void remapStepConditions(JoinInput step, boolean isFilterRead) {
+    void remapStepReads(JoinInput step, boolean isFilterRead) {
         recordCarriers(step);
         step.setOnResidual(context.getRewriter().remapColumns(step.getOnResidual(), substitution));
         step.setKeyFilter(context.getRewriter().remapColumns(step.getKeyFilter(), substitution));
         if (isFilterRead) {
             step.setPostJoinFilter(context.getRewriter().remapColumns(step.getPostJoinFilter(), substitution));
+        }
+        final UnnestSpec unnest = step.getUnnest();
+        if (unnest != null) {
+            final ObjList<BoundExpression> arguments = unnest.getExpressions();
+            for (int i = 0, n = arguments.size(); i < n; i++) {
+                arguments.setQuick(i, context.getRewriter().remapColumns(arguments.getQuick(i), substitution));
+            }
         }
     }
 

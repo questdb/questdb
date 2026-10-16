@@ -112,19 +112,9 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
             super(left, right);
         }
 
-        /**
-         * Equality treats NULL = NULL as true and NULL = value as false, matching
-         * the {@code UnscaledDecimal128Func} fast path. {@link Decimal128#compareTo}
-         * already returns 0 for two NULLs and a non-zero ordering when only one
-         * side is NULL, so we skip the SQL-standard NULL guard from the base class.
-         */
         @Override
         public boolean getBool(Record rec) {
-            left.getDecimal128(rec, decimalLeft);
-            decimalLeft.setScale(leftScale);
-            right.getDecimal128(rec, decimalRight);
-            decimalRight.setScale(rightScale);
-            return negated != exec();
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -139,6 +129,20 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         @Override
         protected boolean exec() {
             return decimalLeft.compareTo(decimalRight) == 0;
+        }
+
+        /**
+         * Equality treats NULL = NULL as true and NULL = value as false, matching
+         * the {@code UnscaledDecimal128Func} fast path. {@link Decimal128#compareTo}
+         * already returns 0 for two NULLs and a non-zero ordering when only one
+         * side is NULL, so we skip the SQL-standard NULL guard from the base class.
+         */
+        private boolean isMatch(Record rec) {
+            left.getDecimal128(rec, decimalLeft);
+            decimalLeft.setScale(leftScale);
+            right.getDecimal128(rec, decimalRight);
+            decimalRight.setScale(rightScale);
+            return negated != exec();
         }
     }
 
@@ -148,18 +152,9 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
             super(left, right);
         }
 
-        /**
-         * Equality treats NULL = NULL as true and NULL = value as false, matching
-         * the {@code UnscaledDecimal256Func} fast path. See {@link Decimal128Func}
-         * for the rationale; the same reasoning applies via {@link Decimal256#compareTo}.
-         */
         @Override
         public boolean getBool(Record rec) {
-            left.getDecimal256(rec, decimalLeft);
-            decimalLeft.setScale(leftScale);
-            right.getDecimal256(rec, decimalRight);
-            decimalRight.setScale(rightScale);
-            return negated != exec();
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -174,6 +169,19 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         @Override
         protected boolean exec() {
             return decimalLeft.compareTo(decimalRight) == 0;
+        }
+
+        /**
+         * Equality treats NULL = NULL as true and NULL = value as false, matching
+         * the {@code UnscaledDecimal256Func} fast path. See {@link Decimal128Func}
+         * for the rationale; the same reasoning applies via {@link Decimal256#compareTo}.
+         */
+        private boolean isMatch(Record rec) {
+            left.getDecimal256(rec, decimalLeft);
+            decimalLeft.setScale(leftScale);
+            right.getDecimal256(rec, decimalRight);
+            decimalRight.setScale(rightScale);
+            return negated != exec();
         }
     }
 
@@ -183,18 +191,9 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
             super(left, right);
         }
 
-        /**
-         * Equality treats NULL = NULL as true and NULL = value as false, matching
-         * the {@code UnscaledDecimal64Func} fast path. See {@link Decimal128Func}
-         * for the rationale; {@link Decimal64#compareTo} returns 0 for two NULLs.
-         */
         @Override
         public boolean getBool(Record rec) {
-            decimalLeft.ofRaw(left.getDecimal64(rec));
-            decimalLeft.setScale(leftScale);
-            decimalRight.ofRaw(right.getDecimal64(rec));
-            decimalRight.setScale(rightScale);
-            return negated != exec();
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -209,6 +208,19 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         @Override
         protected boolean exec() {
             return decimalLeft.compareTo(decimalRight) == 0;
+        }
+
+        /**
+         * Equality treats NULL = NULL as true and NULL = value as false, matching
+         * the {@code UnscaledDecimal64Func} fast path. See {@link Decimal128Func}
+         * for the rationale; {@link Decimal64#compareTo} returns 0 for two NULLs.
+         */
+        private boolean isMatch(Record rec) {
+            decimalLeft.ofRaw(left.getDecimal64(rec));
+            decimalLeft.setScale(leftScale);
+            decimalRight.ofRaw(right.getDecimal64(rec));
+            decimalRight.setScale(rightScale);
+            return negated != exec();
         }
     }
 

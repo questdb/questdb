@@ -31,22 +31,25 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 
 /**
- * The LIMIT count the parallel filter of a join's master applies, which the negative LIMIT over the join sets: a
- * negative count reads the last master rows, NULL all of them. Until the LIMIT sets a count, the filter applies the
- * count of the LIMIT itself, which EXPLAIN shows, and reads all master rows when that count is not negative.
+ * The LIMIT count the parallel filter of a join's master applies, which the negative LIMIT over the join controls: the
+ * LIMIT's own count when it is negative and within the most rows the filter holds, else NULL, all master rows. The
+ * LIMIT grows the count through the filter's cursor, which reads the longer suffix again under the open join, and
+ * past the most rows the filter holds, has the filter read all master rows under a new cursor over the join.
  */
 public final class MasterSuffixLimitFunction extends LongFunction implements UnaryFunction {
+    private static final long ROW_COUNT_GROWTH = 64;
     private final Function count;
-    private boolean hasRowCount;
+    private final long maxRowCount;
+    private boolean isReadingAllRows;
     private AsyncFilteredNegativeLimitRecordCursor lastRows;
-    private long rowCount;
 
-    public MasterSuffixLimitFunction(Function count) {
+    public MasterSuffixLimitFunction(Function count, long maxRowCount) {
         this.count = count;
+        this.maxRowCount = maxRowCount;
     }
 
-    public void clearRowCount() {
-        hasRowCount = false;
+    public void clearReadingAllRows() {
+        isReadingAllRows = false;
     }
 
     @Override
@@ -56,24 +59,36 @@ public final class MasterSuffixLimitFunction extends LongFunction implements Una
 
     @Override
     public long getLong(Record rec) {
-        if (hasRowCount) {
-            return rowCount;
+        if (isReadingAllRows) {
+            return Numbers.LONG_NULL;
         }
         final long value = count.getLong(rec);
-        return value < 0 ? value : Numbers.LONG_NULL;
+        return value < 0 && value >= -maxRowCount ? value : Numbers.LONG_NULL;
     }
 
     /**
-     * True when the filter, asked for the last {@code -rowCount} rows, returned all of them, so the master may hold more.
-     * The cursor of a filter the join did not read reports no rows.
+     * True when the filter returned as many of the last master rows as it was asked for, and older master rows may pass
+     * it. The cursor of a filter the join did not read, or that read all master rows, reports none.
      */
-    public boolean hasMoreRows(long rowCount) {
-        return rowCount < 0 && rowCount != Numbers.LONG_NULL && lastRows.size() >= -rowCount;
+    public boolean hasMoreRows() {
+        return lastRows.hasOlderRows();
     }
 
-    public void setRowCount(long rowCount) {
-        this.rowCount = rowCount;
-        hasRowCount = true;
+    /**
+     * Rewinds the filter's cursor to read {@link #ROW_COUNT_GROWTH} times as many of the last master rows, up to the
+     * most it holds. Returns false, rewinding nothing, when the filter already read that many.
+     */
+    public boolean readMoreRows() {
+        final long rowLimit = lastRows.getRowLimit();
+        if (rowLimit >= maxRowCount) {
+            return false;
+        }
+        lastRows.readLastRows(Math.min(rowLimit * ROW_COUNT_GROWTH, maxRowCount));
+        return true;
+    }
+
+    public void setReadingAllRows() {
+        isReadingAllRows = true;
     }
 
     /**

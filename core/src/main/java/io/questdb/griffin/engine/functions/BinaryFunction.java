@@ -79,17 +79,6 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default boolean isEquivalentTo(Function other) {
-        if (other == this) {
-            return true;
-        }
-        if (other instanceof BinaryFunction that) {
-            return getLeft().isEquivalentTo(that.getLeft()) && getRight().isEquivalentTo(that.getRight());
-        }
-        return false;
-    }
-
-    @Override
     default boolean isNonDeterministic() {
         return getLeft().isNonDeterministic() || getRight().isNonDeterministic();
     }
