@@ -183,9 +183,10 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LongList rowGroupBounds = new LongList();
             // Same shared boundary (200) and O3 landing on it as testCoalesceTieAcrossTwoRowGroups,
-            // but this commit is NOT deduplicating (coalesceBoundaryTies = false). The tie is
-            // harmless without dedup, so the groups must stay independent: no coalesced multi-group
-            // MERGE, hence no forced full-partition rewrite.
+            // but this commit is NOT deduplicating (coalesceBoundaryTies = false). The groups must
+            // stay independent: no coalesced multi-group MERGE, hence no forced full-partition
+            // rewrite. The O3 row at 200 goes after every stored row at 200, as native: rg1 takes it
+            // and rg0 stays as it is, so the commit re-encodes one row group.
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 200, 300, 4);
 
@@ -207,10 +208,111 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                             actionsBuf.get(i).rowGroupIndexHi
                     );
                 }
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(1).type);
+                Assert.assertEquals(1, actionsBuf.get(1).rowGroupIndex);
+                Assert.assertEquals(0, actionsBuf.get(1).o3Lo);
+                Assert.assertEquals(0, actionsBuf.get(1).o3Hi);
             } finally {
                 freeSortedTimestamps(addr, 1);
             }
         });
+    }
+
+    @Test
+    public void testCoalescedTieKeepsO3Union() throws Exception {
+        // dedup: the O3 row at 150 belongs to rg0, the one at the shared 200 to rg1; the coalesced
+        // run merges both groups with the union of their O3 rows
+        assertActions(
+                new long[]{100, 200, 4, 200, 300, 4},
+                new long[]{150, 200},
+                1,
+                true,
+                "MERGE rg=0..1 rows=0..7 o3=0..1"
+        );
+    }
+
+    @Test
+    public void testNonDedupAdjacentRowGroupsWithoutTieKeepMax() throws Exception {
+        // rg1 starts one step after rg0's max: no tie, the O3 row at rg0's max stays in rg0
+        assertActions(
+                new long[]{100, 200, 4, 201, 300, 4},
+                new long[]{200},
+                1,
+                false,
+                "MERGE rg=0..0 rows=0..3 o3=0..0",
+                "COPY_ROW_GROUP_SLICE rg=1..1 rows=0..3"
+        );
+    }
+
+    @Test
+    public void testNonDedupTieAcrossThreeRowGroups() throws Exception {
+        // 200 runs through rg0, rg1 and rg2: the O3 row goes after all of them, into rg2
+        assertActions(
+                new long[]{100, 200, 4, 200, 200, 4, 200, 300, 4},
+                new long[]{200},
+                1,
+                false,
+                "COPY_ROW_GROUP_SLICE rg=0..0 rows=0..3",
+                "COPY_ROW_GROUP_SLICE rg=1..1 rows=0..3",
+                "MERGE rg=2..2 rows=0..3 o3=0..0"
+        );
+    }
+
+    @Test
+    public void testNonDedupTieAtLastRowGroupMax() throws Exception {
+        // the tie runs into the last row group: it takes the O3 row at 200, the row at 250 is past
+        // the partition and becomes a row group of its own
+        assertActions(
+                new long[]{100, 200, 4, 200, 200, 4},
+                new long[]{200, 250},
+                1,
+                false,
+                "COPY_ROW_GROUP_SLICE rg=0..0 rows=0..3",
+                "MERGE rg=1..1 rows=0..3 o3=0..0",
+                "COPY_O3 o3=1..1"
+        );
+    }
+
+    @Test
+    public void testNonDedupTieAtZeroTimestamp() throws Exception {
+        // the tie at timestamp 0 searches the O3 rows below -1, which takes none of them
+        assertActions(
+                new long[]{0, 0, 4, 0, 100, 4},
+                new long[]{0},
+                1,
+                false,
+                "COPY_ROW_GROUP_SLICE rg=0..0 rows=0..3",
+                "MERGE rg=1..1 rows=0..3 o3=0..0"
+        );
+    }
+
+    @Test
+    public void testNonDedupTieIntoSmallRowGroupWithGapRows() throws Exception {
+        // rg1 holds one row (small with threshold 2): it takes the O3 row at the tie and the gap row
+        // at 400 after it
+        assertActions(
+                new long[]{100, 200, 4, 200, 300, 1},
+                new long[]{200, 400},
+                2,
+                false,
+                "COPY_ROW_GROUP_SLICE rg=0..0 rows=0..3",
+                "MERGE rg=1..1 rows=0..0 o3=0..1"
+        );
+    }
+
+    @Test
+    public void testNonDedupTieSplitsO3AcrossRowGroups() throws Exception {
+        // the O3 row at 150 merges into rg0, the two at the shared 200 into rg1
+        assertActions(
+                new long[]{100, 200, 4, 200, 300, 4},
+                new long[]{150, 200, 200},
+                1,
+                false,
+                "MERGE rg=0..0 rows=0..3 o3=0..0",
+                "MERGE rg=1..1 rows=0..3 o3=1..2"
+        );
     }
 
     @Test
@@ -1137,6 +1239,48 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 new LongList(),
                 new LongList()
         );
+    }
+
+    // computes the actions for row groups given as (min, max, rowCount) triples and the sorted O3
+    // timestamps, and compares them with the expected actions, one line per action
+    private void assertActions(
+            long[] rowGroupTriples,
+            long[] o3Timestamps,
+            int smallRowGroupThreshold,
+            boolean coalesceBoundaryTies,
+            String... expectedActions
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            final LongList rowGroupBounds = new LongList();
+            for (int i = 0; i < rowGroupTriples.length; i += 3) {
+                O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, rowGroupTriples[i], rowGroupTriples[i + 1], rowGroupTriples[i + 2]);
+            }
+            final ObjList<MergeAction> actionsBuf = new ObjList<>();
+            final long addr = allocateSortedTimestamps(o3Timestamps);
+            try {
+                final int n = O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, o3Timestamps.length - 1,
+                        smallRowGroupThreshold, Integer.MAX_VALUE, actionsBuf, new LongList(), new LongList(),
+                        coalesceBoundaryTies
+                );
+                final StringBuilder actual = new StringBuilder();
+                for (int i = 0; i < n; i++) {
+                    final MergeAction action = actionsBuf.get(i);
+                    actual.append(action.type);
+                    if (action.type != ActionType.COPY_O3) {
+                        actual.append(" rg=").append(action.rowGroupIndex).append("..").append(action.rowGroupIndexHi)
+                                .append(" rows=").append(action.rgLo).append("..").append(action.rgHi);
+                    }
+                    if (action.type != ActionType.COPY_ROW_GROUP_SLICE) {
+                        actual.append(" o3=").append(action.o3Lo).append("..").append(action.o3Hi);
+                    }
+                    actual.append('\n');
+                }
+                Assert.assertEquals(String.join("\n", expectedActions) + "\n", actual.toString());
+            } finally {
+                freeSortedTimestamps(addr, o3Timestamps.length);
+            }
+        });
     }
 
     /**
