@@ -419,6 +419,10 @@ public class SqlOptimiser implements Mutable {
     private boolean hasNonEquiNullingJoin;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
+    // The number of indexed ordering edges, see keyMoveEdgeHeads, that pushKeyMoveParents has read over
+    // the life of the optimiser; the index and keyMoveAnswers bound it. clear() keeps it, so tests read
+    // the delta around a compile.
+    private long keyMoveEdgeReads;
     // The execution context of the level whose join conditions optimiseJoins processes, for the NULL
     // checks of isNullRejectedAfter().
     private SqlExecutionContext nullRejectionContext;
@@ -607,6 +611,11 @@ public class SqlOptimiser implements Mutable {
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
+    }
+
+    @TestOnly
+    public long getKeyMoveEdgeReadsForTesting() {
+        return keyMoveEdgeReads;
     }
 
     @TestOnly
@@ -10643,6 +10652,7 @@ public class SqlOptimiser implements Mutable {
         assert keyMoveEdgeLinks.size() == tempIntList.size() / 2 - tempExprs.size();
         final int edgeBase = 2 * tempExprs.size();
         for (int edge = keyMoveEdgeHeads.getQuick(index); edge != -1; edge = keyMoveEdgeLinks.getQuick(edge)) {
+            keyMoveEdgeReads++;
             final int p = tempIntList.getQuick(edgeBase + 2 * edge);
             if (keyMoveVisited.add(p)) {
                 keyMoveStack.add(p);
