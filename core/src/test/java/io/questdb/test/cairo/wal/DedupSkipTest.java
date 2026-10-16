@@ -813,6 +813,68 @@ public class DedupSkipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSkipParquetPartitionRewriteFailsToOpenKeepsByteColumnTop() throws Exception {
+        // The duplicate is dropped and the new row lands after the partition, so the rewrite opens its file
+        // for the new row group and fails. Once the table resumes, the retry keeps the top of the BYTE column
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        assertMemoryLeak(newParquetWriteFailureFacade(isArmed, true), () -> {
+            createParquetPartitionTable("t");
+            // The Parquet file lacks the new column, so a merge that writes rows rewrites the file
+            execute("ALTER TABLE t ADD COLUMN b BYTE");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("t");
+            final Set<String> partitionDirs = listPartitionDirs(tableToken);
+
+            isArmed.set(true);
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T05:00:00.000000Z', 'b', 2005, 5::BYTE),
+                    ('2024-01-01T23:00:00.000000Z', 'x', 2023, 23::BYTE)
+                    """);
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            // the failed rewrite removed the directory it created
+            Assert.assertTrue(partitionDirs.containsAll(listPartitionDirs(tableToken)));
+
+            isArmed.set(false);
+            execute("ALTER TABLE t RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertByteColumnTopReadsNull("t");
+        });
+    }
+
+    @Test
+    public void testSkipParquetPartitionRewriteKeepsByteColumnTop() throws Exception {
+        // The shape of testSkipParquetPartitionRewriteOpensAtNewRowGroup() with a BYTE column, which has no NULL
+        // value: its 12 rows before the new row read NULL only through the column top. The table "t" drops the
+        // duplicate and appends the new row, as its twin "u" does: both keep the top
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetPartitionTable("t");
+            createParquetPartitionTable("u");
+            execute("ALTER TABLE t ADD COLUMN b BYTE");
+            execute("ALTER TABLE u ADD COLUMN b BYTE");
+            drainWalQueue();
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T05:00:00.000000Z', 'b', 2005, 5::BYTE),
+                    ('2024-01-01T23:00:00.000000Z', 'x', 2023, 23::BYTE)
+                    """);
+            execute("INSERT INTO u VALUES ('2024-01-01T23:00:00.000000Z', 'x', 2023, 23::BYTE)");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("u")));
+
+            assertByteColumnTopReadsNull("t");
+            assertByteColumnTopReadsNull("u");
+        });
+    }
+
+    @Test
     public void testSkipParquetPartitionRewriteOpensAfterCoalescedRowGroups() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(() -> {
@@ -1273,6 +1335,33 @@ public class DedupSkipTest extends AbstractCairoTest {
                 return super.openRW(name, opts);
             }
         };
+    }
+
+    // Changes the BYTE column b of the table to SYMBOL, through the footer decoder of its Parquet partition,
+    // then asserts that the 12 rows of 2024-01-01 written before b existed read NULL and the row at 23:00 its
+    // value
+    private void assertByteColumnTopReadsNull(String tableName) throws Exception {
+        execute("ALTER TABLE " + tableName + " ALTER COLUMN b TYPE SYMBOL");
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
+        assertQuery("SELECT v, b FROM " + tableName + " WHERE ts IN '2024-01-01'")
+                .noLeakCheck()
+                .returns("""
+                        v\tb
+                        1\t
+                        2\t
+                        3\t
+                        4\t
+                        5\t
+                        6\t
+                        7\t
+                        8\t
+                        9\t
+                        10\t
+                        11\t
+                        12\t
+                        2023\t23
+                        """);
     }
 
     // Inserts the rows, duplicates of rows that the table "t" and its twin "u" have, into both tables, then

@@ -285,6 +285,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             String tableName = getTestName();
             createEmptyTable(tableName, "DEDUP " + dedupModeSql(isSkipMode) + " keys(ts)", createAsParquet);
+            // the native twin takes the same commits, see assertByteColumnTopMatchesTwin()
+            String twinTableName = tableName + "_native";
+            createEmptyTable(twinTableName, "DEDUP " + dedupModeSql(isSkipMode) + " keys(ts)", false);
+            Rnd twinRnd = new Rnd();
 
             long initialDelta = Micros.MINUTE_MICROS * 15;
             int initialCount = 2 * 24 * 5;
@@ -304,10 +308,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String[] symbols = generateSymbols(rnd, 20, strLen, tableName);
 
             applyWal(transactions, tableName, 1, rnd);
+            applyWal(transactions, twinTableName, 1, twinRnd);
             ObjHashSet<String> firstBatchKeys = collectDedupKeys(transactions, false);
             transactions.clear();
 
-            execute("alter table " + tableName + " add s symbol index", sqlExecutionContext);
+            for (String t : new String[]{tableName, twinTableName}) {
+                execute("alter table " + t + " add s symbol index", sqlExecutionContext);
+                // a column without a NULL value: the rows of the first batch read NULL only through its top
+                execute("alter table " + t + " add b byte", sqlExecutionContext);
+            }
 
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
             long delta = (long) (initialDelta * deltaMultiplier);
@@ -330,8 +339,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             maybeConvertToParquet(tableName, convertToParquet);
             splitTransactionInserts(transactions, 1 + rnd.nextInt(3), rnd);
             // ts is the only dedup key, the rows of one timestamp differ in the s column
-            CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, "ts", false, isSkipMode, transactions, firstBatchKeys);
+            CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, twinTableName, twinRnd, "ts", false, isSkipMode, transactions, firstBatchKeys);
             validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL, oracle);
+            assertByteColumnTopMatchesTwin(tableName, twinTableName);
         });
     }
 
@@ -588,6 +598,21 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions,
             ObjHashSet<String> firstBatchKeys
     ) throws SqlException {
+        return applyWithDedupModeSwitch(rnd, tableName, null, null, dedupKeys, isSymbolKey, isSkipMode, transactions, firstBatchKeys);
+    }
+
+    // twinTableName (null: none) takes the same commits with the same mode switch, after tableName
+    private CommitOracle applyWithDedupModeSwitch(
+            Rnd rnd,
+            String tableName,
+            String twinTableName,
+            Rnd twinRnd,
+            String dedupKeys,
+            boolean isSymbolKey,
+            boolean isSkipMode,
+            ObjList<FuzzTransaction> transactions,
+            ObjHashSet<String> firstBatchKeys
+    ) throws SqlException {
         int switchIndex = rnd.nextInt(transactions.size() + 1);
         boolean isSkipAfterSwitch = rnd.nextBoolean();
         ObjList<FuzzTransaction> beforeSwitch = new ObjList<>();
@@ -604,6 +629,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         fuzzer.applyToWal(beforeSwitch, tableName, 1, rnd);
         execute("alter table " + tableName + " dedup enable " + dedupModeSql(isSkipAfterSwitch) + " keys(" + dedupKeys + ")");
         applyWal(afterSwitch, tableName, 1, rnd);
+        if (twinTableName != null) {
+            fuzzer.applyToWal(beforeSwitch, twinTableName, 1, twinRnd);
+            execute("alter table " + twinTableName + " dedup enable " + dedupModeSql(isSkipAfterSwitch) + " keys(" + dedupKeys + ")");
+            applyWal(afterSwitch, twinTableName, 1, twinRnd);
+        }
 
         return new CommitOracle(
                 firstBatchKeys,
@@ -626,6 +656,18 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             }
             foundSymbols[i] = false;
         }
+    }
+
+    // Changes the BYTE column b of the table and of its native twin to SYMBOL, which reads the rows below a
+    // column top as NULL and a materialized top as 0, then compares the tables
+    private void assertByteColumnTopMatchesTwin(String tableName, String twinTableName) throws SqlException {
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("alter table " + t + " alter column b type symbol", sqlExecutionContext);
+        }
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(twinTableName)));
+        assertSqlCursors(twinTableName, tableName);
     }
 
     private void assertSqlCursorsNoDups(
