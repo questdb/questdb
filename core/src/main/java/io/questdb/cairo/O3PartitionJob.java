@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -706,11 +707,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // In rewrite mode, the new file is in a txn-named directory.
                 final long txnName = isRewrite ? txn : srcNameTxn;
                 path.of(pathToTable);
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
+                setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
                 // Set before the call: when the index update fails part way, TableWriter removes the
                 // files of the new column version it may have left behind.
                 isIndexVersioned = !isRewrite
-                        && hasParquetIndexMovingToNewVersion(tableWriter, tableWriterMetadata, partitionTimestamp, oldPartitionSize, isAppendOnly);
+                        && hasParquetIndexMovingToNewVersion(tableWriter, tableWriterMetadata, ff, path, partitionTimestamp, oldPartitionSize, isAppendOnly);
+                path.of(pathToTable);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
                 updateParquetIndexes(
                         partitionBy,
                         partitionTimestamp,
@@ -2479,19 +2482,37 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     // getParquetIndexVersionNameTxn()). The update zeroes every column top, because the updated file holds every
     // column from row 0. A merge moves rows, so it versions any live index. An append keeps the row ids, and extends
     // a live index in place, unless the column has a top: readers of the previous txn take the rows below it as
-    // implicit NULLs that the index lacks, and a reader with top 0 needs them in the index.
+    // implicit NULLs that the index lacks, and a reader with top 0 needs them in the index. An append also versions
+    // a live index whose key file, of the current index type, is missing from the directory partitionPath names:
+    // ATTACH does not build an index added, or changed, while the partition was detached. Building it under
+    // a new version never leaves a partly built file under the live name, which a later append would extend.
     private static boolean hasParquetIndexMovingToNewVersion(
             TableWriter tableWriter,
             TableRecordMetadata metadata,
+            FilesFacade ff,
+            Path partitionPath,
             long partitionTimestamp,
             long oldPartitionSize,
             boolean isAppendOnly
     ) {
+        final int partitionPathLen = partitionPath.size();
         for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
             if (isParquetIndexedSymbol(metadata, columnIndex)) {
                 final long columnTop = tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
-                if (isParquetIndexLiveForReaders(columnTop, oldPartitionSize) && (!isAppendOnly || columnTop > 0)) {
-                    return true;
+                if (isParquetIndexLiveForReaders(columnTop, oldPartitionSize)) {
+                    if (!isAppendOnly || columnTop > 0) {
+                        return true;
+                    }
+                    final boolean isLiveKeyFilePresent = ff.exists(IndexFactory.keyFileName(
+                            metadata.getColumnIndexType(columnIndex),
+                            partitionPath.trimTo(partitionPathLen),
+                            metadata.getColumnName(columnIndex),
+                            tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex)
+                    ));
+                    partitionPath.trimTo(partitionPathLen);
+                    if (!isLiveKeyFilePresent) {
+                        return true;
+                    }
                 }
             }
         }
@@ -4331,12 +4352,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *     <li>A: no reader reads the live index files ({@link #isParquetIndexLiveForReaders} is false):
      *     rebuild them from row 0 under the live name;</li>
      *     <li>B: not {@code isIndexVersioned}, an append into a partition whose live columns have top 0
-     *     (see hasParquetIndexMovingToNewVersion()): every existing row keeps its row id, append the new
-     *     rows to the live files, as a native append does under readers that bound their scans by their
-     *     own row count;</li>
-     *     <li>C: {@code isIndexVersioned}, rows move or a live column loses its top: build the index from
-     *     row 0 into the column version {@link #getParquetIndexVersionNameTxn} names. TableWriter commits
-     *     that version in _cv and purges the previous one once no reader uses it.</li>
+     *     and live index files (see hasParquetIndexMovingToNewVersion()): every existing row keeps its row
+     *     id, append the new rows to the live files, as a native append does under readers that bound their
+     *     scans by their own row count;</li>
+     *     <li>C: {@code isIndexVersioned}, rows move, a live column loses its top, or an append finds no live
+     *     key file: build the index from row 0 into the column version {@link #getParquetIndexVersionNameTxn}
+     *     names. TableWriter commits that version in _cv and purges the previous one once no reader uses
+     *     it.</li>
      * </ul>
      */
     private static void updateParquetIndexes(
@@ -4444,7 +4466,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // the first row the decode loop below indexes
                         final long indexLo;
                         if (isLiveIndexExtended) {
-                            // hasParquetIndexMovingToNewVersion() versions a partition with a live top
+                            // hasParquetIndexMovingToNewVersion() versions a partition with a live top, or
+                            // without the live key file
                             assert tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex) == 0;
                             // open the live index without truncating it; drop the entries a failed
                             // earlier attempt may have appended past the committed rows
