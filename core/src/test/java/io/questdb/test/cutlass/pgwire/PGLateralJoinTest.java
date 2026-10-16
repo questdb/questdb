@@ -48,10 +48,7 @@ public class PGLateralJoinTest extends BasePGTest {
     public void testRuntimeNullCheckNextToAComputedColumn() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
-                statement.execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp), (3, 3, 3::timestamp)");
-                statement.execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
-                statement.execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp), (102, 3, 3::timestamp)");
+                createOrdersAndRefunds(statement);
                 statement.execute("CREATE TABLE trades (id INT, x INT, i INT, ts TIMESTAMP) TIMESTAMP(ts)");
                 statement.execute("INSERT INTO trades VALUES (10, 1, 10, 1::timestamp), (11, 2, NULL, 2::timestamp)");
             }
@@ -80,10 +77,7 @@ public class PGLateralJoinTest extends BasePGTest {
     public void testRuntimeNullCheckOfANestedSubQuery() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
-                statement.execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp), (3, 3, 3::timestamp)");
-                statement.execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
-                statement.execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp), (102, 3, 3::timestamp)");
+                createOrdersAndRefunds(statement);
                 statement.execute("CREATE TABLE trades (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
                 statement.execute("INSERT INTO trades VALUES (10, 1, 1::timestamp), (11, 2, 2::timestamp)");
             }
@@ -101,14 +95,7 @@ public class PGLateralJoinTest extends BasePGTest {
                     insert.execute("INSERT INTO refunds VALUES (103, 4, 4::timestamp)");
                 }
                 for (int i = 0; i < 2; i++) {
-                    try {
-                        statement.executeQuery();
-                        Assert.fail("expected the NULL value to fail the execution");
-                    } catch (PSQLException e) {
-                        Assert.assertNotNull(e.getServerErrorMessage());
-                        Assert.assertEquals(LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR, e.getServerErrorMessage().getMessage());
-                        Assert.assertEquals(sql.indexOf("CASE") + 1, e.getServerErrorMessage().getPosition());
-                    }
+                    assertNullValueError(statement, sql.indexOf("CASE") + 1);
                 }
             }
         });
@@ -125,10 +112,7 @@ public class PGLateralJoinTest extends BasePGTest {
     public void testRuntimeNullCheckOfAnyConjunct() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
-                statement.execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp), (3, 3, 3::timestamp)");
-                statement.execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
-                statement.execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp), (102, 3, 3::timestamp)");
+                createOrdersAndRefunds(statement);
                 statement.execute("CREATE TABLE trades (id INT, x INT, i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts)");
                 statement.execute("INSERT INTO trades VALUES (10, 1, 10, 10, 1::timestamp), (11, 2, NULL, 10, 2::timestamp)");
             }
@@ -152,14 +136,7 @@ public class PGLateralJoinTest extends BasePGTest {
                 for (int i = 0; i < rows.length; i++) {
                     bind(statement, 1, firstValues[i], secondValues[i]);
                     if (rows[i] == null) {
-                        try {
-                            statement.executeQuery();
-                            Assert.fail("expected the NULL values to fail the execution");
-                        } catch (PSQLException e) {
-                            Assert.assertNotNull(e.getServerErrorMessage());
-                            Assert.assertEquals(LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR, e.getServerErrorMessage().getMessage());
-                            Assert.assertEquals(sql.indexOf('?') + 1, e.getServerErrorMessage().getPosition());
-                        }
+                        assertNullValueError(statement, sql.indexOf('?') + 1);
                         continue;
                     }
                     try (ResultSet rs = statement.executeQuery()) {
@@ -176,6 +153,17 @@ public class PGLateralJoinTest extends BasePGTest {
         });
     }
 
+    // Executes the statement, which must fail with the NULL value error at the 1-based position
+    private static void assertNullValueError(PreparedStatement statement, int position) throws SQLException {
+        try (ResultSet ignore = statement.executeQuery()) {
+            Assert.fail("expected the NULL value error");
+        } catch (PSQLException e) {
+            Assert.assertNotNull(e.getServerErrorMessage());
+            Assert.assertEquals(LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR, e.getServerErrorMessage().getMessage());
+            Assert.assertEquals(position, e.getServerErrorMessage().getPosition());
+        }
+    }
+
     private static void bind(PreparedStatement statement, int index, Integer first, Long second) throws SQLException {
         if (first == null) {
             statement.setNull(index, Types.INTEGER);
@@ -187,5 +175,13 @@ public class PGLateralJoinTest extends BasePGTest {
         } else {
             statement.setLong(index + 1, second);
         }
+    }
+
+    // Three orders with the keys 1 to 3, and three refunds, one per key
+    private static void createOrdersAndRefunds(Statement statement) throws SQLException {
+        statement.execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        statement.execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp), (3, 3, 3::timestamp)");
+        statement.execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        statement.execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp), (102, 3, 3::timestamp)");
     }
 }
