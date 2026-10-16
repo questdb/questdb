@@ -160,6 +160,10 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
         engine.releaseAllWalWriters();
         // Views own a separate WAL-writer pool. Its mappings must also close before durable files are restored.
         engine.releaseAllViewWalWriters();
+        // A freshly booted engine has no open sequencer, and a power loss runs no clean close. Close the sequencers
+        // here, where the clean close's flush of the txnlog comes after the power loss and counts for nothing; after
+        // crash() it would flush through a handle the rollback made stale.
+        engine.releaseInactiveTableSequencers();
         crashFf.crash(engine.getConfiguration().getDbRoot());
 
         // The commit phase can re-point a table's name to a token it minted (REBASE WAL swaps a new table dir in)

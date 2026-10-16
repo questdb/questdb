@@ -142,6 +142,13 @@ public interface TableTransactionLogFile extends Closeable {
     }
 
     /**
+     * Called before a clean close of the sequencer: flushes the records that no completed flush has covered, so that
+     * the next open checks none of them. Not called after a failed append or flush, as a flush then can return
+     * success without the pages the failure lost. Throws when the flush fails, and then leaves the log as it was.
+     */
+    void flushOnCleanClose();
+
+    /**
      * Syncs the log to the disk with {@code MS_SYNC}, in every commit mode. Under SYNC and ADAPTIVE that covers
      * every log file; under NOSYNC and ASYNC a V2 log syncs its header alone.
      */

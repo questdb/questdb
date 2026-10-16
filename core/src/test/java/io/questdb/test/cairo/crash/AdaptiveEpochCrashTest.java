@@ -63,6 +63,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -823,6 +824,52 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             execute("drop table lag");
             execute("drop table lag_expected");
             drainWalQueue();
+            releaseEngineHandles();
+        });
+    }
+
+    /**
+     * A clean close of a NOSYNC sequencer flushes its log once and moves the header hint to the tail, so the start
+     * after a clean stop reads the log's header alone and the first open checks no record. A NOSYNC commit flushes
+     * nothing, and a close with no record past the hint flushes nothing.
+     */
+    @Test
+    public void testSequencerCloseUnderNosyncFlushesTheLogOnce() throws Exception {
+        assumeCrashHarnessSupported();
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final SequencerFileCountingFacade ff = new SequencerFileCountingFacade();
+        crashFf = ff;
+        ff.setDbRoot(root);
+        assertMemoryLeak(ff, () -> {
+            execute("create table whole (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken whole = engine.verifyTableName("whole");
+            ff.reset(whole, whole);
+            try (WalWriter w = engine.getWalWriter(whole)) {
+                for (int i = 1; i <= TORN_TAIL_KEPT; i++) {
+                    commitTornTailRow(w, i);
+                }
+            }
+            drainWalQueue();
+            Assert.assertEquals("a NOSYNC commit flushes nothing", 0, ff.wholeLogFdatasyncs);
+            engine.releaseInactiveTableSequencers();
+            Assert.assertEquals("a clean close flushes the log once", 1, ff.wholeLogFdatasyncs);
+            Assert.assertEquals("a clean close moves the hint to the tail", TORN_TAIL_KEPT + 1, readSequencerLogHint(whole));
+            engine.getTableSequencerAPI().openSequencer(whole);
+            engine.releaseInactiveTableSequencers();
+            Assert.assertEquals("a close with no record past the hint flushes nothing", 1, ff.wholeLogFdatasyncs);
+
+            // A clean stop: the kernel has written every page back before the restart.
+            markDurableBaseline();
+            crashFf.powerLoss();
+            simulateRestart(new TableToken[]{whole});
+            new RecoveryCoordinator(engine).recover();
+            ff.reset(whole, whole);
+            new CheckWalTransactionsJob(engine).run();
+            Assert.assertEquals("the scan reads the header alone", 1, ff.wholeLogReads);
+            Assert.assertEquals(TORN_TAIL_KEPT, engine.getTableSequencerAPI().lastTxn(whole));
+            // A NOSYNC open that checks a record stores the hint negated.
+            Assert.assertEquals("the open checks no record", TORN_TAIL_KEPT + 1, readSequencerLogHint(whole));
+            assertApplyGoesIdle(whole);
             releaseEngineHandles();
         });
     }
@@ -1689,6 +1736,14 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
+    private long readSequencerLogHint(TableToken tt) throws IOException {
+        try (FileChannel channel = FileChannel.open(Paths.get(sequencerLogPath(tt)), StandardOpenOption.READ)) {
+            final ByteBuffer buf = ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+            channel.read(buf, TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64);
+            return buf.getLong(0);
+        }
+    }
+
     // The writer brings its save point in line with the local durability policy: a replica makes the table
     // durable and removes it, a primary publishes the baseline of a table that has none.
     private void reconcileSavePoint(Scenario s, LocalDurabilityPolicy policy) {
@@ -1714,6 +1769,8 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         // reaches.
         new CheckWalTransactionsJob(engine).run();
         engine.getTableSequencerAPI().lastTxn(s.token);
+        // The first process closes its sequencers before it stops: a clean close flushes the log and moves its hint.
+        engine.releaseInactiveTableSequencers();
         final Map<String, byte[]> afterFirst = tableFiles(s);
         engine.releaseAllReaders();
         engine.releaseAllWriters();
@@ -2157,13 +2214,14 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     // Counts the sequencer files the WAL table scan touches: the opens of _txnlog.meta.i, one per sequencer
-    // construction, for the torn table, and those plus the opens, reads and closes of _txnlog for the intact one;
-    // and the opens of each table's _txn.
+    // construction, for the torn table, and those plus the opens, reads, flushes and closes of _txnlog for the
+    // intact one; and the opens of each table's _txn.
     private static final class SequencerFileCountingFacade extends CrashFaultFilesFacade {
         int keptTxnOpens;
         int tornSequencerOpens;
         int tornTxnOpens;
         int wholeLogCloses;
+        int wholeLogFdatasyncs;
         int wholeLogOpens;
         int wholeLogReads;
         int wholeSequencerOpens;
@@ -2181,6 +2239,14 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 wholeLogCloses++;
             }
             return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            if (isWholeLog(fd)) {
+                wholeLogFdatasyncs++;
+            }
+            super.fdatasync(fd);
         }
 
         @Override
@@ -2252,6 +2318,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             wholeLogOpens = 0;
             wholeLogReads = 0;
             wholeLogCloses = 0;
+            wholeLogFdatasyncs = 0;
         }
 
         private void countOpen(LPSZ name) {

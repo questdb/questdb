@@ -774,12 +774,18 @@ change reads as unverified, never as torn, and a released binary ignores the new
   the tail at the first record that cannot be whole (zero WAL id, zero timestamp, a gap in the structure version): it
   lowers `maxTxn`, zeroes the bytes after it and flushes (`dropping torn sequencer txnlog tail [...]`). An open that
   cuts nothing leaves the bytes past the tail alone; the first append after it zeroes and flushes them if any are
-  non-zero, so a stale record can never look valid after the next power loss. Only `sync` and `adaptive` commits move
-  the hint. A `nosync` or `async` open scans from the hint, flushes nothing and stores the hint negated: the next
-  `nosync` or `async` open scans only the records after it, but a `sync` or `adaptive` open that finds it negative
-  scans the whole log from transaction 1, flushes it and stores a positive hint (`TableTransactionLogV1.recoverTail`).
-  So the first `sync` or `adaptive` start after a `nosync` or `async` run pays one `fdatasync` and a full read of
-  every V1 log, once per table: 3-4 s for 1,000 tables against about 50 ms at the next start, and 0.27 s for a log of
+  non-zero, so a stale record can never look valid after the next power loss. `sync` and `adaptive` commits, every
+  structural change (`fullSync`) and a clean close of the sequencer move the hint, each after a flush of the records
+  it covers. The clean close (`TableSequencerImpl.closeLocked` -> `TableTransactionLogV1.flushOnCleanClose`) flushes
+  the log when the hint is behind the tail, in any mode, and then stores the tail without a flush: a power loss
+  that loses that store costs the next open a check of the records. It skips a distressed sequencer and a table
+  whose durable frontier is fenced, as a flush after a failed one can succeed without the lost pages; a failed close
+  flush fences the frontier and is logged (`could not flush sequencer txnlog on close [...]`), and the close goes
+  on. A `nosync` or `async` open scans from the hint, flushes nothing and stores the hint negated: the next `nosync`
+  or `async` open scans only the records after it, but a `sync` or `adaptive` open that finds it negative scans the
+  whole log from transaction 1, flushes it and stores a positive hint (`TableTransactionLogV1.recoverTail`). So the
+  first `sync` or `adaptive` start after a `nosync` or `async` run that did not stop cleanly pays one `fdatasync`
+  and a full read of every V1 log, once per table: 3-4 s for 1,000 tables against about 50 ms at the next start, and 0.27 s for a log of
   a million transactions read from the disk (guide, section 9). It runs at each log's first open: in QuestDB the
   `metadata-hydration` thread opens every WAL table's log right after the start
   (`CairoEngine.hydrateRecentWriteTracker`), unless a write gets there first. Damage to a V1 record already written

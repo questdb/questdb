@@ -301,6 +301,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     @Override
+    public void flushOnCleanClose() {
+        // An open checks records only in ADAPTIVE, where the batched flush moves the hint.
+    }
+
+    @Override
     public void fullSync() {
         // Local commits keep the configured grade; the downloader does not call this method.
         // The part file must be durable before the header, as in sync0(). NOSYNC and ASYNC promise nothing

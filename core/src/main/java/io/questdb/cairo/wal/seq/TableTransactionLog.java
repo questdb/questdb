@@ -175,6 +175,15 @@ public class TableTransactionLog implements Closeable {
         txnLogFile.fdatasyncTxnLog(fromTxn);
     }
 
+    /**
+     * See {@link TableTransactionLogFile#flushOnCleanClose()}. A no-op when the log was not opened.
+     */
+    public void flushOnCleanClose() {
+        if (txnLogFile != null) {
+            txnLogFile.flushOnCleanClose();
+        }
+    }
+
     public void fullSync() {
         txnMetaMemIndex.sync(false);
         txnMetaMem.sync(false);

@@ -310,9 +310,11 @@ Found while this mode was built, not yet filed:
 `cairo.commit.mode` can change at any restart, in any direction, any number of times.
 
 - **Into `adaptive`.** Each WAL table enrols at its first writer open (section 3).
-- **From `nosync` or `async` into `sync` or `adaptive`.** The first start in the new mode reads each WAL table's
-  version 1 sequencer log (the default) once from its first transaction and flushes it, because the records the
-  `nosync` or `async` run wrote were never flushed and a durable mode does not trust them unchecked. The first open
+- **From `nosync` or `async` into `sync` or `adaptive`.** After a `nosync` or `async` run that did not stop
+  cleanly, the first start in the new mode reads each WAL table's version 1 sequencer log (the default) once from
+  its first transaction and flushes it, because the records the `nosync` or `async` run wrote were never flushed and
+  a durable mode does not trust them unchecked. A clean stop flushes each log the run wrote to, and the start skips
+  it (section 8.1). The first open
   of each log pays it, once per table: in QuestDB the background table scan right after the start (or the table's
   first write, if that comes first), in QuestDB Enterprise the uploader start, before any upload. Later starts in a
   durable mode skip it. It costs one `fdatasync` per table and a read of the log: 3-4 s for 1,000 tables in our
@@ -340,6 +342,10 @@ Found while this mode was built, not yet filed:
   system call for the checksum work and about 9 µs on the first reader (four file-size checks). WAL column length
   guards also refresh a cached length when the committed range grows past it. Each V1 sequencer open scans from
   its hint, and a torn tail that it cuts is flushed in every mode; mode-switch rescans are described in section 8.
+  In `nosync` and `async` a clean close of a sequencer (shutdown, the release of an idle table's sequencer, DROP
+  TABLE) flushes its V1 log once, one `fdatasync`, when the log holds records no flush covered, so the next start
+  reads only the log's header. After a crash, a kill or a power loss the next start checks the records written
+  since the sequencer was last opened or closed cleanly.
 - **Held-back transactions** are applied again from the WAL after a restart instead of being read from `_txn`, in
   every mode. Before, a crash at the wrong moment could lose or duplicate those rows
   ([#7804](https://github.com/questdb/questdb/issues/7804)).
@@ -384,8 +390,8 @@ Found while this mode was built, not yet filed:
   restart could find the partition missing (CONVERT PARTITION) or its rows gone (the Parquet partition switch).
 - **A start** checks each WAL table for its two save point files, in every mode: four `access` calls, about 2 µs per
   table (2.2 ms per 1,000 tables).
-- **The first `sync` start after a `nosync` or `async` run** reads and flushes each version 1 sequencer log once, as
-  the switch into `adaptive` does (section 8).
+- **The first `sync` start after a `nosync` or `async` run** that did not stop cleanly reads and flushes each
+  version 1 sequencer log once, as the switch into `adaptive` does (section 8).
 - The selected NOSYNC/ASYNC steady-state measurements were within noise. That does not establish unchanged cost
   for every workload, filesystem or final integrated revision (section 9).
 
@@ -460,8 +466,8 @@ More detail:
   one per generation, so that a start which falls back to the older save point keeps the import; a skipped or failed
   save point fails the COPY (section 11.6).
   `nosync`, `async` and a non-WAL table in `adaptive`: no flush.
-- **The first `sync` or `adaptive` start after `nosync` or `async`** reads each WAL table's version 1 sequencer log
-  from its first transaction and flushes it, once per table (section 8): one `fdatasync` and a read of 28 bytes per
+- **The first `sync` or `adaptive` start after `nosync` or `async`** that did not stop cleanly reads each WAL
+  table's version 1 sequencer log from its first transaction and flushes it, once per table (section 8): one `fdatasync` and a read of 28 bytes per
   transaction in the log. Measured while other work loaded the same disk: 1,000 tables with 100 to 1,000 transactions
   each took 3.0 s in `sync` and 4.2 s in `adaptive`, against about 50 ms at the next start; one table with a million
   transactions 7.5 ms against 0.2 ms with its log in the page cache, 0.27 s when the log had to be read from the disk.
@@ -497,7 +503,7 @@ More detail:
 - **Enterprise.** The uploader flushes every table's sequencer log once when it starts (boot and promotion, in
   `adaptive` and `sync`), before it listens for commits; a commit made meanwhile is uploaded once the flush is done.
   On Linux that is one `syncfs` plus a read of each table's last transaction (on the first such start after a
-  `nosync` or `async` run, also the one-off read and flush of each version 1 log, above): for 1,000 tables 37-109 ms in
+  `nosync` or `async` run that did not stop cleanly, also the one-off read and flush of each version 1 log, above): for 1,000 tables 37-109 ms in
   `adaptive` and 21-23 ms in `sync` when every table has one new commit, 2-8 ms when none has. Elsewhere each table
   flushes its log with every version 2 log part it still keeps: one more flush per kept closed part (5,000
   transactions each by default), about +50% on the start flush in the typical case (1,000 busy tables: 10.0 s

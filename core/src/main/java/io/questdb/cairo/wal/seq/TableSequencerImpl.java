@@ -666,10 +666,26 @@ public class TableSequencerImpl implements TableSequencer {
             return false;
         }
         closed = true;
-        Misc.free(metadata);
-        Misc.free(tableTransactionLog);
-        Misc.free(walIdGenerator);
-        Misc.free(path);
+        try {
+            // Distress and the fence are what a failed append or log flush leaves behind; the flush is skipped then.
+            if (tableTransactionLog != null && !distressed && !seqTxnTracker.isDurableFrontierFenced()) {
+                try {
+                    tableTransactionLog.flushOnCleanClose();
+                } catch (CairoException e) {
+                    // As in fdatasyncTxnLog(): a later flush of this log can return 0 without the pages this one lost.
+                    seqTxnTracker.fenceDurableFrontier(e);
+                    LOG.error().$("could not flush sequencer txnlog on close [table=").$(tableToken)
+                            .$(", errno=").$(e.getErrno())
+                            .$(", error=").$safe(e.getFlyweightMessage())
+                            .I$();
+                }
+            }
+        } finally {
+            Misc.free(metadata);
+            Misc.free(tableTransactionLog);
+            Misc.free(walIdGenerator);
+            Misc.free(path);
+        }
         return true;
     }
 

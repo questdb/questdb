@@ -249,6 +249,19 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     @Override
+    public void flushOnCleanClose() {
+        // The header check comes first: an open that failed leaves maxTxn at 0 under a log that holds records, and
+        // on a replica the downloader moves the header past maxTxn. Neither log is flushed here.
+        if (txnMem.isOpen()
+                && txnMem.getLong(MAX_TXN_OFFSET_64) == maxTxn.get()
+                && txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64) != maxTxn.get() + 1) {
+            txnMem.flushFile(false);
+            // Not flushed: a power loss that loses it costs the next open a check of the records.
+            markFlushed();
+        }
+    }
+
+    @Override
     public void fullSync() {
         txnMem.sync(false);
         markFlushed();

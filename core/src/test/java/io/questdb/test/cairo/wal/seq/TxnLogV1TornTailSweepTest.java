@@ -152,8 +152,9 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
     @Test
     public void testFirstDurableOpenAfterNosyncFlushesTheLogOnce() throws Exception {
         // The one-off cost of a switch into SYNC or ADAPTIVE that the guide documents: after a NOSYNC or ASYNC
-        // run the first durable open scans the whole log and flushes it once; the durable opens after it flush
-        // nothing, and NOSYNC and ASYNC opens never flush.
+        // run that did not stop cleanly the first durable open scans the whole log and flushes it once; the durable
+        // opens after it flush nothing, and NOSYNC and ASYNC opens never flush. A clean close of a NOSYNC run with
+        // commits flushes the log once and moves the hint to the tail, so the next open checks no record.
         assertMemoryLeak(() -> {
             final int[] flushes = {0};
             final FilesFacade ff = new TestFilesFacadeImpl() {
@@ -177,8 +178,8 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                         log.addEntry(0, 100 + txns, 0, txns - 1, TS_BASE + txns * 1_000L, 0, 0, 0);
                     }
                 }
-                // A NOSYNC restart, two durable restarts, a NOSYNC run with commits, an ASYNC restart, two
-                // ADAPTIVE restarts.
+                // A NOSYNC restart that does not stop cleanly, two durable restarts, a NOSYNC run with commits, an
+                // ASYNC restart, two ADAPTIVE restarts. Every run but the first closes cleanly.
                 final int[] modes = {CommitMode.NOSYNC, CommitMode.SYNC, CommitMode.SYNC, CommitMode.NOSYNC, CommitMode.ASYNC, CommitMode.ADAPTIVE, CommitMode.ADAPTIVE};
                 for (int i = 0; i < modes.length; i++) {
                     configuration.commitMode = modes[i];
@@ -192,11 +193,21 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                                 log.addEntry(0, 100 + txns, 0, txns - 1, TS_BASE + txns * 1_000L, 0, 0, 0);
                             }
                         }
+                        if (i > 0) {
+                            log.flushOnCleanClose();
+                        }
                     }
                     actual.append(CommitMode.toString(modes[i])).append('=').append(flushes[0]).append(' ');
+                    if (i == 3) {
+                        Assert.assertEquals("a clean close moves the hint to the tail", txns + 1, readHint(seqDir));
+                    }
+                    if (i == 4) {
+                        // An ASYNC open that checks a record stores the hint negated.
+                        Assert.assertEquals("the open after a clean close checks no record", txns + 1, readHint(seqDir));
+                    }
                 }
             }
-            Assert.assertEquals("nosync=0 sync=1 sync=0 nosync=0 async=0 adaptive=1 adaptive=0 ", actual.toString());
+            Assert.assertEquals("nosync=0 sync=1 sync=0 nosync=1 async=0 adaptive=0 adaptive=0 ", actual.toString());
         });
     }
 
@@ -312,6 +323,11 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
         }
     }
 
+    private static long readHint(String seqDir) {
+        return ByteBuffer.wrap(readFile(seqDir + "/" + WalUtils.TXNLOG_FILE_NAME)).order(ByteOrder.LITTLE_ENDIAN)
+                .getLong((int) TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64);
+    }
+
     private static Rec recordAt(byte[] log, long txn) {
         final long offset = recordOffset(txn);
         if (offset + RECORD_SIZE > log.length) {
@@ -360,8 +376,12 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
         NOSYNC_BATCH("NOSYNC, three commits", CommitMode.NOSYNC, 0, "DDD", false),
         // The commit mode changes between restarts: a NOSYNC open scans records no flush covered, and the next
         // start is ADAPTIVE.
-        NOSYNC_REOPEN_THEN_ADAPTIVE("NOSYNC, three commits and a reopen, reopened ADAPTIVE", CommitMode.NOSYNC, 0, "DDD", false, true, CommitMode.ADAPTIVE);
+        NOSYNC_REOPEN_THEN_ADAPTIVE("NOSYNC, three commits and a reopen, reopened ADAPTIVE", CommitMode.NOSYNC, 0, "DDD", false, true, false, CommitMode.ADAPTIVE),
+        // A clean close flushes the records and then moves the hint to the tail, which no flush covers.
+        NOSYNC_CLEAN_CLOSE("NOSYNC, three commits, a clean close and a reopen", CommitMode.NOSYNC, 0, "DDD", false, true, true, CommitMode.NOSYNC),
+        NOSYNC_CLEAN_CLOSE_THEN_ADAPTIVE("NOSYNC, three commits, a clean close and a reopen, reopened ADAPTIVE", CommitMode.NOSYNC, 0, "DDD", false, true, true, CommitMode.ADAPTIVE);
 
+        final boolean cleanCloseAtEnd;
         final int commitMode;
         final boolean flushAtEnd;
         final long groupWindowUs;
@@ -371,16 +391,17 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
         final int verifyMode;
 
         Window(String label, int commitMode, long groupWindowUs, String ops, boolean flushAtEnd) {
-            this(label, commitMode, groupWindowUs, ops, flushAtEnd, false, commitMode);
+            this(label, commitMode, groupWindowUs, ops, flushAtEnd, false, false, commitMode);
         }
 
-        Window(String label, int commitMode, long groupWindowUs, String ops, boolean flushAtEnd, boolean reopenAtEnd, int verifyMode) {
+        Window(String label, int commitMode, long groupWindowUs, String ops, boolean flushAtEnd, boolean reopenAtEnd, boolean cleanCloseAtEnd, int verifyMode) {
             this.label = label;
             this.commitMode = commitMode;
             this.groupWindowUs = groupWindowUs;
             this.ops = ops;
             this.flushAtEnd = flushAtEnd;
             this.reopenAtEnd = reopenAtEnd;
+            this.cleanCloseAtEnd = cleanCloseAtEnd;
             this.verifyMode = verifyMode;
         }
 
@@ -539,6 +560,11 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                         log.fdatasyncTxnLog();
                         acked = first + window.ops.length() - 1;
                         crashPoint("after batch flush");
+                    }
+                    if (window.cleanCloseAtEnd) {
+                        activity = "clean close";
+                        log.flushOnCleanClose();
+                        crashPoint("after clean close");
                     }
                     if (window.reopenAtEnd) {
                         activity = "reopen";

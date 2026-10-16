@@ -4076,10 +4076,15 @@ public class CheckpointTest extends AbstractCairoTest {
                     }
                 }
             };
+            final byte[] image;
+            final byte[] recordOnDisk;
             try {
                 // The first open after the restore, and the append over the rolled-back record.
                 execute("INSERT INTO test VALUES (200, 200)");
                 Assert.assertEquals(keptTxn + 1, engine.getTableSequencerAPI().lastTxn(tableToken));
+                // The power loss comes before the sequencer's clean close, whose flush covers the appended record.
+                image = java.nio.file.Files.readAllBytes(txnLog);
+                recordOnDisk = onDisk[0];
                 engine.releaseInactive();
                 engine.getTableSequencerAPI().releaseAll();
             } finally {
@@ -4087,8 +4092,7 @@ public class CheckpointTest extends AbstractCairoTest {
             }
             engine.checkpointRelease();
 
-            final byte[] image = java.nio.file.Files.readAllBytes(txnLog);
-            System.arraycopy(onDisk[0], 0, image, offset, recordSize);
+            System.arraycopy(recordOnDisk, 0, image, offset, recordSize);
             java.nio.file.Files.write(txnLog, image);
             Assert.assertEquals("the rolled-back record came back after a torn append", keptTxn, engine.getTableSequencerAPI().lastTxn(tableToken));
         });
