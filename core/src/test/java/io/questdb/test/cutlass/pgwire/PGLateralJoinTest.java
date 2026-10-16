@@ -184,6 +184,51 @@ public class PGLateralJoinTest extends BasePGTest {
         });
     }
 
+    // A prepared statement whose LATERAL body reads o.x in c's ON clause and keys o.x in WHERE on b,
+    // which the RIGHT join after c joins, fails at the RIGHT join at each execution. Its parameter
+    // follows the RIGHT join, as the simple query mode inlines the value. The statement with the key
+    // on a returns the rows of DuckDB at each execution.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlavePrepared() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE o (id INT, x INT)");
+                statement.execute("CREATE TABLE a (id INT, x INT)");
+                statement.execute("CREATE TABLE b (id INT, k INT, x INT)");
+                statement.execute("CREATE TABLE c (id INT, sid INT)");
+                statement.execute("INSERT INTO o VALUES (1, 1), (2, NULL), (3, 3)");
+                statement.execute("INSERT INTO a VALUES (10, 1), (11, 3), (12, NULL), (0, 1)");
+                statement.execute("INSERT INTO b VALUES (20, 5, 1), (21, 1, 1), (22, 7, NULL), (23, 1, NULL), (24, 3, 3)");
+                statement.execute("INSERT INTO c VALUES (100, 21), (101, 22), (102, 20), (103, 23), (104, 99)");
+            }
+            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.x > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND b.id > ?) l ORDER BY 1, 2, 3";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setInt(1, 0);
+                    try (ResultSet ignore = statement.executeQuery()) {
+                        Assert.fail("expected the RIGHT join to fail");
+                    } catch (PSQLException e) {
+                        Assert.assertNotNull(e.getServerErrorMessage());
+                        Assert.assertEquals(
+                                "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query",
+                                e.getServerErrorMessage().getMessage()
+                        );
+                        Assert.assertEquals(sql.indexOf("RIGHT") + 1, e.getServerErrorMessage().getPosition());
+                    }
+                }
+            }
+            final String masterKeySql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid - ? = o.x RIGHT JOIN b ON a.x = b.k WHERE a.x = o.x AND a.id IS NOT NULL) l ORDER BY 1, 2, 3";
+            try (PreparedStatement statement = connection.prepareStatement(masterKeySql)) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setInt(1, 20);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet("id[INTEGER],aid[INTEGER],sid[INTEGER]\n1,0,21\n1,0,23\n1,10,21\n1,10,23\n3,11,24\n", sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
     // Executes the statement, which must fail with the NULL value error at the 1-based position
     private static void assertNullValueError(PreparedStatement statement, int position) throws SQLException {
         try (ResultSet ignore = statement.executeQuery()) {

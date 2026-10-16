@@ -1463,3 +1463,87 @@ ORDER BY 1, 2, 3
 1 0 21
 1 10 21
 3 11 24
+
+# ============================================================
+# Outer column in an ON clause before a RIGHT join, WHERE key on a later table
+# The ON clause of c_kc reads o.x. Where WHERE equates o.x to a column of a
+# table joined at or after the RIGHT join, QuestDB deliberately rejects the
+# query; DuckDB returns 1 NULL 21, 1 NULL 23 and 3 11 24 for the first one.
+# Where the key column is joined before the RIGHT join, both return the rows.
+# ============================================================
+
+statement ok
+CREATE TABLE c_kc (id INT, sid INT)
+
+statement ok
+INSERT INTO c_kc VALUES (100, 21), (101, 22), (102, 20), (103, 23), (104, 99)
+
+statement ok
+CREATE TABLE o2_kc (id INT, x INT, y INT)
+
+statement ok
+INSERT INTO o2_kc VALUES (1, 1, 1), (2, 3, 3), (3, 1, 5), (4, 3, 1)
+
+statement error
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND o.x > 1
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE b.k = o.x
+) l
+ORDER BY 1, 2, 3
+----
+db error: ERROR: outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query
+
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o2_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND c.id > o.x + 98
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE a.x = o.x AND b.k = o.y AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+1 10 21
+1 10 23
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid - 20 = o.x
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE a.x = o.x AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+1 0 21
+1 0 23
+1 10 21
+1 10 23
+3 11 24
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND o.x > 0
+    JOIN b_kc b2 ON b2.id = c.sid
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE b2.k = o.x AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+1 10 21
+1 10 23
