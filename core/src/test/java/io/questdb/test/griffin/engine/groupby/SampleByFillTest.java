@@ -2069,6 +2069,51 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueNarrowsDoubleToLong() throws Exception {
+        // DOUBLE -> LONG has no implicit cast factory; the fill constant is folded with the same
+        // rules INSERT applies, so 1.5 fills 1 instead of reaching DoubleFunction.getLong.
+        assertQuery("SELECT ts, count() c FROM t_fv_dbl SAMPLE BY 1h FILL(1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_dbl (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_dbl VALUES (1, '2024-01-01T00:00:00.000000Z'), (3, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tc
+                        2024-01-01T00:00:00.000000Z\t1
+                        2024-01-01T01:00:00.000000Z\t1
+                        2024-01-01T02:00:00.000000Z\t1
+                        """);
+    }
+
+    @Test
+    public void testFillValueNarrowsDoubleToLongInBroadcast() throws Exception {
+        // Broadcast FILL(1.5) over count() (LONG) and sum(DOUBLE): each slot is folded to its own type.
+        assertQuery("SELECT ts, count() c, sum(d) s FROM t_fv_dbl_bc SAMPLE BY 1h FILL(1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_dbl_bc (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_dbl_bc VALUES (1.0, '2024-01-01T00:00:00.000000Z'), (3.0, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tc\ts
+                        2024-01-01T00:00:00.000000Z\t1\t1.0
+                        2024-01-01T01:00:00.000000Z\t1\t1.5
+                        2024-01-01T02:00:00.000000Z\t1\t3.0
+                        """);
+    }
+
+    @Test
+    public void testFillValueRejectedForOutOfRangeLongToInt() throws Exception {
+        // Same range check INSERT applies when narrowing LONG -> INT.
+        assertQuery("SELECT ts, max(i) m FROM t_fv_l2i SAMPLE BY 1m FILL(9223372036854775807)")
+                .ddl("CREATE TABLE t_fv_l2i (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
+                .fails(52, "inconvertible value: 9223372036854775807 [LONG -> INT]");
+    }
+
+    @Test
     public void testFillValueRejectedForStringAggregate() throws Exception {
         // first(string) returns STRING; no INT -> STRING implicit cast exists.
         assertQuery("SELECT ts, first(s) FROM t_fv_str SAMPLE BY 1m FILL(0)")
@@ -2082,6 +2127,25 @@ public class SampleByFillTest extends AbstractCairoTest {
         assertQuery("SELECT ts, first(u) FROM t_fv_uuid SAMPLE BY 1m FILL(0)")
                 .ddl("CREATE TABLE t_fv_uuid (u UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
                 .fails(53, "fill value of type INT cannot fill column of type UUID");
+    }
+
+    @Test
+    public void testFillValueDoubleFillsFloatAggregate() throws Exception {
+        // DOUBLE -> FLOAT is a narrowing cast with no cast factory, but DoubleFunction.getFloat
+        // works, so it stays accepted (the legacy fill path accepts it too).
+        assertQuery("SELECT ts, max(f) m FROM t_fv_d2f SAMPLE BY 1h FILL(1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_d2f (f FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_d2f VALUES (1.0, '2024-01-01T00:00:00.000000Z'), (3.0, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tm
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-01-01T01:00:00.000000Z\t1.5
+                        2024-01-01T02:00:00.000000Z\t3.0
+                        """);
     }
 
     @Test
