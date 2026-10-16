@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
-import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -1931,25 +1930,26 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "SELECT t.id, q.id, q.k FROM t ASOF JOIN (SELECT * FROM q WHERE id % 3 <> 0) q ON t.k1 = q.k AND t.k2 = q.k",
                     "SELECT t.id, q.id, q.k FROM t ASOF JOIN (SELECT ts, k, id FROM q WHERE id % 3 <> 0) q ON t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.k",
             };
-            for (int i = 0, n = keyTypes.size(); i < n; i++) {
-                final String[] types = keyTypes.getQuick(i);
-                for (int round = 0; round < 2; round++) {
-                    execute("DROP TABLE IF EXISTS t");
-                    execute("DROP TABLE IF EXISTS q");
-                    execute("CREATE TABLE q AS (SELECT x id, " + sharedKeyValue(types[2]) + " k, " + sharedKeyValue(types[2])
-                            + " j, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(300)) TIMESTAMP(ts) PARTITION BY HOUR");
-                    execute("CREATE TABLE t AS (SELECT x id, " + sharedKeyValue(types[0]) + " k1, " + sharedKeyValue(types[1]) + " k2, "
-                            + sharedKeyValue(types[0]) + " k3, timestamp_sequence(500_000, 1_000_000) ts FROM long_sequence(300)) TIMESTAMP(ts) PARTITION BY HOUR");
-                    for (String query : queries) {
-                        final String message = query + ", key types: " + String.join(", ", types);
-                        printSql("EXPLAIN " + query, false);
-                        TestUtils.assertContains(message, sink, "sharedKeyCheck: true");
-                        printSql("EXPLAIN " + query, true);
-                        TestUtils.assertNotContains(message, sink, "AsOf Join Fast");
-                        printSql(query, true);
-                        final String fullFatResult = sink.toString();
-                        printSql(query, false);
-                        TestUtils.assertEquals(message, fullFatResult, sink);
+            try (SqlCompiler fullFatCompiler = engine.getSqlCompiler()) {
+                fullFatCompiler.setFullFatJoins(true);
+                for (int i = 0, n = keyTypes.size(); i < n; i++) {
+                    final String[] types = keyTypes.getQuick(i);
+                    for (int round = 0; round < 2; round++) {
+                        execute("DROP TABLE IF EXISTS t");
+                        execute("DROP TABLE IF EXISTS q");
+                        execute("CREATE TABLE q AS (SELECT x id, " + sharedKeyValue(types[2]) + " k, " + sharedKeyValue(types[2])
+                                + " j, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(300)) TIMESTAMP(ts) PARTITION BY HOUR");
+                        execute("CREATE TABLE t AS (SELECT x id, " + sharedKeyValue(types[0]) + " k1, " + sharedKeyValue(types[1]) + " k2, "
+                                + sharedKeyValue(types[0]) + " k3, timestamp_sequence(500_000, 1_000_000) ts FROM long_sequence(300)) TIMESTAMP(ts) PARTITION BY HOUR");
+                        for (String query : queries) {
+                            final String message = query + ", key types: " + String.join(", ", types);
+                            assertQuery(query).noLeakCheck().assertsPlanContaining("sharedKeyCheck: true");
+                            assertQuery(query).withCompiler(fullFatCompiler).noLeakCheck().assertsPlanNotContaining("AsOf Join Fast");
+                            printSql(query, true);
+                            final String fullFatResult = sink.toString();
+                            printSql(query, false);
+                            TestUtils.assertEquals(message, fullFatResult, sink);
+                        }
                     }
                 }
             }
@@ -2278,11 +2278,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     .replace("q.b", "qb").replace("q.y", "qy").replace("q.sh", "qsh").replace("t.id", "tid");
                             final String message = query + ", key type: " + keyType;
                             TestUtils.assertEquals(message, sortedRows("SELECT * FROM ref WHERE " + refWhere), sortedRows(query));
-                            printSql("EXPLAIN " + query);
                             final boolean isFilterExpected = Boolean.parseBoolean(join[2])
                                     && Boolean.parseBoolean(where[1])
                                     && !keyType.equals("DOUBLE");
-                            Assert.assertEquals(message + "\n" + sink, isFilterExpected, Chars.contains(sink, "s1=s2"));
+                            if (isFilterExpected) {
+                                assertQuery(query).noLeakCheck().assertsPlanContaining("s1=s2");
+                            } else {
+                                assertQuery(query).noLeakCheck().assertsPlanNotContaining("s1=s2");
+                            }
                         }
                     }
                 }

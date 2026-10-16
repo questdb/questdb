@@ -9787,14 +9787,15 @@ public class JoinTest extends AbstractCairoTest {
                 final String query = queries[i];
                 final boolean hasKeyCheck = (i & 1) == 1;
                 for (boolean isFullFat : new boolean[]{false, true}) {
-                    sink.clear();
-                    printSql("EXPLAIN " + query, isFullFat);
-                    final String plan = sink.toString();
-                    Assert.assertTrue(plan, plan.contains(i < 2 ? "Cross Join" : "Nested Loop Left Join"));
-                    Assert.assertTrue(plan, plan.contains("Distinct"));
-                    Assert.assertEquals(plan, hasKeyCheck, plan.contains("joinKeyCheck: true"));
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         compiler.setFullFatJoins(isFullFat);
+                        final String join = i < 2 ? "Cross Join" : "Nested Loop Left Join";
+                        if (hasKeyCheck) {
+                            assertQuery(query).withCompiler(compiler).noLeakCheck().assertsPlanContaining(join, "Distinct", "joinKeyCheck: true");
+                        } else {
+                            assertQuery(query).withCompiler(compiler).noLeakCheck().assertsPlanContaining(join, "Distinct");
+                            assertQuery(query).withCompiler(compiler).noLeakCheck().assertsPlanNotContaining("joinKeyCheck: true");
+                        }
                         try (RecordCursorFactory factory = select(compiler, query, sqlExecutionContext)) {
                             TestLatchedCounterFunctionFactory.reset(null);
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
