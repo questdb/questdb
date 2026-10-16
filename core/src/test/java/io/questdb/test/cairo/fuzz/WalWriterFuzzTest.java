@@ -26,10 +26,15 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
@@ -51,7 +56,12 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -419,51 +429,27 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolFuzz() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        setTestParams(rnd);
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG), null);
+    }
 
-        setFuzzProbabilities(
-                0.01,
-                0.01,
-                0.01,
-                0.1,
-                0.05,
-                0.05,
-                // Two separate bugs keep renames and type changes out of the random runs: RENAME COLUMN
-                // of a covered column makes covering queries read NULL for it, and ALTER COLUMN TYPE of
-                // an indexed symbol leaves its index files in parquet partitions. A type or symbol
-                // capacity change also moves sym0 off column name txn 0. The pinned seed above renames
-                // sym0 itself and changes the type of a column that is neither indexed nor covered.
-                0.0,
-                0.0,
-                1.0,
-                0.01,
-                0.01,
-                0.5,
-                0.5,
-                0.0,
-                0.0,
-                0.8,
-                0.00,
-                0,
-                0.01,
-                0.1,
-                0.1, // addCoveringIndexProb
-                0.0
-        );
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
-        // Two more bugs make covering queries read NULL, and FuzzDropIndexOperation skips their shapes:
-        // DROP INDEX of a column that a POSTING index covers, and DROP INDEX then ADD INDEX of the same
-        // type on the column that hosts a covering index.
-        fuzzer.setDropIndexProbability(0.05);
-        if (rnd.nextBoolean()) {
-            // The purge job of the fuzz run saves the purges in the purge log and leaves them there, as
-            // a restart before their retry delay would, and the purge job after the run replays them,
-            // the purges of DROP INDEX and of index type changes among them.
-            LOG.info().$("deferring column purges past the fuzz run").$();
-            node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, Micros.DAY_MICROS);
-        }
-        runTxnZeroCoveredSymbolFuzz(rnd);
+    @Test
+    public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolLostPurgeLog() throws Exception {
+        // Pins a run of the fuzz test above where an IO failure that the fuzz plants for the non-WAL
+        // writer hits the purge job instead, as it saves a purge in its log. The job saves no purge after
+        // that, so the purge job after the run cannot replay the deferred purges of the WAL tables: the
+        // check before VACUUM TABLE skips, and the check after VACUUM TABLE proves VACUUM removes the files.
+        // The fuzz test drew the default symbol index type from other seeds.
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 882492233733669L, 1792176408151L), "BITMAP");
+    }
+
+    @Test
+    public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolRefusedPurge() throws Exception {
+        // Pins a run of the fuzz test above where DROP PARTITION follows DROP INDEX of sym0 on the non-WAL
+        // table while the purge of the dropped index waits in the purge log. DROP PARTITION changes the
+        // truncate version, and the purge job refuses the purge: the check before VACUUM TABLE exempts
+        // its files, and the check after VACUUM TABLE proves VACUUM removes them. The fuzz test drew the
+        // default symbol index type from other seeds.
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 882356240241250L, 1792176272157L), "POSTING DELTA");
     }
 
     @Test
@@ -1024,6 +1010,14 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      * retyped column version, or of a dropped or changed index, fails the check.
      */
     private void assertNoPostingFilesOfDroppedColumnVersions(String tableName) {
+        assertNoPostingFilesOfDroppedColumnVersions(tableName, new HashSet<>());
+    }
+
+    /**
+     * As {@link #assertNoPostingFilesOfDroppedColumnVersions(String)}, but skips the files of the column
+     * versions in refusedPurges, see {@link #addPurgesRefusedByTruncate}.
+     */
+    private void assertNoPostingFilesOfDroppedColumnVersions(String tableName, Set<String> refusedPurges) {
         final Pattern coverFileName = Pattern.compile("^(.+)\\.pc[0-9]+\\.([0-9]+)(\\.[0-9]+)?\\.[0-9]+$");
         final Pattern keyOrCoverInfoFileName = Pattern.compile("^(.+)\\.(?:pk|pci)(?:\\.([0-9]+))?$");
         final Pattern valueFileName = Pattern.compile("^(.+)\\.pv(?:\\.([0-9]+))?\\.[0-9]+$");
@@ -1056,6 +1050,21 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                     } else {
                         continue;
                     }
+                    final long fileTxn;
+                    if (matcher == coverFileMatcher) {
+                        fileTxn = Long.parseLong(matcher.group(2));
+                    } else {
+                        fileTxn = matcher.group(2) != null ? Long.parseLong(matcher.group(2)) : TableUtils.COLUMN_NAME_TXN_NONE;
+                    }
+                    final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(p);
+                    final String tableDirName = reader.getTableToken().getDirName();
+                    // a .pc name writes the column name txn NONE as 0
+                    if (refusedPurges.contains(refusedPurgeKey(tableDirName, partitionTimestamp, partitionNameTxn, matcher.group(1), fileTxn))
+                            || (matcher == coverFileMatcher && fileTxn == 0 && refusedPurges.contains(refusedPurgeKey(
+                            tableDirName, partitionTimestamp, partitionNameTxn, matcher.group(1), TableUtils.COLUMN_NAME_TXN_NONE)))) {
+                        LOG.info().$("skipping posting file of a refused purge [dir=").$(dir).$(", file=").$(name).I$();
+                        continue;
+                    }
                     final String context = dir + ", " + name + " in " + Arrays.toString(names);
                     final int columnIndex = metadata.getColumnIndexQuiet(matcher.group(1));
                     Assert.assertTrue("posting file of a dropped column: " + context, columnIndex > -1);
@@ -1067,12 +1076,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                             partitionTimestamp,
                             metadata.getWriterIndex(columnIndex)
                     );
-                    final long fileTxn;
-                    if (matcher == coverFileMatcher) {
-                        fileTxn = Long.parseLong(matcher.group(2));
-                    } else {
-                        fileTxn = matcher.group(2) != null ? Long.parseLong(matcher.group(2)) : TableUtils.COLUMN_NAME_TXN_NONE;
-                    }
                     Assert.assertEquals(
                             "posting file of a dropped column version: " + context,
                             matcher == coverFileMatcher ? Math.max(0, columnNameTxn) : columnNameTxn,
@@ -1080,6 +1083,94 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                     );
                 }
             }
+        }
+    }
+
+    /**
+     * Adds to refusedPurges the column versions of tableName that the purge log holds with another
+     * truncate version than the table has. DROP PARTITION, ATTACH, DETACH and TRUNCATE change it, and
+     * ColumnPurgeOperator refuses those purges, see ColumnPurgeJobTest#testPurgeRespectsTableTruncates.
+     * VACUUM TABLE removes their files.
+     */
+    private void addPurgesRefusedByTruncate(String tableName, Set<String> refusedPurges) throws SqlException {
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        final long truncateVersion;
+        final int timestampType;
+        try (TableReader reader = getReader(tableName)) {
+            truncateVersion = reader.getTxFile().getTruncateVersion();
+            timestampType = reader.getMetadata().getTimestampType();
+        }
+        final String sql = "SELECT partition_timestamp, partition_name_txn, column_name, column_version FROM \""
+                + configuration.getSystemTableNamePrefix() + "column_versions_purge_log\" WHERE table_name = '"
+                + tableToken.getDirName() + "' AND table_id = " + tableToken.getTableId() + " AND truncate_version <> " + truncateVersion;
+        try (
+                RecordCursorFactory factory = select(sql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final String key = refusedPurgeKey(
+                        tableToken.getDirName(),
+                        ColumnType.getTimestampDriver(timestampType).fromMicros(record.getTimestamp(0)),
+                        record.getLong(1),
+                        record.getSymA(2),
+                        record.getLong(3)
+                );
+                LOG.info().$("purge refused by truncate [table=").$(tableToken).$(", key=").$(key).I$();
+                refusedPurges.add(key);
+            }
+        }
+    }
+
+    // ALTER TABLE ... ADD INDEX TYPE POSTING INCLUDE of the column and include list of pickPostingIndexToAdd()
+    private static String addPostingIndexSql(String tableName, String[] postingIndex) {
+        return "ALTER TABLE \"" + tableName + "\" ALTER COLUMN \"" + postingIndex[0] + "\" ADD INDEX TYPE POSTING INCLUDE (" + postingIndex[1] + ")";
+    }
+
+    /**
+     * The number of purges in the purge log. The purge job of the fuzz run truncates the log when it
+     * starts, and saves one row per partition of each purge.
+     */
+    private long countPurgeLogTasks() throws SqlException {
+        final String sql = "SELECT count() FROM (SELECT DISTINCT ts, table_name, column_name, updated_txn FROM \""
+                + configuration.getSystemTableNamePrefix() + "column_versions_purge_log\")";
+        try (
+                RecordCursorFactory factory = select(sql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
+    }
+
+    /**
+     * Picks a SYMBOL column of tableName without an index, and up to two other columns that are not the
+     * designated timestamp, for ALTER TABLE ... ADD INDEX TYPE POSTING INCLUDE. Returns the quoted column
+     * name and the quoted, comma-separated include list, or null when there is no such column.
+     */
+    private static String[] pickPostingIndexToAdd(String tableName, Rnd rnd) {
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final ArrayList<String> symbolColumns = new ArrayList<>();
+            final ArrayList<String> otherColumns = new ArrayList<>();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (ColumnType.isSymbol(metadata.getColumnType(i)) && !metadata.isColumnIndexed(i)) {
+                    symbolColumns.add(metadata.getColumnName(i));
+                } else if (i != metadata.getTimestampIndex()) {
+                    otherColumns.add(metadata.getColumnName(i));
+                }
+            }
+            if (symbolColumns.isEmpty() || otherColumns.isEmpty()) {
+                LOG.info().$("no posting index to add while vacuum runs [table=").$(tableName).I$();
+                return null;
+            }
+            final String column = symbolColumns.get(rnd.nextInt(symbolColumns.size()));
+            final StringBuilder includeList = new StringBuilder();
+            for (int i = 0, n = 1 + rnd.nextInt(Math.min(2, otherColumns.size())); i < n; i++) {
+                includeList.append(i > 0 ? ", " : "").append('"').append(otherColumns.remove(rnd.nextInt(otherColumns.size()))).append('"');
+            }
+            LOG.info().$("adding posting index while vacuum runs [column=").$(column).$(", include=").$(includeList).I$();
+            return new String[]{column, includeList.toString()};
         }
     }
 
@@ -1102,6 +1193,11 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         } finally {
             setCurrentMicros(-1);
         }
+    }
+
+    // the key of a purged column version in a partition, see addPurgesRefusedByTruncate()
+    private static String refusedPurgeKey(String tableDirName, long partitionTimestamp, long partitionNameTxn, CharSequence columnName, long columnNameTxn) {
+        return tableDirName + "/" + partitionTimestamp + "/" + partitionNameTxn + "/" + columnName + "/" + columnNameTxn;
     }
 
     /**
@@ -1135,28 +1231,107 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     /**
+     * Runs the fuzz of {@link #runTxnZeroCoveredSymbolFuzz(Rnd)} with the operations and counts of
+     * testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolFuzz drawn from rnd.
+     *
+     * @param defaultSymbolIndexType when not null, the default symbol index type, which otherwise
+     *                               AbstractFuzzTest draws from its own seeds
+     */
+    private void runTxnZeroCoveredSymbolRandomFuzz(Rnd rnd, String defaultSymbolIndexType) throws Exception {
+        setTestParams(rnd);
+        if (defaultSymbolIndexType != null) {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, defaultSymbolIndexType);
+        }
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                // Two separate bugs keep renames and type changes out of the random runs: RENAME COLUMN
+                // of a covered column makes covering queries read NULL for it, and ALTER COLUMN TYPE of
+                // an indexed symbol leaves its index files in parquet partitions. A type or symbol
+                // capacity change also moves sym0 off column name txn 0. The pinned seed above renames
+                // sym0 itself and changes the type of a column that is neither indexed nor covered.
+                0.0,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.0,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1,
+                0.1, // addCoveringIndexProb
+                0.0
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        // Two more bugs make covering queries read NULL, and FuzzDropIndexOperation skips their shapes:
+        // DROP INDEX of a column that a POSTING index covers, and DROP INDEX then ADD INDEX of the same
+        // type on the column that hosts a covering index.
+        fuzzer.setDropIndexProbability(0.05);
+        if (rnd.nextBoolean()) {
+            // The purge job of the fuzz run saves the purges in the purge log and leaves them there, as
+            // a restart before their retry delay would, and the purge job after the run replays them,
+            // the purges of DROP INDEX and of index type changes among them.
+            LOG.info().$("deferring column purges past the fuzz run").$();
+            node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, Micros.DAY_MICROS);
+        }
+        runTxnZeroCoveredSymbolFuzz(rnd);
+    }
+
+    /**
      * Runs the fuzz on tables that start with a covering index on a column of column name txn 0, see
      * FuzzRunner.setTxnZeroCoveredSymbol(). runFuzz() checks that the covered queries read what the
      * uncovered ones read and that the WAL tables equal the non-WAL twin. After the column purge, which
      * replays the purges left in the purge log, no POSTING index file of a dropped column version or index
-     * stays in a live partition of any of the three tables. Then VACUUM TABLE and the column purge run on
-     * the three tables, which must still match, read their covered values and hold no POSTING index file
-     * of a dropped column version or index.
+     * stays in a live partition of any of the three tables, apart from the files of the purges that the
+     * purge job refuses, see {@link #addPurgesRefusedByTruncate}. The check is skipped when the purge log
+     * lost purges. Then VACUUM TABLE and the column purge run on the three tables, VACUUM TABLE of each
+     * WAL table while the WAL apply adds a POSTING index to a SYMBOL column, see
+     * {@link #vacuumWhileAddingPostingIndex}. The tables must still match, read their covered values and
+     * hold no POSTING index file of a dropped column version or index, with no exemption.
      *
      * @param expectedVacuumedCoveringIndexes when not null, the {@link #coveringIndexInstances} of the
      *                                        WAL table that VACUUM TABLE runs over
      */
     private void runTxnZeroCoveredSymbolFuzz(Rnd rnd, String expectedVacuumedCoveringIndexes) throws Exception {
         fuzzer.setTxnZeroCoveredSymbol(rnd);
+        final long purgeTasksConsumedBeforeRun = engine.getMessageBus().getColumnPurgeSubSeq().current();
         runFuzz(rnd);
         assertMemoryLeak(() -> {
-            purgeColumnVersions();
             final String tableName = getTestName();
             final String tableNameNoWal = tableName + "_nonwal";
             final String[] walTableNames = {tableName + "_wal", tableName + "_wal_parallel"};
-            assertNoPostingFilesOfDroppedColumnVersions(tableNameNoWal);
+            // The purge job of the fuzz run takes a purge off the queue and then saves it in the purge log.
+            // An IO failure that the fuzz plants for the non-WAL writer can hit the log instead, and the job
+            // saves no purge after that, so the purge job after the run, which stands for a restart, cannot
+            // replay the purges it did not save.
+            final long purgeTasksConsumed = engine.getMessageBus().getColumnPurgeSubSeq().current() - purgeTasksConsumedBeforeRun;
+            final long purgeTasksLogged = countPurgeLogTasks();
+            Assert.assertTrue(purgeTasksLogged + " > " + purgeTasksConsumed, purgeTasksLogged <= purgeTasksConsumed);
+            // read before purgeColumnVersions(), whose purge job replays and truncates the purge log
+            final Set<String> refusedPurges = new HashSet<>();
+            addPurgesRefusedByTruncate(tableNameNoWal, refusedPurges);
             for (String walTableName : walTableNames) {
-                assertNoPostingFilesOfDroppedColumnVersions(walTableName);
+                addPurgesRefusedByTruncate(walTableName, refusedPurges);
+            }
+            purgeColumnVersions();
+            if (purgeTasksLogged == purgeTasksConsumed) {
+                assertNoPostingFilesOfDroppedColumnVersions(tableNameNoWal, refusedPurges);
+                for (String walTableName : walTableNames) {
+                    assertNoPostingFilesOfDroppedColumnVersions(walTableName, refusedPurges);
+                }
+            } else {
+                LOG.info().$("purge log lost purges, skipping the check before VACUUM [consumed=").$(purgeTasksConsumed)
+                        .$(", logged=").$(purgeTasksLogged).I$();
             }
 
             final String vacuumedCoveringIndexes = coveringIndexInstances(walTableNames[0]);
@@ -1165,8 +1340,16 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 Assert.assertEquals(expectedVacuumedCoveringIndexes, vacuumedCoveringIndexes);
             }
             execute("VACUUM TABLE " + tableNameNoWal);
+            final String[] postingIndex = pickPostingIndexToAdd(tableNameNoWal, rnd);
+            if (postingIndex != null) {
+                execute(addPostingIndexSql(tableNameNoWal, postingIndex));
+            }
             for (String walTableName : walTableNames) {
-                execute("VACUUM TABLE " + walTableName);
+                if (postingIndex != null) {
+                    vacuumWhileAddingPostingIndex(walTableName, postingIndex);
+                } else {
+                    execute("VACUUM TABLE " + walTableName);
+                }
             }
             purgeColumnVersions();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -1180,6 +1363,39 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 assertNoPostingFilesOfDroppedColumnVersions(walTableName);
             }
         });
+    }
+
+    /**
+     * Runs VACUUM TABLE on the WAL table while another thread applies ALTER TABLE ... ADD INDEX TYPE
+     * POSTING INCLUDE on a SYMBOL column without an index. The .pc files of the new index carry the host
+     * token 0 for the column name txn NONE, which a VACUUM that does not see the index yet must keep.
+     * The thread starts the WAL apply before VACUUM starts; the order of the two after that is free.
+     */
+    private void vacuumWhileAddingPostingIndex(String walTableName, String[] postingIndex) throws Exception {
+        execute(addPostingIndexSql(walTableName, postingIndex));
+        final AtomicReference<Throwable> applyError = new AtomicReference<>();
+        final CountDownLatch applyStarted = new CountDownLatch(1);
+        final Thread applyThread = new Thread(() -> {
+            try {
+                applyStarted.countDown();
+                drainWalQueue();
+            } catch (Throwable th) {
+                applyError.set(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+        applyThread.start();
+        try {
+            applyStarted.await();
+            execute("VACUUM TABLE " + walTableName);
+        } finally {
+            applyThread.join();
+        }
+        if (applyError.get() != null) {
+            throw new AssertionError("WAL apply failed", applyError.get());
+        }
+        Assert.assertFalse(walTableName, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(walTableName)));
     }
 
     private void setTestParams(Rnd rnd) throws Exception {
