@@ -37,6 +37,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
@@ -451,6 +452,14 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        fuzzer.setDropIndexProbability(0.05);
+        if (rnd.nextBoolean()) {
+            // The purge job of the fuzz run saves the purges in the purge log and leaves them there, as
+            // a restart before their retry delay would, and the purge job after the run replays them,
+            // the purges of DROP INDEX and of index type changes among them.
+            LOG.info().$("deferring column purges past the fuzz run").$();
+            node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, Micros.DAY_MICROS);
+        }
         runTxnZeroCoveredSymbolFuzz(rnd);
     }
 
@@ -1005,13 +1014,16 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * Checks that each .pc sidecar in a live partition of tableName belongs to a live column instance: a
-     * POSTING indexed column of that name whose column name txn in the partition gives the txn token of
-     * the file name, 0 for txn NONE and for txn 0, the txn otherwise. A sidecar of a dropped, renamed or
-     * retyped column version fails the check.
+     * Checks that each POSTING index file in a live partition of tableName belongs to a live column
+     * instance: a POSTING indexed column of that name whose column name txn in the partition is the txn
+     * in the file name. The .pk, .pci and .pv names carry no txn for txn NONE. A .pc sidecar name carries
+     * the txn token, 0 for txn NONE and for txn 0, the txn otherwise. A file of a dropped, renamed or
+     * retyped column version, or of a dropped or changed index, fails the check.
      */
-    private void assertNoCoverFilesOfDroppedColumnVersions(String tableName) {
+    private void assertNoPostingFilesOfDroppedColumnVersions(String tableName) {
         final Pattern coverFileName = Pattern.compile("^(.+)\\.pc[0-9]+\\.([0-9]+)(\\.[0-9]+)?\\.[0-9]+$");
+        final Pattern keyOrCoverInfoFileName = Pattern.compile("^(.+)\\.(?:pk|pci)(?:\\.([0-9]+))?$");
+        final Pattern valueFileName = Pattern.compile("^(.+)\\.pv(?:\\.([0-9]+))?\\.[0-9]+$");
         try (TableReader reader = getReader(tableName); Path path = new Path()) {
             final TableReaderMetadata metadata = reader.getMetadata();
             for (int p = 0, n = reader.getTxFile().getPartitionCount(); p < n; p++) {
@@ -1028,25 +1040,40 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 final String[] names = new File(dir).list();
                 Assert.assertNotNull(dir, names);
                 for (String name : names) {
-                    final Matcher matcher = coverFileName.matcher(name);
-                    if (!matcher.matches()) {
+                    final Matcher coverFileMatcher = coverFileName.matcher(name);
+                    final Matcher keyOrCoverInfoFileMatcher = keyOrCoverInfoFileName.matcher(name);
+                    final Matcher valueFileMatcher = valueFileName.matcher(name);
+                    final Matcher matcher;
+                    if (coverFileMatcher.matches()) {
+                        matcher = coverFileMatcher;
+                    } else if (keyOrCoverInfoFileMatcher.matches()) {
+                        matcher = keyOrCoverInfoFileMatcher;
+                    } else if (valueFileMatcher.matches()) {
+                        matcher = valueFileMatcher;
+                    } else {
                         continue;
                     }
                     final String context = dir + ", " + name + " in " + Arrays.toString(names);
                     final int columnIndex = metadata.getColumnIndexQuiet(matcher.group(1));
-                    Assert.assertTrue("sidecar of a dropped column: " + context, columnIndex > -1);
+                    Assert.assertTrue("posting file of a dropped column: " + context, columnIndex > -1);
                     Assert.assertTrue(
-                            "sidecar of a dropped index: " + context,
+                            "posting file of a dropped index: " + context,
                             IndexType.isPosting(metadata.getColumnIndexType(columnIndex))
                     );
                     final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(
                             partitionTimestamp,
                             metadata.getWriterIndex(columnIndex)
                     );
+                    final long fileTxn;
+                    if (matcher == coverFileMatcher) {
+                        fileTxn = Long.parseLong(matcher.group(2));
+                    } else {
+                        fileTxn = matcher.group(2) != null ? Long.parseLong(matcher.group(2)) : TableUtils.COLUMN_NAME_TXN_NONE;
+                    }
                     Assert.assertEquals(
-                            "sidecar of a dropped column version: " + context,
-                            Math.max(0, columnNameTxn),
-                            Long.parseLong(matcher.group(2))
+                            "posting file of a dropped column version: " + context,
+                            matcher == coverFileMatcher ? Math.max(0, columnNameTxn) : columnNameTxn,
+                            fileTxn
                     );
                 }
             }
@@ -1055,14 +1082,16 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     /**
      * Runs a column purge job until it purged every column version that the fuzz run queued, moving
-     * the clock past the retry delay before each run.
+     * the clock past the retry delay before each run. The job first replays the purges that the purge
+     * job of the fuzz run left incomplete in the purge log.
      */
     private void purgeColumnVersions() throws SqlException {
         engine.releaseInactive();
         try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
             long now = configuration.getMicrosecondClock().getTicks();
+            final long retryDelay = Math.max(configuration.getColumnPurgeRetryDelay(), configuration.getColumnPurgeRetryDelayLimit());
             for (int i = 0; i < 20 && (i == 0 || purgeJob.getOutstandingPurgeTasks() > 0); i++) {
-                now += configuration.getColumnPurgeRetryDelayLimit() + 1;
+                now += retryDelay + 1;
                 setCurrentMicros(now);
                 purgeJob.run();
             }
@@ -1105,10 +1134,11 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     /**
      * Runs the fuzz on tables that start with a covering index on a column of column name txn 0, see
      * FuzzRunner.setTxnZeroCoveredSymbol(). runFuzz() checks that the covered queries read what the
-     * uncovered ones read and that the WAL tables equal the non-WAL twin. After the column purge, no .pc
-     * sidecar of a dropped column version stays in a live partition of any of the three tables. Then
-     * VACUUM TABLE and the column purge run on the three tables, which must still match, read their
-     * covered values and hold no .pc sidecar of a dropped column version.
+     * uncovered ones read and that the WAL tables equal the non-WAL twin. After the column purge, which
+     * replays the purges left in the purge log, no POSTING index file of a dropped column version or index
+     * stays in a live partition of any of the three tables. Then VACUUM TABLE and the column purge run on
+     * the three tables, which must still match, read their covered values and hold no POSTING index file
+     * of a dropped column version or index.
      *
      * @param expectedVacuumedCoveringIndexes when not null, the {@link #coveringIndexInstances} of the
      *                                        WAL table that VACUUM TABLE runs over
@@ -1121,9 +1151,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             final String tableName = getTestName();
             final String tableNameNoWal = tableName + "_nonwal";
             final String[] walTableNames = {tableName + "_wal", tableName + "_wal_parallel"};
-            assertNoCoverFilesOfDroppedColumnVersions(tableNameNoWal);
+            assertNoPostingFilesOfDroppedColumnVersions(tableNameNoWal);
             for (String walTableName : walTableNames) {
-                assertNoCoverFilesOfDroppedColumnVersions(walTableName);
+                assertNoPostingFilesOfDroppedColumnVersions(walTableName);
             }
 
             final String vacuumedCoveringIndexes = coveringIndexInstances(walTableNames[0]);
@@ -1142,9 +1172,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                     fuzzer.assertRandomIndexes(tableNameNoWal, walTableName, rnd);
                 }
             }
-            assertNoCoverFilesOfDroppedColumnVersions(tableNameNoWal);
+            assertNoPostingFilesOfDroppedColumnVersions(tableNameNoWal);
             for (String walTableName : walTableNames) {
-                assertNoCoverFilesOfDroppedColumnVersions(walTableName);
+                assertNoPostingFilesOfDroppedColumnVersions(walTableName);
             }
         });
     }
