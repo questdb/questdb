@@ -2519,6 +2519,56 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return false;
     }
 
+    // Adds the rows from indexLo of the SYMBOL column at parquetColumnIndex of the decoder's parquet file to the
+    // index. A method of its own: compiled inside the large updateParquetIndexes(), the same per-row loop ran
+    // about 15% slower in ParquetIndexedO3CommitBenchmark.merge. C2 keeps the call out of line, because the
+    // caller already exceeds DesiredMethodLimit.
+    private static void indexParquetSymbolColumn(
+            ParquetPartitionDecoder partitionDecoder,
+            RowGroupBuffers rowGroupBuffers,
+            DirectIntList parquetColumns,
+            int parquetColumnIndex,
+            IndexWriter indexWriter,
+            long indexLo
+    ) {
+        parquetColumns.clear();
+        parquetColumns.add(parquetColumnIndex);
+        parquetColumns.add(ColumnType.SYMBOL);
+
+        final ParquetMetaFileReader parquetMetadata = partitionDecoder.metadata();
+        long rowCount = 0;
+        final int rowGroupCount = parquetMetadata.getRowGroupCount();
+        for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
+            final int rowGroupSize = (int) parquetMetadata.getRowGroupSize(rowGroupIndex);
+            if (rowCount + rowGroupSize <= indexLo) {
+                rowCount += rowGroupSize;
+                continue;
+            }
+
+            partitionDecoder.decodeRowGroup(
+                    rowGroupBuffers,
+                    parquetColumns,
+                    rowGroupIndex,
+                    (int) Math.max(0, indexLo - rowCount),
+                    rowGroupSize
+            );
+
+            long rowId = Math.max(rowCount, indexLo);
+            final long addr = rowGroupBuffers.getChunkDataPtr(0);
+            final long size = rowGroupBuffers.getChunkDataSize(0);
+            if (size == 0) {
+                BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+            } else {
+                for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                }
+            }
+
+            rowCount += rowGroupSize;
+        }
+    }
+
     // Whether the first stage of a row group merge prepares the column. That is every column, except when the first
     // stage prepares the designated timestamp and the dedup key columns only: the columns the dedup compares to
     // decide whether the merge changes the row group at all.
@@ -4463,7 +4513,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final boolean isLiveForReaders = !isRewrite
                                 && isParquetIndexLiveForReaders(tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex), oldPartitionSize);
                         final boolean isLiveIndexExtended = isLiveForReaders && !isIndexVersioned;
-                        // the first row the decode loop below indexes
+                        // the first row indexParquetSymbolColumn() indexes
                         final long indexLo;
                         if (isLiveIndexExtended) {
                             // hasParquetIndexMovingToNewVersion() versions a partition with a live top, or
@@ -4498,41 +4548,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         // the update adds at least one row, and indexLo is 0 or the committed row count
                         assert newPartitionSize > indexLo;
-                        parquetColumns.clear();
-                        parquetColumns.add(parquetColumnIndex);
-                        parquetColumns.add(ColumnType.SYMBOL);
-
-                        long rowCount = 0;
-                        final int rowGroupCount = parquetMetadata.getRowGroupCount();
-                        for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                            assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
-                            final int rowGroupSize = (int) parquetMetadata.getRowGroupSize(rowGroupIndex);
-                            if (rowCount + rowGroupSize <= indexLo) {
-                                rowCount += rowGroupSize;
-                                continue;
-                            }
-
-                            partitionDecoder.decodeRowGroup(
-                                    rowGroupBuffers,
-                                    parquetColumns,
-                                    rowGroupIndex,
-                                    (int) Math.max(0, indexLo - rowCount),
-                                    rowGroupSize
-                            );
-
-                            long rowId = Math.max(rowCount, indexLo);
-                            final long addr = rowGroupBuffers.getChunkDataPtr(0);
-                            final long size = rowGroupBuffers.getChunkDataSize(0);
-                            if (size == 0) {
-                                BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
-                            } else {
-                                for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
-                                }
-                            }
-
-                            rowCount += rowGroupSize;
-                        }
+                        indexParquetSymbolColumn(
+                                partitionDecoder,
+                                rowGroupBuffers,
+                                parquetColumns,
+                                parquetColumnIndex,
+                                indexWriter,
+                                indexLo
+                        );
                         indexWriter.setMaxValue(newPartitionSize - 1);
 
                         // Tag the chain entry with the upcoming txn so that if
