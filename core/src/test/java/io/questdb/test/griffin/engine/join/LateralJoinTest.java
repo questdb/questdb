@@ -1215,6 +1215,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t FULL JOIN refunds r ON r.k = o.k AND t.x = r.k AND t.id > 0) l")
+                    .noLeakCheck()
                     .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1264,6 +1265,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createNullOuterKeyTables();
             assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x) l")
+                    .noLeakCheck()
                     .fails(80, "correlated sub-query at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1291,6 +1293,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k FULL JOIN refunds r ON r.k = t.x) l")
+                    .noLeakCheck()
                     .fails(117, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1354,6 +1357,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             """);
             final String zeroInList = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM (SELECT id::short id, x FROM trades) t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE t.id IN (0, 10)) l";
             assertQuery(zeroInList)
+                    .noLeakCheck()
                     .fails(zeroInList.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1374,6 +1378,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             """);
             final String notBetween = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE t.id NOT BETWEEN 11 AND 15) l";
             assertQuery(notBetween)
+                    .noLeakCheck()
                     .fails(notBetween.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1412,6 +1417,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             bindVariableService.setShort(0, (short) 10);
             final String shortColumn = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM (SELECT id::short id, x FROM trades) t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE t.id = $1) l";
             assertQuery(shortColumn)
+                    .noLeakCheck()
                     .fails(shortColumn.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1472,6 +1478,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     }
                     for (String filter : new String[]{"t.s = 0", "t.s IS NOT NULL", "t.f = false", "t.i IS NULL", "t.d != 0.5", "t.v != 'a'", "t.s > x.v - 1000"}) {
                         assertQuery(body + filter + ") l")
+                                .noLeakCheck()
                                 .fails(body.indexOf(join + " JOIN refunds"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
                     }
                 }
@@ -1500,6 +1507,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             for (String filter : new String[]{"t.id IN (NULL, 10)", "t.id NOT IN (10, 15)"}) {
                 final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE " + filter + ") l";
                 assertQuery(sql)
+                        .noLeakCheck()
                         .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
             }
         });
@@ -1536,6 +1544,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                 // without the filter, the unmatched refunds would lose their outer row
                 final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (" + body + ") l";
                 assertQuery(sql)
+                        .noLeakCheck()
                         .fails(sql.indexOf(join + " JOIN"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
             }
         });
@@ -1617,7 +1626,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             };
             for (String body : bodies) {
                 final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM " + body + ") l";
-                assertQuery(sql).fails(sql.indexOf(") s ON") + 2, "could not determine join order for this table");
+                assertQuery(sql).noLeakCheck().fails(sql.indexOf(") s ON") + 2, "could not determine join order for this table");
             }
         });
     }
@@ -1628,6 +1637,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
             assertQuery("SELECT o.id, l.c FROM orders o JOIN LATERAL (SELECT count(*) c FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k) l")
+                    .noLeakCheck()
                     .fails(77, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1639,6 +1649,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k) l")
+                    .noLeakCheck()
                     .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1649,6 +1660,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
             assertQuery("SELECT o.id, l.rid FROM orders o JOIN LATERAL (SELECT r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id IS NULL) l")
+                    .noLeakCheck()
                     .fails(77, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1662,6 +1674,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.x = o.k) l")
+                    .noLeakCheck()
                     .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1717,6 +1730,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             for (String filter : new String[]{"t.id >= NULL::int", "t.id <= CAST(NULL AS INT)"}) {
                 final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
                 assertQuery(sql)
+                        .noLeakCheck()
                         .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
             }
             final String gtSql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id > $1) l ORDER BY 1, 2, 3";
@@ -1776,6 +1790,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             for (String[] c : cases) {
                 final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + c[0] + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + c[1] + ") l";
                 assertQuery(sql)
+                        .noLeakCheck()
                         .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
             }
         });
@@ -1908,6 +1923,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             createCorrelatedRightJoinTables();
             execute("INSERT INTO xs VALUES (NULL, 200)");
             assertQuery("SELECT o.id, l.tid, l.rid, l.v FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid, x.v FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k JOIN xs x ON x.k = t.x) l")
+                    .noLeakCheck()
                     .fails(104, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1926,6 +1942,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     "t.d = 'NaN'", "'NaN' = t.d", "t.d >= 'NaN'", "t.d IN ('NaN', 10.0)", "t.d = 'Infinity'", "t.d >= NULL::double", "t.sym IN (NULL, 'abc')"}) {
                 final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
                 assertQuery(sql)
+                        .noLeakCheck()
                         .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
             }
             for (String filter : new String[]{"t.d != NaN", "t.ip != '0.0.0.0'", "t.d != 'NaN'", "t.d = 10.0", "t.sym IN ('abc', 'xyz')"}) {
@@ -1949,6 +1966,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             createCorrelatedRightJoinTables();
             execute("INSERT INTO orders VALUES (3, NULL, 3::timestamp)");
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= o.k) l")
+                    .noLeakCheck()
                     .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
         });
     }
@@ -1962,6 +1980,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             createCorrelatedRightJoinTables();
             final String nullSql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT max(id) FROM trades WHERE id > 1000)) l";
             assertQuery(nullSql)
+                    .noLeakCheck()
                     .fails(nullSql.indexOf("SELECT max"), "is not supported in a correlated lateral sub-query when this value is NULL");
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT min(id) FROM trades)) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
@@ -2133,6 +2152,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
             final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT id FROM trades WHERE id > 1000 LIMIT 1)) l";
             assertQuery(sql)
+                    .noLeakCheck()
                     .fails(sql.indexOf("SELECT id FROM trades WHERE id > 1000"), "is not supported in a correlated lateral sub-query when this value is NULL");
         });
     }
@@ -2178,6 +2198,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             }
             final String computed = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.v tid, r.id rid FROM (SELECT x, id::short v FROM trades) t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.v IS NOT NULL) l";
             assertQuery(computed)
+                    .noLeakCheck()
                     .fails(computed.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.v tid, r.id rid FROM (SELECT x, id::short v FROM trades) t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.v > 5) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
@@ -2202,6 +2223,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                 for (String filter : new String[]{"t.s < 11", "t.s >= 0", "t.s = 0", "t.s IS NOT NULL", "t.b <= 10", "t.f = false", "t.f IS NOT NULL"}) {
                     final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + table + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
                     assertQuery(sql)
+                            .noLeakCheck()
                             .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
                 }
                 for (String filter : new String[]{"t.s > 5", "t.b >= 1", "t.f = true"}) {
@@ -2271,6 +2293,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             for (String filter : new String[]{"t.s < 11", "t.s >= 0", "t.s = 0", "t.s IS NOT NULL", "t.s IN (0, 10)", "t.b <= 10", "t.b IN (0, 10)", "t.f = false", "t.f IS NOT NULL", "t.s > r.id - 200"}) {
                 final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
                 assertQuery(sql)
+                        .noLeakCheck()
                         .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
             }
             for (String filter : new String[]{"t.s > 5", "5 < t.s", "t.s != 0", "t.s IN (5, 10)", "t.b >= 1", "t.b IN (10)", "t.f = true"}) {
@@ -2439,6 +2462,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 """);
                 for (String tail : new String[]{"WHERE t.x = o.k AND t.s = 0", "JOIN xs y ON y.k = r.k AND t.i IS NOT NULL WHERE t.x = o.k AND t.s = 0"}) {
                     assertQuery(body + tail + ") m) l")
+                            .noLeakCheck()
                             .fails(body.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
                 }
             }
