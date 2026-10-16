@@ -52,10 +52,11 @@ public class TypeConformanceTypesTest {
         // own message, not with a kit class that cannot be initialized
         TypeConformanceTypes.checkLaterTypes();
         try {
-            TypeConformanceTypes.parseLaterTypeLine("FULL_LONG | FULL_LONG | BITMAP | -", Set.of());
+            // a policy no type will have, so the case holds when a later PR teaches the kit one
+            TypeConformanceTypes.parseLaterTypeLine("PROBE | PROBE | MAYBE | -", Set.of());
             Assert.fail("a NULL policy the kit does not know must be refused");
         } catch (IllegalStateException e) {
-            Assert.assertTrue(e.getMessage(), e.getMessage().contains("the kit knows the NULL policies SENTINEL and NONE, not BITMAP"));
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains("the kit knows the NULL policies") && e.getMessage().contains("not MAYBE"));
         }
     }
 }
