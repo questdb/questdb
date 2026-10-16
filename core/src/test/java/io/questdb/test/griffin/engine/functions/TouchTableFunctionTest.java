@@ -85,6 +85,24 @@ public class TouchTableFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTouchLocalParquetAndNativePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, 'value'::varchar s, 'a'::symbol sym, timestamp_sequence(0, 3_600_000_000) ts FROM long_sequence(30)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            execute("ALTER TABLE t ADD COLUMN added LONG");
+            sink.clear();
+            TestUtils.printSql(engine, sqlExecutionContext,
+                    "SELECT touch(SELECT x, s, sym, added, ts FROM t WHERE ts IN '1970-01-01')", sink);
+            TestUtils.assertContains(sink, "data_pages");
+            Assert.assertFalse("parquet chunks must be touched", sink.toString().contains("data_pages\": 0"));
+            Assert.assertFalse("parquet partition indexes must be touched", sink.toString().contains("index_key_pages\":0,"));
+            sink.clear();
+            TestUtils.printSql(engine, sqlExecutionContext, "SELECT touch(SELECT * FROM t)", sink);
+            TestUtils.assertContains(sink, "data_pages");
+        });
+    }
+
+    @Test
     public void testTouchMemoryIncludesUnalignedTailAndChecksCancellation() throws Exception {
         assertMemoryLeak(() -> {
             final long size = 66 * Files.PAGE_SIZE;
@@ -106,23 +124,6 @@ public class TouchTableFunctionTest extends AbstractCairoTest {
             } finally {
                 Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
             }
-        });
-    }
-
-    @Test
-    public void testTouchLocalParquetAndNativePartitions() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT x, 'value'::varchar s, timestamp_sequence(0, 3600000000) ts FROM long_sequence(30)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
-            execute("ALTER TABLE t ADD COLUMN added LONG");
-            sink.clear();
-            TestUtils.printSql(engine, sqlExecutionContext,
-                    "SELECT touch(SELECT x, s, added, ts FROM t WHERE ts IN '1970-01-01')", sink);
-            TestUtils.assertContains(sink, "data_pages");
-            Assert.assertFalse("parquet chunks must be touched", sink.toString().contains("data_pages\": 0"));
-            sink.clear();
-            TestUtils.printSql(engine, sqlExecutionContext, "SELECT touch(SELECT * FROM t)", sink);
-            TestUtils.assertContains(sink, "data_pages");
         });
     }
 

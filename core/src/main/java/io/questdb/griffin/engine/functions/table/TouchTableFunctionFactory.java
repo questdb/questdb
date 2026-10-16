@@ -33,10 +33,10 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameTouch;
 import io.questdb.cairo.sql.PartitionFormat;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -47,9 +47,9 @@ import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -185,7 +185,8 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                 RecordMetadata metadata = recordCursorFactory.getMetadata();
                 while ((frame = pageFrameCursor.next()) != null) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    if (frame.getFormat() == PartitionFormat.PARQUET) {
+                    final boolean isParquet = frame.getFormat() == PartitionFormat.PARQUET;
+                    if (isParquet) {
                         if (parquetColumns == null) {
                             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
                         }
@@ -199,15 +200,16 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                             dataPages += decoder.touchRowGroup(parquetColumns, frame.getParquetRowGroup(), circuitBreaker, trackerAddr);
                             previousRowGroup = frame.getParquetRowGroup();
                         }
-                        continue;
                     }
                     for (int columnIndex = 0, sz = metadata.getColumnCount(); columnIndex < sz; columnIndex++) {
+                        // Parquet frames have no native pages, but their bitmap indexes are local files.
+                        if (!isParquet) {
+                            final long columnMemorySize = frame.getPageSize(columnIndex);
+                            final long columnBaseAddress = frame.getPageAddress(columnIndex);
+                            dataPages += PageFrameTouch.touchMemory(columnBaseAddress, columnMemorySize, circuitBreaker);
 
-                        final long columnMemorySize = frame.getPageSize(columnIndex);
-                        final long columnBaseAddress = frame.getPageAddress(columnIndex);
-                        dataPages += PageFrameTouch.touchMemory(columnBaseAddress, columnMemorySize, circuitBreaker);
-
-                        dataPages += PageFrameTouch.touchMemory(frame.getAuxPageAddress(columnIndex), frame.getAuxPageSize(columnIndex), circuitBreaker);
+                            dataPages += PageFrameTouch.touchMemory(frame.getAuxPageAddress(columnIndex), frame.getAuxPageSize(columnIndex), circuitBreaker);
+                        }
 
                         if (metadata.isColumnIndexed(columnIndex)) {
                             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
