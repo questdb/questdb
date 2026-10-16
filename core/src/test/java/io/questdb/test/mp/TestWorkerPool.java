@@ -139,6 +139,16 @@ public class TestWorkerPool extends WorkerPool {
         }
 
         @Override
+        public int getGroupCount() {
+            return configuration.getGroupCount();
+        }
+
+        @Override
+        public int[][] getGroupCpus() {
+            return configuration.getGroupCpus();
+        }
+
+        @Override
         public Metrics getMetrics() {
             return configuration.getMetrics();
         }

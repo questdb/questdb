@@ -37,7 +37,7 @@
             --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED
             --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED
             --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED
-            --add-exports=java.base/jdk.internal.vm=io.questdb
+            --add-exports=java.base/jdk.internal.vm=io.questdb -XX:-RestrictContended
         </argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
@@ -105,6 +105,7 @@
                         <arg>-J-XX:-TieredCompilation</arg>
                         <arg>-J-XX:TieredStopAtLevel=1</arg>
                         <arg>--add-exports=java.base/jdk.internal.vm=io.questdb</arg>
+                        <arg>--add-exports=java.base/jdk.internal.vm.annotation=io.questdb</arg>
                         <arg>--add-exports=java.base/jdk.internal.vm=io.questdb.test</arg>
                     </compilerArgs>
                     <fork>true</fork>
@@ -297,6 +298,7 @@
                             </sourceFileExcludes>
                             <additionalOptions>
                                 <additionalOption>--add-exports java.base/jdk.internal.vm=io.questdb</additionalOption>
+                                <additionalOption>--add-exports java.base/jdk.internal.vm.annotation=io.questdb</additionalOption>
                             </additionalOptions>
                         </configuration>
                     </plugin>
@@ -326,6 +328,7 @@
                             </sourceFileExcludes>
                             <additionalOptions>
                                 <additionalOption>--add-exports java.base/jdk.internal.vm=io.questdb</additionalOption>
+                                <additionalOption>--add-exports java.base/jdk.internal.vm.annotation=io.questdb</additionalOption>
                             </additionalOptions>
                         </configuration>
                     </plugin>

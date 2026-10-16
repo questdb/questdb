@@ -71,6 +71,7 @@ import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.MetricsRegistryImpl;
+import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.EpollFacade;
@@ -85,6 +86,7 @@ import io.questdb.network.SelectFacade;
 import io.questdb.network.SelectFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.CpuTopology;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -2383,6 +2385,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepThreshold,
                     sharedWorkerSleepTimeout
             );
+            if (getBoolean(properties, env, PropertyKey.SHARED_NETWORK_WORKER_SPLIT_BY_CPU_SOCKET, false)) {
+                configureNetworkGroups(sharedWorkerPoolNetworkConfiguration);
+            }
 
             final int queryWorkers = configureSharedThreadPool(
                     properties,
@@ -2875,6 +2880,60 @@ public class PropServerConfiguration implements ServerConfiguration {
         );
     }
 
+    // Splits the shared network pool into one group per CPU socket when the detected layout passes
+    // the checks of CpuTopology, and logs the outcome either way.
+    private void configureNetworkGroups(PropWorkerPoolConfiguration poolConfiguration) throws ServerConfigurationException {
+        final String splitKey = PropertyKey.SHARED_NETWORK_WORKER_SPLIT_BY_CPU_SOCKET.getPropertyPath();
+        for (int cpu : poolConfiguration.sharedWorkerAffinity) {
+            if (cpu > -1) {
+                throw ServerConfigurationException.forInvalidKey(
+                        splitKey,
+                        "cannot be combined with " + PropertyKey.SHARED_NETWORK_WORKER_AFFINITY.getPropertyPath()
+                );
+            }
+        }
+        final CpuTopology topology = createCpuTopology();
+        if (topology == null) {
+            log.advisory().$("network workers not split: ").$(splitKey)
+                    .$(" applies on Linux only, where SO_REUSEPORT spreads connections over the groups' listeners").$();
+            return;
+        }
+        final int workerCount = poolConfiguration.sharedWorkerCount;
+        final CpuTopology.Layout layout = topology.readLayout(workerCount);
+        final int[][] socketCpus = layout.getSocketCpus();
+        final int[] socketIds = layout.getSocketIds();
+        if (socketCpus == null || socketIds == null) {
+            final String refusal = layout.getRefusal();
+            final String description = layout.getDescription();
+            (layout.isRefusalWarning() ? log.advisory() : log.info())
+                    .$("network workers not split: ").$(refusal)
+                    .$(" [layout=").$(description).I$();
+            return;
+        }
+        final int groupCount = socketCpus.length;
+        // for example "group 0 workers 0-94 on CPUs 0-95 (socket 0), group 1 workers 95-189 on CPUs 96-191 (socket 1)"
+        final StringBuilder groups = new StringBuilder();
+        int firstWorker = 0;
+        for (int g = 0; g < groupCount; g++) {
+            int lastWorker = firstWorker;
+            while (lastWorker + 1 < workerCount && WorkerPool.getGroup(lastWorker + 1, groupCount, workerCount) == g) {
+                lastWorker++;
+            }
+            if (g > 0) {
+                groups.append(", ");
+            }
+            groups.append("group ").append(g)
+                    .append(" workers ").append(firstWorker).append('-').append(lastWorker)
+                    .append(" on CPUs ").append(CpuTopology.formatCpuList(socketCpus[g]))
+                    .append(" (socket ").append(socketIds[g]).append(')');
+            firstWorker = lastWorker + 1;
+        }
+        poolConfiguration.groupCount = groupCount;
+        poolConfiguration.groupCpus = socketCpus;
+        final String groupsText = groups.toString();
+        log.info().$("network workers split by CPU socket: ").$(groupsText).$();
+    }
+
     private int configureSharedThreadPool(
             Properties properties,
             Map<String, String> env,
@@ -3212,6 +3271,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                         .$();
             }
         }
+    }
+
+    /**
+     * The source of the CPU socket layout for {@code shared.network.worker.split.by.cpu.socket},
+     * or null where the split doesn't apply.
+     */
+    protected @Nullable CpuTopology createCpuTopology() {
+        return Os.isLinux() ? new CpuTopology() : null;
     }
 
     protected String getAcceptingWrites() {
@@ -3718,6 +3785,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private static class PropWorkerPoolConfiguration extends PropFiberWorkerPoolConfiguration {
         private final String name;
+        public int groupCount = 1;
+        public int[][] groupCpus;
         public Metrics metrics;
         public int[] sharedWorkerAffinity;
         public int sharedWorkerCount;
@@ -3731,6 +3800,16 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         private PropWorkerPoolConfiguration(String name) {
             this.name = name;
+        }
+
+        @Override
+        public int getGroupCount() {
+            return groupCount;
+        }
+
+        @Override
+        public int[][] getGroupCpus() {
+            return groupCpus;
         }
 
         @Override

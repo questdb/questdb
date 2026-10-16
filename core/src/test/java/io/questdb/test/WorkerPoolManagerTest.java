@@ -57,6 +57,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -71,6 +72,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 public class WorkerPoolManagerTest {
     private static final Log LOG = LogFactory.getLog(WorkerPoolManagerTest.class);
@@ -297,6 +299,49 @@ public class WorkerPoolManagerTest {
                 Assert.assertSame(primaryFailure, e);
                 Assert.assertEquals(1, e.getSuppressed().length);
                 Assert.assertSame(cleanupFailure, e.getSuppressed()[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorRejectsPoolWithoutConfiguredGroups() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final WorkerPoolConfiguration grouped = new WorkerPoolConfiguration() {
+                @Override
+                public int getGroupCount() {
+                    return 2;
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 4;
+                }
+            };
+            // the factory builds the pool from a configuration that doesn't forward the group methods
+            try {
+                new WorkerPoolManager(createServerConfig(1, Metrics.ENABLED, null, grouped, c -> new WorkerPool(c::getWorkerCount))) {
+                    @Override
+                    protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+                    }
+                };
+                Assert.fail();
+            } catch (IllegalStateException e) {
+                TestUtils.assertContains(
+                        e.getMessage(),
+                        "network pool does not have the configured worker groups [pool=worker, configured=2, actual=1]"
+                );
+            }
+
+            // a pool built from the configuration itself keeps the groups
+            final WorkerPoolManager workerPoolManager = new WorkerPoolManager(createServerConfig(1, Metrics.ENABLED, null, grouped, WorkerPool::new)) {
+                @Override
+                protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+                }
+            };
+            try {
+                Assert.assertEquals(2, workerPoolManager.getSharedPoolNetwork().getGroupCount());
+            } finally {
+                workerPoolManager.halt();
             }
         });
     }
@@ -706,10 +751,25 @@ public class WorkerPoolManagerTest {
             Metrics metrics,
             AtomicInteger metricUpdates
     ) {
+        return createServerConfig(workerCount, metrics, metricUpdates, null, null);
+    }
+
+    // A null networkConfiguration gives the network pool workerCount workers, like the other shared
+    // pools, and a null poolFactory builds every pool from its configuration.
+    private static ServerConfiguration createServerConfig(
+            int workerCount,
+            Metrics metrics,
+            AtomicInteger metricUpdates,
+            @Nullable WorkerPoolConfiguration networkConfiguration,
+            @Nullable Function<WorkerPoolConfiguration, WorkerPool> poolFactory
+    ) {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         return new ServerConfiguration() {
             @Override
             public WorkerPool createWorkerPool(WorkerPoolConfiguration configuration) {
+                if (poolFactory != null) {
+                    return poolFactory.apply(configuration);
+                }
                 if (metricUpdates == null) {
                     return ServerConfiguration.super.createWorkerPool(configuration);
                 }
@@ -794,7 +854,9 @@ public class WorkerPoolManagerTest {
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
-                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
+                return networkConfiguration != null
+                        ? networkConfiguration
+                        : TestWorkerPool.withRandomMode(rnd, () -> workerCount);
             }
 
             @Override

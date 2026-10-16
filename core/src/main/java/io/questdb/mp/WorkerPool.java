@@ -62,6 +62,9 @@ public class WorkerPool implements Closeable {
     private final DynamicFiberWorkerPoolConfiguration dynamicFiberConfiguration;
     private final FiberRuntime fiberRuntime;
     private final ObjList<Object> freeOnExit = new ObjList<>();
+    private final int groupCount;
+    // per group, the CPUs its workers may run on; null leaves placement to workerAffinity
+    private final @Nullable int[][] groupCpus;
     private final ReentrantLock haltLock = new ReentrantLock();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
@@ -106,6 +109,8 @@ public class WorkerPool implements Closeable {
         } else {
             this.workerAffinity = Misc.getWorkerAffinity(workerCount);
         }
+        this.groupCount = configuration.getGroupCount();
+        this.groupCpus = configuration.getGroupCpus();
         this.halted = new SOCountDownLatch(workerCount);
         this.haltOnError = configuration.haltOnError();
         this.daemons = configuration.isDaemonPool();
@@ -147,6 +152,21 @@ public class WorkerPool implements Closeable {
             throw new IllegalArgumentException("worker affinity length does not match worker count [pool=" + poolName
                     + ", affinity=" + this.workerAffinity.length + ", workers=" + workerCount + ']');
         }
+        if (groupCount < 1 || groupCount > Math.max(1, workerCount)) {
+            throw new IllegalArgumentException("group count must be between 1 and the worker count [pool=" + poolName
+                    + ", groups=" + groupCount + ", workers=" + workerCount + ']');
+        }
+        if (groupCpus != null) {
+            if (groupCpus.length != groupCount) {
+                throw new IllegalArgumentException("group CPU sets do not match group count [pool=" + poolName
+                        + ", cpuSets=" + groupCpus.length + ", groups=" + groupCount + ']');
+            }
+            for (int i = 0; i < workerCount; i++) {
+                if (this.workerAffinity[i] > Worker.NO_THREAD_AFFINITY) {
+                    throw new IllegalArgumentException("worker affinity cannot be combined with group CPU sets [pool=" + poolName + ']');
+                }
+            }
+        }
 
         this.workerJobs = new ObjList<>(workerCount);
         this.threadLocalCleaners = new ObjList<>(workerCount);
@@ -179,6 +199,14 @@ public class WorkerPool implements Closeable {
                 throw th;
             }
         }
+    }
+
+    /**
+     * The group of worker {@code worker} when {@code workerCount} workers split into
+     * {@code groupCount} contiguous blocks.
+     */
+    public static int getGroup(int worker, int groupCount, int workerCount) {
+        return (int) ((long) worker * groupCount / workerCount);
     }
 
     /**
@@ -259,6 +287,18 @@ public class WorkerPool implements Closeable {
             throw new IllegalStateException("worker pool does not host fibers [pool=" + poolName + ']');
         }
         return fiberRuntime;
+    }
+
+    /**
+     * The group of worker {@code worker}: the pool's workers split into {@link #getGroupCount()}
+     * contiguous blocks.
+     */
+    public int getGroup(int worker) {
+        return getGroup(worker, groupCount, workerCount);
+    }
+
+    public int getGroupCount() {
+        return groupCount;
     }
 
     public String getPoolName() {
@@ -441,6 +481,9 @@ public class WorkerPool implements Closeable {
                     final LogRecord record = log.info().$("worker pool configured [pool=").$(poolName)
                             .$(", workers=").$(workerCount)
                             .$(", mode=").$(mode.name());
+                    if (groupCount > 1) {
+                        record.$(", groups=").$(groupCount);
+                    }
                     if (fiberRuntime != null) {
                         record.$(", maxLive=").$(fiberRuntime.getMaxLiveFiberCount())
                                 .$(", maxRetained=").$(fiberRuntime.getMaxRetainedFiberCount())
@@ -459,6 +502,7 @@ public class WorkerPool implements Closeable {
                             poolName,
                             i,
                             workerAffinity[i],
+                            groupCpus != null ? groupCpus[getGroup(i)] : null,
                             workerJobs.getQuick(i),
                             halted,
                             _ -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),

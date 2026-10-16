@@ -51,6 +51,7 @@ import io.questdb.std.AssociativeCache;
 import io.questdb.std.ConcurrentAssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -66,7 +67,8 @@ public class PGServer implements Closeable {
     private static final NoOpAssociativeCache<TypesAndSelect> NO_OP_CACHE = new NoOpAssociativeCache<>();
     private final AtomicBoolean acceptOpen;
     private final PGConnectionContextFactory contextFactory;
-    private final IODispatcher<PGConnectionContext> dispatcher;
+    // one per worker group, each with its own listener on the server's port
+    private final ObjList<IODispatcher<PGConnectionContext>> dispatchers;
     private final Metrics metrics;
     private final PGCircuitBreakerRegistry registry;
     private final WorkerPool sharedPoolNetwork;
@@ -95,7 +97,7 @@ public class PGServer implements Closeable {
         // (typesAndSelectCache + contextFactory). Matches the LineTcpReceiver pattern.
         AssociativeCache<TypesAndSelect> typesAndSelectCacheLocal = null;
         PGConnectionContextFactory contextFactoryLocal = null;
-        IODispatcher<PGConnectionContext> dispatcherLocal = null;
+        final ObjList<IODispatcher<PGConnectionContext>> dispatchersLocal = new ObjList<>();
         FiberRuntime fiberRuntimeLocal = null;
         try {
             this.acceptOpen = acceptOpen;
@@ -115,22 +117,32 @@ public class PGServer implements Closeable {
                     executionContextObjectFactory,
                     typesAndSelectCacheLocal
             );
-            dispatcherLocal = IODispatchers.create(configuration, contextFactoryLocal);
+            final int groupCount = IODispatchers.getGroupCount(configuration, sharedPoolNetwork);
+            IODispatchers.createGroups(configuration, contextFactoryLocal, groupCount, dispatchersLocal);
             this.typesAndSelectCache = typesAndSelectCacheLocal;
             this.contextFactory = contextFactoryLocal;
-            this.dispatcher = dispatcherLocal;
+            this.dispatchers = dispatchersLocal;
             this.sharedPoolNetwork = sharedPoolNetwork;
             this.registry = registry;
 
-            // Gate the IO dispatcher so the pool polls it only once accept opens.
-            sharedPoolNetwork.assign(new AcceptGatedJob(dispatcher, acceptOpen));
+            // Gate the IO dispatchers so the pool polls them only once accept opens. AcceptGatedJob
+            // is stateless and the server frees the dispatchers, so one instance per group,
+            // assigned to each of the group's workers, runs like assign(Job) on every worker.
+            final ObjList<AcceptGatedJob> dispatcherJobs = new ObjList<>(groupCount);
+            for (int g = 0; g < groupCount; g++) {
+                dispatcherJobs.add(new AcceptGatedJob(dispatchers.getQuick(g), acceptOpen));
+            }
+            final int workerCount = sharedPoolNetwork.getWorkerCount();
+            for (int i = 0; i < workerCount; i++) {
+                sharedPoolNetwork.assign(i, dispatcherJobs.getQuick(groupCount == 1 ? 0 : sharedPoolNetwork.getGroup(i)));
+            }
 
             if (fiberRuntimeLocal != null) {
                 final FiberRuntime runtime = fiberRuntimeLocal;
-                for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
+                for (int i = 0; i < workerCount; i++) {
                     sharedPoolNetwork.assign(i, new PGRequestJob(
                             acceptOpen,
-                            dispatcher,
+                            dispatchers.getQuick(groupCount == 1 ? 0 : sharedPoolNetwork.getGroup(i)),
                             metrics,
                             runtime
                     ));
@@ -167,22 +179,27 @@ public class PGServer implements Closeable {
                     }
                     return false;
                 };
-                sharedPoolNetwork.assign(new AcceptGatedJob(ignore -> dispatcher.processIOQueue(processor), acceptOpen));
+                final ObjList<AcceptGatedJob> requestJobs = new ObjList<>(groupCount);
+                for (int g = 0; g < groupCount; g++) {
+                    final IODispatcher<PGConnectionContext> dispatcher = dispatchers.getQuick(g);
+                    requestJobs.add(new AcceptGatedJob(ignore -> dispatcher.processIOQueue(processor), acceptOpen));
+                }
+                for (int i = 0; i < workerCount; i++) {
+                    sharedPoolNetwork.assign(i, requestJobs.getQuick(groupCount == 1 ? 0 : sharedPoolNetwork.getGroup(i)));
+                }
             }
 
             // pgwire context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
+            for (int i = 0; i < workerCount; i++) {
                 sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
             }
         } catch (Throwable t) {
             // Free what we allocated above; close() would normally do this, but the partially
             // constructed PGServer never enters the try-with-resources at the call site so
             // close() never runs. Match the LineTcpReceiver close-and-rethrow shape.
-            try {
-                Misc.free(dispatcherLocal);
-            } catch (Throwable s) {
-                t.addSuppressed(s);
+            for (int g = 0, n = dispatchersLocal.size(); g < n; g++) {
+                Misc.free(dispatchersLocal.getQuick(g), t);
             }
             try {
                 Misc.free(contextFactoryLocal);
@@ -223,15 +240,31 @@ public class PGServer implements Closeable {
     @Override
     public void close() {
         acceptOpen.set(false);
-        Throwable failure = Misc.freeBestEffort(null, dispatcher);
+        Throwable failure = null;
+        for (int g = 0, n = dispatchers.size(); g < n; g++) {
+            failure = Misc.freeBestEffort(failure, dispatchers.getQuick(g));
+        }
         failure = Misc.freeBestEffort(failure, registry);
         failure = Misc.freeBestEffort(failure, contextFactory);
         failure = Misc.freeBestEffort(failure, typesAndSelectCache);
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    /**
+     * The connections that group {@code group}'s dispatcher holds.
+     */
+    @TestOnly
+    public int getGroupConnectionCount(int group) {
+        return dispatchers.getQuick(group).getConnectionCount();
+    }
+
+    @TestOnly
+    public int getGroupCount() {
+        return dispatchers.size();
+    }
+
     public int getPort() {
-        return dispatcher.getPort();
+        return dispatchers.getQuick(0).getPort();
     }
 
     @TestOnly
@@ -240,7 +273,12 @@ public class PGServer implements Closeable {
     }
 
     public boolean isListening() {
-        return dispatcher.isListening();
+        for (int g = 0, n = dispatchers.size(); g < n; g++) {
+            if (!dispatchers.getQuick(g).isListening()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public void resetQueryCache() {

@@ -30,6 +30,7 @@ import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.CpuTopology;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -46,6 +47,10 @@ public class Worker extends Thread {
     private static final CarrierLocal<Worker> CURRENT = new CarrierLocal<>();
     private static final String UNKNOWN_JOB_NAME = "<unknown>";
     private final int affinity;
+    // the CPUs the worker may run on, or null to use affinity
+    private final @Nullable int[] cpus;
+    // cpus as ranges, for the log
+    private final @Nullable String cpusText;
     private final String criticalErrorLine;
     private final FiberRuntime.OwnerContext fiberOwnerContext;
     private final FiberRuntime fiberRuntime;
@@ -90,6 +95,7 @@ public class Worker extends Thread {
                 poolName,
                 workerId,
                 affinity,
+                null,
                 jobs,
                 haltLatch,
                 onHaltAction,
@@ -110,6 +116,7 @@ public class Worker extends Thread {
             String poolName,
             int workerId,
             int affinity,
+            @Nullable int[] cpus,
             ObjHashSet<? extends Job> jobs,
             SOCountDownLatch haltLatch,
             @Nullable OnHaltAction onHaltAction,
@@ -136,6 +143,9 @@ public class Worker extends Thread {
         if ((fiberOwnerContext == null) != (wakeController == null)) {
             throw new IllegalArgumentException("Fiber owner context and wake controller must be installed together");
         }
+        if (cpus != null && affinity > NO_THREAD_AFFINITY) {
+            throw new IllegalArgumentException("Worker affinity and CPU set cannot be combined");
+        }
         setName(poolName + '_' + workerId);
         this.poolName = poolName;
         this.workerId = workerId;
@@ -151,6 +161,8 @@ public class Worker extends Thread {
             }
         };
         this.affinity = affinity;
+        this.cpus = cpus;
+        this.cpusText = cpus != null ? CpuTopology.formatCpuList(cpus) : null;
         this.jobs = jobs;
         this.jobNames = new ObjList<>(jobs.size());
         for (int i = 0, n = jobs.size(); i < n; i++) {
@@ -219,7 +231,15 @@ public class Worker extends Thread {
                 }
 
                 final String workerName = getName();
-                if (affinity > NO_THREAD_AFFINITY) {
+                if (cpus != null) {
+                    if (Os.setCurrentThreadCpus(cpus) == 0) {
+                        if (log != null) {
+                            log.info().$("affinity set [cpus=").$(cpusText).$(", name=").$(workerName).I$();
+                        }
+                    } else if (log != null) {
+                        log.error().$("could not set affinity [cpus=").$(cpusText).$(", name=").$(workerName).I$();
+                    }
+                } else if (affinity > NO_THREAD_AFFINITY) {
                     if (Os.setCurrentThreadAffinity(affinity) == 0) {
                         if (log != null) {
                             log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(workerName).I$();

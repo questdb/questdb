@@ -32,7 +32,9 @@ import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,7 +42,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LineTcpReceiver implements Closeable {
     private final AtomicBoolean acceptOpen;
-    private final IODispatcher<LineTcpConnectionContext> dispatcher;
+    // one per worker group, each with its own listener on the receiver's port
+    private final ObjList<IODispatcher<LineTcpConnectionContext>> dispatchers = new ObjList<>();
     private LineTcpMeasurementScheduler scheduler;
 
     public LineTcpReceiver(
@@ -69,11 +72,21 @@ public class LineTcpReceiver implements Closeable {
                     factory,
                     configuration.getConnectionPoolInitialCapacity()
             );
-            this.dispatcher = IODispatchers.create(configuration, contextFactory);
-            sharedPoolNetwork.assign(new AcceptGatedJob(dispatcher, acceptOpen));
-            this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, sharedPoolNetwork, dispatcher, sharedPoolWrite);
+            final int groupCount = IODispatchers.getGroupCount(configuration, sharedPoolNetwork);
+            IODispatchers.createGroups(configuration, contextFactory, groupCount, dispatchers);
+            // AcceptGatedJob is stateless and the receiver frees the dispatchers, so one instance per
+            // group, assigned to each of the group's workers, runs like assign(Job) on every worker
+            final ObjList<AcceptGatedJob> dispatcherJobs = new ObjList<>(groupCount);
+            for (int g = 0; g < groupCount; g++) {
+                dispatcherJobs.add(new AcceptGatedJob(dispatchers.getQuick(g), acceptOpen));
+            }
+            final int workerCount = sharedPoolNetwork.getWorkerCount();
+            for (int i = 0; i < workerCount; i++) {
+                sharedPoolNetwork.assign(i, dispatcherJobs.getQuick(groupCount == 1 ? 0 : sharedPoolNetwork.getGroup(i)));
+            }
+            this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, sharedPoolNetwork, dispatchers, sharedPoolWrite);
 
-            for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
+            for (int i = 0; i < workerCount; i++) {
                 // line tcp context factory has thread local pools
                 // therefore we need each thread to clean their thread locals individually
                 sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
@@ -87,8 +100,23 @@ public class LineTcpReceiver implements Closeable {
     @Override
     public void close() {
         Throwable failure = Misc.freeBestEffort(null, scheduler);
-        failure = Misc.freeBestEffort(failure, dispatcher);
+        for (int g = 0, n = dispatchers.size(); g < n; g++) {
+            failure = Misc.freeBestEffort(failure, dispatchers.getQuick(g));
+        }
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * The connections that group {@code group}'s dispatcher holds.
+     */
+    @TestOnly
+    public int getGroupConnectionCount(int group) {
+        return dispatchers.getQuick(group).getConnectionCount();
+    }
+
+    @TestOnly
+    public int getGroupCount() {
+        return dispatchers.size();
     }
 
 }

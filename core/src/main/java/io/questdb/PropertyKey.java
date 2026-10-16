@@ -559,6 +559,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     SHARED_WORKER_YIELD_THRESHOLD("shared.worker.yield.threshold"),
     SHARED_NETWORK_WORKER_COUNT("shared.network.worker.count"),
     SHARED_NETWORK_WORKER_AFFINITY("shared.network.worker.affinity"),
+    SHARED_NETWORK_WORKER_SPLIT_BY_CPU_SOCKET("shared.network.worker.split.by.cpu.socket"),
     SHARED_NETWORK_WORKER_FIBER_ENABLED("shared.network.worker.fiber.enabled"),
     SHARED_NETWORK_WORKER_FIBER_MAX_LIVE("shared.network.worker.fiber.max.live"),
     SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED("shared.network.worker.fiber.max.retained"),

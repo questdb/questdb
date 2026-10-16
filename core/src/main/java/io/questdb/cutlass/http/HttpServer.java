@@ -39,6 +39,8 @@ import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
@@ -78,15 +80,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private static final Log LOG = LogFactory.getLog(HttpServer.class);
     private final AtomicBoolean acceptOpen;
     private final ActiveConnectionTracker activeConnectionTracker;
     private final ObjList<Closeable> closeables = new ObjList<>();
-    private final IODispatcher<HttpConnectionContext> dispatcher;
+    // one per worker group, each with its own listener on the server's port
+    private final ObjList<IODispatcher<HttpConnectionContext>> dispatchers;
     private final @Nullable FiberRuntime fiberRuntime;
     private final HttpContextFactory httpContextFactory;
-    private final WaitProcessor rescheduleContext;
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final HttpRequestProcessorSelectorFactory selectorFactory;
+    // one per worker group, parallel to dispatchers
+    private final ObjList<WaitProcessor> waitProcessors;
     private final int workerCount;
 
     public HttpServer(
@@ -94,7 +99,7 @@ public class HttpServer implements Closeable {
             WorkerPool networkSharedPool,
             SocketFactory socketFactory
     ) {
-        this(configuration, networkSharedPool, socketFactory, new AtomicBoolean(true), true, null);
+        this(configuration, networkSharedPool, socketFactory, new AtomicBoolean(true), true, true, null);
     }
 
     public HttpServer(
@@ -103,7 +108,7 @@ public class HttpServer implements Closeable {
             SocketFactory socketFactory,
             AtomicBoolean acceptOpen
     ) {
-        this(configuration, networkSharedPool, socketFactory, acceptOpen, true, null);
+        this(configuration, networkSharedPool, socketFactory, acceptOpen, true, true, null);
     }
 
     private HttpServer(
@@ -112,13 +117,14 @@ public class HttpServer implements Closeable {
             SocketFactory socketFactory,
             AtomicBoolean acceptOpen,
             boolean isFiberExecutionEnabled,
+            boolean isGroupSplitEnabled,
             @Nullable Runnable afterSelectorPop
     ) {
         this.acceptOpen = acceptOpen;
         this.workerCount = networkSharedPool.getWorkerCount();
-        IODispatcher<HttpConnectionContext> dispatcher = null;
+        final ObjList<IODispatcher<HttpConnectionContext>> dispatchers = new ObjList<>();
+        final ObjList<WaitProcessor> waitProcessors = new ObjList<>();
         HttpContextFactory httpContextFactory = null;
-        WaitProcessor rescheduleContext = null;
         AssociativeCache<RecordCursorFactory> selectCache = null;
         HttpRequestProcessorSelectorFactory selectorFactory = null;
         FiberRuntime fiberRuntime = null;
@@ -147,27 +153,49 @@ public class HttpServer implements Closeable {
                     selectCache,
                     activeConnectionTracker
             );
-            dispatcher = IODispatchers.create(configuration, httpContextFactory);
-            rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
+            final int groupCount;
+            if (isGroupSplitEnabled) {
+                groupCount = IODispatchers.getGroupCount(configuration, networkSharedPool);
+            } else {
+                if (networkSharedPool.getGroupCount() > 1) {
+                    LOG.advisory().$("not split by CPU socket, the min HTTP server has a single dispatcher [groups=")
+                            .$(networkSharedPool.getGroupCount())
+                            .I$();
+                }
+                groupCount = 1;
+            }
+            IODispatchers.createGroups(configuration, httpContextFactory, groupCount, dispatchers);
+            for (int g = 0; g < groupCount; g++) {
+                waitProcessors.add(new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatchers.getQuick(g)));
+            }
 
             this.activeConnectionTracker = activeConnectionTracker;
-            this.dispatcher = dispatcher;
+            this.dispatchers = dispatchers;
             this.fiberRuntime = fiberRuntime;
             this.httpContextFactory = httpContextFactory;
-            this.rescheduleContext = rescheduleContext;
             this.selectCache = selectCache;
             this.selectorFactory = selectorFactory;
+            this.waitProcessors = waitProcessors;
 
-            networkSharedPool.assign(new AcceptGatedJob(dispatcher, acceptOpen));
-            networkSharedPool.assign(new AcceptGatedJob(rescheduleContext, acceptOpen));
+            // AcceptGatedJob is stateless and the server frees the dispatchers, so one instance per
+            // group, assigned to each of the group's workers, runs like assign(Job) on every worker
+            final ObjList<AcceptGatedJob> dispatcherJobs = new ObjList<>(groupCount);
+            final ObjList<AcceptGatedJob> waitProcessorJobs = new ObjList<>(groupCount);
+            for (int g = 0; g < groupCount; g++) {
+                dispatcherJobs.add(new AcceptGatedJob(dispatchers.getQuick(g), acceptOpen));
+                waitProcessorJobs.add(new AcceptGatedJob(waitProcessors.getQuick(g), acceptOpen));
+            }
             for (int i = 0; i < workerCount; i++) {
+                final int g = groupCount == 1 ? 0 : networkSharedPool.getGroup(i);
                 final HttpRequestProcessorSelectorImpl selector = fiberRuntime == null
                         ? selectorFactory.getSelectorByWorker(i)
                         : null;
+                networkSharedPool.assign(i, dispatcherJobs.getQuick(g));
+                networkSharedPool.assign(i, waitProcessorJobs.getQuick(g));
                 networkSharedPool.assign(i, new HttpRequestJob(
                         this,
-                        dispatcher,
-                        rescheduleContext,
+                        dispatchers.getQuick(g),
+                        waitProcessors.getQuick(g),
                         selectorFactory,
                         selector,
                         acceptOpen,
@@ -180,8 +208,13 @@ public class HttpServer implements Closeable {
             if (fiberRuntime != null && selectorFactory != null) {
                 fiberRuntime.unregisterConfigurationListener(selectorFactory);
             }
-            Misc.free(dispatcher, t);
-            Misc.free(rescheduleContext, t);
+            // group k's bind can fail after groups 0 to k - 1 have bound
+            for (int g = 0, n = dispatchers.size(); g < n; g++) {
+                Misc.free(dispatchers.getQuick(g), t);
+            }
+            for (int g = 0, n = waitProcessors.size(); g < n; g++) {
+                Misc.free(waitProcessors.getQuick(g), t);
+            }
             Misc.free(selectorFactory, t);
             Misc.free(httpContextFactory, t);
             if (selectCache != NO_OP_CACHE) {
@@ -362,6 +395,7 @@ public class HttpServer implements Closeable {
                 socketFactory,
                 new AtomicBoolean(true),
                 false,
+                false,
                 null
         );
     }
@@ -378,6 +412,7 @@ public class HttpServer implements Closeable {
                 networkSharedPool,
                 socketFactory,
                 new AtomicBoolean(true),
+                true,
                 true,
                 afterSelectorPop
         );
@@ -445,8 +480,13 @@ public class HttpServer implements Closeable {
         if (fiberRuntime != null) {
             fiberRuntime.unregisterConfigurationListener(selectorFactory);
         }
-        Throwable failure = Misc.freeBestEffort(null, dispatcher);
-        failure = Misc.freeBestEffort(failure, rescheduleContext);
+        Throwable failure = null;
+        for (int g = 0, n = dispatchers.size(); g < n; g++) {
+            failure = Misc.freeBestEffort(failure, dispatchers.getQuick(g));
+        }
+        for (int g = 0, n = waitProcessors.size(); g < n; g++) {
+            failure = Misc.freeBestEffort(failure, waitProcessors.getQuick(g));
+        }
         failure = Misc.freeBestEffort(failure, selectorFactory);
         failure = Misc.freeObjListBestEffort(failure, closeables);
         closeables.clear();
@@ -492,13 +532,29 @@ public class HttpServer implements Closeable {
         return activeConnectionTracker;
     }
 
-    public int getPort() {
-        return dispatcher.getPort();
+    /**
+     * The connections that group {@code group}'s dispatcher holds.
+     */
+    @TestOnly
+    public int getGroupConnectionCount(int group) {
+        return dispatchers.getQuick(group).getConnectionCount();
     }
 
     @TestOnly
+    public int getGroupCount() {
+        return dispatchers.size();
+    }
+
+    public int getPort() {
+        return dispatchers.getQuick(0).getPort();
+    }
+
+    /**
+     * Group 0's wait processor; the tests that call it run with one group.
+     */
+    @TestOnly
     public WaitProcessor getWaitProcessor() {
-        return rescheduleContext;
+        return waitProcessors.getQuick(0);
     }
 
     public void registerClosable(Closeable closeable) {
