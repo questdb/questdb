@@ -959,6 +959,16 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitParentLargeAppendAtMaxTimestampCopiesWhenReaderPinned() throws Exception {
+        assertPinnedSplitParentCopiedOnLargeO3Append(false);
+    }
+
+    @Test
+    public void testSplitParentLargeAppendSpanningSplitCopiesWhenReaderPinned() throws Exception {
+        assertPinnedSplitParentCopiedOnLargeO3Append(true);
+    }
+
+    @Test
     public void testSquashIntoOpenPartitionBehindParquetLastPartition() throws Exception {
         // A FORMAT PARQUET table makes every brand-new partition parquet from inception, so once
         // 2020-02-05 exists the writer's openLastPartition() no-ops (openLastPartitionAndSetAppendPosition
@@ -1770,6 +1780,96 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         } catch (NumericException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private void assertPinnedSplitParentCopiedOnLargeO3Append(boolean isSpanningIntoSplit) throws Exception {
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // a single O3 row re-splits this layout, see testSplitParentAppendAtMaxTimestampResplitsWhenReaderPinned
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, str STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO x SELECT x::INT, 'str-' || x, '2020-02-03T16' FROM long_sequence(20)");
+            execute("INSERT INTO x SELECT (20 + x)::INT, 'str-' || (20 + x), '2020-02-03T17' FROM long_sequence(2)");
+            execute("INSERT INTO x SELECT (22 + x)::INT, 'str-' || (22 + x), '2020-02-03T18' FROM long_sequence(2)");
+
+            final String expectedPinned = replaceTimestampSuffix1(
+                    """
+                            i\tstr\tts
+                            21\tstr-21\t2020-02-03T17:00:00.000000Z
+                            22\tstr-22\t2020-02-03T17:00:00.000000Z
+                            23\tstr-23\t2020-02-03T18:00:00.000000Z
+                            24\tstr-24\t2020-02-03T18:00:00.000000Z
+                            """,
+                    timestampType.getTypeName()
+            );
+            final int o3RowsInSplit = isSpanningIntoSplit ? 5 : 0;
+
+            try (
+                    RecordCursorFactory cursorFactory = select("SELECT * FROM x WHERE ts BETWEEN '2020-02-03T17' AND '2020-02-03T18'");
+                    // pins the reader before the split
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expectedPinned, sink);
+
+                // split at 17:30: the parent keeps the rows up to 17:00
+                execute("INSERT INTO x VALUES (1_000_000, 'split', '2020-02-03T17:30')");
+                final long parentNameTxn;
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(22, reader.getPartitionRowCountFromMetadata(0));
+                    Assert.assertEquals(3, reader.getPartitionRowCountFromMetadata(1));
+                    parentNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                }
+
+                // 22 merge rows outweigh the 20-row prefix, so the writer copies the parent instead of re-splitting
+                execute(
+                        "INSERT INTO x SELECT (100 + x)::INT, 'o3-' || x, "
+                                + "CASE WHEN x <= 20 THEN '2020-02-03T17' ELSE '2020-02-03T17:45' END "
+                                + "FROM long_sequence(" + (20 + o3RowsInSplit) + ")"
+                );
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(42, reader.getPartitionRowCountFromMetadata(0));
+                    Assert.assertEquals(3 + o3RowsInSplit, reader.getPartitionRowCountFromMetadata(1));
+                    Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(0) > parentNameTxn);
+                }
+
+                cursor.toTop();
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expectedPinned, sink);
+            }
+
+            final StringBuilder expectedAt17 = new StringBuilder("i\tstr\n21\tstr-21\n22\tstr-22\n");
+            for (int i = 1; i <= 20; i++) {
+                expectedAt17.append(100 + i).append("\to3-").append(i).append('\n');
+            }
+            assertQuery("SELECT i, str FROM x WHERE ts = '2020-02-03T17'")
+                    .noLeakCheck()
+                    .returns(expectedAt17.toString());
+
+            final String o3InSplit = isSpanningIntoSplit
+                    ? """
+                    121\to3-21\t2020-02-03T17:45:00.000000Z
+                    122\to3-22\t2020-02-03T17:45:00.000000Z
+                    123\to3-23\t2020-02-03T17:45:00.000000Z
+                    124\to3-24\t2020-02-03T17:45:00.000000Z
+                    125\to3-25\t2020-02-03T17:45:00.000000Z
+                    """
+                    : "";
+            assertQuery("SELECT * FROM x WHERE ts > '2020-02-03T17'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1(
+                            "i\tstr\tts\n"
+                                    + "1000000\tsplit\t2020-02-03T17:30:00.000000Z\n"
+                                    + o3InSplit
+                                    + "23\tstr-23\t2020-02-03T18:00:00.000000Z\n"
+                                    + "24\tstr-24\t2020-02-03T18:00:00.000000Z\n",
+                            timestampType.getTypeName()
+                    ));
+        });
     }
 
     private void assertSplitParentTailSurvivesO3AppendAtMaxTimestamp(boolean canResplit) throws Exception {
