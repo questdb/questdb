@@ -355,28 +355,16 @@ impl ParquetUpdater {
         // scanned, and the scan downgrades them to `false` on the first
         // non-ASCII entry.
         let mut varchar_all_ascii: RapidHashMap<i32, bool> = RapidHashMap::default();
-        if let Some(old_qdb) = metadata
-            .key_value_metadata
-            .as_ref()
-            .and_then(|kvs| {
-                kvs.iter()
-                    .find(|kv| kv.key == QDB_META_KEY)
-                    .and_then(|kv| kv.value.as_ref())
-            })
-            .map(|raw| QdbMeta::deserialize(raw))
-            .transpose()?
-        {
-            let schema_cols = metadata.schema_descr.columns();
-            for (i, col) in old_qdb.schema.iter().enumerate() {
-                if col.column_type.tag() != ColumnTypeTag::Varchar {
-                    continue;
-                }
-                if let Some(field_id) = schema_cols
-                    .get(i)
-                    .and_then(|c| c.base_type.get_field_info().id)
-                {
-                    varchar_all_ascii.insert(field_id, col.ascii == Some(true));
-                }
+        let schema_cols = metadata.schema_descr.columns();
+        for (i, col) in source_qdb_meta.schema.iter().enumerate() {
+            if col.column_type.tag() != ColumnTypeTag::Varchar {
+                continue;
+            }
+            if let Some(field_id) = schema_cols
+                .get(i)
+                .and_then(|c| c.base_type.get_field_info().id)
+            {
+                varchar_all_ascii.insert(field_id, col.ascii == Some(true));
             }
         }
 
@@ -392,20 +380,7 @@ impl ParquetUpdater {
             (pf, 0u64)
         } else {
             // Update mode: append to existing file.
-            // The upfront guard already validated QDB metadata exists and parses,
-            // so unwrap_or(0) only covers the default for missing unused_bytes field.
-            let accumulated_unused_bytes = metadata
-                .key_value_metadata
-                .as_ref()
-                .and_then(|kvs| {
-                    kvs.iter()
-                        .find(|kv| kv.key == QDB_META_KEY)
-                        .and_then(|kv| kv.value.as_ref())
-                })
-                .map(|raw| QdbMeta::deserialize(raw))
-                .transpose()?
-                .map(|m| m.unused_bytes)
-                .unwrap_or(0);
+            let accumulated_unused_bytes = source_qdb_meta.unused_bytes;
 
             // Seek writer to end of file so new data is appended after existing content.
             // The reader and writer are separate fds; reading metadata only moves the reader cursor.
@@ -429,50 +404,25 @@ impl ParquetUpdater {
         // QdbMetaCol with the parquet field_id from the corresponding old schema
         // field at the same position. Entries without a known ascii flag are
         // omitted (track_ascii treats the absence as "no signal").
-        let old_ascii: RapidHashMap<i32, bool> = file_metadata
-            .key_value_metadata
-            .as_ref()
-            .and_then(|kvs| {
-                kvs.iter()
-                    .find(|kv| kv.key == QDB_META_KEY)
-                    .and_then(|kv| kv.value.as_ref())
-                    .and_then(|v| QdbMeta::deserialize(v).ok())
+        let old_fields = file_metadata.schema_descr.fields();
+        let old_ascii: RapidHashMap<i32, bool> = source_qdb_meta
+            .schema
+            .iter()
+            .zip(old_fields.iter())
+            .filter_map(|(col, field)| {
+                field
+                    .get_field_info()
+                    .id
+                    .and_then(|id| col.ascii.map(|a| (id, a)))
             })
-            .map(|m| {
-                let old_fields = file_metadata.schema_descr.fields();
-                m.schema
-                    .iter()
-                    .zip(old_fields.iter())
-                    .filter_map(|(col, field)| {
-                        field
-                            .get_field_info()
-                            .id
-                            .and_then(|id| col.ascii.map(|a| (id, a)))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+            .collect();
 
-        let old_column_tops: RapidHashMap<i32, usize> = file_metadata
-            .key_value_metadata
-            .as_ref()
-            .and_then(|kvs| {
-                kvs.iter()
-                    .find(|kv| kv.key == QDB_META_KEY)
-                    .and_then(|kv| kv.value.as_ref())
-                    .and_then(|v| QdbMeta::deserialize(v).ok())
-            })
-            .map(|m| {
-                let old_fields = file_metadata.schema_descr.fields();
-                m.schema
-                    .iter()
-                    .zip(old_fields.iter())
-                    .filter_map(|(col, field)| {
-                        field.get_field_info().id.map(|id| (id, col.column_top))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let old_column_tops: RapidHashMap<i32, usize> = source_qdb_meta
+            .schema
+            .iter()
+            .zip(old_fields.iter())
+            .filter_map(|(col, field)| field.get_field_info().id.map(|id| (id, col.column_top)))
+            .collect();
         let old_row_count = file_metadata
             .row_groups
             .iter()
@@ -6571,6 +6521,226 @@ mod tests {
                 .contains("column b has 1 bytes, fewer than its top of 4 rows"),
             "unexpected error: {err}"
         );
+        Ok(())
+    }
+
+    /// The schema of the QDB metadata tests: ts (id 0), VARCHAR ids 3, 5, 7 and INT id 9.
+    fn qdb_meta_source_schema() -> Result<super::SchemaDescriptor, Box<dyn Error>> {
+        let empty_column = |id: i32, name: &'static str, tag: ColumnTypeTag| {
+            Column::from_raw_data(
+                id,
+                name,
+                tag.into_type().code(),
+                0,
+                0,
+                null(),
+                0,
+                null(),
+                0,
+                null(),
+                0,
+                false,
+                false,
+                0,
+            )
+            .unwrap()
+        };
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &[]),
+                empty_column(3, "ascii_vc", ColumnTypeTag::Varchar),
+                empty_column(5, "utf8_vc", ColumnTypeTag::Varchar),
+                empty_column(7, "unknown_vc", ColumnTypeTag::Varchar),
+                empty_column(9, "i", ColumnTypeTag::Int),
+            ],
+        };
+        Ok(to_parquet_schema(&partition, false, -1, SeqTxn::UNSET)?.0)
+    }
+
+    /// Writes a zero-row file of `schema` whose footer carries `qdb_meta_value` under the
+    /// QDB metadata key, or no key-value metadata when it is None.
+    fn write_qdb_meta_source(
+        schema: super::SchemaDescriptor,
+        qdb_meta_value: Option<String>,
+    ) -> Result<(NamedTempFile, u64), Box<dyn Error>> {
+        use crate::parquet::qdb_metadata::QDB_META_KEY;
+
+        let src = NamedTempFile::new()?;
+        let mut pf = ParquetFile::with_sorting_columns(
+            src.reopen()?,
+            schema,
+            write::WriteOptions {
+                write_statistics: true,
+                version: Version::V1,
+                bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+            },
+            Some("test".to_string()),
+            None,
+        );
+        pf.end(qdb_meta_value.map(|value| {
+            vec![parquet2::metadata::KeyValue { key: QDB_META_KEY.to_string(), value: Some(value) }]
+        }))?;
+        let src_len = src.as_file().metadata()?.len();
+        Ok((src, src_len))
+    }
+
+    /// The updater seeds its per-column state of the old file from the QDB metadata
+    /// of the source footer, keyed by parquet field_id.
+    #[test]
+    fn new_seeds_old_column_state_from_source_qdb_meta() -> Result<(), Box<dyn Error>> {
+        use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
+        use std::collections::HashMap;
+
+        let meta_col = |tag: ColumnTypeTag, column_top: usize, ascii: Option<bool>| QdbMetaCol {
+            column_type: tag.into_type(),
+            column_top,
+            format: None,
+            ascii,
+            id: None,
+        };
+        let mut qdb_meta = QdbMeta::new(5);
+        qdb_meta.unused_bytes = 1_234;
+        qdb_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Timestamp, 0, None));
+        qdb_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Varchar, 2, Some(true)));
+        qdb_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Varchar, 0, Some(false)));
+        qdb_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Varchar, 4, None));
+        qdb_meta.schema.push(meta_col(ColumnTypeTag::Int, 6, None));
+        let (src, src_len) =
+            write_qdb_meta_source(qdb_meta_source_schema()?, Some(qdb_meta.serialize()?))?;
+
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let rewrite_out = NamedTempFile::new()?;
+        // in place the updater continues the footer's unused bytes; a rewrite starts a new file
+        for (out, expected_unused_bytes) in [(None, 1_234u64), (Some(&rewrite_out), 0)] {
+            let updater = open_topped_updater(&alloc, &src, src_len, out)?;
+            // VARCHAR only: Some(true) is all ASCII, Some(false) and None are not
+            assert_eq!(
+                updater
+                    .varchar_all_ascii
+                    .into_iter()
+                    .collect::<HashMap<_, _>>(),
+                HashMap::from([(3, true), (5, false), (7, false)])
+            );
+            // columns without a known ascii flag are absent
+            assert_eq!(
+                updater.old_ascii.into_iter().collect::<HashMap<_, _>>(),
+                HashMap::from([(3, true), (5, false)])
+            );
+            assert_eq!(
+                updater
+                    .old_column_tops
+                    .into_iter()
+                    .collect::<HashMap<_, _>>(),
+                HashMap::from([(0, 0), (3, 2), (5, 0), (7, 4), (9, 6)])
+            );
+            assert_eq!(updater.accumulated_unused_bytes, expected_unused_bytes);
+        }
+
+        // a parquet schema without field ids (not written by QuestDB): the maps are keyed by
+        // field_id, so no column is seeded
+        let no_id_field = |name: &str, physical_type, repetition| {
+            super::ParquetType::try_from_primitive(
+                name.to_string(),
+                physical_type,
+                repetition,
+                None,
+                None,
+                None,
+            )
+        };
+        let no_id_schema = super::SchemaDescriptor::new(
+            "t".to_string(),
+            vec![
+                no_id_field(
+                    "ts",
+                    parquet2::schema::types::PhysicalType::Int64,
+                    super::Repetition::Required,
+                )?,
+                no_id_field(
+                    "vc",
+                    parquet2::schema::types::PhysicalType::ByteArray,
+                    super::Repetition::Optional,
+                )?,
+            ],
+        );
+        let mut no_id_meta = QdbMeta::new(2);
+        no_id_meta.unused_bytes = 77;
+        no_id_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Timestamp, 0, None));
+        no_id_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Varchar, 3, Some(true)));
+        let (src, src_len) = write_qdb_meta_source(no_id_schema, Some(no_id_meta.serialize()?))?;
+        for (out, expected_unused_bytes) in [(None, 77u64), (Some(&rewrite_out), 0)] {
+            let updater = open_topped_updater(&alloc, &src, src_len, out)?;
+            assert!(updater.varchar_all_ascii.is_empty());
+            assert!(updater.old_ascii.is_empty());
+            assert!(updater.old_column_tops.is_empty());
+            assert_eq!(updater.accumulated_unused_bytes, expected_unused_bytes);
+        }
+        Ok(())
+    }
+
+    /// `ParquetUpdater::new` rejects a source footer whose QDB metadata is missing, does not
+    /// parse, or describes a different number of columns than the parquet schema.
+    #[test]
+    fn new_rejects_source_without_valid_qdb_meta() -> Result<(), Box<dyn Error>> {
+        use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
+
+        let mut four_columns = QdbMeta::new(4);
+        for tag in [
+            ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Varchar,
+            ColumnTypeTag::Varchar,
+            ColumnTypeTag::Varchar,
+        ] {
+            four_columns.schema.push(QdbMetaCol {
+                column_type: tag.into_type(),
+                column_top: 0,
+                format: None,
+                ascii: None,
+                id: None,
+            });
+        }
+        let cases = [
+            (
+                None,
+                "parquet file lacks 'questdb' metadata key; O3 merge requires files written by QuestDB",
+            ),
+            (
+                Some(r#"{"version":1"#.to_string()),
+                "could not parse questdb metadata: EOF while parsing an object at line 1 column 12",
+            ),
+            (
+                Some(r#"{"version":2,"schema":[]}"#.to_string()),
+                "unsupported questdb metadata version: 2",
+            ),
+            (
+                Some(four_columns.serialize()?),
+                "QuestDB metadata schema has 4 columns but parquet schema has 5",
+            ),
+        ];
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let rewrite_out = NamedTempFile::new()?;
+        for (qdb_meta_value, expected) in cases {
+            let (src, src_len) = write_qdb_meta_source(qdb_meta_source_schema()?, qdb_meta_value)?;
+            for out in [None, Some(&rewrite_out)] {
+                let Err(err) = open_topped_updater(&alloc, &src, src_len, out) else {
+                    panic!("expected an error: {expected}");
+                };
+                assert_eq!(err.to_string(), expected);
+            }
+        }
         Ok(())
     }
 }
