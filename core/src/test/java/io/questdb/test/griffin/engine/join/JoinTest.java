@@ -18544,6 +18544,76 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeSeriesJoinAfterKeyMoveOnPredicateBehindRightJoin() throws Exception {
+        // The ON clause of the last INNER join reads instruments, which joins before the non-equi RIGHT or
+        // FULL JOIN, so the optimiser keeps that join after the outer join and every model before the
+        // outer join ahead of it, on the level where runFromModelFirst runs trades first again. Every trade
+        // that the INNER joins keep matches an extra row and every extra row a trade; i.lot > 150 keeps
+        // trade B, whose price 20.0 is below 100.0 only.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMoveBehindRightJoin();
+            for (String outerJoin : new String[]{"RIGHT", "FULL"}) {
+                for (boolean fullFatJoins : new boolean[]{false, true}) {
+                    assertQuery("SELECT t.sym, t.ts, q.bid, r.x, w.n " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym) " + outerJoin
+                            + " JOIN extra r ON r.x > t.px JOIN more w ON w.n = i.lot AND i.lot > 150 ORDER BY r.x, t.ts")
+                            .noLeakCheck()
+                            .fullFatJoins(fullFatJoins)
+                            .returns("""
+                                    sym\tts\tbid\tx\tn
+                                    B\t2024-01-01T00:00:20.000000Z\t19.5\t100.0\t200
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveOnPredicateBehindTwoRightJoins() throws Exception {
+        // The ON clause of the last INNER join reads m2, which joins between the two RIGHT JOINs, so the
+        // optimiser keeps that join after the second RIGHT JOIN only. The six trade and r rows all join
+        // m2; r2 = 10.5 matches no r.x and its NULL-extended row fails the INNER join, r2 = 15.0 matches
+        // r.x = 10.5, r2 = 100.0 matches r.x = 10.5 and 15.0, and the row of trade B, r.x = 100.0, matches
+        // no r2. m2.n < 150 keeps lot 100, and m2.n > 150 keeps lot 200, of trade B, which no r2 matches.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMoveBehindRightJoin();
+            final String joins = "SELECT t.sym, t.ts, q.bid, r.x, m2.n, r2.x x2, w.n n2 " + KEY_MOVE_JOINS
+                    + " ASOF JOIN quotes q ON (sym) RIGHT JOIN extra r ON r.x > t.px JOIN more m2 ON m2.n = i.lot"
+                    + " RIGHT JOIN extra r2 ON r2.x > r.x JOIN more w ON w.n = m2.n AND m2.n ";
+            assertQuery(joins + "< 150 ORDER BY r2.x, r.x, t.ts")
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tts\tbid\tx\tn\tx2\tn2
+                            A\t2024-01-01T00:00:10.000000Z\t9.5\t10.5\t100\t15.0\t100
+                            A\t2024-01-01T00:00:10.000000Z\t9.5\t10.5\t100\t100.0\t100
+                            A\t2024-01-01T00:00:10.000000Z\t9.5\t15.0\t100\t100.0\t100
+                            A\t2024-01-01T00:00:30.000000Z\t10.5\t15.0\t100\t100.0\t100
+                            """);
+            assertQuery(joins + "> 150 ORDER BY r2.x, r.x, t.ts")
+                    .noLeakCheck()
+                    .returns("sym\tts\tbid\tx\tn\tx2\tn2\n");
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveOnPredicateReadsTimeSeriesJoinAhead() throws Exception {
+        // The ASOF JOIN, written after the RIGHT JOIN, runs ahead of it, and the ON clause of the last
+        // INNER join reads it, so the optimiser keeps that join after the RIGHT JOIN. Of the six trade and
+        // r rows, q.bid > 10 drops the rows of trade A at 10s, whose bid is 9.5.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMoveBehindRightJoin();
+            assertQuery("SELECT t.sym, t.ts, q.bid, r.x, w.n " + KEY_MOVE_JOINS + " RIGHT JOIN extra r ON r.x > t.px"
+                    + " ASOF JOIN quotes q ON (q.sym = t.sym) JOIN more w ON w.n = i.lot AND q.bid > 10 ORDER BY r.x, t.ts")
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tts\tbid\tx\tn
+                            A\t2024-01-01T00:00:30.000000Z\t10.5\t15.0\t100
+                            B\t2024-01-01T00:00:20.000000Z\t19.5\t100.0\t200
+                            A\t2024-01-01T00:00:30.000000Z\t10.5\t100.0\t100
+                            """);
+        });
+    }
+
+    @Test
     public void testTimeSeriesJoinAfterKeyMoveOnRekeyedTable() throws Exception {
         // the ASOF key reads instruments, which joins after trades again
         assertMemoryLeak(() -> {
@@ -19473,6 +19543,16 @@ public class JoinTest extends AbstractCairoTest {
                 ('A', 10.5, '2024-01-01T00:00:25.000000Z'),
                 ('C', 29.0, '2024-01-01T00:00:35.000000Z')
                 """);
+    }
+
+    // the tables of createTablesForTimeSeriesJoinAfterKeyMove(), and two tables without a designated
+    // timestamp for the joins after the time-series join
+    private void createTablesForTimeSeriesJoinAfterKeyMoveBehindRightJoin() throws SqlException {
+        createTablesForTimeSeriesJoinAfterKeyMove();
+        execute("CREATE TABLE extra (x DOUBLE)");
+        execute("INSERT INTO extra VALUES (10.5), (15.0), (100.0)");
+        execute("CREATE TABLE more (n INT)");
+        execute("INSERT INTO more VALUES (100), (200), (300)");
     }
 
     // a deferred edge after reorderTables moves a4.s = a0.s onto a0, see testTimeSeriesJoinAfterKeyMoveDerivesKeyOntoDeferredTable()

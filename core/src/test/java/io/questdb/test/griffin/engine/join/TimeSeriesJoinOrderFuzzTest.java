@@ -51,8 +51,9 @@ import java.util.regex.Pattern;
  * INNER join is keyed on both. Keys compare SYMBOL, VARCHAR, computed columns, and TIMESTAMP and
  * TIMESTAMP_NS columns, so the optimiser may group keys that compare one column with columns of
  * different types, and some key columns are in upper case. Some queries add a RIGHT JOIN after the
- * time-series join, and then an INNER JOIN that compares two tables joined before it. The data holds
- * NULL keys, 1970-01-01, timestamps that differ by less than a microsecond and rows that do not match.
+ * time-series join, or a RIGHT or FULL JOIN on a non-equi condition, and then an INNER JOIN that
+ * compares two tables joined before it. The data holds NULL keys, 1970-01-01, timestamps that differ by
+ * less than a microsecond and rows that do not match.
  */
 public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
     // the key columns of every table: SYMBOL s, VARCHAR v, INT k, LONG l, TIMESTAMP m and TIMESTAMP_NS n
@@ -65,15 +66,18 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
     public void testGeneratorEmitsKeyDerivationShapes() {
         // The shapes that reach the key placement of SqlOptimiser.runFromModelFirst, see
         // JoinTest#testTimeSeriesJoinAfterKeyMoveDerivesKeyOntoDeferredTable and the tests next to it:
-        // an INNER join with three keys, a key column in upper case, and a RIGHT JOIN followed by an
-        // INNER JOIN that compares two tables joined before the time-series join. The seed is fixed.
+        // an INNER join with three keys, a key column in upper case, and a RIGHT JOIN, on a key or on a
+        // non-equi condition, or a FULL JOIN on a non-equi condition, followed by an INNER JOIN that
+        // compares two tables joined before the time-series join. The seed is fixed.
         final Rnd rnd = new Rnd(42, 4242);
         final Pattern threeKeys = Pattern.compile(" a[2-4] ON [^J]* AND [^J]* AND ");
         final Pattern upperCaseKey = Pattern.compile(" a[0-9]\\.[SVKLMN] = ");
         final Pattern deferredKey = Pattern.compile(" RIGHT JOIN .* r ON r\\.k = a[0-4]\\.k JOIN .* a5 ON a5\\.k = r\\.k AND a[1-4]\\.[svklmn] = a[0-3]\\.[svklmn]$");
+        final Pattern nonEquiOuterJoin = Pattern.compile(" (RIGHT|FULL) JOIN .* r ON r\\.k >= a[0-4]\\.k JOIN .* a5 ON a5\\.k = r\\.k AND a[1-4]\\.[svklmn] = a[0-3]\\.[svklmn]$");
         int threeKeyCount = 0;
         int upperCaseKeyCount = 0;
         int deferredKeyCount = 0;
+        int nonEquiOuterJoinCount = 0;
         for (int i = 0; i < QUERY_COUNT; i++) {
             final String flat = generateQueries(rnd)[0];
             if (threeKeys.matcher(flat).find()) {
@@ -82,7 +86,11 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
             if (upperCaseKey.matcher(flat).find()) {
                 upperCaseKeyCount++;
             }
-            if (flat.contains(" RIGHT JOIN ")) {
+            if (flat.contains(" r ON r.k >= ")) {
+                Assert.assertTrue(flat, nonEquiOuterJoin.matcher(flat).find());
+                Assert.assertFalse("a comma join applies its WHERE clause after the outer join: " + flat, flat.contains(" WHERE "));
+                nonEquiOuterJoinCount++;
+            } else if (flat.contains(" RIGHT JOIN ")) {
                 Assert.assertTrue(flat, deferredKey.matcher(flat).find());
                 Assert.assertFalse("a comma join applies its WHERE clause after the RIGHT JOIN: " + flat, flat.contains(" WHERE "));
                 deferredKeyCount++;
@@ -91,6 +99,7 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
         Assert.assertTrue("INNER joins with three keys: " + threeKeyCount, threeKeyCount >= QUERY_COUNT / 10);
         Assert.assertTrue("key columns in upper case: " + upperCaseKeyCount, upperCaseKeyCount >= QUERY_COUNT / 10);
         Assert.assertTrue("RIGHT JOINs with a deferred key: " + deferredKeyCount, deferredKeyCount >= QUERY_COUNT / 10);
+        Assert.assertTrue("RIGHT and FULL JOINs on a non-equi condition: " + nonEquiOuterJoinCount, nonEquiOuterJoinCount >= QUERY_COUNT / 20);
     }
 
     @Test
@@ -247,9 +256,22 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
         // A RIGHT JOIN, and then an INNER JOIN whose ON clause compares two of the joins before the
         // time-series join, which the optimiser defers to after the RIGHT JOIN. The comma join applies
         // its WHERE clause after the RIGHT JOIN, and the reference before it, so it gets no RIGHT JOIN.
+        // On a non-equi condition, the RIGHT or FULL JOIN keeps every join before it ahead of it and
+        // the INNER JOIN after it, see SqlOptimiser.constrainJoinsAfterReorderedNullingJoins.
         String tail = "";
         String referenceTail = "";
-        if (!isCommaJoin && rnd.nextInt(4) == 0) {
+        String outerJoin = null;
+        String outerJoinCondition = null;
+        if (!isCommaJoin) {
+            if (rnd.nextInt(4) == 0) {
+                outerJoin = " RIGHT JOIN ";
+                outerJoinCondition = " = ";
+            } else if (rnd.nextInt(4) == 0) {
+                outerJoin = rnd.nextBoolean() ? " RIGHT JOIN " : " FULL JOIN ";
+                outerJoinCondition = " >= ";
+            }
+        }
+        if (outerJoin != null) {
             final String rightTable = table(rnd);
             final String innerTable = table(rnd);
             final String right = aliases.get(rnd.nextInt(aliases.size()));
@@ -257,9 +279,9 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
             final String left = aliases.get(leftIndex);
             final String other = aliases.get(rnd.nextInt(leftIndex));
             final String pair = keyPair(rnd);
-            tail = " RIGHT JOIN " + rightTable + " r ON r.k = " + right + ".k JOIN " + innerTable + " a5 ON a5.k = r.k AND "
+            tail = outerJoin + rightTable + " r ON r.k" + outerJoinCondition + right + ".k JOIN " + innerTable + " a5 ON a5.k = r.k AND "
                     + left + '.' + pair.charAt(0) + " = " + other + '.' + pair.charAt(1);
-            referenceTail = " RIGHT JOIN " + rightTable + " r ON r.k = x." + right + "_k JOIN " + innerTable + " a5 ON a5.k = r.k AND x."
+            referenceTail = outerJoin + rightTable + " r ON r.k" + outerJoinCondition + "x." + right + "_k JOIN " + innerTable + " a5 ON a5.k = r.k AND x."
                     + left + '_' + pair.charAt(0) + " = x." + other + '_' + pair.charAt(1);
             projected += ", r.k, a5.k";
             referenceProjected += ", r.k, a5.k";

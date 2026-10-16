@@ -748,12 +748,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private static SqlException fromModelOrderException(IQueryModel parent) {
-        final IQueryModel fromModel = parent.getJoinModels().getQuick(0);
-        final ExpressionNode name = fromModel.getTableNameExpr() != null ? fromModel.getTableNameExpr() : fromModel.getAlias();
-        return SqlException.$(name != null ? name.position : fromModel.getModelPosition(), "could not determine join order for this table");
-    }
-
     // A SHOW that names an object reads it through the view the context reads table-name functions
     // through, if any, see createShowFactory().
     private static RecordCursorFactory generateShowFactory(
@@ -16165,7 +16159,7 @@ public class SqlOptimiser implements Mutable {
     // model thus joins on every key it shares with the models placed before it, as when the query lists the
     // ancestors in that order, and the order stays acyclic, as every edge among the ancestors follows the
     // placement.
-    private void runFromModelFirst(IQueryModel parent, int fromModelJoinType) throws SqlException {
+    private void runFromModelFirst(IQueryModel parent, int fromModelJoinType) {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         final IntHashSet ancestors = fromModelAncestors;
         final IntList queue = fromModelPlacement;
@@ -16177,18 +16171,12 @@ public class SqlOptimiser implements Mutable {
             final int index = queue.getLast();
             queue.setPos(queue.size() - 1);
             final IQueryModel m = joinModels.getQuick(index);
-            // a barrier join does not move, so it cannot join after model 0
-            if (index > 0 && joinBarriers.contains(m.getJoinType())) {
-                throw fromModelOrderException(parent);
-            }
+            // a key or a deferred edge links a model before the first barrier only to models before it
+            assert index == 0 || joinBarriers.excludes(m.getJoinType());
             final JoinContext jc = m.getJoinContext();
             if (jc != null) {
                 for (int i = 0, n = jc.parents.size(); i < n; i++) {
                     final int parentIndex = jc.parents.get(i);
-                    // an ordering edge into model 0 keeps another model ahead of it
-                    if (index == 0 && !hasJoinKey(jc, parentIndex) && !isDeferredInnerKeyEdge(parentIndex, 0)) {
-                        throw fromModelOrderException(parent);
-                    }
                     if (ancestors.add(parentIndex)) {
                         queue.add(parentIndex);
                     }
@@ -16255,8 +16243,7 @@ public class SqlOptimiser implements Mutable {
                 linkDependencies(parent, keyParent, holder);
             }
             // Every parent of an ancestor is a key partner or a deferred edge, which follows its key below.
-            // An ordering edge into an INNER or CROSS join comes from a barrier join, and the walk above
-            // rejects a barrier ancestor and an ordering edge into model 0.
+            // Every other ordering edge goes into a barrier join or a model written after one.
             for (int p = 0, pn = jc.parents.size(); p < pn; p++) {
                 assert hasJoinKey(jc, jc.parents.get(p)) || isDeferredInnerKeyEdge(jc.parents.get(p), index);
             }
@@ -16285,10 +16272,9 @@ public class SqlOptimiser implements Mutable {
         applyModelOnOrderingConstraints(parent);
 
         final IntList ordered = parent.nextOrderedJoinModels();
-        if (doReorderTables(parent, ordered, false) == Integer.MAX_VALUE || ordered.getQuick(0) != 0) {
-            throw fromModelOrderException(parent);
-        }
-        doReorderTables(parent, ordered, true);
+        final int cost = doReorderTables(parent, ordered, true);
+        // model 0 has no parent left, and every edge into an ancestor comes from an ancestor placed before it
+        assert cost != Integer.MAX_VALUE && ordered.getQuick(0) == 0;
         parent.setOrderedJoinModels(ordered);
     }
 
