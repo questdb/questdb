@@ -13857,6 +13857,61 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinInnerDerivedKeyOnNullRejectedLeftJoinBeforeTimeSeriesJoin() throws Exception {
+        // An ASOF or LT JOIN after the LEFT JOIN matches each row by the designated timestamp of a, which
+        // the LEFT JOIN keeps, keyed or not, so WHERE b.u > 2 lets the LEFT JOIN hash on the implied key
+        // a.w = b.k. The a rows that remain have ts 00:01, 00:04 and 00:05: ASOF takes the last d row at
+        // or before each, LT the last d row strictly before each.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            final String asOfQuery = """
+                    SELECT a.x ax, a.w aw, b.k bk, b.u bu, c.k ck, d.v dv
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    ASOF JOIN d
+                    WHERE b.u > 2
+                    ORDER BY 1, 2, 3, 4, 5, 6
+                    """;
+            final String ltQuery = asOfQuery.replace("ASOF JOIN d", "LT JOIN d");
+            final String[][] cases = {
+                    {asOfQuery, "AsOf Join", """
+                            ax\taw\tbk\tbu\tck\tdv
+                            5\t1\t1\t3\t1\t10
+                            7\t3\t3\t4\t3\t30
+                            9\tnull\tnull\t6\tnull\t30
+                            """},
+                    {ltQuery, "Lt Join", """
+                            ax\taw\tbk\tbu\tck\tdv
+                            5\t1\t1\t3\t1\tnull
+                            7\t3\t3\t4\t3\t30
+                            9\tnull\tnull\t6\tnull\t30
+                            """},
+            };
+            for (String[] testCase : cases) {
+                final String query = testCase[0];
+                final String timeSeriesJoin = testCase[1];
+                final String expected = testCase[2];
+                assertQuery(query)
+                        .noLeakCheck()
+                        .withPlanContaining("Hash Left Outer Join Light", "condition: b.k=a.w", timeSeriesJoin)
+                        .withPlanNotContaining("Nested Loop")
+                        .returns(expected);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .expectSize()
+                        .returns(expected);
+                printSql("EXPLAIN " + query, true);
+                TestUtils.assertContains(sink, "Hash Left Outer Join\n");
+                TestUtils.assertContains(sink, "condition: b.k=a.w");
+                TestUtils.assertContains(sink, timeSeriesJoin);
+                Assert.assertFalse(sink.toString(), Chars.contains(sink, "Nested Loop"));
+            }
+        });
+    }
+
+    @Test
     public void testOuterJoinInnerDerivedKeyOnNullRejectedRightJoin() throws Exception {
         // The INNER join implies a.w = b.k, and WHERE a.x > 0 drops the NULL-extended rows of the RIGHT
         // JOIN, so the RIGHT JOIN returns the rows of an INNER join and runs as a hash join on that key.
@@ -14122,6 +14177,45 @@ public class JoinTest extends AbstractCairoTest {
                             ax\taw\tbx\tbk\tbu\tck
                             null\tnull\t0\tnull\t6\tnull
                             5\t1\t2\t1\t3\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterOnTimeSeriesJoin() throws Exception {
+        // The INNER join c implies a.w = b.k. As a key of the ASOF or LT JOIN b, it would match each a row
+        // to the last b row with the same k instead of the last b row, so b keeps the equality as a filter
+        // although WHERE b.u > 2 drops the rows that b NULL-extends. The LEFT JOIN d matches no a row, and
+        // it puts an INNER join after an outer join on this level, which makes the optimiser consider the
+        // implied key at all. ASOF matches the a rows at ts 00:01 to 00:05 to the b rows (k, u) (1, 3),
+        // (3, 4), (null, 6), (null, 6), (null, 6), and LT matches them to none, (1, 3), (3, 4), (null, 6),
+        // (null, 6). As a key, a.w = b.k would match a (7, 3) at 00:04 to b (3, 4) in both, and the INNER
+        // join would add the row 7, 3, 3, 4, 3.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            final String asOfQuery = """
+                    SELECT a.x ax, a.w aw, b.k bk, b.u bu, c.k ck, d.v dv
+                    FROM a
+                    LEFT JOIN d ON a.x = d.v
+                    ASOF JOIN b
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE b.u > 2
+                    ORDER BY 1, 2, 3, 4, 5, 6
+                    """;
+            assertQuery(asOfQuery)
+                    .noLeakCheck()
+                    .withPlanContaining("AsOf Join")
+                    .returns("""
+                            ax\taw\tbk\tbu\tck\tdv
+                            5\t1\t1\t3\t1\tnull
+                            9\tnull\tnull\t6\tnull\tnull
+                            """);
+            assertQuery(asOfQuery.replace("ASOF JOIN b", "LT JOIN b"))
+                    .noLeakCheck()
+                    .withPlanContaining("Lt Join")
+                    .returns("""
+                            ax\taw\tbk\tbu\tck\tdv
+                            9\tnull\tnull\t6\tnull\tnull
                             """);
         });
     }

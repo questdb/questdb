@@ -2769,6 +2769,58 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterBeforeSpliceJoin() throws Exception {
+        // The INNER join c implies a.w = b.k, and WHERE b.u > 2 drops the rows that LEFT JOIN b NULL-extends.
+        // A later SPLICE JOIN would pair the rows that the key NULL-extends with d rows before WHERE drops
+        // them, so b keeps the equality as a filter and stays a keyless outer join. SqlCodeGenerator rejects
+        // this query, because the master of the SPLICE is a join, so only the optimised model shows the rule.
+        // An ASOF or LT JOIN in place of the SPLICE matches by the designated timestamp of a alone, so b
+        // hashes on the key. Parts of each model, as QueryModel.toSink0() prints them:
+        // - select-choose: SELECT * lists the columns of a, b, c and d, with suffixes on repeated names;
+        // - select [cols] from t timestamp (ts): each table, with the columns SELECT * uses, in written order;
+        // - SPLICE: b prints as " join ", the spelling of the keyless LEFT JOIN that homogenizeCrossJoins()
+        //   makes, with its ON clause as outer-join-expression and the equality as its post-join-where;
+        //   WHERE b.u > 2 stays after the SPLICE, as the post-join-where of d;
+        // - ASOF and LT: b prints as " left join " keyed on b.k = a.w, and WHERE b.u > 2 filters after b;
+        // - c keys on b.k, the other column of the equality class a.w = b.k = c.k that joins before c.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, w INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (x INT, k INT, u INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE c (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE d (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String query = """
+                    SELECT * FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    SPLICE JOIN d
+                    WHERE b.u > 2
+                    """;
+            final String columns = "select-choose a.x x, a.w w, a.ts ts, b.x x1, b.k k, b.u u, b.ts ts1, c.k k1, c.ts ts2, d.v v, d.ts ts3";
+            assertQuery(
+                    columns + " from (select [x, w, ts] from a timestamp (ts)"
+                            + " join select [x, k, u, ts] from b timestamp (ts) outer-join-expression a.x > b.u post-join-where a.w = b.k"
+                            + " join select [k, ts] from c timestamp (ts) on c.k = b.k"
+                            + " splice join select [v, ts] from d timestamp (ts) post-join-where b.u > 2)",
+                    query
+            );
+            assertQuery(
+                    columns + " from (select [x, w, ts] from a timestamp (ts)"
+                            + " left join select [x, k, u, ts] from b timestamp (ts) on b.k = a.w outer-join-expression a.x > b.u post-join-where b.u > 2"
+                            + " join select [k, ts] from c timestamp (ts) on c.k = b.k"
+                            + " asof join select [v, ts] from d timestamp (ts))",
+                    query.replace("SPLICE JOIN d", "ASOF JOIN d")
+            );
+            assertQuery(
+                    columns + " from (select [x, w, ts] from a timestamp (ts)"
+                            + " left join select [x, k, u, ts] from b timestamp (ts) on b.k = a.w outer-join-expression a.x > b.u post-join-where b.u > 2"
+                            + " join select [k, ts] from c timestamp (ts) on c.k = b.k"
+                            + " lt join select [v, ts] from d timestamp (ts))",
+                    query.replace("SPLICE JOIN d", "LT JOIN d")
+            );
+        });
+    }
+
+    @Test
     public void testPushDownLimitFromChooseToNone() throws Exception {
         assertMemoryLeak(() -> {
             execute(tripsDdl);

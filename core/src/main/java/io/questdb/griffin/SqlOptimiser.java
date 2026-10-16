@@ -7755,10 +7755,11 @@ public class SqlOptimiser implements Mutable {
     // and with them every row that the key changes.
     // The joins after slaveIndex must not pair a row that the key changes with another row: a SPLICE join
     // could pair a row that the key NULL-extends with a row that the query returns, instead of the row it
-    // pairs that row with now. Unless the keyed join is a LEFT join, every later join must be an INNER,
-    // CROSS or outer join: a time-series join written after a non-equi RIGHT or FULL join runs ahead of it,
-    // see constrainTimeSeriesJoinsAhead(), but not ahead of a keyed one, after which it has no designated
-    // timestamp. A LEFT join keeps the designated timestamp of its master, keyed or not.
+    // pairs that row with now. SqlCodeGenerator rejects a SPLICE join whose master is a join, so this rule
+    // shows in the optimised model only. Unless the keyed join is a LEFT join, every later join must be an
+    // INNER, CROSS or outer join: a time-series join written after a non-equi RIGHT or FULL join runs ahead
+    // of it, see constrainTimeSeriesJoinsAhead(), but not ahead of a keyed one, after which it has no
+    // designated timestamp. A LEFT join keeps the designated timestamp of its master, keyed or not.
     private boolean isNullExtensionRejected(IQueryModel parent, int slaveIndex, int contextSlaveIndex) {
         if (nullRejectionConjunctNodes.size() == 0) {
             return false;
@@ -7766,12 +7767,15 @@ public class SqlOptimiser implements Mutable {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         final int slaveJoinType = joinModels.getQuick(slaveIndex).getJoinType();
         for (int i = slaveIndex + 1, n = joinModels.size(); i < n; i++) {
-            switch (joinModels.getQuick(i).getJoinType()) {
+            final int joinType = joinModels.getQuick(i).getJoinType();
+            // addFilterOrEmitJoin() runs before homogenizeCrossJoins(), the only code that sets these types
+            assert joinType != IQueryModel.JOIN_CROSS_LEFT && joinType != IQueryModel.JOIN_CROSS_RIGHT
+                    && joinType != IQueryModel.JOIN_CROSS_FULL;
+            switch (joinType) {
                 case IQueryModel.JOIN_INNER, IQueryModel.JOIN_CROSS, IQueryModel.JOIN_LEFT_OUTER,
                      IQueryModel.JOIN_RIGHT_OUTER, IQueryModel.JOIN_FULL_OUTER -> {
                 }
-                case IQueryModel.JOIN_SPLICE, IQueryModel.JOIN_CROSS_LEFT, IQueryModel.JOIN_CROSS_RIGHT,
-                     IQueryModel.JOIN_CROSS_FULL -> {
+                case IQueryModel.JOIN_SPLICE -> {
                     return false;
                 }
                 default -> {
