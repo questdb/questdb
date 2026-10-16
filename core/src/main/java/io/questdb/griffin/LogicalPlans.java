@@ -987,7 +987,8 @@ public final class LogicalPlans {
      */
     public static int unorderedTimestampColumnId(LogicalPlan plan) {
         return switch (plan) {
-            case SortPlan sort when sort.getOutput().getTimestampIndex() < 0 -> sort.getChild().getOutput().getTimestampColumnId();
+            case SortPlan sort when sort.getOutput().getTimestampIndex() < 0 ->
+                    sort.getChild().getOutput().getTimestampColumnId();
             case FilterPlan filter -> unorderedTimestampColumnId(filter.getChild());
             case ProjectPlan project when isColumnProjection(project) -> {
                 final int index = projectedColumnIndex(project, unorderedTimestampColumnId(project.getChild()));
