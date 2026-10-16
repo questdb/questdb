@@ -922,7 +922,8 @@ public class CrashVerifier {
                 while (cursor.hasNext()) {
                     final long actualId = rec.getLong(0);
                     final long actualV = rec.getLong(1);
-                    final CharSequence actualS = rec.getSymA(2);
+                    // A STRING under the nosymbol profile, a symbol everywhere else; same values.
+                    final CharSequence actualS = CrashIngestWriter.NO_SYMBOL ? rec.getStrA(2) : rec.getSymA(2);
                     final long actualTs = rec.getTimestamp(3);
 
                     final long expectedV = actualId * 2_654_435_761L;

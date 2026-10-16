@@ -234,6 +234,12 @@ barrier" inexpressible. `t10` therefore asserts every verification reports `wal.
 before counting its verdict: a NOSYNC run that fell back to the bypass-WAL path would go red for
 `t07`'s reason and look like a passing control.
 
+Both arms use `profile=nosymbol`: column `s` is a STRING, so the table has no symbol column.
+Since OSS #7912, CREATE TABLE under NOSYNC no longer flushes a symbol column's `s.o`/`s.k`
+headers, and a power cut soon after CREATE leaves a table the product refuses to open. That is a
+product finding (`LOUD_FAILURE`) and must not decide a control whose question is whether lost
+rows are seen. The sweeps keep their symbol columns.
+
 **The SYNC/NOSYNC control uses acknowledged frontier C, not Wm.** `CrashVerifier` deliberately
 ignores `W` outside ADAPTIVE. SYNC can advance a local frontier in current code, but the QWP local
 tier remains adaptive-only, and a missing or negative Wm must never make the negative control

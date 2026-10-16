@@ -371,7 +371,7 @@ public class CrashIngestWriter {
                 final TableWriter.Row row = writer.newRow(ts);
                 row.putLong(0, id);                           // col 0: id
                 row.putLong(1, id * 2_654_435_761L);          // col 1: v = Knuth hash
-                row.putSym(2, SYMBOLS[(int) (id % SYMBOLS.length)]); // col 2: s
+                putS(row, id);                                // col 2: s
                 // col 3: ts is the designated timestamp, set by newRow(ts)
                 putExtras(row, id);
                 row.append();
@@ -474,7 +474,7 @@ public class CrashIngestWriter {
                     final TableWriter.Row row = w.newRow(ts);
                     row.putLong(0, id);                           // col 0: id
                     row.putLong(1, id * 2_654_435_761L);          // col 1: v = Knuth hash
-                    row.putSym(2, SYMBOLS[(int) (id % SYMBOLS.length)]); // col 2: s
+                    putS(row, id);                                // col 2: s
                     // col 3: ts is the designated timestamp, set by newRow(ts)
                     putExtras(row, id);
                     row.append();
@@ -485,7 +485,7 @@ public class CrashIngestWriter {
                         final TableWriter.Row r2 = w2.newRow(ts);
                         r2.putLong(0, id);
                         r2.putLong(1, id * 2_654_435_761L);
-                        r2.putSym(2, SYMBOLS[(int) (id % SYMBOLS.length)]);
+                        putS(r2, id);
                         putExtras(r2, id);
                         r2.append();
                     }
@@ -690,7 +690,21 @@ public class CrashIngestWriter {
     //   array    + arr double[]            ArrayCrashConsistencyTest
     //   wide     + 12 mixed-type columns   BatchedFlushDurabilityCrashTest
     //   o3       out-of-order timestamps   AdaptiveO3CrashSweep, AdaptiveO3LazyGap
+    //   nosymbol s is a STRING, so the     the t10 barrier control only (see NO_SYMBOL)
+    //            table has no symbol column
     static final String PROFILE = System.getProperty("schema.profile", "bitmap");
+
+    /**
+     * The nosymbol profile keeps column 2 (s) at its position and its values, but as a STRING, so
+     * the table has no symbol column and no symbol map files at all.
+     * <p>
+     * It exists for test/t10, the barrier control, which must prove that the rig sees lost rows
+     * and nothing else. Since OSS #7912, CREATE TABLE under NOSYNC no longer flushes a symbol
+     * column's s.o/s.k headers, so a power cut soon after CREATE leaves a table the product
+     * refuses to open. That is a product finding of its own and must not decide the control.
+     * Every other workload keeps its symbol column.
+     */
+    static final boolean NO_SYMBOL = "nosymbol".equals(PROFILE);
 
     /**
      * Extra column DDL appended after the fixed 0..3 columns.
@@ -738,6 +752,13 @@ public class CrashIngestWriter {
     }
 
     /**
+     * Column 2 (s) in the DDL: a symbol carrying the profile's index, or a STRING under nosymbol.
+     */
+    private static String sColumnDdl() {
+        return NO_SYMBOL ? "s string" : "s symbol" + indexClause();
+    }
+
+    /**
      * Designated timestamp for a row.
      * <p>
      * The o3 profile decouples commit order from timestamp order: every 4th row
@@ -750,6 +771,18 @@ public class CrashIngestWriter {
             return BASE_TS + (id - 2) * 1_000_000L + 250_000L;
         }
         return BASE_TS + id * 1_000_000L;
+    }
+
+    /**
+     * Write column 2 (s): the same value in every profile, as a symbol or, under nosymbol, a STRING.
+     */
+    private static void putS(TableWriter.Row row, long id) {
+        final String s = SYMBOLS[(int) (id % SYMBOLS.length)];
+        if (NO_SYMBOL) {
+            row.putStr(2, s);
+        } else {
+            row.putSym(2, s);
+        }
     }
 
     /**
@@ -851,7 +884,7 @@ public class CrashIngestWriter {
                 //   none     no index                (baseline: isolates index faults)
                 final String withClause = "";
                 final String ddl = "create table " + TABLE_NAME
-                        + " (id long, v long, s symbol" + indexClause() + ", ts timestamp"
+                        + " (id long, v long, " + sColumnDdl() + ", ts timestamp"
                         + extraColumnsDdl() + ")"
                         + " timestamp(ts) partition by DAY " + (walMode ? "wal" : "bypass wal")
                         + withClause;

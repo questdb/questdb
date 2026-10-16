@@ -124,7 +124,12 @@ STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
 BASE="$STATE_DIR/base"
 KEY="$BASE/id_ed25519"
 RUN="$STATE_DIR/t10-$$"
-PROFILE=bitmap
+# No symbol column, in both arms. This control must show that the rig sees lost rows, and
+# nothing else may decide it. Since OSS #7912, CREATE TABLE under NOSYNC no longer flushes a
+# symbol column's s.o/s.k headers, so a power cut soon after CREATE leaves a table the product
+# refuses to open (LOUD_FAILURE): a product finding of its own, not a missing barrier. The
+# sweeps keep their symbol columns; only this control uses the nosymbol profile.
+PROFILE=nosymbol
 # Boundaries per arm. Three tells "structural" from "one unlucky point" while keeping the test
 # to two VM cycles; the sweep is what runs hundreds.
 POINTS="${QDB_T10_POINTS:-3}"
@@ -134,10 +139,10 @@ POINTS="${QDB_T10_POINTS:-3}"
 #
 # Exported rather than passed, because both builders read the environment. Pinned rather than
 # inherited, so an ambient QDB_MAT_VIEW in someone's shell cannot change what is graded. Every
-# value below is the builders' own default except QDB_WAL_TABLE, the one variable this control
-# exists to set: harness_wal_table() otherwise derives the table kind from the commit mode
-# (adaptive -> true, everything else -> false), which at SYNC and NOSYNC would silently grade
-# the bypass-WAL path instead.
+# value below is the builders' own default except QDB_SCHEMA_PROFILE (see PROFILE above) and
+# QDB_WAL_TABLE, the one variable this control exists to set: harness_wal_table() otherwise
+# derives the table kind from the commit mode (adaptive -> true, everything else -> false),
+# which at SYNC and NOSYNC would silently grade the bypass-WAL path instead.
 export QDB_WAL_TABLE=true
 export QDB_SCHEMA_PROFILE="$PROFILE"
 export QDB_SIBLING_TABLE=false
