@@ -211,7 +211,9 @@ public interface ParquetDecoder {
         return 0;
     }
 
-    /** Warms selected compressed chunks without materializing decoded column buffers. */
+    /**
+     * Warms selected compressed chunks without materializing decoded column buffers.
+     */
     default long touchRowGroup(
             DirectIntList columns,
             int rowGroup,

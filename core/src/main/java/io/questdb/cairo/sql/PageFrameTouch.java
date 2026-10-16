@@ -32,7 +32,9 @@ public final class PageFrameTouch {
     private PageFrameTouch() {
     }
 
-    /** Fault every intersecting OS page in while the caller holds the source lease. */
+    /**
+     * Fault every intersecting OS page in while the caller holds the source lease.
+     */
     public static long touchMemory(long address, long size, SqlExecutionCircuitBreaker circuitBreaker) {
         if (address == 0 || size == 0) {
             return 0;
