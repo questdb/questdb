@@ -2,7 +2,7 @@
 name: review-pr-runner
 description: Runs one review-pr review end to end in a fresh context for fix-pr, launching the review's own agents, and writes the report to files
 tools: read, grep, find, ls, bash, write, subagent, contact_supervisor
-thinking: high
+thinking: max
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

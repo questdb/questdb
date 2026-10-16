@@ -2,7 +2,7 @@
 name: review-prober
 description: Read-only code review agent with a shell, for review-pr's discovery agents and falsifiers, which back their claims with executed probes
 tools: read, grep, find, ls, bash, write, contact_supervisor
-thinking: high
+thinking: max
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

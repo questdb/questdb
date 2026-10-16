@@ -84,7 +84,7 @@ task per role or atomic falsification candidate. `review-prober`
 (`.pi/agents/review-prober.md`) is a read-only reviewer with a shell, so it can run
 the probes the evidence rules ask for; the builtin `reviewer` has no shell. Launch
 them as foreground calls (`async: false`; a parallel fanout still runs them at once)
-with `timeoutMs: 3600000`, since the 30-minute default cuts discovery short. Each task
+with `timeoutMs: 7200000`, since the 30-minute default cuts discovery short and the agents think at max. Each task
 is self-contained and read-only.
 Discovery tasks receive the diff, Step 2.4 provenance verdicts, the Step 2.5 surface
 map, the Step 2.6 coverage map, role instructions, and the candidate contract. Agents

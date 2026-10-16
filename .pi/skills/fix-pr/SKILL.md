@@ -73,19 +73,25 @@ a reply is unclear or the user asks. A small main session is cheap to resume
 after waiting on a helper; a large one is not.
 
 Launch helpers one at a time as ordinary foreground `subagent` calls (never
-`async: true`) with `context: "fresh"` and the task templates at the end of
-this file. While the main session waits inside a tool call, pi keeps its
-prompt cache warm; a session that ends its turn and is woken later by a
-background helper loses the cache and pays to rebuild it.
+`async: true`) with `context: "fresh"`, `model: "<HELPER_MODEL>"` (Setup) and
+the task templates at the end of this file. While the main session waits
+inside a tool call, pi keeps its prompt cache warm; a session that ends its
+turn and is woken later by a background helper loses the cache and pays to
+rebuild it.
+
+Every agent of the run thinks at max. The builtin `worker` and `reviewer`
+default to high, and a launch overrides that only through the `:max` suffix of
+its model; `review-pr-runner` and the review's `review-prober` agents set max
+in their definitions. The timeouts leave room for it.
 
 | Helper | Agent | Extra parameters |
 |---|---|---|
-| Analysis | `worker` | `timeoutMs: 3600000`, `acceptance: { level: "none", reason: "fix-pr checks the result" }` |
-| Check | `reviewer` | none |
-| Build | `worker` | `timeoutMs: 7200000`, `acceptance: { level: "none", reason: "fix-pr checks the commit" }` |
-| Test review | `reviewer` | none |
+| Analysis | `worker` | `timeoutMs: 7200000`, `acceptance: { level: "none", reason: "fix-pr checks the result" }` |
+| Check | `reviewer` | `timeoutMs: 3600000` |
+| Build | `worker` | `timeoutMs: 10800000`, `acceptance: { level: "none", reason: "fix-pr checks the commit" }` |
+| Test review | `reviewer` | `timeoutMs: 3600000` |
 | Test gaps | `worker` | `timeoutMs: 5400000`, `acceptance: { level: "none", reason: "fix-pr checks the commit" }` |
-| Review | `review-pr-runner` | `timeoutMs: 18000000`, `acceptance: { level: "none", reason: "fix-pr reads the report" }` |
+| Review | `review-pr-runner` | `timeoutMs: 28800000`, `acceptance: { level: "none", reason: "fix-pr reads the report" }` |
 
 The review helper is the only one that launches agents of its own: the
 review's discovery agents and falsifiers. Its definition,
@@ -99,9 +105,12 @@ follow it with the helper's arguments.
    number if `gh pr view --json number` finds one, and the PR base:
    `git merge-base HEAD origin/<base>`, where `<base>` comes from
    `gh pr view --json baseRefName`, else from
-   `git symbolic-ref --short refs/remotes/origin/HEAD`.
+   `git symbolic-ref --short refs/remotes/origin/HEAD`. Record the helper
+   model too: `HELPER_MODEL="$PI_PROVIDER/$PI_MODEL:max"`, this session's
+   model at max thinking.
 2. If tracked files have uncommitted changes, list them and ask whether to
-   continue. Commits never include them.
+   continue. Commits never include them. If this session doesn't think at
+   max (`$PI_REASONING_LEVEL`), say so and ask too.
 3. Create a state directory outside the repo: `mktemp -d /tmp/fix-pr.XXXXXX`.
 4. Parse the items. Each entry of a list of features or bugs is one item. From
    a `review-pr` report, queue Critical and Moderate findings and Adjacent
