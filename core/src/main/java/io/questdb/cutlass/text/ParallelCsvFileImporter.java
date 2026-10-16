@@ -291,7 +291,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final CharSequence tableName,
             TableStructure structure,
             int tableId,
-            SecurityContext securityContext
+            SecurityContext securityContext,
+            int commitMode
     ) {
         try (Path path = new Path()) {
             switch (TableUtils.exists(ff, path, root, tableDir)) {
@@ -317,7 +318,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 tableDir,
                                 structure,
                                 ColumnType.VERSION,
-                                tableId
+                                tableId,
+                                commitMode
                         );
                     }
                     break;
@@ -1467,7 +1469,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             targetTableStructure.getTableName(),
                             targetTableStructure,
                             tableToken.getTableId(),
-                            securityContext
+                            securityContext,
+                            configuration.getCommitMode()
                     );
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
