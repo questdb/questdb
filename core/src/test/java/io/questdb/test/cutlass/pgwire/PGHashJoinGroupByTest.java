@@ -81,6 +81,11 @@ public class PGHashJoinGroupByTest extends BasePGTest {
             {"2024-01-02T00:00", "2024-01-06T00:00", "b"},
             {"2025-01-01T00:00", "2025-01-02T00:00", "a"}
     };
+    // SQL with d, the table with fewer rows, first in join order, so the INNER join builds the
+    // input that the ordinary plan compiles first.
+    private static final String BUILD_FIRST_SQL = """
+            SELECT d.g, count(*) n, sum(f.v) v, sum(d.w) w FROM d JOIN f ON d.k = f.k
+            WHERE f.ts >= ? AND f.ts < ? AND d.sym = ? ORDER BY d.g""";
     private static final String BUILD_LATCHED_SQL = """
             SELECT d.g, count(*) n, sum(f.v) v, sum(d.w) w
             FROM f LEFT JOIN (SELECT * FROM d WHERE test_latched_counter()) d ON f.k = d.k
@@ -145,6 +150,60 @@ public class PGHashJoinGroupByTest extends BasePGTest {
             SELECT d.g, count(*) n, sum(f.v) v, sum(d.w) w
             FROM (SELECT * FROM f WHERE test_latched_counter()) f LEFT JOIN d ON f.k = d.k
             ORDER BY d.g""";
+    // EXPECTED, plus the rows of f whose key no row of d with the symbol matches.
+    private static final String[] RIGHT_EXPECTED = {
+            """
+                    g[INTEGER],n[BIGINT],v[BIGINT],w[DOUBLE]
+                    null,55,2770,null
+                    0,38,1908,2919.0
+                    1,38,1960,2840.0
+                    2,39,1956,2888.0
+                    3,38,1946,2808.0
+                    4,39,1944,2857.0
+                    5,38,1932,2776.0
+                    6,40,2034,2997.0
+                    """,
+            """
+                    g[INTEGER],n[BIGINT],v[BIGINT],w[DOUBLE]
+                    null,580,290320,null
+                    0,353,176418,27174.0
+                    1,353,176980,26150.0
+                    2,369,184476,27473.0
+                    3,353,176846,26433.0
+                    4,369,184374,27772.0
+                    5,353,176712,26716.0
+                    6,370,185274,28242.0
+                    """,
+            """
+                    g[INTEGER],n[BIGINT],v[BIGINT],w[DOUBLE]
+                    null,120,60200,null
+                    0,67,33473,4896.5
+                    1,71,35373,5271.5
+                    2,67,33447,5033.5
+                    3,71,35355,5412.5
+                    4,67,33421,5170.5
+                    5,70,34936,5383.0
+                    6,67,33395,5132.5
+                    """,
+            """
+                    g[INTEGER],n[BIGINT],v[BIGINT],w[DOUBLE]
+                    null,235,70525,null
+                    0,138,41588,10094.0
+                    1,146,43912,10776.0
+                    2,138,41534,10267.0
+                    3,146,43874,10957.0
+                    4,138,41480,10440.0
+                    5,145,43735,10967.5
+                    6,139,41927,10598.5
+                    """,
+            """
+                    g[INTEGER],n[BIGINT],v[BIGINT],w[DOUBLE]
+                    """
+    };
+    // A RIGHT join builds the table before it, here d with its own WHERE clause, and probes f.
+    private static final String RIGHT_SQL = """
+            SELECT d.g, count(*) n, sum(f.v) v, sum(d.w) w FROM (SELECT * FROM d WHERE sym = ?) d RIGHT JOIN f ON d.k = f.k
+            WHERE f.ts >= ? AND f.ts < ? ORDER BY d.g""";
     private static final String SQL = """
             SELECT d.g, count(*) n, sum(f.v) v, sum(d.w) w FROM f JOIN d ON f.k = d.k
             WHERE f.ts >= ? AND f.ts < ? AND d.sym = ? ORDER BY d.g""";
@@ -261,6 +320,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                     statement.setString(2, values[1] + ":00.000000Z");
                     statement.setString(3, values[2]);
                 },
+                EXPECTED,
                 true
         );
     }
@@ -269,7 +329,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
     // variables and compiles both orientations of the INNER join.
     @Test
     public void testNamedStatementRebindsTypedTimestamps() throws Exception {
-        assertNamedStatement(SQL, PGHashJoinGroupByTest::bindTyped, true);
+        assertNamedStatement(SQL, PGHashJoinGroupByTest::bindTyped, EXPECTED, true);
     }
 
     // setTimestamp() leaves the parameter type unspecified, since pgjdbc cannot tell TIMESTAMP
@@ -277,7 +337,23 @@ public class PGHashJoinGroupByTest extends BasePGTest {
     // leaves their types to the compile of each input, which infers them as the ordinary plan does.
     @Test
     public void testNamedStatementRebindsUnspecifiedTimestamps() throws Exception {
-        assertNamedStatement(SQL, PGHashJoinGroupByTest::bindUnspecified, true);
+        assertNamedStatement(SQL, PGHashJoinGroupByTest::bindUnspecified, EXPECTED, true);
+    }
+
+    // A RIGHT join always builds the input that comes first in join order, and keeps one orientation.
+    @Test
+    public void testNamedStatementRebindsUnspecifiedTimestampsInRightJoin() throws Exception {
+        assertNamedStatement(RIGHT_SQL, PGHashJoinGroupByTest::bindUnspecifiedRight, RIGHT_EXPECTED, false);
+    }
+
+    // The analysis accepts an INNER join that builds d, the input that comes first in join order,
+    // and leaves the unspecified types to the compile of each input. pgjdbc gives each ? its own
+    // parameter, which sits in one input, so the compile order decides no type here;
+    // HashJoinGroupByCandidateTest and HashJoinGroupBySemanticTest pin that order with a bind
+    // variable that both inputs read.
+    @Test
+    public void testNamedStatementRebindsUnspecifiedTimestampsWhenBuildComesFirst() throws Exception {
+        assertNamedStatement(BUILD_FIRST_SQL, PGHashJoinGroupByTest::bindUnspecified, EXPECTED, true);
     }
 
     // Describe compiles the statement with every parameter type unspecified. The fused analysis
@@ -286,6 +362,8 @@ public class PGHashJoinGroupByTest extends BasePGTest {
     public void testParameterDescriptionMatchesOrdinaryPlan() throws Exception {
         final String[] sqls = {
                 SQL,
+                BUILD_FIRST_SQL,
+                RIGHT_SQL,
                 """
                         SELECT d.g, count(*) n FROM f JOIN d ON f.k = d.k
                         WHERE f.ts >= ?::TIMESTAMP AND f.ts < ?::TIMESTAMP AND d.sym = ? ORDER BY d.g""",
@@ -305,10 +383,13 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                         for (String sql : sqls) {
                             description.append(sql).append('\n').append(describe(connection, sql)).append('\n');
                         }
-                        // The described statements compile the plans that the enabled path chose,
-                        // SQL with its timestamps unspecified and sqls[2] with typed parameters.
+                        // The described statements compile the plans that the enabled path chose:
+                        // SQL, BUILD_FIRST_SQL and RIGHT_SQL with their timestamps unspecified, and
+                        // sqls[4] with typed parameters.
                         assertFused(explain(connection, SQL, PGHashJoinGroupByTest::bindUnspecified, BINDS[0]), isFused);
-                        assertFused(explain(connection, sqls[2], (statement, values) -> {
+                        assertFused(explain(connection, BUILD_FIRST_SQL, PGHashJoinGroupByTest::bindUnspecified, BINDS[0]), isFused);
+                        assertFused(explain(connection, RIGHT_SQL, PGHashJoinGroupByTest::bindUnspecifiedRight, BINDS[0]), isFused);
+                        assertFused(explain(connection, sqls[4], (statement, values) -> {
                             statement.setLong(1, 1);
                             statement.setDouble(2, 2.0);
                             statement.setInt(3, 3);
@@ -357,6 +438,13 @@ public class PGHashJoinGroupByTest extends BasePGTest {
         statement.setTimestamp(1, Timestamp.from(Instant.parse(values[0] + ":00Z")));
         statement.setTimestamp(2, Timestamp.from(Instant.parse(values[1] + ":00Z")));
         statement.setString(3, values[2]);
+    }
+
+    // RIGHT_SQL takes the symbol first.
+    private static void bindUnspecifiedRight(PreparedStatement statement, String[] values) throws SQLException {
+        statement.setString(1, values[2]);
+        statement.setTimestamp(2, Timestamp.from(Instant.parse(values[0] + ":00Z")));
+        statement.setTimestamp(3, Timestamp.from(Instant.parse(values[1] + ":00Z")));
     }
 
     private static String describe(Connection connection, String sql) throws SQLException {
@@ -508,7 +596,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
         });
     }
 
-    private void assertNamedStatement(String sql, Binder binder, boolean isFusedPlan) throws Exception {
+    private void assertNamedStatement(String sql, Binder binder, String[] expected, boolean isBuildChoice) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             for (boolean isFused : new boolean[]{true, false}) {
@@ -524,13 +612,13 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                                 for (int i = 0; i < BINDS.length; i++) {
                                     binder.bind(statement, BINDS[i]);
                                     try (ResultSet resultSet = statement.executeQuery()) {
-                                        assertResultSet(Arrays.toString(BINDS[i]), EXPECTED[i], sink, resultSet);
+                                        assertResultSet(Arrays.toString(BINDS[i]), expected[i], sink, resultSet);
                                     }
                                 }
                             }
                             final String plan = explain(connection, sql, binder, BINDS[0]);
-                            assertFused(plan, isFused && isFusedPlan);
-                            Assert.assertEquals(plan, isFused && isFusedPlan, plan.contains("Hash Join Group By Build Choice"));
+                            assertFused(plan, isFused);
+                            Assert.assertEquals(plan, isFused && isBuildChoice, plan.contains("Hash Join Group By Build Choice"));
                         }
                     }
                 });

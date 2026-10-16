@@ -606,8 +606,8 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             // plan runs, values bound as text]
             final String[][] queries = {
                     // The analysis leaves an input's own WHERE clause unparsed, and the compile of the
-                    // input infers the types, as the ordinary compile does, when the fused plan compiles
-                    // its inputs in the ordinary plan's order: the probe, first in join order, first.
+                    // input infers the types, as the ordinary compile does: the fused plan compiles its
+                    // inputs in the ordinary plan's order, the input first in join order first.
                     {select + "rn JOIN pn" + on + interval + " AND pn.country = $3 ORDER BY 1",
                             "TIMESTAMP_NS TIMESTAMP_NS STRING", "true", "true", "2020-01-01T05", "2020-01-02T03", "C1"},
                     {select + "rn LEFT JOIN pn" + on + interval + " ORDER BY 1",
@@ -622,21 +622,46 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                             "TIMESTAMP_NS TIMESTAMP_NS", "true", "false", "2020-01-01T05", "2020-01-02T03"},
                     {select + "rn JOIN pn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp + rnd_double() > $2 ORDER BY 1",
                             "TIMESTAMP_NS DOUBLE", "true", "false", "2020-01-01T05", "-1"},
-                    // These build the first input in join order.
+                    // These build the first input in join order, so the fused plan compiles the build
+                    // before the probe.
                     {select + "pn JOIN rn" + on + interval + " ORDER BY 1",
-                            "TIMESTAMP_NS TIMESTAMP_NS", "false", "false", "2020-01-01T05", "2020-01-02T03"},
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "true", "2020-01-01T05", "2020-01-02T03"},
                     {select + "pn RIGHT JOIN rn" + on + interval + " ORDER BY 1",
-                            "TIMESTAMP_NS TIMESTAMP_NS", "false", "false", "2020-01-01T05", "2020-01-02T03"},
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "true", "2020-01-01T05", "2020-01-02T03"},
+                    // The fused compile drops the build it compiled first when either input's scan
+                    // filter does not qualify. In the second query the build, pn, keeps a JIT-compiled
+                    // scan filter, so assertMemoryLeak() fails unless the fused compile frees the build
+                    // that rn's scan filter makes it drop.
+                    {select + "pn JOIN rn" + on + interval + " AND rn.plant_id::SYMBOL <> 'z' ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "false", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "pn JOIN rn" + on + interval + " AND rn.plant_id::SYMBOL <> 'z' AND pn.installed_kwp > 1.5 ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "false", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "pn JOIN rn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp + rnd_double() > $2 ORDER BY 1",
+                            "TIMESTAMP_NS DOUBLE", "true", "false", "2020-01-01T05", "-1"},
+                    // A bind variable in both inputs takes the type that the compile of the first input
+                    // in join order infers: a microsecond one from pn's comparison, and a string one
+                    // from length(), which the comparison in rn then reads as a number.
+                    {select + "(SELECT * FROM pn WHERE dateadd('h', plant_id, '2020-01-01'::TIMESTAMP) < $1) pn JOIN rn" + on
+                            + " WHERE rn.reading_ts >= $1 ORDER BY 1", "TIMESTAMP", "true", "true", "2020-01-01T05"},
+                    {select + "(SELECT * FROM pn WHERE dateadd('h', plant_id, '2020-01-01'::TIMESTAMP) < $1) pn RIGHT JOIN rn" + on
+                            + " WHERE rn.reading_ts >= $1 ORDER BY 1", "TIMESTAMP", "true", "true", "2020-01-01T05"},
+                    {select + "(SELECT * FROM pn WHERE length($1) > 0) pn JOIN rn" + on + " WHERE rn.energy_kwh > $1 ORDER BY 1",
+                            "STRING", "true", "true", "20"},
                     // The fused plan parses an aggregate, a post-join filter and an ON condition in an
                     // order of its own.
                     {"SELECT pn.country, sum(rn.energy_kwh * $1) FROM rn JOIN pn" + on + " WHERE rn.reading_ts >= $2 ORDER BY 1",
                             "DOUBLE TIMESTAMP_NS", "false", "false", "2", "2020-01-02T03"},
+                    {"SELECT pn.country, sum(rn.energy_kwh * $1) FROM pn JOIN rn" + on + " WHERE rn.reading_ts >= $2 ORDER BY 1",
+                            "DOUBLE TIMESTAMP_NS", "false", "false", "2", "2020-01-02T03"},
                     {select + "rn JOIN pn" + on + " WHERE rn.energy_kwh > pn.installed_kwp + $1 ORDER BY 1",
                             "DOUBLE", "false", "false", "20"},
                     // A LEFT join keeps its WHERE clause on pn above the join, a post-join filter that
-                    // reads pn alone. The analysis stops deferring bind variables once it leaves rn's
-                    // own WHERE clause, so it rejects $2 rather than leaving it unparsed.
+                    // reads pn alone, and so does a RIGHT join that builds pn. The analysis stops
+                    // deferring bind variables once it leaves rn's own WHERE clause, so it rejects $2
+                    // rather than leaving it unparsed.
                     {select + "rn LEFT JOIN pn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp > $2 ORDER BY 1",
+                            "TIMESTAMP_NS DOUBLE", "false", "false", "2020-01-01T05", "2"},
+                    {select + "pn RIGHT JOIN rn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp > $2 ORDER BY 1",
                             "TIMESTAMP_NS DOUBLE", "false", "false", "2020-01-01T05", "2"},
                     {select + "rn LEFT JOIN pn" + on + " AND pn.installed_kwp > $1 ORDER BY 1",
                             "DOUBLE", "false", "false", "2"},

@@ -150,6 +150,7 @@ public final class HashJoinGroupByCandidate {
 
     /**
      * True when the build is the first input in join order: every RIGHT join, and an INNER join whose first table is smaller.
+     * The planner then compiles the build before the probe, as the ordinary plan compiles the first input first.
      */
     public boolean isInputSwapped() {
         return isInputSwapped;
@@ -392,13 +393,6 @@ public final class HashJoinGroupByCandidate {
             analyzer.captureInputColumns();
             // captureInputColumns() tolerates unresolvable input columns, so check the flag after it.
             if (analyzer.hasUndefinedBindVariable) {
-                return null;
-            }
-            // The first compile that parses a bind variable without a type defines it. The ordinary
-            // plan compiles the input that comes first in join order first, and the fused plan its
-            // probe, so the inputs' compiles infer the types that the ordinary plan infers only when
-            // the probe comes first. A bind variable may sit in both inputs.
-            if (analyzer.deferredBindVariableCount > 0 && buildIndex == order.getQuick(0)) {
                 return null;
             }
             // A RIGHT join builds the table before it whatever its size, and the owner keeps every
@@ -707,12 +701,13 @@ public final class HashJoinGroupByCandidate {
             if (isPostJoin) {
                 resolvedPostJoinFilters.add(expression);
             }
-            // Both plans compile an input's own WHERE clause with generateQuery() on the input's
-            // model, and its interval extraction gives a bind variable the type of the designated
-            // timestamp, where FunctionParser would give a nanosecond timestamp's comparison a
-            // microsecond one. So leave a clause with a bind variable without a type to the input's
-            // compile, the checks below included: isSupportedFramedInput() checks the filter that
-            // the input's scan keeps, and a clause that is not BOOLEAN fails both compiles alike.
+            // Both plans compile the inputs in join order, each input's own WHERE clause with
+            // generateQuery() on the input's model, and its interval extraction gives a bind
+            // variable the type of the designated timestamp, where FunctionParser would give a
+            // nanosecond timestamp's comparison a microsecond one. So leave a clause with a bind
+            // variable without a type to the input's compile, the checks below included:
+            // isSupportedFramedInput() checks the filter that the input's scan keeps, and a clause
+            // that is not BOOLEAN fails both compiles alike.
             if (deferredBindVariableCount > deferredCount) {
                 return true;
             }
@@ -863,7 +858,8 @@ public final class HashJoinGroupByCandidate {
             // aggregate expressions in a different order than the ordinary plan. Resolving before
             // parsing also keeps this analysis from defining the type itself. An input's own WHERE
             // clause is the exception: the fused plan compiles each input as the ordinary plan
-            // does, before it parses any of these, and checkFilter() leaves the clause unparsed.
+            // does, in the same order and before it parses any of these, and checkFilter() leaves
+            // the clause unparsed.
             if (node.type == ExpressionNode.BIND_VARIABLE && !isBindVariableTypeDefined(node.token)) {
                 if (!isDeferringBindVariables) {
                     hasUndefinedBindVariable = true;

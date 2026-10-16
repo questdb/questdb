@@ -937,7 +937,7 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                             "SELECT sum(r.d * length($1))" + from + " WHERE r.d > $1",
                             "SELECT sum(r.d * length($1))" + from + " WHERE p.d > $1",
                             "SELECT sum(r.d * length($1))" + from + " AND p.d > $1",
-                            // The ordinary compile generates the SQL LHS input first, the fused plan its probe input.
+                            // Both plans compile the SQL LHS input first, and a RIGHT join builds it.
                             "SELECT sum(p.d) FROM (SELECT * FROM a WHERE d > $1) r" + join
                                     + "(SELECT * FROM b WHERE length($1) > 0) p ON r.id = p.id",
                             "SELECT sum(p.d) FROM (SELECT * FROM a WHERE length($1) > 0) r" + join
@@ -945,7 +945,8 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                             // Interval extraction infers $1 in one input, FunctionParser in the other.
                             "SELECT sum(p.d)" + from + " WHERE r.t >= $1 AND p.d > $1",
                             "SELECT sum(p.d)" + from + " WHERE r.d > $1 AND p.t >= $1",
-                            "SELECT sum(p.d)" + from + " WHERE r.t >= $1 AND r.d > $2"
+                            "SELECT sum(p.d)" + from + " WHERE r.t >= $1 AND r.d > $2",
+                            "SELECT sum(p.d)" + from + " WHERE p.t >= $1 AND p.d > $2"
                     }) {
                         expected.append(sql).append('\n').append(bindOutcome(sql, context, false, ColumnType.UNDEFINED, "1")).append('\n');
                         actual.append(sql).append('\n').append(bindOutcome(sql, context, true, ColumnType.UNDEFINED, "1")).append('\n');
@@ -957,14 +958,34 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                 bindVariableService.setStr(0, "1");
                 assertOutcome("SELECT sum(r.d + $1) FROM a r JOIN b p ON r.id = p.id WHERE r.n = $1", context, true);
                 // So do undefined ones in the inputs' own WHERE clauses, whose types each input's
-                // compile infers, when the fused plan compiles the inputs in the ordinary plan's
-                // order. A RIGHT join's WHERE clause on r filters the joined rows.
+                // compile infers, since the fused plan compiles the inputs in the ordinary plan's
+                // order, r first, whichever input it builds. A LEFT join's WHERE clause on p and a
+                // RIGHT join's WHERE clause on r filter the joined rows.
                 for (String join : JOINS) {
+                    for (String input : new String[]{"r", "p"}) {
+                        bindVariableService.clear();
+                        String sql = "SELECT sum(p.d) FROM a r" + join + "b p ON r.id = p.id WHERE "
+                                + input + ".t >= $1 AND " + input + ".d > $2";
+                        boolean isPostJoin = join.equals(input.equals("r") ? " right join " : " left join ");
+                        try (RecordCursorFactory factory = engine.select(sql, context)) {
+                            String actualPlan = plan(factory, context);
+                            Assert.assertEquals(sql + '\n' + actualPlan, !isPostJoin, actualPlan.contains("Hash Join Group By"));
+                        }
+                    }
+                }
+                // c holds fewer rows than b, so an INNER join builds r, the input that comes first in
+                // join order, and the fused plan compiles r before p, as the ordinary plan does.
+                execute("CREATE TABLE c AS (SELECT * FROM a WHERE id = 1) TIMESTAMP(t) PARTITION BY DAY");
+                for (String sql : new String[]{
+                        "SELECT sum(p.d) FROM c r JOIN b p ON r.id = p.id WHERE r.t >= $1 AND p.d > $1",
+                        "SELECT sum(p.d) FROM (SELECT * FROM c WHERE length($1) > 0) r JOIN (SELECT * FROM b WHERE d > $1) p ON r.id = p.id"
+                }) {
+                    Assert.assertEquals(sql, bindOutcome(sql, context, false, ColumnType.UNDEFINED, "1"),
+                            bindOutcome(sql, context, true, ColumnType.UNDEFINED, "1"));
                     bindVariableService.clear();
-                    String sql = "SELECT sum(p.d) FROM a r" + join + "b p ON r.id = p.id WHERE r.t >= $1 AND r.d > $2";
                     try (RecordCursorFactory factory = engine.select(sql, context)) {
                         String actualPlan = plan(factory, context);
-                        Assert.assertEquals(sql + '\n' + actualPlan, !join.equals(" right join "), actualPlan.contains("Hash Join Group By"));
+                        Assert.assertTrue(sql + '\n' + actualPlan, actualPlan.contains("Hash Join Group By"));
                     }
                 }
             }

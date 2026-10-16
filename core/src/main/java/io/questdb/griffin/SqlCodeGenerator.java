@@ -5488,7 +5488,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // keep their intervals to their own scans and leave that level as they found it.
         executionContext.pushHasInterval(1);
         try {
-            // These children stay under the enclosing query registration and memory tracker.
+            // These children stay under the enclosing query registration and memory tracker. The
+            // first compile that parses a bind variable without a type defines it, and the ordinary
+            // plan compiles the input that comes first in join order first, so compile the inputs
+            // in that order. The inputs' compiles then infer the types that the ordinary plan
+            // infers, and when a check below rejects the candidate, the ordinary plan finds each
+            // type as its own compile would have defined it.
+            if (candidate.isInputSwapped()) {
+                build = generateQuery(candidate.getBuildModel(), executionContext, false);
+            }
             probe = generateQuery(candidate.getProbeModel(), executionContext, false);
             // Peel pure projections above a filter before checking its frame boundary.
             // Remap model-output -> base-table indexes into the eventual frame coordinates.
@@ -5497,7 +5505,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (!HashJoinGroupByCandidate.isSupportedFramedInput(probeInput)) {
                 return null;
             }
-            build = generateQuery(candidate.getBuildModel(), executionContext, false);
+            if (!candidate.isInputSwapped()) {
+                build = generateQuery(candidate.getBuildModel(), executionContext, false);
+            }
             // The build walks page frames too: it keeps row ids, and probes read payload columns at
             // those rows of the same frames.
             final IntList buildColumns = hashJoinGroupByFrameColumns(build, candidate, true);
