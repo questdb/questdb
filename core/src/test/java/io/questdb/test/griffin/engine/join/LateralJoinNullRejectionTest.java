@@ -35,9 +35,11 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.table.LateralNullCheckRecordCursorFactory;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -197,63 +199,17 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     public void testBindVariableValuesShareThePlan() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            final String[] filters = {"t.i > $1", "t.i < $1", "$1 < t.i", "t.i BETWEEN $1 AND $2", "t.l > $1", "t.d < $1", "t.t2 > $1", "t.st > $1"};
-            final String[] bindTypes = {"int", "int", "int", "int", "long", "double", "timestamp", "str"};
-            for (Shape shape : new Shape[]{Shape.RIGHT_ON, Shape.INNER_ON_RIGHT, Shape.INNER_ON_FULL}) {
-                for (int f = 0; f < filters.length; f++) {
-                    final String sql = lateralSql(shape, Form.TABLE, filters[f]);
-                    bindVariableService.clear();
-                    setBindVariables(bindTypes[f], BindValues.LOW);
-                    try (RecordCursorFactory factory = select(sql)) {
-                        for (BindValues values : new BindValues[]{BindValues.LOW, BindValues.NULL, BindValues.HIGH, BindValues.LOW}) {
-                            setBindVariables(bindTypes[f], values);
-                            final String header = shape + " " + filters[f] + " " + values;
-                            final List<String> actual;
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                final StringSink rows = new StringSink();
-                                println(factory.getMetadata(), cursor, rows);
-                                actual = sortedRows(rows);
-                            }
-                            final Outcome reference = run(referenceSql(shape, filters[f]), header);
-                            Assert.assertNull(header, reference.error);
-                            Assert.assertEquals(header, reference.rows, actual);
-                        }
-                    }
-                }
-            }
-            final String[] checkedFilters = {"t.i >= $1", "t.i <= $1", "$1 <= t.i", "t.i = $1", "t.l >= $1", "t.d <= $1", "t.t2 >= $1", "t.st >= $1", "t.sy = $1"};
-            final String[] checkedBindTypes = {"int", "int", "int", "int", "long", "double", "timestamp", "str", "str"};
-            for (Shape shape : new Shape[]{Shape.RIGHT_ON, Shape.INNER_ON_RIGHT, Shape.INNER_ON_FULL}) {
-                for (int f = 0; f < checkedFilters.length; f++) {
-                    final String sql = lateralSql(shape, Form.TABLE, checkedFilters[f]);
-                    bindVariableService.clear();
-                    setBindVariables(checkedBindTypes[f], BindValues.LOW);
-                    try (RecordCursorFactory factory = select(sql)) {
-                        for (BindValues values : new BindValues[]{BindValues.LOW, BindValues.NULL, BindValues.HIGH, BindValues.LOW}) {
-                            setBindVariables(checkedBindTypes[f], values);
-                            final String header = shape + " " + checkedFilters[f] + " " + values;
-                            if (values == BindValues.NULL) {
-                                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                                    Assert.fail(header + ": expected the NULL value to fail the execution");
-                                } catch (SqlException e) {
-                                    TestUtils.assertContains(header, e.getFlyweightMessage(), NULL_VALUE_SUFFIX);
-                                    Assert.assertEquals(header, sql.indexOf("$1"), e.getPosition());
-                                }
-                                continue;
-                            }
-                            final List<String> actual;
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                final StringSink rows = new StringSink();
-                                println(factory.getMetadata(), cursor, rows);
-                                actual = sortedRows(rows);
-                            }
-                            final Outcome reference = run(referenceSql(shape, checkedFilters[f]), header);
-                            Assert.assertNull(header, reference.error);
-                            Assert.assertEquals(header, reference.rows, actual);
-                        }
-                    }
-                }
-            }
+            assertBindVariableValuesShareThePlan(
+                    new String[]{"t.i > $1", "t.i < $1", "$1 < t.i", "t.i BETWEEN $1 AND $2", "t.l > $1", "t.d < $1", "t.t2 > $1", "t.st > $1"},
+                    new String[]{"int", "int", "int", "int", "long", "double", "timestamp", "str"},
+                    false
+            );
+            assertBindVariableValuesShareThePlan(
+                    new String[]{"t.i >= $1", "t.i <= $1", "$1 <= t.i", "t.i = $1", "t.l >= $1", "t.d <= $1", "t.t2 >= $1", "t.st >= $1", "t.sy = $1"},
+                    new String[]{"int", "int", "int", "int", "long", "double", "timestamp", "str", "str"},
+                    true
+            );
+            bindVariableService.clear();
         });
     }
 
@@ -976,7 +932,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                         id\ttid\trid
                         2\t11\t101
                         """);
-                Assert.assertEquals(new Outcome(List.of("2\t11\t101"), null, -1), runFactory(factory, sql));
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns("id\ttid\trid\n2\t11\t101\n");
                 execute("TRUNCATE TABLE trades");
                 Assert.assertEquals(nullValueError, runFactory(factory, sql));
             }
@@ -1322,7 +1278,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             final String refundsSql = lateralSql(refundsBody);
             final String tradesSql = lateralSql(tradesBody);
             final String elseSql = lateralSql(elseBody);
-            final List<String> all = sortedRows(allRows);
             assertReference("", refundsBody, allRows);
             assertReference("", tradesBody, allRows);
             assertReference("", elseBody, allRows);
@@ -1339,19 +1294,19 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     RecordCursorFactory trades = select(tradesSql);
                     RecordCursorFactory otherwise = select(elseSql)
             ) {
-                Assert.assertEquals(new Outcome(all, null, -1), runFactory(refunds, refundsSql));
-                Assert.assertEquals(new Outcome(all, null, -1), runFactory(trades, tradesSql));
-                Assert.assertEquals(new Outcome(all, null, -1), runFactory(otherwise, elseSql));
+                assertFactory(refunds).withContext(sqlExecutionContext).expectSize().returns(allRows);
+                assertFactory(trades).withContext(sqlExecutionContext).expectSize().returns(allRows);
+                assertFactory(otherwise).withContext(sqlExecutionContext).expectSize().returns(allRows);
 
                 execute("INSERT INTO refunds (id, k, ts) VALUES (103, 4, 4::timestamp)");
                 Assert.assertEquals(new Outcome(null, NULL_VALUE_ERROR, refundsSql.indexOf("CASE")), runFactory(refunds, refundsSql));
                 assertReference("", tradesBody, allRows);
-                Assert.assertEquals(new Outcome(all, null, -1), runFactory(trades, tradesSql));
+                assertFactory(trades).withContext(sqlExecutionContext).expectSize().returns(allRows);
 
                 execute("TRUNCATE TABLE trades");
                 Assert.assertEquals(new Outcome(null, NULL_VALUE_ERROR, tradesSql.indexOf("CASE")), runFactory(trades, tradesSql));
                 assertReference("", elseBody, "id\ttid\trid\n");
-                Assert.assertEquals(new Outcome(List.of(), null, -1), runFactory(otherwise, elseSql));
+                assertFactory(otherwise).withContext(sqlExecutionContext).expectSize().returns("id\ttid\trid\n");
             }
         });
     }
@@ -1378,7 +1333,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                 Assert.assertEquals(alone.error, runFactory(factory, sql).error);
                 execute("TRUNCATE TABLE trades");
                 execute("INSERT INTO trades (id, x, ts) VALUES (10, 1, 1::timestamp)");
-                Assert.assertEquals(new Outcome(sortedRows(trade10Rows), null, -1), runFactory(factory, sql));
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns(trade10Rows);
                 assertReference("", body, trade10Rows);
             }
             assertQuery(sql).noLeakCheck()
@@ -1466,7 +1421,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                         id\ttid\trid
                         2\t11\t101
                         """);
-                Assert.assertEquals(new Outcome(List.of("2\t11\t101"), null, -1), runFactory(factory, sql));
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns("id\ttid\trid\n2\t11\t101\n");
                 execute("TRUNCATE TABLE trades");
                 Assert.assertEquals(nullValueError, runFactory(factory, sql));
             }
@@ -2073,6 +2028,32 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         return "[" + outcome.position + "] " + outcome.error;
     }
 
+    // Compiles the query of each shape and filter once and runs it with low, NULL, high and low bind
+    // values again. Each execution returns the rows of the reference under the same values, or, for
+    // a checked filter with NULL values, fails at $1.
+    private void assertBindVariableValuesShareThePlan(String[] filters, String[] bindTypes, boolean isChecked) throws Exception {
+        for (Shape shape : new Shape[]{Shape.RIGHT_ON, Shape.INNER_ON_RIGHT, Shape.INNER_ON_FULL}) {
+            for (int f = 0; f < filters.length; f++) {
+                final String sql = lateralSql(shape, Form.TABLE, filters[f]) + " ORDER BY 1, 2, 3";
+                final String bindType = bindTypes[f];
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                for (BindValues values : new BindValues[]{BindValues.LOW, BindValues.NULL, BindValues.HIGH, BindValues.LOW}) {
+                    final String description = shape + " " + filters[f] + " " + values;
+                    if (isChecked && values == BindValues.NULL) {
+                        cases.add(BindVarTuple.fails(description, sql.indexOf("$1"), NULL_VALUE_SUFFIX, service -> setBindVariables(bindType, values)));
+                        continue;
+                    }
+                    bindVariableService.clear();
+                    setBindVariables(bindType, values);
+                    sink.clear();
+                    printSql("SELECT * FROM (" + referenceSql(shape, filters[f]) + ") ORDER BY 1, 2, 3");
+                    cases.add(BindVarTuple.ok(description, sink.toString(), service -> setBindVariables(bindType, values)));
+                }
+                assertQuery(sql).noLeakCheck().expectSize().assertBinds(cases);
+            }
+        }
+    }
+
     private void assertCase(
             Shape shape,
             Form form,
@@ -2123,39 +2104,71 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         assertSteps("", "JOIN LATERAL", body, body, steps);
     }
 
-    // Compiles the query once, with the bind values of the first step, and runs it with the bind
-    // values of each step in turn. A step returns its rows, which the reference, the body once per
-    // outer row over referenceBody, returns too, and LEFT JOIN LATERAL adds a NULL row for each outer
-    // row without one; or it fails with the NULL value error at the position of its token.
+    // Compiles the query once, with the bind values of the first step that returns rows, or of the
+    // first step when none does, and runs it with the bind values of each step in turn, each step
+    // clearing the bind values and setting its own. A step returns its rows, which the reference, the
+    // body once per outer row over referenceBody, returns too, and LEFT JOIN LATERAL adds a NULL row
+    // for each outer row without one; assertBinds() runs the full returns() checks on them. Or the
+    // step fails with the NULL value error at the position of its token, which assertBinds() takes
+    // from any exception with a message. When the first step fails, a query compiled with its bind
+    // values must fail with exactly that SqlException and then return the rows of the first step
+    // that returns rows, as the check the code generator plants may depend on the compile-time values.
     private void assertSteps(String prefix, String lateralJoin, String body, String referenceBody, Step... steps) throws Exception {
         final String sql = prefix + "SELECT o.id, l.tid, l.rid FROM orders o " + lateralJoin
-                + " (SELECT t.id tid, r.id rid FROM " + body.replace("{K}", "o.k") + ") l";
-        bindVariableService.clear();
-        steps[0].bind.set();
-        try (RecordCursorFactory factory = select(sql)) {
-            for (int i = 0; i < steps.length; i++) {
-                final Step step = steps[i];
-                final String header = "step " + i + ": " + sql;
-                step.bind.set();
-                if (step.errorToken != null) {
-                    Assert.assertEquals(header, new Outcome(null, NULL_VALUE_ERROR, sql.indexOf(step.errorToken)), runFactory(factory, header));
-                    continue;
-                }
-                assertReference(prefix, referenceBody, "id\ttid\trid\n" + step.rows + (step.rows.isEmpty() ? "" : "\n"));
-                final List<String> rows = sortedRows("header\n" + step.rows);
-                final List<String> lateralRows = new ArrayList<>(rows);
-                if (lateralJoin.startsWith("LEFT")) {
-                    for (int k = 0; k < OUTER_KEYS.length; k++) {
-                        final String outerId = (k + 1) + "\t";
-                        if (rows.stream().noneMatch(row -> row.startsWith(outerId))) {
-                            lateralRows.add(outerId + "null\tnull");
-                        }
+                + " (SELECT t.id tid, r.id rid FROM " + body.replace("{K}", "o.k") + ") l ORDER BY 1, 2, 3";
+        final boolean isLeft = lateralJoin.startsWith("LEFT");
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        Step firstRowsStep = null;
+        String firstRows = null;
+        for (int i = 0; i < steps.length; i++) {
+            final Step step = steps[i];
+            final String description = "step " + i + ": " + sql;
+            if (step.errorToken != null) {
+                final int position = sql.indexOf(step.errorToken);
+                Assert.assertTrue(description + ": no " + step.errorToken + " in the query", position >= 0);
+                cases.add(BindVarTuple.fails(description, position, NULL_VALUE_ERROR, service -> step.bind.set()));
+                continue;
+            }
+            bindVariableService.clear();
+            step.bind.set();
+            assertReference(prefix, referenceBody, "id\ttid\trid\n" + step.rows + (step.rows.isEmpty() ? "" : "\n"));
+            final StringBuilder expected = new StringBuilder("id\ttid\trid\n");
+            final List<String> rows = step.rows.isEmpty() ? List.of() : List.of(step.rows.split("\n"));
+            for (int k = 0; k < OUTER_KEYS.length; k++) {
+                final String outerId = (k + 1) + "\t";
+                boolean hasRow = false;
+                for (String row : rows) {
+                    if (row.startsWith(outerId)) {
+                        expected.append(row).append('\n');
+                        hasRow = true;
                     }
-                    Collections.sort(lateralRows);
                 }
-                Assert.assertEquals(header, new Outcome(lateralRows, null, -1), runFactory(factory, header));
+                if (!hasRow && isLeft) {
+                    expected.append(outerId).append("null\tnull\n");
+                }
+            }
+            if (firstRowsStep == null) {
+                firstRowsStep = step;
+                firstRows = expected.toString();
+            }
+            cases.add(BindVarTuple.ok(description, expected.toString(), service -> step.bind.set()));
+        }
+        if (steps[0].errorToken != null) {
+            bindVariableService.clear();
+            steps[0].bind.set();
+            try (RecordCursorFactory factory = select(sql)) {
+                final String description = "step 0 compiled with its bind values: " + sql;
+                Assert.assertEquals(description, new Outcome(null, NULL_VALUE_ERROR, sql.indexOf(steps[0].errorToken)), runFactory(factory, description));
+                if (firstRowsStep != null) {
+                    bindVariableService.clear();
+                    firstRowsStep.bind.set();
+                    assertFactory(factory).withContext(sqlExecutionContext).expectSize(!isLeft).returns(firstRows);
+                }
             }
         }
+        bindVariableService.clear();
+        steps[0].bind.set();
+        assertQuery(sql).noLeakCheck().expectSize(!isLeft).assertBinds(cases);
     }
 
     private int assertTemplate(
