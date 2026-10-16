@@ -1351,6 +1351,78 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeJobRemovesOrphanPostingSidecarsOfEveryPartition() throws Exception {
+        // UPDATE with an open reader leaves the old instance of sym in three partitions. The test deletes
+        // its sym.d and sym.pk in the last two partitions, or in all three, so only the .pci, .pv and .pc
+        // files of the old instance remain there. One retry of the purge task removes the old instance
+        // from every partition.
+        assertMemoryLeak(() -> {
+            for (boolean isFirstPartitionOrphaned : new boolean[]{false, true}) {
+                final String context = isFirstPartitionOrphaned ? "all partitions orphaned" : "first partition complete";
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    final String[] liveFiles = createOrphanPostingSidecars(context, purgeJob, isFirstPartitionOrphaned);
+                    Assert.assertEquals(context, 1, purgeJob.getOutstandingPurgeTasks());
+
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertOrphanPostingSidecarsPurged(context, liveFiles);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRemovesRootSymbolFilesOfOldCapacity() throws Exception {
+        // A symbol capacity change with an open reader leaves the symbol table files of the old version
+        // in the table root. One run of the purge job removes all four of them.
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("CREATE TABLE t_capacity AS" +
+                        " (SELECT timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampType.getTypeName() + " ts," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym" +
+                        " FROM long_sequence(3))" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                final File tableDir = new File(configuration.getDbRoot().toString(), engine.verifyTableName("t_capacity").getDirName());
+                Assert.assertEquals("[sym.c, sym.k, sym.o, sym.v]", symbolRootFiles(tableDir).toString());
+                final long symbolTableNameTxn;
+                try (TableReader ignore = getReader("t_capacity")) {
+                    execute("ALTER TABLE t_capacity ALTER COLUMN sym SYMBOL CAPACITY 1024");
+                    try (TableReader reader = getReader("t_capacity")) {
+                        symbolTableNameTxn = reader.getColumnVersionReader().getSymbolTableNameTxn(1);
+                    }
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                }
+                Assert.assertTrue(symbolTableNameTxn > 0);
+                final String suffix = "." + symbolTableNameTxn;
+                Assert.assertEquals(
+                        "[sym.c, sym.c" + suffix + ", sym.k, sym.k" + suffix + ", sym.o, sym.o" + suffix + ", sym.v, sym.v" + suffix + "]",
+                        symbolRootFiles(tableDir).toString()
+                );
+
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 100_000_000L);
+                purgeJob.run();
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(
+                        "[sym.c" + suffix + ", sym.k" + suffix + ", sym.o" + suffix + ", sym.v" + suffix + "]",
+                        symbolRootFiles(tableDir).toString()
+                );
+                assertQuery("SELECT count() FROM t_capacity WHERE sym IN ('A', 'B', 'C', 'D')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                3
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testPurgeRemovesPostingCoverFilesOfNameTxnZero() throws Exception {
         // s is the first column added to the empty table t_z, so its column name txn is 0, and its .pc
         // files carry the token 0 that txn NONE also writes: s.pc<N>.0[.<covered txn>].<seal>. An
@@ -1612,6 +1684,107 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testReplayedPurgeRemovesOrphanPostingSidecarsOfEveryPartition() throws Exception {
+        // Same shape as testPurgeJobRemovesOrphanPostingSidecarsOfEveryPartition, with the purge task
+        // replayed from the purge log by a new purge job.
+        assertMemoryLeak(() -> {
+            final String[] liveFiles;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                liveFiles = createOrphanPostingSidecars("replay", purgeJob, true);
+            }
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertOrphanPostingSidecarsPurged("replay", liveFiles);
+                assertQuery(purgeJob.getLogTableName())
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+            }
+        });
+    }
+
+    private static String listFiles(String dir) {
+        final String[] names = new File(dir).list();
+        Assert.assertNotNull(dir, names);
+        Arrays.sort(names);
+        return String.join(" ", names);
+    }
+
+    private static TreeSet<String> symbolRootFiles(File tableDir) {
+        final String[] names = tableDir.list((dir, name) -> name.startsWith("sym."));
+        Assert.assertNotNull(names);
+        return new TreeSet<>(Arrays.asList(names));
+    }
+
+    private void assertOrphanPostingSidecarsPurged(String context, String[] liveFiles) throws Exception {
+        for (int i = 0; i < liveFiles.length; i++) {
+            Assert.assertEquals(context, liveFiles[i], listFiles(partitionDir("t_orphan", i + 2)));
+        }
+        assertQuery("SELECT ts, sym, x FROM t_orphan WHERE sym = 'Z'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: sym with: ts, x")
+                .returns(replaceTimestampSuffix("""
+                        ts\tsym\tx
+                        1970-01-03T02:00:00.000000Z\tZ\t3
+                        1970-01-04T02:00:00.000000Z\tZ\t4
+                        1970-01-05T02:00:00.000000Z\tZ\t5
+                        """, timestampType.getTypeName()));
+    }
+
+    /**
+     * Creates t_orphan with a POSTING INCLUDE index on sym in five daily partitions, and updates sym in
+     * the last three with a reader open, so the purge job keeps the purge task of the old instance of
+     * sym. Then deletes sym.d and sym.pk of the old instance in the last two of those partitions, and
+     * in the first one too when {@code isFirstPartitionOrphaned}. Returns the files of the three
+     * partitions without the old instance.
+     */
+    private String[] createOrphanPostingSidecars(String context, ColumnPurgeJob purgeJob, boolean isFirstPartitionOrphaned) throws SqlException {
+        execute("DROP TABLE IF EXISTS t_orphan");
+        execute("CREATE TABLE t_orphan AS" +
+                " (SELECT timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampType.getTypeName() + " ts," +
+                " x," +
+                " rnd_symbol('A', 'B', 'C', 'D') sym" +
+                " FROM long_sequence(5))" +
+                " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("ALTER TABLE t_orphan ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (x)");
+        final String[] oldInstanceFiles = new String[3];
+        for (int i = 0; i < 3; i++) {
+            final TreeSet<String> files = new TreeSet<>();
+            for (String file : listFiles(partitionDir("t_orphan", i + 2)).split(" ")) {
+                if (file.startsWith("sym.")) {
+                    files.add(file);
+                }
+            }
+            Assert.assertTrue(context + ", " + files, files.containsAll(Arrays.asList("sym.d", "sym.pci", "sym.pk")));
+            oldInstanceFiles[i] = String.join(" ", files);
+        }
+
+        try (TableReader ignore = getReader("t_orphan")) {
+            update("UPDATE t_orphan SET sym = 'Z' WHERE ts >= '1970-01-03'");
+            // the reader holds the old instance
+            runPurgeJob(purgeJob);
+        }
+
+        final String[] liveFiles = new String[3];
+        for (int i = 0; i < 3; i++) {
+            final String dir = partitionDir("t_orphan", i + 2);
+            final TreeSet<String> files = new TreeSet<>(Arrays.asList(listFiles(dir).split(" ")));
+            Assert.assertTrue(context, files.containsAll(Arrays.asList(oldInstanceFiles[i].split(" "))));
+            files.removeAll(Arrays.asList(oldInstanceFiles[i].split(" ")));
+            liveFiles[i] = String.join(" ", files);
+            if (i > 0 || isFirstPartitionOrphaned) {
+                Assert.assertTrue(new File(dir, "sym.d").delete());
+                Assert.assertTrue(new File(dir, "sym.pk").delete());
+            }
+        }
+        return liveFiles;
     }
 
     private void assertPostingKeyFileExists(Path path, String tableName, String partition, boolean exist) {

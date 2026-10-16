@@ -32,6 +32,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -1025,6 +1027,131 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVacuumPurgesOrphanIndexFilesOfEveryPartition() throws Exception {
+        // UPDATE with an open reader leaves the old instance of each updated column in every partition.
+        // The test then deletes the column file of each, and the .pk of s, so that only these remain:
+        // the .pci, .pv and .pc files of s, the .k and .v files of b, the .i files of w and str, and
+        // the .d of x. VACUUM alone removes all of them, in every partition, without removing a directory.
+        final ArrayList<String> directoryRemovals = new ArrayList<>();
+        assertMemoryLeak(newOrphanPurgeFilesFacade(directoryRemovals, new AtomicReference<>(), new AtomicInteger()), () -> {
+            for (String walMode : WAL_MODES) {
+                for (String partitionBy : new String[]{"DAY", "NONE"}) {
+                    if (partitionBy.equals("NONE") && walMode.equals("WAL")) {
+                        // a WAL table is always partitioned
+                        continue;
+                    }
+                    for (String indexClause : POSTING_INDEX_CLAUSES) {
+                        final String context = walMode + ", " + partitionBy + ", " + indexClause;
+                        final OrphanIndexFiles orphans = createOrphanIndexFiles(context, walMode, partitionBy, indexClause);
+                        Assert.assertEquals(context, partitionBy.equals("DAY") ? 3 : 1, orphans.partitionDirs.length);
+
+                        vacuumTablePt();
+                        Assert.assertEquals(context, "[]", directoryRemovals.toString());
+                        orphans.assertLiveFilesOnly(context + ", after VACUUM");
+
+                        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                            // replays the purge tasks of the UPDATE
+                            runPurgeJob(purgeJob);
+                            Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                        }
+                        orphans.assertLiveFilesOnly(context + ", after the purge job");
+                        Assert.assertEquals(context, "[]", directoryRemovals.toString());
+                        assertOrphanIndexFilesTableRows(context, !indexClause.equals("POSTING"));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesOrphanPostingFilesOfParquetPartition() throws Exception {
+        // Orphan .pv and .pc files of a stale instance of s in a parquet partition and in a native one.
+        // VACUUM alone removes both sets, without removing a directory.
+        final ArrayList<String> directoryRemovals = new ArrayList<>();
+        assertMemoryLeak(newOrphanPurgeFilesFacade(directoryRemovals, new AtomicReference<>(), new AtomicInteger()), () -> {
+            for (String walMode : WAL_MODES) {
+                execute("DROP TABLE IF EXISTS pt");
+                createPostingTableOfColumnNameTxnNone(walMode, POSTING_INDEX_CLAUSES[0]);
+                insertPostingRows();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                final String[] partitionDirs = livePartitionDirs("pt");
+                Assert.assertEquals(walMode, 2, partitionDirs.length);
+                Assert.assertTrue(walMode, listFiles("pt", partitionDirs[0]).contains("data.parquet"));
+                Assert.assertFalse(walMode, listFiles("pt", partitionDirs[1]).contains("data.parquet"));
+                // txn 1 is committed and is not the column name txn of s or d in either partition
+                final long staleTxn = 1;
+                Assert.assertTrue(walMode, getTableTxn() > staleTxn);
+                final String[] liveFiles = new String[2];
+                try (Path path = new Path()) {
+                    final String valueFile = fileName(PostingIndexUtils.valueFileName(path.of(""), "s", staleTxn, 0));
+                    final String coverDataFile = fileName(PostingIndexUtils.coverDataFileName(path.of(""), "s", 0, staleTxn, TableUtils.COLUMN_NAME_TXN_NONE, 0));
+                    for (int i = 0; i < 2; i++) {
+                        Assert.assertEquals(walMode, TableUtils.COLUMN_NAME_TXN_NONE, getColumnNameTxn("pt", "s", i));
+                        liveFiles[i] = listFiles("pt", partitionDirs[i]);
+                        Assert.assertTrue(walMode + ", " + liveFiles[i], hasCoverDataFile(liveFiles[i]));
+                        path.of(configuration.getDbRoot()).concat(engine.verifyTableName("pt")).concat(partitionDirs[i]);
+                        final int pathLen = path.size();
+                        Assert.assertTrue(configuration.getFilesFacade().touch(path.trimTo(pathLen).concat(valueFile).$()));
+                        Assert.assertTrue(configuration.getFilesFacade().touch(path.trimTo(pathLen).concat(coverDataFile).$()));
+                        Assert.assertEquals(walMode, sortedFiles(liveFiles[i], valueFile, coverDataFile), listFiles("pt", partitionDirs[i]));
+                    }
+                }
+
+                vacuumTablePt();
+                Assert.assertEquals(walMode, "[]", directoryRemovals.toString());
+                for (int i = 0; i < 2; i++) {
+                    Assert.assertEquals(walMode + ", " + partitionDirs[i], liveFiles[i], listFiles("pt", partitionDirs[i]));
+                }
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                }
+                for (int i = 0; i < 2; i++) {
+                    Assert.assertEquals(walMode + ", " + partitionDirs[i], liveFiles[i], listFiles("pt", partitionDirs[i]));
+                }
+                assertPostingRowsOfY(walMode, true, POSTING_ROWS_OF_Y);
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesOrphanPostingFilesWhenMiddlePartitionRemoveFails() throws Exception {
+        // The removal of an orphan .pv file of s in the middle one of three partitions fails once. VACUUM
+        // removes the orphan files of the other two partitions and of the rest of the middle one, and the
+        // column purge job removes the failed file on retry.
+        final ArrayList<String> directoryRemovals = new ArrayList<>();
+        final AtomicReference<String> failingFile = new AtomicReference<>();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        assertMemoryLeak(newOrphanPurgeFilesFacade(directoryRemovals, failingFile, failedRemoveCount), () -> {
+            final String context = POSTING_INDEX_CLAUSES[0];
+            final OrphanIndexFiles orphans = createOrphanIndexFiles(context, "BYPASS WAL", "DAY", POSTING_INDEX_CLAUSES[0]);
+            Assert.assertEquals(3, orphans.partitionDirs.length);
+            // VACUUM reads the token 0 in the .pc names of the old instance as txn 0 and purges that txn
+            // too, which removes the same .pc files again; only the old instance owns its .pv files
+            final String orphanValueFile = "s.pv.1";
+            Assert.assertTrue((" " + listFiles("pt", orphans.partitionDirs[1]) + " ").contains(" " + orphanValueFile + " "));
+            failingFile.set(orphans.partitionDirs[1] + Files.SEPARATOR + orphanValueFile);
+
+            vacuumTablePt();
+            Assert.assertEquals("[]", directoryRemovals.toString());
+            Assert.assertEquals(1, failedRemoveCount.get());
+            Assert.assertEquals(orphans.liveFiles[0], listFiles("pt", orphans.partitionDirs[0]));
+            Assert.assertEquals(sortedFiles(orphans.liveFiles[1], orphanValueFile), listFiles("pt", orphans.partitionDirs[1]));
+            Assert.assertEquals(orphans.liveFiles[2], listFiles("pt", orphans.partitionDirs[2]));
+
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+            orphans.assertLiveFilesOnly("after the retry");
+            Assert.assertEquals(1, failedRemoveCount.get());
+            Assert.assertEquals("[]", directoryRemovals.toString());
+            assertOrphanIndexFilesTableRows(context, true);
+        });
+    }
+
+    @Test
     public void testVacuumPurgesPostingFilesOfReAddedColumn() throws Exception {
         // s is dropped while a reader holds the table, so its NONE instance stays on disk, and added back
         // as a new instance T. VACUUM removes the NONE files and keeps those of T.
@@ -1186,6 +1313,39 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         return Utf8s.stringFromUtf8Bytes(name);
     }
 
+    /**
+     * A files facade that records every removeQuiet() whose target is a directory, and fails the first
+     * removal of the file whose path ends with the value of {@code failingFile}.
+     */
+    private static FilesFacade newOrphanPurgeFilesFacade(
+            ArrayList<String> directoryRemovals,
+            AtomicReference<String> failingFile,
+            AtomicInteger failedRemoveCount
+    ) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (new File(fileName(name)).isDirectory()) {
+                    directoryRemovals.add(fileName(name));
+                }
+                final String file = failingFile.get();
+                if (file != null && Utf8s.endsWithAscii(name, file)) {
+                    failingFile.set(null);
+                    failedRemoveCount.incrementAndGet();
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+    }
+
+    // the files of the space-separated listing that are not in the space-separated files
+    private static String withoutFiles(String listing, String files) {
+        final ArrayList<String> remaining = new ArrayList<>(Arrays.asList(listing.split(" ")));
+        remaining.removeAll(Arrays.asList(files.split(" ")));
+        return String.join(" ", remaining);
+    }
+
     // the files of the listing whose names start with prefix
     private static String filesOf(String listing, String prefix) {
         final ArrayList<String> files = new ArrayList<>();
@@ -1311,6 +1471,91 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         assertPostingRowsOfY(context + ", reopened", isCovering, expectedRowsOfY);
     }
 
+    private void assertOrphanIndexFilesTableRows(String context, boolean isCovering) throws Exception {
+        assertPostingRowsOfY(context, isCovering, """
+                ts\ts\td\tvc
+                2024-01-01T00:00:00.000000Z\ty\t1.5\ta1
+                2024-01-02T00:00:00.000000Z\ty\t2.5\ta2
+                """);
+        try {
+            assertQuery("SELECT v, s, b, w, str, x FROM pt")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\ts\tb\tw\tstr\tx
+                            1\ty\tp\tw1\ts1\t10
+                            4\tz\tz\tz\tz\t41
+                            2\ty\tq\tw2\ts2\t20
+                            5\tz\tz\tz\tz\t51
+                            3\tx\tp\tw3\ts3\t30
+                            6\tz\tz\tz\tz\t61
+                            """);
+        } catch (AssertionError e) {
+            throw new AssertionError(context, e);
+        }
+    }
+
+    /**
+     * Creates pt with the POSTING-indexed s, the BITMAP-indexed b, VARCHAR w, STRING str and INT x, all
+     * in CREATE TABLE, writes two commits into each of three days, and updates all five columns in every
+     * partition with a reader open, so the old instances stay on disk; a purge job records the purge
+     * tasks of the UPDATE in its log. Then deletes s.d, s.pk, b.d, w.d and str.d of the old instances,
+     * which leaves their index and .i files, and the .d of x, as orphans.
+     */
+    private OrphanIndexFiles createOrphanIndexFiles(String context, String walMode, String partitionBy, String indexClause) throws SqlException {
+        execute("DROP TABLE IF EXISTS pt");
+        execute("CREATE TABLE pt (v INT, ts TIMESTAMP, s SYMBOL INDEX TYPE " + indexClause
+                + ", d DOUBLE, vc VARCHAR, b SYMBOL INDEX, w VARCHAR, str STRING, x INT) TIMESTAMP(ts) PARTITION BY "
+                + partitionBy + " " + walMode);
+        // the six rows in timestamp order; each commit writes a row into each day, or, for a table that is
+        // not partitioned and takes no out-of-order rows, the first three and the last three rows
+        final String[] rows = {
+                "(1, '2024-01-01T00:00:00.000000Z', 'y', 1.5, 'a1', 'p', 'w1', 's1', 10)",
+                "(4, '2024-01-01T01:00:00.000000Z', 'x', 4.5, 'a4', 'q', 'w4', 's4', 40)",
+                "(2, '2024-01-02T00:00:00.000000Z', 'y', 2.5, 'a2', 'q', 'w2', 's2', 20)",
+                "(5, '2024-01-02T01:00:00.000000Z', 'y', 5.5, 'a5', 'p', 'w5', 's5', 50)",
+                "(3, '2024-01-03T00:00:00.000000Z', 'x', 3.5, 'a3', 'p', 'w3', 's3', 30)",
+                "(6, '2024-01-03T01:00:00.000000Z', 'x', 6.5, 'a6', 'q', 'w6', 's6', 60)"
+        };
+        final boolean isPartitioned = !partitionBy.equals("NONE");
+        execute("INSERT INTO pt (v, ts, s, d, vc, b, w, str, x) VALUES "
+                + (isPartitioned ? String.join(", ", rows[0], rows[2], rows[4]) : String.join(", ", rows[0], rows[1], rows[2])));
+        drainWalQueue();
+        execute("INSERT INTO pt (v, ts, s, d, vc, b, w, str, x) VALUES "
+                + (isPartitioned ? String.join(", ", rows[1], rows[3], rows[5]) : String.join(", ", rows[3], rows[4], rows[5])));
+        drainWalQueue();
+        final String[] partitionDirs = livePartitionDirs("pt");
+        final String[] oldInstanceFiles = new String[partitionDirs.length];
+        for (int i = 0; i < partitionDirs.length; i++) {
+            final String listing = listFiles("pt", partitionDirs[i]);
+            oldInstanceFiles[i] = sortedFiles(
+                    filesOf(listing, "s."), filesOf(listing, "b."), filesOf(listing, "w."), filesOf(listing, "str."), filesOf(listing, "x.")
+            );
+            Assert.assertTrue(context + ", " + oldInstanceFiles[i], (" " + oldInstanceFiles[i] + " ").contains(" s.pv."));
+        }
+
+        try (TableReader ignore = getReader("pt"); ColumnPurgeJob purgeJob = createPurgeJob()) {
+            update("UPDATE pt SET s = 'z', b = 'z', w = 'z', str = 'z', x = x + 1 WHERE v > 3");
+            drainWalQueue();
+            // the reader holds the old instances, so the purge job only records the purge tasks in its
+            // log; the purge queue holds two tasks, so the UPDATE drops the purge tasks of the others
+            runPurgeJob(purgeJob);
+        }
+        Assert.assertArrayEquals(context, partitionDirs, livePartitionDirs("pt"));
+
+        final String[] liveFiles = new String[partitionDirs.length];
+        final File tableDir = new File(configuration.getDbRoot().toString(), engine.verifyTableName("pt").getDirName());
+        for (int i = 0; i < partitionDirs.length; i++) {
+            final String listing = listFiles("pt", partitionDirs[i]);
+            Assert.assertEquals(context, oldInstanceFiles[i], withoutFiles(listing, withoutFiles(listing, oldInstanceFiles[i])));
+            liveFiles[i] = withoutFiles(listing, oldInstanceFiles[i]);
+            for (String file : new String[]{"s.d", "s.pk", "b.d", "w.d", "str.d"}) {
+                Assert.assertTrue(context + ", " + file, new File(new File(tableDir, partitionDirs[i]), file).delete());
+            }
+        }
+        return new OrphanIndexFiles(partitionDirs, liveFiles);
+    }
+
     private void createPostingTableOfColumnNameTxnNone(String walMode, String indexClause) throws SqlException {
         execute("CREATE TABLE pt (v INT, ts TIMESTAMP, s SYMBOL INDEX TYPE " + indexClause
                 + ", d DOUBLE, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
@@ -1394,8 +1639,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     // runs VACUUM TABLE pt, then the column purge job until it has no task left or ran 10 times, and
     // returns the purge tasks left outstanding
     private int vacuumAndPurge() throws SqlException {
-        engine.releaseInactive();
-        execute("VACUUM TABLE pt");
+        vacuumTablePt();
         try (ColumnPurgeJob purgeJob = createPurgeJob()) {
             for (int i = 0; i < 10 && (i == 0 || purgeJob.getOutstandingPurgeTasks() > 0); i++) {
                 runPurgeJob(purgeJob);
@@ -1404,7 +1648,26 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Runs VACUUM TABLE pt through a new compiler. VacuumColumnVersions takes its files facade when the
+     * compiler is created, so a pooled compiler would purge with the files facade of an earlier test.
+     */
+    private void vacuumTablePt() throws SqlException {
+        engine.releaseInactive();
+        try (SqlCompiler compiler = new SqlCompilerImpl(engine)) {
+            execute(compiler, "VACUUM TABLE pt");
+        }
+    }
+
     private record StalePostingInstance(String partitionDir, String liveFiles, String coverDataFile, String rowsOfY) {
+    }
+
+    private record OrphanIndexFiles(String[] partitionDirs, String[] liveFiles) {
+        void assertLiveFilesOnly(String context) {
+            for (int i = 0; i < partitionDirs.length; i++) {
+                Assert.assertEquals(context + ", " + partitionDirs[i], liveFiles[i], listFiles("pt", partitionDirs[i]));
+            }
+        }
     }
 
     private void assertFilesExist(String[] partitions, String tableName, String[] files, String colSuffix, boolean exist) {

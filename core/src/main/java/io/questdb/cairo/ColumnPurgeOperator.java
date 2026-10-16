@@ -373,8 +373,15 @@ public class ColumnPurgeOperator implements Closeable {
                             path.trimTo(pathTableLen);
                         }
                         pathTrimToPartition = path.size();
-                        TableUtils.dFile(path, columnName, columnVersion);
                         setupScoreboard = false;
+                    }
+
+                    // the existence probe and openScoreboardAndTxn() move path off the column file
+                    path.trimTo(pathTrimToPartition);
+                    if (isSymbolRootFiles) {
+                        TableUtils.charFileName(path, columnName, columnVersion);
+                    } else {
+                        TableUtils.dFile(path, columnName, columnVersion);
                     }
 
                     if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
