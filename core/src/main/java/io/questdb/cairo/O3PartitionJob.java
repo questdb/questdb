@@ -3223,6 +3223,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         appendOnly = oooTimestampMin >= dataMergeMaxTimestamp;
                     }
 
+                    // A split parent's files still hold the rows the split moved out. While a reader that locked
+                    // a txn before the split can still read them, the writer keeps the merge instead of appending in place.
+                    if (appendOnly && tableWriter.isPartitionTailPinnedByReaders(oldPartitionTimestamp)) {
+                        appendOnly = false;
+                    }
+
                     if (appendOnly) {
                         mergeType = O3_BLOCK_NONE;
                         mergeDataHi = -1;

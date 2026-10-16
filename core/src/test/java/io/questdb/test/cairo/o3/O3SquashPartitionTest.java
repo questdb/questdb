@@ -959,6 +959,74 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitParentDedupAppendAtSharedTimestampKeepsPinnedReaderRows() throws Exception {
+        // The dedup step can turn a merge back into an in-place append when every parent row shares
+        // the O3 rows' timestamp. The parent's tail is pinned, so the writer must keep the merge.
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (k INT, s STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)",
+                    timestampType.getTypeName()
+            );
+            execute(
+                    """
+                            INSERT INTO x SELECT x::INT, 'str-' || x, '2020-02-03T10' FROM long_sequence(100)
+                            UNION ALL
+                            SELECT (100 + x)::INT, 'str-' || (100 + x), '2020-02-03T12'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(5)
+                            """
+            );
+            drainWalQueue();
+
+            try (
+                    RecordCursorFactory cursorFactory = select("SELECT * FROM x");
+                    // pins the reader before the split
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(cursorFactory, cursor);
+                final String expected = sink.toString();
+
+                // split at 11:00: the parent keeps the 100 rows that all sit at 10:00
+                execute("INSERT INTO x VALUES (1_000, 'split', '2020-02-03T11')");
+                drainWalQueue();
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(100, reader.getPartitionRowCountFromMetadata(0));
+                }
+
+                // new keys at the parent's only timestamp: dedup finds no duplicates
+                execute("INSERT INTO x SELECT (2_000 + x)::INT, 'new-' || x, '2020-02-03T10' FROM long_sequence(3)");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+                cursor.toTop();
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expected, sink);
+            }
+
+            assertQuery("SELECT count() FROM x WHERE ts = '2020-02-03T10'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n103\n");
+            assertQuery("SELECT k, s FROM x WHERE ts >= '2020-02-03T11'")
+                    .noLeakCheck()
+                    .returns(
+                            """
+                                    k\ts
+                                    1000\tsplit
+                                    101\tstr-101
+                                    102\tstr-102
+                                    103\tstr-103
+                                    104\tstr-104
+                                    105\tstr-105
+                                    """
+                    );
+        });
+    }
+
+    @Test
     public void testSplitParentLargeAppendAtMaxTimestampCopiesWhenReaderPinned() throws Exception {
         assertPinnedSplitParentCopiedOnLargeO3Append(false);
     }
@@ -966,6 +1034,16 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     @Test
     public void testSplitParentLargeAppendSpanningSplitCopiesWhenReaderPinned() throws Exception {
         assertPinnedSplitParentCopiedOnLargeO3Append(true);
+    }
+
+    @Test
+    public void testSplitParentMergeBelowColumnTopKeepsPinnedReaderRows() throws Exception {
+        assertPinnedSplitParentSurvivesColumnTopMerge(false);
+    }
+
+    @Test
+    public void testSplitParentResplitBelowColumnTopKeepsPinnedReaderRows() throws Exception {
+        assertPinnedSplitParentSurvivesColumnTopMerge(true);
     }
 
     @Test
@@ -1869,6 +1947,91 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                     + "24\tstr-24\t2020-02-03T18:00:00.000000Z\n",
                             timestampType.getTypeName()
                     ));
+        });
+    }
+
+    private void assertPinnedSplitParentSurvivesColumnTopMerge(boolean isResplit) throws Exception {
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO x SELECT x::INT, '2020-02-03T10'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(100)");
+            // the added columns get a column top of 100 rows in the partition
+            execute("ALTER TABLE x ADD COLUMN l LONG");
+            execute("ALTER TABLE x ADD COLUMN s STRING");
+            execute("ALTER TABLE x ADD COLUMN v VARCHAR");
+            execute("ALTER TABLE x ADD COLUMN sym SYMBOL");
+            execute(
+                    """
+                            INSERT INTO x (i, ts, l, s, v, sym)
+                            SELECT (100 + x)::INT, '2020-02-03T12'::TIMESTAMP + (x - 1) * 60_000_000L, x * 1_000,
+                                'string-value-' || x, 'varchar-value-' || x, 'sym-' || (x % 3)
+                            FROM long_sequence(48)
+                            """
+            );
+
+            final String expected;
+            try (
+                    // the fixed-size columns get their own cursor, so a fault there does not hide behind a string read error
+                    RecordCursorFactory fixFactory = select("SELECT i, l, sym, ts FROM x WHERE ts >= '2020-02-03T12'");
+                    RecordCursorFactory cursorFactory = select("SELECT i, l, s, v, sym, ts FROM x WHERE ts >= '2020-02-03T12'");
+                    // each cursor pins a reader before the split
+                    RecordCursor fixCursor = fixFactory.getCursor(sqlExecutionContext);
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(fixFactory, fixCursor);
+                final String expectedFix = sink.toString();
+                sink.clear();
+                println(cursorFactory, cursor);
+                expected = sink.toString();
+
+                // split right after the first row with values: the parent keeps 101 rows, 1 past the column top
+                execute("INSERT INTO x (i, ts) VALUES (1_000_000, '2020-02-03T12:00:30')");
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(101, reader.getPartitionRowCountFromMetadata(0));
+                }
+
+                // The O3 row lands below the column top, so the merge materializes the column top nulls
+                // in scratch space of the parent's column files. A resplit keeps the parent in place,
+                // a full merge rewrites it.
+                execute("INSERT INTO x (i, ts) VALUES (1_000_001, '" + (isResplit ? "2020-02-03T11:35:30" : "2020-02-03T10:30:30") + "')");
+                try (TableReader reader = getReader("x")) {
+                    if (isResplit) {
+                        Assert.assertEquals(3, reader.getPartitionCount());
+                        Assert.assertEquals(96, reader.getPartitionRowCountFromMetadata(0));
+                    } else {
+                        Assert.assertEquals(2, reader.getPartitionCount());
+                        Assert.assertEquals(102, reader.getPartitionRowCountFromMetadata(0));
+                    }
+                }
+
+                fixCursor.toTop();
+                sink.clear();
+                println(fixFactory, fixCursor);
+                TestUtils.assertEquals(expectedFix, sink);
+
+                cursor.toTop();
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expected, sink);
+            }
+
+            // the 100 rows below the column top, plus the two inserted rows, read the materialized nulls
+            assertQuery("SELECT count() FROM x WHERE l IS NULL AND s IS NULL AND v IS NULL AND sym IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n102\n");
+            assertQuery("SELECT i, l, s, v, sym, ts FROM x WHERE ts >= '2020-02-03T12' AND i < 1_000_000")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n150\n");
         });
     }
 

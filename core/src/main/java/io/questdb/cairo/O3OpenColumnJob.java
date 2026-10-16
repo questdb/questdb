@@ -244,7 +244,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             TableWriter tableWriter,
             long colTopSinkAddr,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            boolean mayHaveReaderVisibleTail
     ) {
         int partCount = 0;
         long dstDataFd = 0;
@@ -305,10 +306,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
-                    // Do all of this beyond existing written data, using column as a buffer.
+                    // Do all of this beyond any data a reader may still see, using column as a buffer.
                     // It is also fine in case when last partition contains WAL LAG, since at the
                     // beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
-                    newAuxSize = auxSizeOld + auxSizeNew;
+                    final long auxScratchOffset = mayHaveReaderVisibleTail ? scratchOffset(ff, srcFixFd, auxSizeOld) : auxSizeOld;
+                    newAuxSize = auxScratchOffset + auxSizeNew;
 
                     srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
@@ -318,16 +320,17 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // At bottom of source var column set length of strings to null (-1) for as many strings
                     // as srcDataTop value.
-                    srcDataOffset = srcDataSize;
                     // We need to reserve null values for every column top value
                     // in the variable len file. Each null value takes 4 bytes for string
                     final long reservedBytesForColTopNulls = srcDataTop * columnTypeDriver.getDataVectorMinEntrySize();
-                    srcDataSize += reservedBytesForColTopNulls;
                     // This value may be lower than auxRowCount.
                     // We use it when copying non-column top column data.
-                    if (auxRowCountNew > 0) {
-                        srcDataSize += columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountNew - 1);
-                    }
+                    final long varDataSizeNew = auxRowCountNew > 0 ? columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountNew - 1) : 0;
+                    // VARCHAR stores no bytes for nulls, so the var file may get nothing to write
+                    srcDataOffset = mayHaveReaderVisibleTail && reservedBytesForColTopNulls + varDataSizeNew > 0
+                            ? scratchOffset(ff, srcVarFd, srcDataSize)
+                            : srcDataSize;
+                    srcDataSize = srcDataOffset + reservedBytesForColTopNulls + varDataSizeNew;
                     srcDataAddr = srcDataSize > 0 ? mapRW(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : srcDataAddr;
                     ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
 
@@ -339,13 +342,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         Vect.memcpy(
                                 srcDataAddr + srcDataOffset + reservedBytesForColTopNulls,
                                 srcDataAddr,
-                                columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountNew - 1)
+                                varDataSizeNew
                         );
                     }
 
                     // We need to shift copy the original column so that new block points at strings "below"
                     // the nulls we created above.
-                    final long dstOffset = auxSizeOld + columnTypeDriver.auxRowsToBytes(srcDataTop);
+                    final long dstOffset = auxScratchOffset + columnTypeDriver.auxRowsToBytes(srcDataTop);
                     final long dstAddr = srcAuxAddr + dstOffset;
                     final long dstAddrSize = newAuxSize - dstOffset;
                     columnTypeDriver.shiftCopyAuxVector(
@@ -361,9 +364,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // null strings we just added.
                     // Call to setPartAuxVectorNull must be after shiftCopyAuxVector
                     // because the data has to be shifted before being overwritten.
-                    columnTypeDriver.setPartAuxVectorNull(srcAuxAddr + auxSizeOld, 0, srcDataTop);
+                    columnTypeDriver.setPartAuxVectorNull(srcAuxAddr + auxScratchOffset, 0, srcDataTop);
                     srcDataTop = 0;
-                    srcDataFixOffset = auxSizeOld;
+                    srcDataFixOffset = auxScratchOffset;
                 } else {
                     // When we are shuffling "empty" space we can just reduce column top instead
                     // of moving the data.
@@ -2449,7 +2452,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             IndexWriter indexWriter,
             long colTopSinkAddr,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            boolean mayHaveReaderVisibleTail
     ) {
         int partCount = 0;
         long dstFixAppendOffset1;
@@ -2495,18 +2499,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
-                    // Do all of this beyond existing written data, using column as a buffer.
+                    // Do all of this beyond any data a reader may still see, using column as a buffer.
                     // It is also fine in case when last partition contains WAL LAG, since at the
                     // beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
-
-                    srcDataFixSize = srcDataActualBytesOld + (srcDataMax << shl);
+                    final long fixScratchOffset = mayHaveReaderVisibleTail ? scratchOffset(ff, srcFixFd, srcDataActualBytesOld) : srcDataActualBytesOld;
+                    srcDataFixSize = fixScratchOffset + (srcDataMax << shl);
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
-                    TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytesOld, srcDataTop);
+                    TableUtils.setNull(columnType, srcDataFixAddr + fixScratchOffset, srcDataTop);
                     // srcDataActualBytesNew may be zero, so that the below memcpy call is no-op.
-                    Vect.memcpy(srcDataFixAddr + srcDataActualBytesOld + (srcDataTop << shl), srcDataFixAddr, srcDataActualBytesNew);
+                    Vect.memcpy(srcDataFixAddr + fixScratchOffset + (srcDataTop << shl), srcDataFixAddr, srcDataActualBytesNew);
                     srcDataTop = 0;
-                    srcDataFixOffset = srcDataActualBytesOld;
+                    srcDataFixOffset = fixScratchOffset;
                 } else {
                     // When we are shuffling "empty" space we can just reduce column top instead
                     // of moving the data.
@@ -2765,7 +2769,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     tableWriter,
                     colTopSinkAddr,
                     columnNameTxn,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    false
             );
         } else {
             mergeFixColumn(
@@ -2810,7 +2815,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     indexWriter,
                     colTopSinkAddr,
                     columnNameTxn,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    false
             );
         }
     }
@@ -2954,7 +2960,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     tableWriter,
                     colTopSinkAddr,
                     columnNameTxn,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    true
             );
         } else {
             try {
@@ -3023,7 +3030,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     indexWriter,
                     colTopSinkAddr,
                     columnNameTxn,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    true
             );
         }
     }
@@ -3312,6 +3320,20 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partitionUpdateSinkAddr
         );
         tableWriter.getO3CopyPubSeq().done(cursor);
+    }
+
+    // Returns where the scratch space for materialized column top nulls starts in a mid partition's column file.
+    // A split parent's files still hold the rows the split moved out, and a reader that locked a txn before
+    // the split still reads them, so the scratch space starts past the end of the file, not past dataSize.
+    // The last partition is never a split parent, and its files run into the writer's preallocated pages,
+    // so its scratch space keeps starting at dataSize.
+    private static long scratchOffset(FilesFacade ff, long fd, long dataSize) {
+        final long fileSize = ff.length(fd);
+        if (fileSize < 0) {
+            throw CairoException.critical(ff.errno()).put("could not get column file length [fd=").put(fd).put(']');
+        }
+        // keep the scratch space aligned for the widest fixed-size column (LONG256)
+        return fileSize > dataSize ? (fileSize + 31) & ~31L : dataSize;
     }
 
     @Override
