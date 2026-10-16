@@ -426,7 +426,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     // trades, and 10 with = the three of trade 10. The sub-queries make the CASE NULL in some
     // executions, which fail at the CASE, and not in others, which return those rows, never other
     // rows. The CASE reads its sub-queries through comparisons and AND, over INT and over a BOOLEAN
-    // sub-query, and through a BETWEEN over two TIMESTAMP sub-queries. Over the UNION ALL table, the
+    // sub-query, through an IN over a STRING sub-query, and through a BETWEEN over two TIMESTAMP
+    // sub-queries. Over the UNION ALL table, the
     // code generator builds the check.
     @Test
     public void testRightJoinShareANestedRandomSubQueryCheck() throws Exception {
@@ -460,6 +461,14 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                             "1"
                     },
                     {"t.id >= CASE WHEN " + random + " = 0 AND " + random + " = 0 THEN NULL::int ELSE 0 END", "t.id >= 0", allRows, "2"},
+                    // an IN over a sub-query holds the set of its values, which the check passes to
+                    // the filter
+                    {
+                            "t.id >= CASE WHEN '0'::symbol IN (SELECT rnd_int(0, 1, 0)::string FROM long_sequence(1)) THEN NULL::int ELSE 0 END",
+                            "t.id >= 0",
+                            allRows,
+                            "1"
+                    },
                     // the refunds have the timestamps 1 to 3, so 1 is between the bounds while the
                     // lower bound is 0, not 2; one function reads both sub-queries
                     {
