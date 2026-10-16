@@ -358,6 +358,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelGroupByEnabled();
 
+    boolean isParallelHashJoinGroupByEnabled();
+
     boolean isParallelHorizonJoinEnabled();
 
     boolean isParallelReadParquetEnabled();
@@ -424,6 +426,18 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         }
         getSecurityContext().authorizeSelect(viewDefinition);
         return true;
+    }
+
+    /**
+     * Returns whether a factory may keep the plan choices that its compile took from the tables'
+     * row counts after the tables change size. A context that runs a factory which no holder
+     * compiles again, such as a queued export, tolerates the change: a fused GROUP BY over a hash
+     * join then keeps its compile-time build side, RIGHT join bound and key table presizing, which
+     * cost memory and never change the rows, instead of throwing
+     * {@link TableReferenceOutOfDateException} to ask for a recompile.
+     */
+    default boolean isTableRowCountChangeTolerated() {
+        return false;
     }
 
     boolean isTimestampRequired();
@@ -537,6 +551,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
+
+    void setParallelHashJoinGroupByEnabled(boolean isEnabled);
 
     void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
 

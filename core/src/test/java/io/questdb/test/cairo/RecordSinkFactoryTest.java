@@ -46,6 +46,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -865,6 +866,81 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         // Symbol should default to INT (symbol index), not STRING
         Assert.assertEquals(ColumnType.INT, testRecordSink.recordedTypes.get(0));
         Assert.assertEquals(ColumnType.STRING, testRecordSink.recordedTypes.get(1));
+    }
+
+    @Test
+    public void testTimestampAsNanosKeepsNull() {
+        // A join key widens a TIMESTAMP column to nanos when its partner is TIMESTAMP_NS. NULL has to
+        // stay NULL: multiplied, it overflows to 0, so a NULL key would match epoch keys instead of
+        // NULL keys. 500 columns make the chunked sink split the copy across two methods.
+        final int columnCount = 500;
+        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        ListColumnFilter columnFilter = new ListColumnFilter();
+        BitSet writeTimestampAsNanos = new BitSet();
+        final long[] timestamps = new long[columnCount];
+        final long[] expected = new long[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            columnTypes.add(ColumnType.TIMESTAMP);
+            columnFilter.add(i + 1);
+            timestamps[i] = switch (i % 3) {
+                case 0 -> Numbers.LONG_NULL;
+                case 1 -> 0;
+                default -> i;
+            };
+            // the last column stays in micros
+            if (i < columnCount - 1) {
+                writeTimestampAsNanos.set(i);
+                expected[i] = timestamps[i] == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamps[i] * 1000;
+            } else {
+                expected[i] = timestamps[i];
+            }
+        }
+
+        for (int sinkType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_CHUNKED, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+            CairoConfiguration sinkTypeConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCopierType() {
+                    return sinkType;
+                }
+            };
+            RecordSink sink = RecordSinkFactory.getInstance(
+                    sinkTypeConfiguration,
+                    new BytecodeAssembler(),
+                    columnTypes,
+                    columnFilter,
+                    null,
+                    null,
+                    writeTimestampAsNanos
+            );
+            // a generated class name carries a hidden class suffix after the slash
+            final String expectedSinkClass = switch (sinkType) {
+                case RecordSinkFactory.SINK_TYPE_SINGLE_METHOD -> "io.questdb.cairo.sink/";
+                case RecordSinkFactory.SINK_TYPE_CHUNKED -> "io.questdb.cairo.chunkedsink/";
+                default -> io.questdb.cairo.LoopingRecordSink.class.getName();
+            };
+            final String sinkClass = sink.getClass().getName();
+            Assert.assertTrue(sinkClass, sinkClass.startsWith(expectedSinkClass));
+
+            final long[] written = new long[columnCount];
+            TestRecordSink testRecordSink = new TestRecordSink() {
+                private int writtenCount;
+
+                @Override
+                public void putTimestamp(long value) {
+                    written[writtenCount++] = value;
+                    super.putTimestamp(value);
+                }
+            };
+            TestRecord testRecord = new TestRecord() {
+                @Override
+                public long getTimestamp(int col) {
+                    super.getTimestamp(col);
+                    return timestamps[col];
+                }
+            };
+            sink.copy(testRecord, testRecordSink);
+            Assert.assertArrayEquals(expectedSinkClass, expected, written);
+        }
     }
 
     @NotNull

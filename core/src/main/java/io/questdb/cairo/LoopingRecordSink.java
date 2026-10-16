@@ -186,7 +186,7 @@ public class LoopingRecordSink implements RecordSink {
             case ColumnType.TIMESTAMP:
                 long ts = r.getTimestamp(idx);
                 if (tsNanos) {
-                    ts *= 1000L;
+                    ts = RecordSinkFactory.widenMicrosToNanos(ts);
                 }
                 w.putTimestamp(ts);
                 break;

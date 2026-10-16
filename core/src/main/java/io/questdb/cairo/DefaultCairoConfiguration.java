@@ -1271,6 +1271,36 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelHashJoinGroupByBuildParallelMinRows() {
+        return 300_000;
+    }
+
+    @Override
+    public long getSqlParallelHashJoinGroupByBuildRowsPerPartition() {
+        return 32_768;
+    }
+
+    @Override
+    public long getSqlParallelHashJoinGroupByPayloadCopyMaxSize() {
+        return 128 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public double getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio() {
+        return 0.4;
+    }
+
+    @Override
+    public double getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio() {
+        return 0.125;
+    }
+
+    @Override
+    public long getSqlParallelHashJoinGroupByRightJoinMaxBuildSize() {
+        return 256 * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public long getSqlParallelWorkStealingSpinTimeout() {
         return 50_000; // 50us
     }
@@ -1807,6 +1837,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelGroupByEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelHashJoinGroupByEnabled() {
         return true;
     }
 
