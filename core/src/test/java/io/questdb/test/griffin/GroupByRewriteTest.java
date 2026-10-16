@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.BindVarTuple;
 import org.junit.Assert;
 import org.junit.Test;
@@ -332,7 +331,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                 6\t6
                                 """);
                 assertQuery(declare + "SELECT SUM(@v) AS s FROM t WHERE @v > 3")
-                        .noLeakCheck().noRandomAccess().expectSize().returns("s\n6\n");
+                        .noLeakCheck().noRandomAccess().expectSize().returns("""
+                                s
+                                6
+                                """);
                 assertQuery(declare + "SELECT SUM(@v) AS s, AVG(@v) AS a FROM t")
                         .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("values: [sum(x),")
                         .returns("""
@@ -359,7 +361,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             bindVariableService.setStr("s", "2");
             bindVariableService.setStr("m", "-2");
             bindVariableService.setInt(0, 2);
-            String empty = "a\tb\tc\td\te\tf\nnull\tnull\tnull\tnull\tnull\tnull\n";
+            String empty = """
+                    a\tb\tc\td\te\tf
+                    null\tnull\tnull\tnull\tnull\tnull
+                    """;
             assertSumArithmetic(empty, "2", ":k", "$1");
             execute("INSERT INTO t VALUES (null)");
             assertSumArithmetic(empty, "2", ":k", "$1");
@@ -410,27 +415,27 @@ public class GroupByRewriteTest extends AbstractCairoTest {
 
     @Test
     public void testSumNonIntegerAndRowDependentOperands() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (i LONG, x SHORT, y INT)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (10_000_000_000_000_000, 30_000, 927_094),
-                    (-10_000_000_000_000_000, 1, 0)
-                    """);
-            bindVariableService.setDouble("d", 1);
-            bindVariableService.setFloat("f", 1);
-            // Per-row arithmetic rounds the constant away; hoisting it would turn 0.0 into 2.0.
-            assertQuery("""
-                    SELECT SUM(i + 1.0) a, SUM(i + :d) b, SUM(i + :f) c, SUM(i + 1::DOUBLE) d,
-                           SUM(i + -:d) e, SUM(i + -1::DOUBLE) f, SUM(x * y::INT) g, SUM(x * -y) h,
-                           SUM(x / 2) i, SUM(x % 7) j, SUM(x * (y - 1)) k
-                    FROM t
-                    """)
-                    .noLeakCheck().noRandomAccess().expectSize().returns("""
-                            a\tb\tc\td\te\tf\tg\th\ti\tj\tk
-                            0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t2043016224\t-2043016224\t15000\t6\t2042986223
-                            """);
-        });
+        bindVariableService.setDouble("d", 1);
+        bindVariableService.setFloat("f", 1);
+        // Per-row arithmetic rounds the constant away; hoisting it would turn 0.0 into 2.0.
+        assertQuery("""
+                SELECT SUM(i + 1.0) a, SUM(i + :d) b, SUM(i + :f) c, SUM(i + 1::DOUBLE) d,
+                       SUM(i + -:d) e, SUM(i + -1::DOUBLE) f, SUM(x * y::INT) g, SUM(x * -y) h,
+                       SUM(x / 2) i, SUM(x % 7) j, SUM(x * (y - 1)) k
+                FROM t
+                """)
+                .ddl(
+                        "CREATE TABLE t (i LONG, x SHORT, y INT)",
+                        """
+                                INSERT INTO t VALUES
+                                (10_000_000_000_000_000, 30_000, 927_094),
+                                (-10_000_000_000_000_000, 1, 0)
+                                """
+                )
+                .noRandomAccess().expectSize().returns("""
+                        a\tb\tc\td\te\tf\tg\th\ti\tj\tk
+                        0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t2043016224\t-2043016224\t15000\t6\t2042986223
+                        """);
     }
 
     @Test
@@ -804,33 +809,43 @@ public class GroupByRewriteTest extends AbstractCairoTest {
 
     @Test
     public void testSumRebindMultiplier() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x SHORT)");
-            execute("INSERT INTO t VALUES (30_000)");
-            ObjList<BindVarTuple> cases = new ObjList<>();
-            cases.add(BindVarTuple.ok("initial null", "a\tb\tc\nnull\tnull\tnull\n", b -> {
-                b.setInt("k", Numbers.INT_NULL);
-                b.setStr("s", null);
-            }));
-            cases.add(BindVarTuple.ok("small", "a\tb\tc\n60000\t-60000\t60000\n", b -> {
-                b.setInt("k", 2);
-                b.setStr("s", "2");
-            }));
-            cases.add(BindVarTuple.ok("overflow", "a\tb\tc\n27812820000\t-27812820000\t27812820000\n", b -> {
-                b.setInt("k", 927_094);
-                b.setStr("s", "927094");
-            }));
-            cases.add(BindVarTuple.ok("negative", "a\tb\tc\n-27812820000\t27812820000\t-27812820000\n", b -> {
-                b.setInt("k", -927_094);
-                b.setStr("s", "-927094");
-            }));
-            cases.add(BindVarTuple.ok("null again", "a\tb\tc\nnull\tnull\tnull\n", b -> {
-                b.setInt("k", Numbers.INT_NULL);
-                b.setStr("s", null);
-            }));
-            assertQuery("SELECT SUM(:k * x) a, SUM(x * -:k) b, SUM(:s::INT * x) c FROM t")
-                    .noLeakCheck().noRandomAccess().expectSize().assertBinds(cases);
-        });
+        final String nulls = """
+                a\tb\tc
+                null\tnull\tnull
+                """;
+        ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok("initial null", nulls, b -> {
+            b.setInt("k", Numbers.INT_NULL);
+            b.setStr("s", null);
+        }));
+        cases.add(BindVarTuple.ok("small", """
+                a\tb\tc
+                60000\t-60000\t60000
+                """, b -> {
+            b.setInt("k", 2);
+            b.setStr("s", "2");
+        }));
+        cases.add(BindVarTuple.ok("overflow", """
+                a\tb\tc
+                27812820000\t-27812820000\t27812820000
+                """, b -> {
+            b.setInt("k", 927_094);
+            b.setStr("s", "927094");
+        }));
+        cases.add(BindVarTuple.ok("negative", """
+                a\tb\tc
+                -27812820000\t27812820000\t-27812820000
+                """, b -> {
+            b.setInt("k", -927_094);
+            b.setStr("s", "-927094");
+        }));
+        cases.add(BindVarTuple.ok("null again", nulls, b -> {
+            b.setInt("k", Numbers.INT_NULL);
+            b.setStr("s", null);
+        }));
+        assertQuery("SELECT SUM(:k * x) a, SUM(x * -:k) b, SUM(:s::INT * x) c FROM t")
+                .ddl("CREATE TABLE t (x SHORT)", "INSERT INTO t VALUES (30_000)")
+                .noRandomAccess().expectSize().assertBinds(cases);
     }
 
     @Test
@@ -873,16 +888,39 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x SHORT)");
             execute("INSERT INTO t VALUES (30_000)");
             // The compiler infers an untyped bind's type, so the first compilation keeps per-row arithmetic.
-            assertUntypedBind("SELECT SUM(x * $1) s FROM t", ColumnType.FLOAT, "2", "s\n60000.0\n");
-            assertUntypedBind("SELECT $1 b, SUM(x * $1::INT) a FROM t", ColumnType.DOUBLE, "2.5", "b\ta\n2.5\t60000\n");
-            assertUntypedBind("SELECT SUM(x - $1::SHORT) s, MIN(x * $1) m FROM t", ColumnType.DOUBLE, "2.5", "s\tm\n29998\t75000.0\n");
-            assertUntypedBind("SELECT SUM($1::INT * x) s FROM t", ColumnType.DOUBLE, "927094", "s\n2043016224\n");
-            assertUntypedBind("SELECT SUM((-$1)::INT * x) s FROM t", ColumnType.DOUBLE, "927094", "s\n-2043016224\n");
-            assertUntypedBind("SELECT SUM(x - ($1 + 0)::SHORT) s, MIN(x * $1) m FROM t", ColumnType.INT, "927094", "s\tm\n20410\t2043016224\n");
+            assertUntypedBind("SELECT SUM(x * $1) s FROM t", ColumnType.FLOAT, "2", """
+                    s
+                    60000.0
+                    """);
+            assertUntypedBind("SELECT $1 b, SUM(x * $1::INT) a FROM t", ColumnType.DOUBLE, "2.5", """
+                    b\ta
+                    2.5\t60000
+                    """);
+            assertUntypedBind("SELECT SUM(x - $1::SHORT) s, MIN(x * $1) m FROM t", ColumnType.DOUBLE, "2.5", """
+                    s\tm
+                    29998\t75000.0
+                    """);
+            assertUntypedBind("SELECT SUM($1::INT * x) s FROM t", ColumnType.DOUBLE, "927094", """
+                    s
+                    2043016224
+                    """);
+            assertUntypedBind("SELECT SUM((-$1)::INT * x) s FROM t", ColumnType.DOUBLE, "927094", """
+                    s
+                    -2043016224
+                    """);
+            assertUntypedBind("SELECT SUM(x - ($1 + 0)::SHORT) s, MIN(x * $1) m FROM t", ColumnType.INT, "927094", """
+                    s\tm
+                    20410\t2043016224
+                    """);
             // A recompilation sees the inferred type and moves the multiplication outside the aggregate.
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 927_094);
             try (RecordCursorFactory factory = select("SELECT SUM($1::INT * x) s FROM t")) {
-                new QueryAssertion(engine, factory).withContext(sqlExecutionContext)
-                        .noRandomAccess().expectSize().returns("s\n27812820000\n");
+                assertFactory(factory).withContext(sqlExecutionContext)
+                        .noRandomAccess().expectSize().returns("""
+                                s
+                                27812820000
+                                """);
             }
         });
     }
@@ -927,7 +965,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select(query)) {
             Assert.assertEquals(expectedBindType, bindVariableService.getFunction(0).getType());
             bindVariableService.setStr(0, value);
-            new QueryAssertion(engine, factory).withContext(sqlExecutionContext)
+            assertFactory(factory).withContext(sqlExecutionContext)
                     .noRandomAccess().expectSize().returns(expected);
         }
     }
