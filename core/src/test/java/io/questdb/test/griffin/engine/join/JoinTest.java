@@ -17721,40 +17721,7 @@ public class JoinTest extends AbstractCairoTest {
         // a lane with a1.k != a4.k, and the RIGHT JOIN keeps the slot that matches no post, whose NULL
         // a1.k and a4.k are equal.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE lanes (s SYMBOL, v VARCHAR, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE posts (s SYMBOL, m INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE owners (v VARCHAR, s SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slots (m INT, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE fills (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES ('A', '2024-01-01T00:00:10.000000Z'), ('B', '2024-01-01T00:00:20.000000Z')");
-            execute("""
-                    INSERT INTO quotes VALUES
-                    (9.0, '2024-01-01T00:00:00.000000Z'),
-                    (9.5, '2024-01-01T00:00:09.000000Z'),
-                    (19.5, '2024-01-01T00:00:19.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO lanes VALUES
-                    ('S1', 'S1', 1, '2023-12-01T00:00:00.000000Z'),
-                    ('S2', 'S1', 2, '2023-12-01T00:00:01.000000Z'),
-                    ('S2', 'S2', 3, '2023-12-01T00:00:02.000000Z')
-                    """);
-            execute("INSERT INTO posts VALUES ('S1', 1, '2023-12-01T00:00:00.000000Z'), ('S2', 2, '2023-12-01T00:00:01.000000Z')");
-            execute("INSERT INTO owners VALUES ('S1', 'A', 1, '2023-12-01T00:00:00.000000Z'), ('S2', 'B', 4, '2023-12-01T00:00:01.000000Z')");
-            execute("""
-                    INSERT INTO slots VALUES
-                    (1, 10, '2023-12-01T00:00:00.000000Z'),
-                    (2, 20, '2023-12-01T00:00:01.000000Z'),
-                    (3, 30, '2023-12-01T00:00:02.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO fills VALUES
-                    (10, '2023-12-01T00:00:00.000000Z'),
-                    (20, '2023-12-01T00:00:01.000000Z'),
-                    (30, '2023-12-01T00:00:02.000000Z')
-                    """);
+            createTablesForTimeSeriesJoinDeferredEdge();
             final String joins = """
                     FROM orders a0
                     CROSS JOIN lanes a1
@@ -17822,6 +17789,76 @@ public class JoinTest extends AbstractCairoTest {
             // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
             assertQuery("SELECT x.k, x.ts, x.s, x.l, x.v, q.bid FROM (SELECT a0.k, a0.ts, a1.s, a2.l, a4.v "
                     + joins + "ORDER BY ts, s) x LT JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveDerivesKeyOntoTableJoiningPartnerOnOtherColumns() throws Exception {
+        // As in testTimeSeriesJoinAfterKeyMoveSkipsDuplicateDerivedKeyOnFromTable, a4 keeps a4.s = a0.v and
+        // derives a3.S = a0.v onto a3. a3 already joins a0, but on a0.k = a3.n, a key on other columns, so
+        // a3 gets the derived key too. The key is on n rather than l, as a key on l would reach a1 and a2
+        // through a3.l = a2.l = a1.l and let a0 run first with no key move. Trade 4 matches book S3 but no
+        // desk, and trade 5 (v = 'S1') matches book (S2, 5), whose s differs from the trade's v, so neither
+        // joins. The keys match NULL to NULL, so trade 3 joins its NULL book and desk.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (k INT, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE books (s SYMBOL, l LONG, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE desks (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'S1', '2024-01-01T00:00:10.000000Z'),
+                    (2, 'S2', '2024-01-01T00:00:20.000000Z'),
+                    (3, NULL, '2024-01-01T00:00:30.000000Z'),
+                    (4, 'S3', '2024-01-01T00:00:40.000000Z'),
+                    (5, 'S1', '2024-01-01T00:00:50.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.0, '2024-01-01T00:00:00.000000Z'),
+                    (9.5, '2024-01-01T00:00:09.000000Z'),
+                    (19.5, '2024-01-01T00:00:19.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO books VALUES
+                    ('S1', 1, 1, '2023-12-01T00:00:00.000000Z'),
+                    ('S2', 2, 2, '2023-12-01T00:00:01.000000Z'),
+                    (NULL, 3, 3, '2023-12-01T00:00:02.000000Z'),
+                    ('S3', 4, 4, '2023-12-01T00:00:03.000000Z'),
+                    ('S2', 5, 5, '2023-12-01T00:00:04.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO desks VALUES
+                    ('S1', '2023-12-01T00:00:00.000000Z'),
+                    ('S2', '2023-12-01T00:00:01.000000Z'),
+                    (NULL, '2023-12-01T00:00:02.000000Z')
+                    """);
+            final String joins = """
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN books a2 ON a2.l = a1.l
+                    JOIN books a3 ON a3.l = a2.l AND a0.k = a3.n
+                    JOIN desks a4 ON a0.v = a4.s AND a3.S = a4.S
+                    """;
+            final String expected = """
+                    k\tts\ts\ts1\tbid
+                    1\t2024-01-01T00:00:10.000000Z\tS1\tS1\t9.5
+                    2\t2024-01-01T00:00:20.000000Z\tS2\tS2\t19.5
+                    3\t2024-01-01T00:00:30.000000Z\t\t\t19.5
+                    """;
+            assertQuery("SELECT a0.k, a0.ts, a3.s, a4.s, q.bid " + joins + "LT JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("condition: a3.n=a0.k and a3.S=a0.v\n", "condition: a4.s=a0.v\n")
+                    .withPlanNotContaining("Filter")
+                    .returns(expected);
+            // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
+            assertQuery("SELECT x.k, x.ts, x.s, x.s1, q.bid FROM (SELECT a0.k, a0.ts, a3.s, a4.s s1 " + joins + "ORDER BY ts) x LT JOIN quotes q")
                     .noLeakCheck()
                     .noRandomAccess()
                     .timestamp("ts")
@@ -18160,6 +18197,75 @@ public class JoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .timestamp("ts")
                     .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveKeepsDeferredEdgeToNonAncestor() throws Exception {
+        // As in testTimeSeriesJoinAfterKeyMoveDerivesKeyOntoDeferredTable, with a6 joined on a3 and the
+        // deferred key a1.k = a6.k. a1 runs before a0, but a6 does not, so runFromModelFirst keeps the edge
+        // from a1 to a6: reversing it would close the cycle a1, a3, a6. The lane of order A joins the lane
+        // a6 with k = a3.m = 1, which equals its own k, so the rows match those of the original query.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinDeferredEdge();
+            final String joins = """
+                    FROM orders a0
+                    CROSS JOIN lanes a1
+                    JOIN posts a3 ON a3.s = a1.v AND a3.s = a1.s
+                    JOIN owners a4 ON a4.v = a3.s AND a4.s = a0.s
+                    JOIN lanes a6 ON a6.k = a3.m
+                    """;
+            final String expected = """
+                    s\tts\ts1\tv\tbid\tm\tk
+                    A\t2024-01-01T00:00:10.000000Z\tS1\tS1\t9.5\t1\t10
+                    \t\t\t\tnull\t3\t30
+                    """;
+            assertQuery("SELECT a0.s, a0.ts, a1.s, a4.v, q.bid, r.m, a5.k " + joins
+                    + "LT JOIN quotes q RIGHT JOIN slots r ON r.m = a3.m JOIN fills a5 ON a5.k = r.k AND a1.k = a4.k AND a1.k = a6.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("condition: a1.s=a4.v", "condition: a3.s=a4.v")
+                    .returns(expected);
+            // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
+            assertQuery("SELECT x.s, x.ts, x.s1, x.v, q.bid, r.m, a5.k FROM (SELECT a0.s, a0.ts, a1.s s1, a4.v, a3.m, a1.k k1, a4.k k4, a6.k k6 "
+                    + joins + "ORDER BY ts) x LT JOIN quotes q RIGHT JOIN slots r ON r.m = x.m JOIN fills a5 ON a5.k = r.k AND x.k1 = x.k4 AND x.k1 = x.k6")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveKeepsOrderedDeferredEdge() throws Exception {
+        // As in testTimeSeriesJoinAfterKeyMoveDerivesKeyOntoDeferredTable, with the deferred key
+        // a1.k = a3.m. runFromModelFirst places a1 before a3, so the edge from a1 to a3 already follows
+        // the placement and stays: reversing it would close a cycle with the key a3.s = a1.s. The lane of
+        // order A has k = 1 and joins the post with m = 1, so the rows match those of the original query.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinDeferredEdge();
+            final String joins = """
+                    FROM orders a0
+                    CROSS JOIN lanes a1
+                    JOIN posts a3 ON a3.s = a1.v AND a3.s = a1.s
+                    JOIN owners a4 ON a4.v = a3.s AND a4.s = a0.s
+                    """;
+            final String expected = """
+                    s\tts\ts1\tv\tbid\tm\tk
+                    A\t2024-01-01T00:00:10.000000Z\tS1\tS1\t9.5\t1\t10
+                    \t\t\t\tnull\t3\t30
+                    """;
+            assertQuery("SELECT a0.s, a0.ts, a1.s, a4.v, q.bid, r.m, a5.k " + joins
+                    + "LT JOIN quotes q RIGHT JOIN slots r ON r.m = a3.m JOIN fills a5 ON a5.k = r.k AND a1.k = a4.k AND a1.k = a3.m")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("condition: a1.s=a4.v", "condition: a3.s=a4.v")
+                    .returns(expected);
+            // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
+            assertQuery("SELECT x.s, x.ts, x.s1, x.v, q.bid, r.m, a5.k FROM (SELECT a0.s, a0.ts, a1.s s1, a4.v, a3.m, a1.k k1, a4.k k4 "
+                    + joins + "ORDER BY ts) x LT JOIN quotes q RIGHT JOIN slots r ON r.m = x.m JOIN fills a5 ON a5.k = r.k AND x.k1 = x.k4 AND x.k1 = x.m")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -19325,6 +19431,44 @@ public class JoinTest extends AbstractCairoTest {
                 ('B', 19.5, '2024-01-01T00:00:19.000000Z'),
                 ('A', 10.5, '2024-01-01T00:00:25.000000Z'),
                 ('C', 29.0, '2024-01-01T00:00:35.000000Z')
+                """);
+    }
+
+    // a deferred edge after reorderTables moves a4.s = a0.s onto a0, see testTimeSeriesJoinAfterKeyMoveDerivesKeyOntoDeferredTable()
+    private void createTablesForTimeSeriesJoinDeferredEdge() throws SqlException {
+        execute("CREATE TABLE orders (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE lanes (s SYMBOL, v VARCHAR, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE posts (s SYMBOL, m INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE owners (v VARCHAR, s SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE slots (m INT, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE fills (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO orders VALUES ('A', '2024-01-01T00:00:10.000000Z'), ('B', '2024-01-01T00:00:20.000000Z')");
+        execute("""
+                INSERT INTO quotes VALUES
+                (9.0, '2024-01-01T00:00:00.000000Z'),
+                (9.5, '2024-01-01T00:00:09.000000Z'),
+                (19.5, '2024-01-01T00:00:19.000000Z')
+                """);
+        execute("""
+                INSERT INTO lanes VALUES
+                ('S1', 'S1', 1, '2023-12-01T00:00:00.000000Z'),
+                ('S2', 'S1', 2, '2023-12-01T00:00:01.000000Z'),
+                ('S2', 'S2', 3, '2023-12-01T00:00:02.000000Z')
+                """);
+        execute("INSERT INTO posts VALUES ('S1', 1, '2023-12-01T00:00:00.000000Z'), ('S2', 2, '2023-12-01T00:00:01.000000Z')");
+        execute("INSERT INTO owners VALUES ('S1', 'A', 1, '2023-12-01T00:00:00.000000Z'), ('S2', 'B', 4, '2023-12-01T00:00:01.000000Z')");
+        execute("""
+                INSERT INTO slots VALUES
+                (1, 10, '2023-12-01T00:00:00.000000Z'),
+                (2, 20, '2023-12-01T00:00:01.000000Z'),
+                (3, 30, '2023-12-01T00:00:02.000000Z')
+                """);
+        execute("""
+                INSERT INTO fills VALUES
+                (10, '2023-12-01T00:00:00.000000Z'),
+                (20, '2023-12-01T00:00:01.000000Z'),
+                (30, '2023-12-01T00:00:02.000000Z')
                 """);
     }
 
