@@ -746,7 +746,10 @@ final class TemporalJoinBinder {
             master = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
         }
         final OutputSchema masterOutput = master.getOutput();
-        if (masterOutput.getTimestampIndex() < 0) {
+        // A master ordered by a key that is not a timestamp binds by the timestamp beneath that order, see JoinBinder.
+        final int masterTimestampIndex = masterOutput.getTimestampIndex() < 0
+                ? masterOutput.getColumnIndexById(LogicalPlans.unorderedTimestampColumnId(master)) : masterOutput.getTimestampIndex();
+        if (masterTimestampIndex < 0) {
             final QueryModel first = sources.getQuick(offsetIndex == 1 ? 2 : 1);
             throw SqlException.$(first.getJoinKeywordPosition(), "left side of time series join has no timestamp");
         }
@@ -765,7 +768,7 @@ final class TemporalJoinBinder {
         output.addColumnsFrom(masterOutput, masterAlias);
         output.setTimestampIndex(masterOutput.getTimestampIndex());
         output.add(ctx.planNodes.nextColumnId(), "offset", ColumnType.LONG, null, true, horizonAlias);
-        output.add(ctx.planNodes.nextColumnId(), "timestamp", masterOutput.getColumnType(masterOutput.getTimestampIndex()), null, true, horizonAlias);
+        output.add(ctx.planNodes.nextColumnId(), "timestamp", masterOutput.getColumnType(masterTimestampIndex), null, true, horizonAlias);
         for (int i = 0, n = selected.size(); i < n; i++) {
             rejectUnknownHorizonColumn(selected.getQuick(i).getAst(), output, horizonAlias);
         }
@@ -779,7 +782,7 @@ final class TemporalJoinBinder {
             final HorizonJoinSlave step = ctx.planNodes.horizonJoinSlaves.next().of(slave, slaveAlias, occurrence.getJoinKeywordPosition());
             plan.getSlaves().add(step);
             final OutputSchema slaveOutput = slave.getOutput();
-            JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getTimestampColumnId(), slave);
+            JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getColumnId(masterTimestampIndex), slave);
             output.addColumnsFrom(slaveOutput, slaveAlias);
             final ExpressionNode slaveFilter = bindHorizonKeys(occurrence.getJoinCriteria(), null, step, masterOutput, masterAlias,
                     slaveOutput, slaveAlias);
@@ -797,7 +800,7 @@ final class TemporalJoinBinder {
                 step.getKeyPositions().add(column.position);
             }
         }
-        bindHorizonOffsets(plan, horizon, masterOutput.getColumnType(masterOutput.getTimestampIndex()),
+        bindHorizonOffsets(plan, horizon, masterOutput.getColumnType(masterTimestampIndex),
                 executionContext.getCairoEngine().getConfiguration().getSqlHorizonJoinMaxOffsets());
         for (int s = 0, m = plan.getSlaves().size(); s < m; s++) {
             final HorizonJoinSlave step = plan.getSlaves().getQuick(s);

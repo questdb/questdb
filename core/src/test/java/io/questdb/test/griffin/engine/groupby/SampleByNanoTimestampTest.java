@@ -365,6 +365,96 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullDstDayStrideWithOffsetNano() throws Exception {
+        // Nanosecond parity for a day stride whose OFFSET puts the local grid line in
+        // Berlin's DST gap and overlap. The fill grid matches timestamp_floor_utc:
+        // 2021-03-28 starts at 01:00Z (03:00 CEST), and the 1h bucket at 2021-10-31T00:00Z
+        // (02:00 CEST) precedes the bucket at 01:00Z (02:00 CET).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-03-26T12:00:00.000000000Z'),
+                    (2.0, '2021-03-28T12:00:00.000000000Z'),
+                    (3.0, '2021-03-30T12:00:00.000000000Z'),
+                    (4.0, '2021-10-29T12:00:00.000000000Z'),
+                    (5.0, '2021-10-31T12:00:00.000000000Z'),
+                    (6.0, '2021-11-02T12:00:00.000000000Z')
+                    """);
+            assertQuery("""
+                    SELECT sum(val) s, ts FROM x WHERE ts < '2021-06-01'
+                    SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tts
+                            1.0\t2021-03-26T01:00:00.000000000Z
+                            null\t2021-03-27T01:00:00.000000000Z
+                            2.0\t2021-03-28T01:00:00.000000000Z
+                            null\t2021-03-29T00:00:00.000000000Z
+                            3.0\t2021-03-30T00:00:00.000000000Z
+                            """);
+            assertQuery("""
+                    SELECT sum(val) s, ts FROM x WHERE ts > '2021-06-01'
+                    SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tts
+                            4.0\t2021-10-29T00:00:00.000000000Z
+                            null\t2021-10-30T00:00:00.000000000Z
+                            null\t2021-10-31T00:00:00.000000000Z
+                            5.0\t2021-10-31T01:00:00.000000000Z
+                            null\t2021-11-01T01:00:00.000000000Z
+                            6.0\t2021-11-02T01:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullNegativeOffsetMonthNano() throws Exception {
+        // A negative OFFSET starts each month at 23:00 local on the previous day.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-01-15T12:00:00.000000000Z'),
+                    (2.0, '2021-03-15T12:00:00.000000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tts
+                            1.0\t2020-12-31T23:00:00.000000000Z
+                            null\t2021-01-31T23:00:00.000000000Z
+                            2.0\t2021-02-28T23:00:00.000000000Z
+                            """);
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tts
+                            1.0\t2020-12-31T22:00:00.000000000Z
+                            null\t2021-01-31T22:00:00.000000000Z
+                            2.0\t2021-02-28T22:00:00.000000000Z
+                            """);
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1y FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tts
+                            3.0\t2020-12-31T23:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testFillPrevNumericWithTimezoneNano() throws Exception {
         assertMemoryLeak(() -> {
             // Nanosecond parity for numeric PREV with timezone.

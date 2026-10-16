@@ -337,7 +337,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.setView(scan.getViewName(), scan.getViewPosition());
         clone.getRequestedOrder().copyFrom(scan.getRequestedOrder());
         clone.setLimit(scan.getLimitLo(), scan.getLimitHi());
-        clone.setRowOrderRequired(scan.isRowOrderRequired());
+        clone.setRowOrder(scan.getRowOrder());
         clone.setScanDirection(scan.getScanDirection());
         clone.setAccessPath(scan.getAccessPath(), scan.getResidual());
         clone.setResidualAlgorithm(scan.getResidualAlgorithm());

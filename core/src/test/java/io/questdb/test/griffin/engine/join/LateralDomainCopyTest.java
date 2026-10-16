@@ -444,6 +444,102 @@ public class LateralDomainCopyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDomainCopiesTableFunctionsWithSubqueryArguments() throws Exception {
+        assertMemoryLeak(() -> {
+            final String crossJoin = """
+                    SELECT s.generate_series, l.c
+                    FROM generate_series(1, CASE WHEN NOT (SELECT false) THEN 3 ELSE 4 END, 1) s
+                    CROSS JOIN LATERAL (SELECT count(*) AS c FROM long_sequence(3) WHERE x < s.generate_series) l
+                    """;
+            final String expected = """
+                    generate_series\tc
+                    1\t0
+                    2\t1
+                    3\t2
+                    """;
+            assertQuery(crossJoin)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("__qdb_outer_ref__")
+                    .returns(expected);
+            assertQuery("""
+                    SELECT s.generate_series, l.c
+                    FROM generate_series(1, CASE WHEN NOT (SELECT false) THEN 3 ELSE 4 END, 1) s
+                    LEFT JOIN LATERAL (SELECT count(*) AS c FROM long_sequence(3) WHERE x < s.generate_series) l
+                    """)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("__qdb_outer_ref__")
+                    .returns(expected);
+            assertQuery("""
+                    SELECT s.generate_series, l.c
+                    FROM generate_series(1, CASE WHEN NOT (SELECT true FROM long_sequence(1) WHERE x > 5) THEN 3 ELSE 4 END, 1) s
+                    CROSS JOIN LATERAL (SELECT count(*) AS c FROM long_sequence(3) WHERE x < s.generate_series) l
+                    """)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("__qdb_outer_ref__")
+                    .returns(expected);
+            assertQuery("""
+                    SELECT s.generate_series, a.c, b.c
+                    FROM generate_series(1, CASE WHEN NOT (SELECT false) THEN 3 ELSE 4 END, 1) s
+                    CROSS JOIN LATERAL (SELECT count() c FROM long_sequence(3) WHERE x < s.generate_series) a
+                    CROSS JOIN LATERAL (SELECT count() c FROM long_sequence(3) WHERE x > s.generate_series) b
+                    """)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("__qdb_outer_ref__")
+                    .returns("""
+                            generate_series\tc\tc1
+                            1\t0\t2
+                            2\t1\t1
+                            3\t2\t0
+                            """);
+            assertQuery("""
+                    WITH s AS (SELECT generate_series g FROM generate_series(1, CASE WHEN NOT (SELECT false) THEN 3 ELSE 4 END, 1))
+                    SELECT s.g, l.c FROM s CROSS JOIN LATERAL (SELECT count() c FROM s s2 WHERE s2.g < s.g) l ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("__qdb_outer_ref__")
+                    .returns("""
+                            g\tc
+                            1\t0
+                            2\t1
+                            3\t2
+                            """);
+            assertQuery("""
+                    SELECT s.x, l.c
+                    FROM long_sequence(CASE WHEN NOT (SELECT max(x) > 2 FROM long_sequence(3)) THEN 3 ELSE 4 END) s
+                    CROSS JOIN LATERAL (SELECT count() c FROM long_sequence(3) WHERE x < s.x) l
+                    """)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("__qdb_outer_ref__")
+                    .returns("""
+                            x\tc
+                            1\t0
+                            2\t1
+                            3\t2
+                            4\t3
+                            """);
+            assertExceptionNoLeakCheck("""
+                    SELECT s.generate_series, l.c
+                    FROM generate_series(1, CASE WHEN NOT (SELECT x = 1 FROM long_sequence(2)) THEN 3 ELSE 4 END, 1) s
+                    CROSS JOIN LATERAL (SELECT count(*) AS c FROM long_sequence(3) WHERE x < s.generate_series) l
+                    """, 69, "scalar sub-query returned more than one row");
+            execute("CREATE VIEW v AS (" + crossJoin + ")");
+            assertQuery("SELECT * FROM v WHERE generate_series > 1")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            generate_series\tc
+                            2\t1
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testDomainCopiesTemporalJoins() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

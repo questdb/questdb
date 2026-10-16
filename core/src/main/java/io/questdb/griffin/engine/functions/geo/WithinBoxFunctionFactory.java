@@ -220,6 +220,14 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof ConstBoxGeoWithinBoxFunction other) {
+                xFunc.offerStateTo(other.xFunc);
+                yFunc.offerStateTo(other.yFunc);
+            }
+        }
+
+        @Override
         public boolean shouldMemoize() {
             return xFunc.shouldMemoize() || yFunc.shouldMemoize();
         }
@@ -366,6 +374,18 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
                     && minYFunc.isThreadSafe()
                     && maxXFunc.isThreadSafe()
                     && maxYFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof GeoWithinBoxFunction other) {
+                xFunc.offerStateTo(other.xFunc);
+                yFunc.offerStateTo(other.yFunc);
+                maxXFunc.offerStateTo(other.maxXFunc);
+                maxYFunc.offerStateTo(other.maxYFunc);
+                minXFunc.offerStateTo(other.minXFunc);
+                minYFunc.offerStateTo(other.minYFunc);
+            }
         }
 
         @Override

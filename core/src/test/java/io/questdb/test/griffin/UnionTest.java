@@ -33,6 +33,90 @@ import java.util.Arrays;
 public class UnionTest extends AbstractCairoTest {
 
     @Test
+    public void testAggregateOverUnionAllDropsBranchOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                        ('1970-01-01T00:00:01.000000Z', 1, 1),
+                        ('1970-01-01T00:00:02.000000Z', 2, 2),
+                        ('1970-01-01T00:00:03.000000Z', 1, 3),
+                        ('1970-01-01T00:00:04.000000Z', 2, 4)
+                    """);
+            execute("CREATE TABLE b (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO b VALUES
+                        ('1970-01-01T00:00:00.500000Z', 1, 10),
+                        ('1970-01-01T00:00:01.500000Z', 2, 20),
+                        ('1970-01-01T00:00:02.500000Z', 1, 30),
+                        ('1970-01-01T00:00:03.500000Z', 2, 5),
+                        ('1970-01-01T00:00:03.800000Z', 1, 7)
+                    """);
+            final String joined = """
+                    sum\tcount
+                    68\t5
+                    """;
+            assertQuery("SELECT sum(v), count() FROM (SELECT b.v FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b UNION ALL SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(joined);
+            assertQuery("SELECT sum(v), count() FROM (SELECT b.v FROM a ASOF JOIN b UNION ALL SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(joined);
+            final String distinct = """
+                    count\tmin
+                    5\t1
+                    """;
+            assertQuery("SELECT count(), min(v) FROM (SELECT b.v FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b UNION SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(distinct);
+            assertQuery("SELECT count(), min(v) FROM (SELECT b.v FROM a ASOF JOIN b UNION SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(distinct);
+            assertQuery("SELECT sum(v) FROM (SELECT v FROM b UNION ALL SELECT b.v FROM a LT JOIN (SELECT * FROM b ORDER BY ts DESC) b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            139
+                            """);
+            assertQuery("SELECT sum(v) FROM (SELECT v FROM (SELECT * FROM a ORDER BY ts DESC) UNION ALL SELECT v FROM b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              values: [sum(v)]
+                                Union All
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: b
+                            """)
+                    .returns("""
+                            sum
+                            82
+                            """);
+            assertQuery("SELECT first(v) FROM (SELECT b.v FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b UNION ALL SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .fails(75, "left side of time series join doesn't have ASC timestamp order");
+            assertQuery("SELECT sum(v) FROM (SELECT b.v FROM (SELECT * FROM a ORDER BY ts DESC LIMIT 2) a ASOF JOIN b UNION ALL SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .fails(81, "left side of time series join doesn't have ASC timestamp order");
+        });
+    }
+
+    @Test
     public void testAggregateOverUnionAllOfLatestOn() throws Exception {
         // Regression test: an aggregate (count/sum) over a UNION ALL of LATEST ON
         // sub-queries used to crash with an AssertionError in SqlCodeGenerator

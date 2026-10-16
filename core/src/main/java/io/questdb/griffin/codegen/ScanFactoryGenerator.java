@@ -49,7 +49,6 @@ import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.InstantiatedIntervalBounds;
 import io.questdb.griffin.IntervalExtractor;
 import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -249,10 +248,6 @@ final class ScanFactoryGenerator {
         return frames;
     }
 
-    private static int orderMnemonic(ScanPlan scan) {
-        return scan.isRowOrderRequired() ? OrderByMnemonic.ORDER_BY_REQUIRED : OrderByMnemonic.ORDER_BY_INVARIANT;
-    }
-
     private static int requestedDirection(ScanPlan scan) {
         final SortKeys requestedOrder = scan.getRequestedOrder();
         return SqlCodeGenerator.queryModelDirection(requestedOrder.isEmpty() ? SortDirection.ASCENDING : requestedOrder.getDirections().getQuick(0));
@@ -329,7 +324,6 @@ final class ScanFactoryGenerator {
             GenericRecordMetadata metadata, RecordMetadata readerMetadata, TableReader reader, IntList indexes, IntList shifts
     ) throws SqlException {
         final BoundExpression residual = scan.getResidual();
-        final int orderByMnemonic = orderMnemonic(scan);
         final int keyIndex = scan.getOutput().getColumnIndexById(scan.getIndexColumnId());
         final boolean isExcluded = scan.getAccessPath() == ScanPlan.AccessPath.EXCLUDED_SYMBOL_INDEX;
         final ObjList<BoundExpression> values = isExcluded ? scan.getExcludedKeys() : scan.getIndexKeys();
@@ -338,8 +332,6 @@ final class ScanFactoryGenerator {
         RuntimeIntrinsicIntervalModel intervalModel = buildIntervals(scanIntervals, reader);
         Function filter = null;
         PartitionFrameCursorFactory frames = null;
-        final boolean isOrderByKey = scan.getIndexOrder() == ScanPlan.IndexOrder.KEY;
-        final boolean isOrderByTimestamp = scan.getIndexOrder() == ScanPlan.IndexOrder.TIMESTAMP;
         final int indexDirection = indexDirection(scan);
         final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
         int[] coveringMapping = null;
@@ -365,7 +357,7 @@ final class ScanFactoryGenerator {
         }
         if (isExcluded) {
             return new FilterOnExcludedValuesRecordCursorFactory(configuration, metadata, frames, keys,
-                    keyIndex, filter, orderByMnemonic, isOrderByKey, isOrderByTimestamp, requestedDirection(scan),
+                    keyIndex, filter, scan.getIndexOrder(), requestedDirection(scan),
                     indexDirection, indexes, shifts, configuration.getMaxSymbolNotEqualsCount());
         }
         final Function coveredFilter = coveringMapping == null ? null : filter;
@@ -373,13 +365,12 @@ final class ScanFactoryGenerator {
         try {
             if (keyCount == 1) {
                 factory = generateSingleSymbolIndexScan(metadata, frames, keyIndex, keys.getQuick(0),
-                        coveringMapping == null ? filter : null, indexDirection, isOrderByKey || isOrderByTimestamp,
+                        coveringMapping == null ? filter : null, indexDirection, scan.isRequestedOrderDelivered(),
                         indexes, shifts, coveringMapping, scan.hasNullableKey(), scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING));
             } else {
                 factory = generateSymbolValuesIndexScan(metadata, frames, keys, keyIndex,
-                        coveringMapping == null ? filter : null, orderByMnemonic, isOrderByKey, isOrderByTimestamp,
-                        requestedDirection(scan), indexDirection, indexes, shifts, coveringMapping, scan.hasNullableKey(),
-                        scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING));
+                        coveringMapping == null ? filter : null, scan.getIndexOrder(), requestedDirection(scan), indexDirection,
+                        indexes, shifts, coveringMapping, scan.hasNullableKey(), scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING));
             }
         } catch (Throwable th) {
             Misc.free(coveredFilter, th);
@@ -583,7 +574,6 @@ final class ScanFactoryGenerator {
         final BoundExpression predicate = scan.getResidual();
         final FunctionExpression pattern = scan.getKeyPattern();
         final OutputSchema input = scan.getOutput();
-        final boolean isOrderByTimestampOnly = scan.isNativeTimestampOrderRequested();
         final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
         frame.expressions.clear();
         LogicalPlans.collectConjuncts(predicate, frame.expressions);
@@ -628,8 +618,8 @@ final class ScanFactoryGenerator {
             workerFilters = null;
             limit = null;
             return generateSymbolPatternIndex(frames, metadata, reader, indexes, shifts, ownedFilter, predicate, pattern, residual, input,
-                    ownedWorkers, ownedLimit, limitCount == null ? 0 : limitCount.getPosition(), orderMnemonic(scan),
-                    isOrderByTimestampOnly, isCovering, isParallel, scan.hasHint(ScanPlan.HINT_PRE_TOUCH), stolenFilter, executionContext);
+                    ownedWorkers, ownedLimit, limitCount == null ? 0 : limitCount.getPosition(), scan.getIndexOrder(), isCovering,
+                    isParallel, scan.hasHint(ScanPlan.HINT_PRE_TOUCH), stolenFilter, executionContext);
         } catch (Throwable th) {
             Misc.free(filter, th);
             Misc.freeObjList(workerFilters, th);
@@ -903,8 +893,7 @@ final class ScanFactoryGenerator {
             @Nullable ObjList<Function> workerFilters,
             @Nullable Function limit,
             int limitPosition,
-            int orderByMnemonic,
-            boolean isOrderByTimestampOnly,
+            ScanPlan.IndexOrder indexOrder,
             boolean isCovering,
             boolean isParallel,
             boolean isPreTouchEnabled,
@@ -940,7 +929,7 @@ final class ScanFactoryGenerator {
         boolean isSelfFiltering = false;
         try {
             indexDelegate = new SymbolPatternIndexRecordCursorFactory(configuration, metadata, sharedFrames, keyColumnIndex,
-                    effectiveKeys, orderByMnemonic, isOrderByTimestampOnly, IndexReader.DIR_FORWARD, columnIndexes, columnSizeShifts);
+                    effectiveKeys, indexOrder, IndexReader.DIR_FORWARD, columnIndexes, columnSizeShifts);
             if (isCovering) {
                 final int[] coveringMapping = buildCoveringMapping(reader, columnIndexes.getQuick(keyColumnIndex), columnIndexes);
                 coveringDelegate = new CoveringIndexRecordCursorFactory(metadata, sharedFrames, columnIndexes.getQuick(keyColumnIndex),
@@ -1006,9 +995,7 @@ final class ScanFactoryGenerator {
             ObjList<Function> keys,
             int keyIndex,
             @Nullable Function filter,
-            int orderByMnemonic,
-            boolean isOrderByKey,
-            boolean isOrderByTimestamp,
+            ScanPlan.IndexOrder indexOrder,
             int orderDirection,
             int indexDirection,
             IntList columnIndexes,
@@ -1019,14 +1006,14 @@ final class ScanFactoryGenerator {
     ) {
         if (coveringMapping == null) {
             return new FilterOnValuesRecordCursorFactory(configuration, metadata, frames, keys, keyIndex,
-                    filter, orderByMnemonic, isOrderByKey, isOrderByTimestamp, orderDirection,
+                    filter, indexOrder, orderDirection,
                     indexDirection, columnIndexes, columnSizeShifts);
         }
         assert filter == null;
         final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
         final RecordCursorFactory backup = hasNullableKey && !isBackupSuppressed
                 ? new FilterOnValuesRecordCursorFactory(configuration, metadata, frames, keys, keyIndex,
-                null, orderByMnemonic, isOrderByKey, isOrderByTimestamp, orderDirection,
+                null, indexOrder, orderDirection,
                 indexDirection, columnIndexes, columnSizeShifts)
                 : null;
         return new CoveringIndexRecordCursorFactory(metadata, frames, readerKeyIndex,

@@ -150,6 +150,19 @@ final class AccessPathPlanning {
         return pattern.getArgumentCount() == 1 ? (FunctionExpression) pattern.argumentAt(0) : pattern;
     }
 
+    /**
+     * The order a read of a list of keys emits its rows in when it delivers no requested order: merged row by row in
+     * table order when the consumers require the order, key by key within each page frame when an aggregate without
+     * keys folds the rows, and merged frame by frame in table order otherwise.
+     */
+    private static ScanPlan.IndexOrder unrequestedIndexOrder(ScanPlan scan) {
+        return switch (scan.getRowOrder()) {
+            case REQUIRED -> ScanPlan.IndexOrder.TABLE;
+            case ANY_SINGLE_GROUP -> ScanPlan.IndexOrder.KEY_PER_FRAME;
+            case ANY -> ScanPlan.IndexOrder.TABLE_PER_FRAME;
+        };
+    }
+
     private void capture(boolean hasModel) {
         if (!isCapturing || !hasModel) {
             return;
@@ -265,6 +278,9 @@ final class AccessPathPlanning {
                 indexOrder = ScanPlan.IndexOrder.TIMESTAMP;
                 indexDirection = order.getDirections().getQuick(0);
             }
+        }
+        if (indexOrder == ScanPlan.IndexOrder.NONE && keyCount != 1) {
+            indexOrder = unrequestedIndexOrder(scan);
         }
         scan.setSinglePartition(isSinglePartition);
         scan.setTimestampDropped(isTimestampDropped);
@@ -388,6 +404,8 @@ final class AccessPathPlanning {
                 && !isNegated && table.isCovering(tableColumnIndex(output, keyId), tableColumnIndexes);
         scan.setKeyPattern(pattern);
         scan.setIndex(keyId, isCovering ? ScanPlan.IndexRead.COVERING : ScanPlan.IndexRead.INDEX);
+        scan.setIndexOrder(scan.isNativeTimestampOrderRequested() ? ScanPlan.IndexOrder.TABLE
+                : unrequestedIndexOrder(scan), SortDirection.ASCENDING);
         scan.setAccessPath(ScanPlan.AccessPath.SYMBOL_PATTERN, residual);
         return true;
     }

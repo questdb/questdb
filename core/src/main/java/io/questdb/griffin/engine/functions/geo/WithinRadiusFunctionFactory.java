@@ -203,6 +203,14 @@ public class WithinRadiusFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof ConstRadiusGeoWithinRadiusFunction other) {
+                xFunc.offerStateTo(other.xFunc);
+                yFunc.offerStateTo(other.yFunc);
+            }
+        }
+
+        @Override
         public boolean shouldMemoize() {
             return xFunc.shouldMemoize() || yFunc.shouldMemoize();
         }
@@ -341,6 +349,17 @@ public class WithinRadiusFunctionFactory implements FunctionFactory {
                     && centerXFunc.isThreadSafe()
                     && centerYFunc.isThreadSafe()
                     && radiusFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof GeoWithinRadiusFunction other) {
+                centerXFunc.offerStateTo(other.centerXFunc);
+                centerYFunc.offerStateTo(other.centerYFunc);
+                radiusFunc.offerStateTo(other.radiusFunc);
+                xFunc.offerStateTo(other.xFunc);
+                yFunc.offerStateTo(other.yFunc);
+            }
         }
 
         @Override

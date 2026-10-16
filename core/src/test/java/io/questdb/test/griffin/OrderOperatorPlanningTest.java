@@ -637,6 +637,81 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResortDropsDescendingTemporalJoinSort() throws Exception {
+        assertMemoryLeak(() -> {
+            createTemporalJoinTables();
+            final String distinctKeys = """
+                    k
+                    1
+                    2
+                    """;
+            assertQuery("SELECT DISTINCT b.k FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(distinctKeys);
+            assertQuery("SELECT DISTINCT b.k FROM a ASOF JOIN b ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(distinctKeys);
+            final String groups = """
+                    k\tsum
+                    1\t40
+                    2\t27
+                    """;
+            assertQuery("SELECT a.k, sum(b.v) FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b GROUP BY a.k ORDER BY a.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(groups);
+            assertQuery("SELECT a.k, sum(b.v) FROM a ASOF JOIN b GROUP BY a.k ORDER BY a.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(groups);
+            final String descending = """
+                    ts\tv
+                    1970-01-01T00:00:04.000000Z\t7
+                    1970-01-01T00:00:03.000000Z\t30
+                    1970-01-01T00:00:02.000000Z\t20
+                    1970-01-01T00:00:01.000000Z\t10
+                    """;
+            assertQuery("SELECT a.ts, b.v FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b ORDER BY a.ts DESC")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(descending);
+            assertQuery("SELECT a.ts, b.v FROM a ASOF JOIN b ORDER BY a.ts DESC")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(descending);
+            final String ascending = """
+                    ts\tv
+                    1970-01-01T00:00:01.000000Z\t10
+                    1970-01-01T00:00:02.000000Z\t20
+                    1970-01-01T00:00:03.000000Z\t30
+                    1970-01-01T00:00:04.000000Z\t7
+                    """;
+            assertQuery("SELECT a.ts, b.v FROM (SELECT * FROM a ORDER BY ts DESC) a LT JOIN (SELECT * FROM b ORDER BY ts DESC) b ORDER BY a.ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(ascending);
+            assertQuery("SELECT a.ts, b.v FROM a LT JOIN b ORDER BY a.ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(ascending);
+
+            final String left = "left side of time series join doesn't have ASC timestamp order";
+            assertQuery("SELECT DISTINCT b.k FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b").noLeakCheck().fails(62, left);
+            assertQuery("SELECT DISTINCT a.k, b.k FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b ORDER BY 1").noLeakCheck().fails(67, left);
+            assertQuery("SELECT a.k, sum(b.v) s FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b GROUP BY a.k ORDER BY s").noLeakCheck().fails(65, left);
+            assertQuery("SELECT * FROM (SELECT a.ts, b.v FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b LIMIT 2) ORDER BY ts").noLeakCheck().fails(74, left);
+        });
+    }
+
+    @Test
     public void testResortDropsSampleBySort() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1200,10 +1275,10 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                     .noLeakCheck().fails(64, left);
             assertQuery("SELECT t.ts, sum(b.x) FROM t WINDOW JOIN (SELECT * FROM t ORDER BY ts DESC) b RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW")
                     .noLeakCheck().fails(29, right);
-            assertQuery("SELECT sum(b.x) FROM (SELECT * FROM t ORDER BY ts DESC) a HORIZON JOIN t b RANGE FROM 0s TO 0s STEP 1s AS h")
-                    .noLeakCheck().fails(58, left);
-            assertQuery("SELECT sum(b.x) FROM t a HORIZON JOIN (SELECT * FROM t ORDER BY ts DESC) b RANGE FROM 0s TO 0s STEP 1s AS h")
-                    .noLeakCheck().fails(25, right);
+            assertQuery("SELECT first(b.x) FROM (SELECT * FROM t ORDER BY ts DESC) a HORIZON JOIN t b RANGE FROM 0s TO 0s STEP 1s AS h")
+                    .noLeakCheck().fails(60, left);
+            assertQuery("SELECT first(b.x) FROM t a HORIZON JOIN (SELECT * FROM t ORDER BY ts DESC) b RANGE FROM 0s TO 0s STEP 1s AS h")
+                    .noLeakCheck().fails(27, right);
 
             assertQuery("SELECT ts, sparkline(x), twap(x, ts) FROM (SELECT * FROM t ORDER BY ts DESC) SAMPLE BY 1h")
                     .noLeakCheck().fails(0, "base query does not provide ASC order over designated TIMESTAMP column");
@@ -1329,6 +1404,63 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                             2
                             3
                             """);
+        });
+    }
+
+    @Test
+    public void testUnorderedAggregateDropsDescendingTemporalJoinSort() throws Exception {
+        assertMemoryLeak(() -> {
+            createTemporalJoinTables();
+            final String asOf = """
+                    GroupBy vectorized: false
+                      values: [sum(b.v)]
+                        AsOf Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """;
+            final String sum = """
+                    sum
+                    67
+                    """;
+            assertQuery("SELECT sum(b.v) FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan(asOf)
+                    .returns(sum);
+            assertQuery("SELECT sum(b.v) FROM a ASOF JOIN (SELECT * FROM b ORDER BY ts DESC) b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan(asOf)
+                    .returns(sum);
+            assertQuery("SELECT sum(b.v) FROM (SELECT * FROM a ORDER BY ts DESC) a HORIZON JOIN b RANGE FROM 0s TO 0s STEP 1s AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(sum);
+            assertQuery("SELECT sum(b.v) FROM a HORIZON JOIN (SELECT * FROM b ORDER BY ts DESC) b RANGE FROM 0s TO 0s STEP 1s AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(sum);
+            assertQuery("SELECT sum(b.v) FROM (SELECT * FROM (SELECT * FROM a ORDER BY ts DESC LIMIT 2) ORDER BY ts) a ASOF JOIN b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            37
+                            """);
+
+            final String left = "left side of time series join doesn't have ASC timestamp order";
+            assertQuery("SELECT first(a.k), sum(b.v) FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b").noLeakCheck().fails(70, left);
+            assertQuery("SELECT sum(b.v) FROM (SELECT * FROM a ORDER BY ts DESC LIMIT 2) a ASOF JOIN b").noLeakCheck().fails(66, left);
+            assertQuery("SELECT sum(b.v) FROM (SELECT ts, k, ts + 1 ts2 FROM a ORDER BY ts2 DESC) a ASOF JOIN b").noLeakCheck().fails(75, left);
         });
     }
 

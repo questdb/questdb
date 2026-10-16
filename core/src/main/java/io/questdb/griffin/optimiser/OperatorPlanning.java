@@ -1012,10 +1012,14 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Rejects a time series join step whose master, the first {@code inputCount} ordered inputs of the join, or
-     * whose slave does not emit its rows in ascending designated timestamp order.
+     * Rejects a time series join step whose master, the first {@code inputCount} ordered inputs of the join,
+     * designates no timestamp, which binding defers for a master ordered by a key that is not a timestamp, or whose
+     * master or slave does not emit its rows in ascending designated timestamp order.
      */
     private void validateTimeSeriesOrders(JoinPlan join, int inputCount, LogicalPlan slave, int position) throws SqlException {
+        if (LogicalPlans.joinTimestampColumnId(join, inputCount) < 0) {
+            throw SqlException.$(position, "left side of time series join has no timestamp");
+        }
         readJoinOrder(join, inputCount, false, true);
         if (validatedDirection(PhysicalProperties.masterScanDirection(join, inputCount)) != PhysicalProperties.ScanDirection.FORWARD) {
             throw SqlException.$(position, "left side of time series join doesn't have ASC timestamp order");
@@ -1024,10 +1028,13 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Rejects a time series join step whose master or slave does not emit its rows in ascending designated timestamp
-     * order.
+     * Rejects a time series join step whose master designates no timestamp, as for the join above, or whose master or
+     * slave does not emit its rows in ascending designated timestamp order.
      */
     private void validateTimeSeriesOrders(LogicalPlan master, LogicalPlan slave, int position) throws SqlException {
+        if (timestampIndex(master) < 0) {
+            throw SqlException.$(position, "left side of time series join has no timestamp");
+        }
         readOrder(master, false, true);
         if (scanDirection(master) != PhysicalProperties.ScanDirection.FORWARD) {
             throw SqlException.$(position, "left side of time series join doesn't have ASC timestamp order");

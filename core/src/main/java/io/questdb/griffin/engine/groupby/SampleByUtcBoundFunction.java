@@ -25,32 +25,40 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 
 /**
- * Converts a runtime-constant SAMPLE BY range bound from the sampling timezone to UTC once the bound has its
- * per-execution value. A NULL bound stays NULL.
+ * Converts a runtime-constant SAMPLE BY range bound from the sampling timezone to UTC once the bound and the
+ * timezone have their per-execution values. A NULL bound stays NULL, and a NULL timezone leaves the bound as it is.
  */
-public final class SampleByUtcBoundFunction extends TimestampFunction implements UnaryFunction {
+public final class SampleByUtcBoundFunction extends TimestampFunction implements BinaryFunction {
     private final Function bound;
     private final int boundType;
-    private final TimeZoneRules rules;
+    private final Function timezone;
+    private final int timezonePosition;
+    private TimeZoneRules rules;
 
-    public SampleByUtcBoundFunction(Function bound, TimeZoneRules rules, int timestampType) {
+    public SampleByUtcBoundFunction(Function bound, Function timezone, int timezonePosition, int timestampType) {
         super(timestampType);
         this.bound = bound;
         this.boundType = ColumnType.getTimestampType(bound.getType());
-        this.rules = rules;
+        this.timezone = timezone;
+        this.timezonePosition = timezonePosition;
     }
 
     @Override
-    public Function getArg() {
+    public Function getLeft() {
         return bound;
     }
 
@@ -60,8 +68,24 @@ public final class SampleByUtcBoundFunction extends TimestampFunction implements
     }
 
     @Override
+    public Function getRight() {
+        return timezone;
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         final long timestamp = timestampDriver.from(bound.getTimestamp(rec), boundType);
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestampDriver.toUTC(timestamp, rules);
+        return timestamp == Numbers.LONG_NULL || rules == null ? timestamp : timestampDriver.toUTC(timestamp, rules);
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        BinaryFunction.super.init(symbolTableSource, executionContext);
+        final CharSequence zone = timezone.getStrA(null);
+        try {
+            rules = zone == null ? null : timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
+        } catch (CairoException e) {
+            throw SqlException.$(timezonePosition, "invalid timezone: ").put(zone);
+        }
     }
 }

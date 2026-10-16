@@ -58,14 +58,14 @@ public class DoubleArrayElemSumFunctionFactory implements FunctionFactory {
         int resolvedDims = AbstractDoubleArrayElemFunction.validateArgsAndResolveDims(
                 position, args, argPositions, "array_elem_sum"
         );
-        return new Func(configuration, new ObjList<>(args), resolvedDims);
+        return new Func(configuration, position, new ObjList<>(args), resolvedDims);
     }
 
     private static final class Func extends AbstractDoubleArrayElemFunction {
         private final DoubleList compensation = new DoubleList();
 
-        Func(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims) {
-            super(configuration, args, resolvedDims);
+        Func(CairoConfiguration configuration, int position, ObjList<Function> args, int resolvedDims) {
+            super(configuration, position, args, resolvedDims);
         }
 
         @Override

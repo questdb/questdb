@@ -683,6 +683,98 @@ public class OuterJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinResidualConditionOnDuplicateKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_dup_l (id INT, k INT, v INT)");
+            execute("CREATE TABLE lp_dup_r (id INT, k INT, v INT)");
+            execute("INSERT INTO lp_dup_l VALUES (1, 1, 20), (2, 1, 10), (3, 0, 30), (4, NULL, 40), (5, NULL, 5)");
+            execute("""
+                    INSERT INTO lp_dup_r VALUES (10, 1, 5), (11, 1, 25), (12, 0, 35), (13, 0, 1),
+                        (14, NULL, 50), (15, NULL, 2), (16, 2, 60), (17, 1, 30)
+                    """);
+            final String fullNoMatch = """
+                    lid	rid
+                    null	10
+                    null	11
+                    null	12
+                    null	13
+                    null	14
+                    null	15
+                    null	16
+                    null	17
+                    1	null
+                    2	null
+                    3	null
+                    4	null
+                    5	null
+                    """;
+            final String fullLeftResidual = """
+                    lid	rid
+                    null	16
+                    1	10
+                    1	11
+                    1	17
+                    2	null
+                    3	12
+                    3	13
+                    4	14
+                    4	15
+                    5	null
+                    """;
+            final String crossResidual = """
+                    lid	rid
+                    null	10
+                    null	13
+                    null	15
+                    null	16
+                    1	11
+                    1	17
+                    2	11
+                    2	17
+                    3	12
+                    4	14
+                    5	14
+                    """;
+            final String rightNoMatch = """
+                    lid	rid
+                    null	10
+                    null	11
+                    null	12
+                    null	13
+                    null	14
+                    null	15
+                    null	16
+                    null	17
+                    """;
+            final String rightLeftResidual = """
+                    lid	rid
+                    null	16
+                    1	10
+                    1	11
+                    1	17
+                    3	12
+                    3	13
+                    4	14
+                    4	15
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                final String light = isFullFat ? "" : " Light";
+                // The left side is the smaller one, so the light FULL join hashes it and streams the right side.
+                assertResidualOuterJoin("lp_dup_l l FULL JOIN lp_dup_r r ON l.k = r.k", isFullFat, "Hash Full Outer Join" + light,
+                        fullNoMatch, fullLeftResidual, crossResidual);
+                assertResidualOuterJoin("lp_dup_r r FULL JOIN lp_dup_l l ON l.k = r.k", isFullFat, "Hash Full Outer Join" + light,
+                        fullNoMatch, fullLeftResidual, crossResidual);
+                assertResidualOuterJoin("lp_dup_l l RIGHT JOIN lp_dup_r r ON l.k = r.k", isFullFat, "Hash Right Outer Join" + light,
+                        rightNoMatch, rightLeftResidual, crossResidual);
+            }
+            assertResidualOuterJoin("lp_dup_l l FULL JOIN lp_dup_r r ON l.k + 0 = r.k", false, "Nested Loop Full Join",
+                    fullNoMatch, fullLeftResidual, crossResidual);
+            assertResidualOuterJoin("lp_dup_l l RIGHT JOIN lp_dup_r r ON l.k + 0 = r.k", false, "Nested Loop Right Join",
+                    rightNoMatch, rightLeftResidual, crossResidual);
+        });
+    }
+
+    @Test
     public void testTimestampDesignationClearedForBothOuterSides() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -742,6 +834,20 @@ public class OuterJoinTest extends AbstractCairoTest {
                                 """);
             }
         });
+    }
+
+    private void assertResidualOuterJoin(
+            String join,
+            boolean isFullFat,
+            String expectedPlan,
+            String expectedNoMatch,
+            String expectedLeftResidual,
+            String expectedCrossResidual
+    ) throws Exception {
+        final String prefix = "SELECT l.id lid, r.id rid FROM " + join + " AND ";
+        assertRows(prefix + "r.v > 1000 ORDER BY lid, rid", isFullFat, expectedPlan, expectedNoMatch);
+        assertRows(prefix + "l.v > 15 ORDER BY lid, rid", isFullFat, expectedPlan, expectedLeftResidual);
+        assertRows(prefix + "l.v < r.v ORDER BY lid, rid", isFullFat, expectedPlan, expectedCrossResidual);
     }
 
     private void assertRows(String sql, boolean isFullFat, String expectedPlan, String expected) throws Exception {

@@ -273,6 +273,14 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof ConstCenterGeoWithinRadiusLatLonFunction other) {
+                latFunc.offerStateTo(other.latFunc);
+                lonFunc.offerStateTo(other.lonFunc);
+            }
+        }
+
+        @Override
         public boolean shouldMemoize() {
             return latFunc.shouldMemoize() || lonFunc.shouldMemoize();
         }
@@ -455,6 +463,17 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
                     && centerLatFunc.isThreadSafe()
                     && centerLonFunc.isThreadSafe()
                     && radiusFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof GeoWithinRadiusLatLonFunction other) {
+                centerLatFunc.offerStateTo(other.centerLatFunc);
+                centerLonFunc.offerStateTo(other.centerLonFunc);
+                latFunc.offerStateTo(other.latFunc);
+                lonFunc.offerStateTo(other.lonFunc);
+                radiusFunc.offerStateTo(other.radiusFunc);
+            }
         }
 
         @Override

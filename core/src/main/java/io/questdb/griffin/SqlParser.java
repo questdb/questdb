@@ -8049,6 +8049,7 @@ public class SqlParser {
         }
         rewriteExpression(windowExpression.getRowsLoExpr());
         rewriteExpression(windowExpression.getRowsHiExpr());
+        rewriteExpression(windowExpression.getAnchorExpression());
     }
 
     @NotNull

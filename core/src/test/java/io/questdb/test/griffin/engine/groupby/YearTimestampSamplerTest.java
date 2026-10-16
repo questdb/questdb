@@ -75,6 +75,32 @@ public class YearTimestampSamplerTest {
     }
 
     @Test
+    public void testNegativeOffset() throws Exception {
+        // OFFSET '-01:00' starts each year at 23:00 on Dec 31 of the previous year.
+        for (TimestampDriver driver : new TimestampDriver[]{MicrosTimestampDriver.INSTANCE, NanosTimestampDriver.INSTANCE}) {
+            final TimestampSampler sampler = driver.getTimestampSampler(1, 'y', 0);
+            sampler.setOffset(-driver.fromHours(1));
+            final String[] buckets = {
+                    "2019-12-31T23:00:00.000000Z",
+                    "2020-12-31T23:00:00.000000Z",
+                    "2021-12-31T23:00:00.000000Z",
+            };
+            for (int i = 0; i < buckets.length; i++) {
+                final long bucket = driver.parseFloorLiteral(buckets[i]);
+                Assert.assertEquals(buckets[i], bucket, sampler.round(bucket));
+                Assert.assertEquals(buckets[i], bucket, sampler.round(bucket + driver.fromHours(2)));
+                if (i > 0) {
+                    Assert.assertEquals(buckets[i], driver.parseFloorLiteral(buckets[i - 1]), sampler.round(bucket - 1));
+                    Assert.assertEquals(buckets[i], driver.parseFloorLiteral(buckets[i - 1]), sampler.previousTimestamp(bucket));
+                }
+                if (i < buckets.length - 1) {
+                    Assert.assertEquals(buckets[i], driver.parseFloorLiteral(buckets[i + 1]), sampler.nextTimestamp(bucket));
+                }
+            }
+        }
+    }
+
+    @Test
     public void testSingleStep() throws NumericException {
         testSampler(
                 1,

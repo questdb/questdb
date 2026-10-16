@@ -2269,9 +2269,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 GroupBy vectorized: false
                                   keys: [s]
                                   values: [count(*)]
-                                    FilterOnExcludedValues symbolOrder: desc
+                                    FilterOnExcludedValues
                                       symbolFilter: s not in [null]
-                                        Cursor-order scan
+                                        Table-order scan
                                         Frame forward scan on: trips
                             """);
 
@@ -2575,14 +2575,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     GroupBy vectorized: false
                       keys: [referencePriceType]
                       values: [count(*)]
-                        FilterOnValues symbolOrder: desc
-                            Cursor-order scan
+                        FilterOnValues
+                            Table-order scan
+                              filter: not (referencePriceType in [TYPE1])
                                 Index forward scan on: venue deferred: true
-                                  symbolFilter: venue='VENUE2'
-                                  filter: not (referencePriceType in [TYPE1])
+                                  filter: venue='VENUE2'
                                 Index forward scan on: venue deferred: true
-                                  symbolFilter: venue='VENUE1'
-                                  filter: not (referencePriceType in [TYPE1])
+                                  filter: venue='VENUE1'
                             Frame forward scan on: reference_prices
                     """;
 
@@ -10134,8 +10133,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             String expectedPlan = """
                     Encode sort light lo: 5
                       keys: [s#ORDER#]
-                        FilterOnValues symbolOrder: desc
-                            Cursor-order scan
+                        FilterOnValues
+                            Table-order scan
                                 Index forward scan on: s deferred: true
                                   filter: s=:s2::string
                                 Index forward scan on: s deferred: true
@@ -13826,8 +13825,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         Encode sort light lo: 5
                           keys: [ts desc]
-                            FilterOnValues symbolOrder: desc
-                                Cursor-order scan
+                            FilterOnValues
+                                Table-order scan
                                     Index forward scan on: s deferred: true
                                       filter: s=:s2::string
                                     Index forward scan on: s deferred: true

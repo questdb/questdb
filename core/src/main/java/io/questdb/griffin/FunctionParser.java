@@ -260,7 +260,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     /**
      * Installs the compiler that compiles the sub-queries met outside function binding while it binds a statement,
-     * e.g. in table-function arguments, and returns the previous one for the caller to restore.
+     * e.g. in table-function arguments, or while code generation re-creates a table-function source, and returns the
+     * previous one for the caller to restore.
      */
     SqlCompilerImpl swapCompiler(SqlCompilerImpl compiler) {
         final SqlCompilerImpl previous = this.compiler;

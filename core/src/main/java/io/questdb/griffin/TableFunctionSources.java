@@ -68,6 +68,7 @@ import java.io.Closeable;
  * Owns prepared table-function roots independently of pooled logical descriptions.
  */
 public final class TableFunctionSources implements Closeable, Mutable {
+    private final SqlCompilerImpl compiler;
     private final ObjList<ExpressionNode> expressions = new ObjList<>();
     private final FunctionParser parser;
     private final PlanNodePools planNodes;
@@ -79,7 +80,8 @@ public final class TableFunctionSources implements Closeable, Mutable {
     private SqlParserCallback callback;
     private Path path;
 
-    public TableFunctionSources(FunctionParser parser, PlanNodePools planNodes) {
+    public TableFunctionSources(SqlCompilerImpl compiler, FunctionParser parser, PlanNodePools planNodes) {
+        this.compiler = compiler;
         this.parser = parser;
         this.planNodes = planNodes;
     }
@@ -190,7 +192,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
 
     /**
      * Copies a prepared source without its output, which the caller fills. The copy creates its own
-     * function from the same call when generated.
+     * function from the same call when generated, over the sub-queries binding compiled for the call.
      */
     public FunctionSourcePlan copy(FunctionSourcePlan plan) {
         final int index = prepared.indexOf(plan);
@@ -300,7 +302,13 @@ public final class TableFunctionSources implements Closeable, Mutable {
             return createShowFactory(show, executionContext, callback, path());
         }
         final ExpressionNode expression = expressions.getQuick(index);
-        final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
+        final SqlCompilerImpl previous = parser.swapCompiler(compiler);
+        final Function function;
+        try {
+            function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
+        } finally {
+            parser.swapCompiler(previous);
+        }
         if (!(function instanceof CursorFunction)) {
             final SqlException exception = SqlException.$(plan.getPosition(), "function must return CURSOR");
             Misc.free(function, exception);

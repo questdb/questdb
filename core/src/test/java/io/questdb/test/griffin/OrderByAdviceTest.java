@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -971,6 +973,63 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSortedSymbolIndexSkipsCountedPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 'a'::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(1_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT ('a' || (x % 3))::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(1_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE c AS (SELECT x::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE c ADD COLUMN sym SYMBOL INDEX");
+            execute("INSERT INTO c SELECT (500 + x)::TIMESTAMP, 'b' FROM long_sequence(500)");
+            sqlExecutionContext.changePageFrameSizes(100, 100);
+            String query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym, ts LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000998Z	a
+                            1970-01-01T00:00:00.000999Z	a
+                            1970-01-01T00:00:00.001000Z	a
+                            """);
+            assertWalksFewRows(query);
+            query = "SELECT ts, sym FROM m WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym, ts LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000992Z	a2
+                            1970-01-01T00:00:00.000995Z	a2
+                            1970-01-01T00:00:00.000998Z	a2
+                            """);
+            assertWalksFewRows(query);
+            query = "SELECT ts, sym FROM m WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym DESC, ts DESC LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000009Z	a0
+                            1970-01-01T00:00:00.000006Z	a0
+                            1970-01-01T00:00:00.000003Z	a0
+                            """);
+            assertWalksFewRows(query);
+            query = "SELECT ts, sym FROM c WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym, ts LIMIT 498, 503";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000499Z\t
+                            1970-01-01T00:00:00.000500Z\t
+                            1970-01-01T00:00:00.000501Z	b
+                            1970-01-01T00:00:00.000502Z	b
+                            1970-01-01T00:00:00.000503Z	b
+                            """);
+            assertWalksFewRows(query);
+        });
+    }
+
+    @Test
     public void testSymbolSearchOrderBy() throws Exception {
         final String expected = """
                 sym\tprice\tts
@@ -1855,5 +1914,16 @@ public class OrderByAdviceTest extends AbstractCairoTest {
 
     private static void createKeyTable(String name, String partitionBy) throws Exception {
         execute("CREATE TABLE " + name + " AS (SELECT x id, ('S' || (x % 3))::SYMBOL s, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(24)), INDEX(s) TIMESTAMP(ts) PARTITION BY " + partitionBy);
+    }
+
+    private void assertWalksFewRows(String query) throws Exception {
+        PageFrameRecordCursorImpl.testWalkedRows.set(0);
+        PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+        try {
+            printSql(query, new StringSink());
+        } finally {
+            PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+        }
+        Assert.assertTrue("rows walked: " + PageFrameRecordCursorImpl.testWalkedRows.get(), PageFrameRecordCursorImpl.testWalkedRows.get() < 100);
     }
 }

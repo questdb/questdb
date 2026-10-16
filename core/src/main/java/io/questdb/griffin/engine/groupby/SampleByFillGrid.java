@@ -70,6 +70,8 @@ final class SampleByFillGrid {
     // Lazily-allocated TZ wrap around baseSampler. Reused across of() calls
     // via setTzRules; held even after a fixed-offset of() for the next bind.
     private TimezoneFloorTimestampSampler tzWrap;
+    // Rules of the TIME ZONE resolved by of(), null when the grid is not zoned.
+    private TimeZoneRules tzRules;
 
     SampleByFillGrid(
             TimestampSampler timestampSampler,
@@ -115,9 +117,11 @@ final class SampleByFillGrid {
         firstRowTimestamp = firstTs;
         final boolean currentBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
         long bucket = currentBucketIsFirstTs ? firstTs : fromTs;
-        if (calendarOffset != 0 && fromTs == Numbers.LONG_NULL) {
-            // No FROM but offset exists: align grid to offset so round()
-            // matches timestamp_floor_utc buckets.
+        if (fromTs == Numbers.LONG_NULL && (calendarOffset != 0 || tzRules != null)) {
+            // No FROM: align grid to the offset so round() matches
+            // timestamp_floor_utc buckets. A zoned grid cannot anchor at
+            // the first bucket instead, as a bucket that starts at a DST
+            // transition does not sit on the local grid.
             timestampSampler.setOffset(calendarOffset);
             bucket = timestampSampler.round(bucket);
         } else if (calendarOffset != 0 && currentBucketIsFirstTs) {
@@ -248,7 +252,6 @@ final class SampleByFillGrid {
             tzFunc.init(symbolTableSource, executionContext);
             final CharSequence tz = tzFunc.getStrA(null);
             if (tz != null) {
-                final TimeZoneRules tzRules;
                 try {
                     tzRules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                 } catch (CairoException e) {
@@ -262,6 +265,7 @@ final class SampleByFillGrid {
                 timestampSampler = tzWrap;
             } else {
                 timestampSampler = baseSampler;
+                tzRules = null;
             }
         }
     }
@@ -284,6 +288,9 @@ final class SampleByFillGrid {
         // Long.MIN_VALUE is QuestDB's universal timestamp null sentinel.
         if (maxTimestamp == Numbers.LONG_NULL) {
             hasExplicitTo = false;
+        } else if (tzRules != null) {
+            // TO is local time, and the range filter bounds the rows at its UTC instant.
+            maxTimestamp = driver.toUTC(maxTimestamp, tzRules);
         }
     }
 }

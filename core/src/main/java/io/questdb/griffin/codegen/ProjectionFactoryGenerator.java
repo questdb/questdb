@@ -39,28 +39,7 @@ import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.memoization.ArrayFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.BinFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DecimalFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.GeoHashFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IntervalFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.Long128FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.ShortFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.StrFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.SymbolFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.VarcharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -281,34 +260,11 @@ final class ProjectionFactoryGenerator {
         if (!isVolatileReadTwice && (!SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION || referenceCount <= 1 && !function.shouldMemoize())) {
             return function;
         }
-        return switch (ColumnType.tagOf(function.getType())) {
-            case ColumnType.LONG -> new LongFunctionMemoizer(function);
-            case ColumnType.INT -> new IntFunctionMemoizer(function);
-            case ColumnType.TIMESTAMP -> new TimestampFunctionMemoizer(function);
-            case ColumnType.DOUBLE -> new DoubleFunctionMemoizer(function);
-            case ColumnType.SHORT -> new ShortFunctionMemoizer(function);
-            case ColumnType.BOOLEAN -> new BooleanFunctionMemoizer(function);
-            case ColumnType.BYTE -> new ByteFunctionMemoizer(function);
-            case ColumnType.CHAR -> new CharFunctionMemoizer(function);
-            case ColumnType.DATE -> new DateFunctionMemoizer(function);
-            case ColumnType.FLOAT -> new FloatFunctionMemoizer(function);
-            case ColumnType.IPv4 -> new IPv4FunctionMemoizer(function);
-            case ColumnType.UUID -> new UuidFunctionMemoizer(function);
-            case ColumnType.LONG256 -> new Long256FunctionMemoizer(function);
-            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
-                 ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
-                    new DecimalFunctionMemoizer(function);
-            case ColumnType.ARRAY -> new ArrayFunctionMemoizer(function);
-            case ColumnType.STRING -> new StrFunctionMemoizer(function);
-            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> new VarcharFunctionMemoizer(function);
-            case ColumnType.SYMBOL -> new SymbolFunctionMemoizer(function);
-            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                    new GeoHashFunctionMemoizer(function);
-            case ColumnType.BINARY -> isVolatileReadTwice ? new BinFunctionMemoizer(function) : function;
-            case ColumnType.LONG128 -> new Long128FunctionMemoizer(function);
-            case ColumnType.INTERVAL -> new IntervalFunctionMemoizer(function);
-            default -> function;
-        };
+        if (ColumnType.tagOf(function.getType()) == ColumnType.BINARY && !isVolatileReadTwice) {
+            return function;
+        }
+        final MemoizerFunction memoizer = MemoizerFunction.newInstance(function);
+        return memoizer != null ? memoizer : function;
     }
 
     /**

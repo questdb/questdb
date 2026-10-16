@@ -35,7 +35,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -84,7 +84,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class RegexpReplaceStrFunction extends StrFunction implements UnaryFunction {
+    protected static class RegexpReplaceStrFunction extends StrFunction implements TernaryFunction {
         private final int functionPos;
         private final int maxLength;
         private final Function pattern;
@@ -113,13 +113,23 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() {
-            return value;
+        public Function getCenter() {
+            return pattern;
         }
 
         @Override
         public int getComplexity() {
-            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
+            return Function.addComplexity(COMPLEXITY_REGEX, value.getComplexity());
+        }
+
+        @Override
+        public Function getLeft() {
+            return value;
+        }
+
+        @Override
+        public Function getRight() {
+            return replacement;
         }
 
         @Override
@@ -134,10 +144,8 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            pattern.init(symbolTableSource, executionContext);
+            TernaryFunction.super.init(symbolTableSource, executionContext);
             matcher = RegexUtils.createMatcher(pattern, patternPos);
-            replacement.init(symbolTableSource, executionContext);
             CharSequence cs = replacement.getStrA(null);
             if (cs == null) {
                 replacementStr = null;

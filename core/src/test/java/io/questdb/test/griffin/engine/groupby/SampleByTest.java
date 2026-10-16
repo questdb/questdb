@@ -8357,6 +8357,63 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneVariableFromTo() throws Exception {
+        // FROM/TO binds keep the SAMPLE BY cursor, which takes FROM/TO in UTC for a sub-day
+        // stride. The TIME ZONE bind converts them on every execution of the same factory.
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
+                "Europe/Berlin",
+                """
+                        ts\tc\ts
+                        2021-03-27T23:00:00.000000Z\t1\t1.0
+                        2021-03-28T00:00:00.000000Z\t1\t2.0
+                        """,
+                bindVariableService -> {
+                    bindVariableService.setStr(0, "Europe/Berlin");
+                    bindVariableService.setStr(1, "2021-03-28");
+                    bindVariableService.setStr(2, "2021-03-28T04");
+                }
+        ));
+        cases.add(BindVarTuple.fails(
+                "invalid timezone",
+                93,
+                "invalid timezone: Oopsie",
+                bindVariableService -> {
+                    bindVariableService.setStr(0, "Oopsie");
+                    bindVariableService.setStr(1, "2021-03-28");
+                    bindVariableService.setStr(2, "2021-03-28T04");
+                }
+        ));
+        cases.add(BindVarTuple.ok(
+                "America/New_York",
+                """
+                        ts\tc\ts
+                        2021-03-28T06:00:00.000000Z\t1\t4.0
+                        """,
+                bindVariableService -> {
+                    bindVariableService.setStr(0, "America/New_York");
+                    bindVariableService.setStr(1, "2021-03-28");
+                    bindVariableService.setStr(2, "2021-03-28T04");
+                }
+        ));
+        assertQuery("SELECT ts, count() c, sum(v) s FROM x SAMPLE BY 1h FROM $2 TO $3 ALIGN TO CALENDAR TIME ZONE $1")
+                .ddl(
+                        "CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO x VALUES
+                                (1.0, '2021-03-27T23:30:00.000000Z'),
+                                (2.0, '2021-03-28T00:30:00.000000Z'),
+                                (3.0, '2021-03-28T02:30:00.000000Z'),
+                                (4.0, '2021-03-28T06:30:00.000000Z'),
+                                (5.0, '2021-03-28T09:30:00.000000Z')
+                                """
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
+    }
+
+    @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarUTC() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));

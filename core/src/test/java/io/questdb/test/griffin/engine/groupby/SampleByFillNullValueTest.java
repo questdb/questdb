@@ -6,9 +6,17 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -349,6 +357,221 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             null\t2024-10-24T04:00:00.000000Z
                             3.0\t2024-10-31T05:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testFillNullDstBerlinSpringForwardDayStrideWithOffsetInGap() throws Exception {
+        // OFFSET '02:00' puts the Mar 28 grid line in the DST gap, so timestamp_floor_utc
+        // starts that bucket at 01:00Z (03:00 CEST): 23 h after the Mar 27 bucket and
+        // 23 h before the Mar 29 bucket at 00:00Z (02:00 CEST).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-03-26T12:00:00.000000Z'),
+                    (2.0, '2021-03-28T12:00:00.000000Z'),
+                    (3.0, '2021-03-30T12:00:00.000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tts
+                            1.0\t2021-03-26T01:00:00.000000Z
+                            null\t2021-03-27T01:00:00.000000Z
+                            2.0\t2021-03-28T01:00:00.000000Z
+                            null\t2021-03-29T00:00:00.000000Z
+                            3.0\t2021-03-30T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullDstBerlinSpringForwardDayStrideWithOffsetInGapKeyed() throws Exception {
+        // Keyed mirror of testFillNullDstBerlinSpringForwardDayStrideWithOffsetInGap. // ORDER BY-safe
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1.0, '2021-03-26T12:00:00.000000Z'),
+                    ('b', 2.0, '2021-03-28T12:00:00.000000Z'),
+                    ('a', 3.0, '2021-03-30T12:00:00.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT ts, k, sum(val) s FROM x
+                        SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'
+                    ) ORDER BY ts, k""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tk\ts
+                            2021-03-26T01:00:00.000000Z\ta\t1.0
+                            2021-03-26T01:00:00.000000Z\tb\tnull
+                            2021-03-27T01:00:00.000000Z\ta\tnull
+                            2021-03-27T01:00:00.000000Z\tb\tnull
+                            2021-03-28T01:00:00.000000Z\ta\tnull
+                            2021-03-28T01:00:00.000000Z\tb\t2.0
+                            2021-03-29T00:00:00.000000Z\ta\tnull
+                            2021-03-29T00:00:00.000000Z\tb\tnull
+                            2021-03-30T00:00:00.000000Z\ta\t3.0
+                            2021-03-30T00:00:00.000000Z\tb\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullDstBerlinFallBackDayStrideWithOffsetInOverlap() throws Exception {
+        // OFFSET '02:00' puts the Oct 31 grid line in the DST overlap, which local
+        // 02:00 enters twice. timestamp_floor_utc keeps the instants of each pass in
+        // their own bucket: 00:00Z (02:00 CEST) holds one hour, and 01:00Z (02:00 CET)
+        // holds the rest of the day.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-10-29T12:00:00.000000Z'),
+                    (2.0, '2021-10-31T12:00:00.000000Z'),
+                    (3.0, '2021-11-02T12:00:00.000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tts
+                            1.0\t2021-10-29T00:00:00.000000Z
+                            null\t2021-10-30T00:00:00.000000Z
+                            null\t2021-10-31T00:00:00.000000Z
+                            2.0\t2021-10-31T01:00:00.000000Z
+                            null\t2021-11-01T01:00:00.000000Z
+                            3.0\t2021-11-02T01:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullDstHavanaSpringForwardDayStrideFirstBucket() throws Exception {
+        // Havana springs forward at local midnight, so the Mar 14 bucket starts at
+        // 05:00Z (01:00 CDT), off the local midnight grid. The first row falls in it,
+        // and the following buckets still start at local midnight (04:00Z).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-03-14T06:00:00.000000Z'),
+                    (2.0, '2021-03-16T12:00:00.000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/Havana'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tts
+                            1.0\t2021-03-14T05:00:00.000000Z
+                            null\t2021-03-15T04:00:00.000000Z
+                            2.0\t2021-03-16T04:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullDstMatchesNonFillBuckets() throws Exception {
+        // Around each 2021 DST transition of several zones, FILL(NULL) over sparse rows
+        // emits exactly the buckets that the query without FILL emits over rows every
+        // 15 minutes, holding the sparse rows' values and NULL elsewhere.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dense AS (
+                        SELECT x::DOUBLE v, ('2021-01-01'::TIMESTAMP + (x - 1) * 900_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(35_040)
+                    ) TIMESTAMP(ts) PARTITION BY MONTH""");
+            execute("CREATE TABLE sparse AS (SELECT * FROM dense WHERE v::LONG % 83 = 0 OR v::LONG % 1009 < 4) TIMESTAMP(ts) PARTITION BY MONTH");
+            final String[] zones = {"Europe/Berlin", "America/New_York", "Australia/Sydney", "America/Havana", "America/Santiago", "Australia/Lord_Howe"};
+            final String[] strides = {"1d", "1h", "30m"};
+            final String[] offsets = {"", " WITH OFFSET '02:00'", " WITH OFFSET '-01:00'"};
+            final long yearEnd = MicrosFormatUtils.parseTimestamp("2021-12-25T00:00:00.000000Z");
+            final StringSink lo = new StringSink();
+            final StringSink hi = new StringSink();
+            final StringSink expected = new StringSink();
+            for (String zone : zones) {
+                final TimeZoneRules rules = Micros.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
+                long transition = rules.getNextDST(MicrosFormatUtils.parseTimestamp("2021-01-05T00:00:00.000000Z"));
+                for (; transition < yearEnd; transition = rules.getNextDST(transition)) {
+                    lo.clear();
+                    hi.clear();
+                    MicrosFormatUtils.appendDateTimeUSec(lo, transition - 3 * Micros.DAY_MICROS);
+                    MicrosFormatUtils.appendDateTimeUSec(hi, transition + 3 * Micros.DAY_MICROS);
+                    for (String stride : strides) {
+                        for (String offset : offsets) {
+                            final String align = " ALIGN TO CALENDAR TIME ZONE '" + zone + "'" + offset;
+                            final String window = " WHERE ts >= '" + lo + "' AND ts < '" + hi + "' SAMPLE BY " + stride;
+                            final String range = " SAMPLE BY " + stride + " FROM '" + lo + "' TO '" + hi + "'";
+                            assertMatchesNonFillBuckets(window, align, true, expected);
+                            assertMatchesNonFillBuckets(range, align, false, expected);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFillNullNegativeOffsetMonthKeyed() throws Exception {
+        // A negative OFFSET starts each month at 23:00 on the previous day. // ORDER BY-safe
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1.0, '2021-01-15T12:00:00.000000Z'),
+                    ('b', 2.0, '2021-03-15T12:00:00.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT ts, k, sum(val) s FROM x SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-01:00'
+                    ) ORDER BY ts, k""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tk\ts
+                            2020-12-31T23:00:00.000000Z\ta\t1.0
+                            2020-12-31T23:00:00.000000Z\tb\tnull
+                            2021-01-31T23:00:00.000000Z\ta\tnull
+                            2021-01-31T23:00:00.000000Z\tb\tnull
+                            2021-02-28T23:00:00.000000Z\ta\tnull
+                            2021-02-28T23:00:00.000000Z\tb\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullNegativeOffsetMonthYearMatchesNonFillBuckets() throws Exception {
+        // A month or year grid with a negative OFFSET starts each bucket on the previous
+        // day. FILL(NULL) over sparse rows emits exactly the buckets that the query without
+        // FILL emits over rows every 6 hours, with and without TIME ZONE.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dense AS (
+                        SELECT x::DOUBLE v, ('2019-01-01'::TIMESTAMP + (x - 1) * 21_600_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(7_300)
+                    ) TIMESTAMP(ts) PARTITION BY MONTH""");
+            execute("""
+                    CREATE TABLE sparse AS (
+                        SELECT * FROM dense WHERE v::LONG % 211 = 0 AND (ts < '2021-01-01' OR ts >= '2022-01-01')
+                    ) TIMESTAMP(ts) PARTITION BY MONTH""");
+            final StringSink expected = new StringSink();
+            for (String stride : new String[]{"1M", "1y"}) {
+                for (String zone : new String[]{"", " TIME ZONE 'Europe/Berlin'"}) {
+                    for (String offset : new String[]{" WITH OFFSET '-01:00'", " WITH OFFSET '-00:30'", " WITH OFFSET '02:00'", ""}) {
+                        assertMatchesNonFillBuckets(" SAMPLE BY " + stride, " ALIGN TO CALENDAR" + zone + offset, true, expected);
+                    }
+                }
+            }
         });
     }
 
@@ -712,7 +935,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // 2024-01-01T00:00Z, 02T, 03T -- one tzOff ahead of GROUP BY's
         // TZ-shifted grid. Post-fix: routes through the wrap with
         // setLocalAnchor, emitting 22:00Z prev day each day matching
-        // timestamp_floor_utc.
+        // timestamp_floor_utc, up to TO at 2024-01-03T22:00Z.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' "
@@ -725,7 +948,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             null\t2023-12-31T22:00:00.000000Z
                             null\t2024-01-01T22:00:00.000000Z
                             null\t2024-01-02T22:00:00.000000Z
-                            null\t2024-01-03T22:00:00.000000Z
                             """);
         });
     }
@@ -804,6 +1026,57 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             1.0\t2024-01-02T05:00:00.000000Z
                             null\t2024-01-03T05:00:00.000000Z
                             3.0\t2024-01-04T05:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullTimezoneDayStrideToBoundEast() throws Exception {
+        // TO is local time: the range ends at 2021-12-04 00:00 CET (12-03T23:00Z), so no
+        // bucket starts at TO, and the row after TO does not turn its bucket into a gap row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-12-02T12:00:00.000000Z'),
+                    (2.0, '2021-12-03T23:30:00.000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2021-12-01' TO '2021-12-04' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tts
+                            null\t2021-11-30T23:00:00.000000Z
+                            1.0\t2021-12-01T23:00:00.000000Z
+                            null\t2021-12-02T23:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullTimezoneDayStrideToBoundWest() throws Exception {
+        // TO is local time: the range ends at 2021-12-04 00:00 EST (12-04T05:00Z), so the
+        // bucket at 12-04T04:00Z (12-03 23:00 EST) keeps the row before TO.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-12-02T12:00:00.000000Z'),
+                    (2.0, '2021-12-04T04:30:00.000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2021-12-01' TO '2021-12-04' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York' WITH OFFSET '-01:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tts
+                            null\t2021-12-01T04:00:00.000000Z
+                            1.0\t2021-12-02T04:00:00.000000Z
+                            null\t2021-12-03T04:00:00.000000Z
+                            2.0\t2021-12-04T04:00:00.000000Z
                             """);
         });
     }
@@ -2240,5 +2513,33 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             1970-01-02T00:00:00.000000Z\t10.0
                             """);
         });
+    }
+
+    private void assertMatchesNonFillBuckets(String sampleBy, String align, boolean isClippedToRows, StringSink expected) throws Exception {
+        final String sparse = "SELECT ts, count() c, sum(v) s FROM sparse" + sampleBy;
+        expected.clear();
+        if (isClippedToRows) {
+            // Without FROM/TO the fill spans the buckets from the first to the last row.
+            try (
+                    RecordCursorFactory factory = select("SELECT min(ts), max(ts) FROM (" + sparse + align + ")");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                expected.put(" WHERE g.ts BETWEEN '");
+                MicrosFormatUtils.appendDateTimeUSec(expected, cursor.getRecord().getTimestamp(0));
+                expected.put("' AND '");
+                MicrosFormatUtils.appendDateTimeUSec(expected, cursor.getRecord().getTimestamp(1));
+                expected.put('\'');
+            }
+        }
+        final String bounds = expected.toString();
+        expected.clear();
+        printSql("SELECT g.ts ts, r.c c, r.s s FROM (SELECT ts, count() c FROM dense" + sampleBy + align + ") g"
+                + " LEFT JOIN (" + sparse + align + ") r ON g.ts = r.ts" + bounds + " ORDER BY g.ts", expected);
+        assertQuery(sparse + " FILL(NULL)" + align)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 }

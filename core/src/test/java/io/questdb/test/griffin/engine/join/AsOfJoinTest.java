@@ -1887,6 +1887,183 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOrderInsensitiveAggregateOverDescendingInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescendingInputTables();
+            execute("CREATE VIEW trades_desc AS (SELECT * FROM trades ORDER BY ts DESC)");
+            drainWalAndViewQueues();
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t ASOF JOIN quotes q",
+                    "SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q",
+                    """
+                            sum
+                            115
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t ASOF JOIN quotes q ON (sym)",
+                    "SELECT count(), sum(q.bid) FROM trades t ASOF JOIN quotes q ON (sym)",
+                    """
+                            count\tsum
+                            4\t105
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(), count(q.bid), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t ASOF JOIN quotes q TOLERANCE 400T",
+                    "SELECT count(), count(q.bid), sum(q.bid) FROM trades t ASOF JOIN quotes q TOLERANCE 400T",
+                    """
+                            count\tcount1\tsum
+                            4\t2\t75
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(q.bid), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC, qty) t ASOF JOIN quotes q ON (sym) TOLERANCE 400T",
+                    "SELECT count(q.bid), sum(q.bid) FROM trades t ASOF JOIN quotes q ON (sym) TOLERANCE 400T",
+                    """
+                            count\tsum
+                            1\t25
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(DISTINCT q.sym) FROM (SELECT * FROM trades ORDER BY ts DESC) t ASOF JOIN quotes q",
+                    "SELECT count(DISTINCT q.sym) FROM trades t ASOF JOIN quotes q",
+                    """
+                            count_distinct
+                            2
+                            """
+            );
+            final String keyed = """
+                    sym\tsum
+                    A\t40
+                    B\t75
+                    """;
+            assertQuery("SELECT t.sym, sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t ASOF JOIN quotes q ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(keyed);
+            assertQuery("SELECT t.sym, sum(q.bid) FROM trades t ASOF JOIN quotes q ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(keyed);
+            assertSameAsUnordered(
+                    "SELECT sum(bid) FROM (SELECT t.qty, q.bid FROM (SELECT ts, sym, qty FROM trades WHERE qty > 1 ORDER BY ts DESC) t ASOF JOIN quotes q)",
+                    "SELECT sum(bid) FROM (SELECT t.qty, q.bid FROM (SELECT ts, sym, qty FROM trades WHERE qty > 1) t ASOF JOIN quotes q)",
+                    """
+                            sum
+                            105
+                            """
+            );
+            assertSameAsUnordered(
+                    "WITH d AS (SELECT * FROM trades ORDER BY ts DESC) SELECT sum(q.bid), sum(p.bid) FROM d ASOF JOIN quotes q LT JOIN quotes p",
+                    "SELECT sum(q.bid), sum(p.bid) FROM trades d ASOF JOIN quotes q LT JOIN quotes p",
+                    """
+                            sum\tsum1
+                            115\t110
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM trades_desc t ASOF JOIN quotes q",
+                    "SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q",
+                    """
+                            sum
+                            115
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM trades t ASOF JOIN (SELECT * FROM quotes ORDER BY ts DESC) q",
+                    "SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q",
+                    """
+                            sum
+                            115
+                            """
+            );
+            assertQuery("SELECT t.qty, q.bid FROM trades_desc t ASOF JOIN quotes q")
+                    .noLeakCheck()
+                    .fails(39, "left side of time series join doesn't have ASC timestamp order");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOrderInsensitiveAggregateOverNonTimestampOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescendingInputTables();
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM (SELECT * FROM trades ORDER BY qty DESC) t ASOF JOIN quotes q",
+                    "SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q",
+                    """
+                            sum
+                            115
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(), sum(q.bid) FROM (SELECT ts, sym FROM trades WHERE qty > 1 ORDER BY sym, qty) t LT JOIN quotes q ON (sym)",
+                    "SELECT count(), sum(q.bid) FROM (SELECT ts, sym FROM trades WHERE qty > 1) t LT JOIN quotes q ON (sym)",
+                    """
+                            count\tsum
+                            3\t90
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(q.bid), sum(q.bid) FROM (SELECT * FROM trades ORDER BY qty) t ASOF JOIN quotes q TOLERANCE 400T",
+                    "SELECT count(q.bid), sum(q.bid) FROM trades t ASOF JOIN quotes q TOLERANCE 400T",
+                    """
+                            count\tsum
+                            2\t75
+                            """
+            );
+            final String resorted = """
+                    qty\tbid
+                    1\t10
+                    2\t25
+                    3\t30
+                    4\t50
+                    """;
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY qty DESC) t ASOF JOIN quotes q ORDER BY t.ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(resorted);
+            assertQuery("SELECT t.qty, q.bid FROM trades t ASOF JOIN quotes q ORDER BY t.ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(resorted);
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY qty DESC) t ASOF JOIN quotes q ORDER BY t.qty")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(resorted);
+            final String ltResorted = """
+                    qty\tbid
+                    1\t10
+                    2\t20
+                    3\t30
+                    4\t50
+                    """;
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY qty DESC) t LT JOIN quotes q ORDER BY t.qty")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(ltResorted);
+            assertQuery("SELECT t.qty, q.bid FROM trades t LT JOIN quotes q ORDER BY t.qty")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(ltResorted);
+            final String noTimestamp = "left side of time series join has no timestamp";
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY qty DESC) t ASOF JOIN quotes q")
+                    .noLeakCheck()
+                    .fails(68, noTimestamp);
+            assertQuery("SELECT first(t.qty), sum(q.bid) FROM (SELECT * FROM trades ORDER BY qty DESC) t ASOF JOIN quotes q")
+                    .noLeakCheck()
+                    .fails(80, noTimestamp);
+            assertQuery("SELECT sum(q.bid) FROM (SELECT * FROM trades ORDER BY qty DESC LIMIT 2) t ASOF JOIN quotes q")
+                    .noLeakCheck()
+                    .fails(74, noTimestamp);
+            assertQuery("SELECT sum(q.bid) FROM trades t ASOF JOIN (SELECT * FROM quotes ORDER BY bid) q")
+                    .noLeakCheck()
+                    .fails(32, "right side of time series join has no timestamp");
+        });
+    }
+
+    @Test
     public void testAsOfJoinSymbolAndDecimalKeys() throws Exception {
         assertMemoryLeak(() -> {
             assertAsOfJoinSymbolAndDecimalKey("dec8", "DECIMAL(2,1)", "1.2", "2.3");
@@ -5324,6 +5501,45 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinOrderInsensitiveAggregateOverDescendingInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescendingInputTables();
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t LT JOIN quotes q",
+                    "SELECT sum(q.bid) FROM trades t LT JOIN quotes q",
+                    """
+                            sum
+                            110
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t LT JOIN quotes q ON (sym)",
+                    "SELECT count(), sum(q.bid) FROM trades t LT JOIN quotes q ON (sym)",
+                    """
+                            count\tsum
+                            4\t100
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(q.bid), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t LT JOIN quotes q TOLERANCE 400T",
+                    "SELECT count(q.bid), sum(q.bid) FROM trades t LT JOIN quotes q TOLERANCE 400T",
+                    """
+                            count\tsum
+                            1\t50
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM trades t LT JOIN (SELECT * FROM quotes ORDER BY ts DESC) q ON (sym)",
+                    "SELECT sum(q.bid) FROM trades t LT JOIN quotes q ON (sym)",
+                    """
+                            sum
+                            100
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testLtJoinSequenceGap() throws Exception {
         assertMemoryLeak(() -> {
             // create table
@@ -6788,6 +7004,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertQuery(query).noLeakCheck().fullFatJoins().timestamp("ts").noRandomAccess().expectSize(!isFiltered).returns(expected);
     }
 
+    private void assertSameAsUnordered(String query, String unorderedQuery, String expected) throws Exception {
+        assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+        assertQuery(unorderedQuery).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+    }
+
     private void createBook() throws Exception {
         executeWithRewriteTimestamp(
                 "CREATE TABLE book (ts #TIMESTAMP, sym SYMBOL, side SYMBOL, side_str STRING, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
@@ -6799,6 +7020,33 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ('2024-01-01T00:00:02.000000Z', 'MSFT', 'sell', 'sell', 2),
                     ('2024-01-01T00:00:03.000000Z', 'IBM', 'buy', 'sell', 3),
                     ('2024-01-01T00:00:04.000000Z', 'AAPL', 'buy', 'buy', 4)
+                """);
+    }
+
+    private void createDescendingInputTables() throws Exception {
+        executeWithRewriteTimestamp(
+                "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                leftTableTimestampType.getTypeName()
+        );
+        executeWithRewriteTimestamp(
+                "CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                rightTableTimestampType.getTypeName()
+        );
+        execute("""
+                INSERT INTO trades VALUES
+                    ('2024-01-01T00:00:01.000000Z', 'A', 1),
+                    ('2024-01-01T00:00:02.000000Z', 'B', 2),
+                    ('2024-01-01T00:00:03.000000Z', 'A', 3),
+                    ('2024-01-01T00:00:04.000000Z', 'B', 4)
+                """);
+        execute("""
+                INSERT INTO quotes VALUES
+                    ('2024-01-01T00:00:00.500000Z', 'A', 10),
+                    ('2024-01-01T00:00:01.500000Z', 'B', 20),
+                    ('2024-01-01T00:00:02.000000Z', 'B', 25),
+                    ('2024-01-01T00:00:02.500000Z', 'A', 30),
+                    ('2024-01-01T00:00:03.500000Z', 'B', 40),
+                    ('2024-01-01T00:00:03.800000Z', 'A', 50)
                 """);
     }
 

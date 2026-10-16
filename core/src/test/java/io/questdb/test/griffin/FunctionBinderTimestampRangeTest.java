@@ -375,6 +375,30 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUndefinedParameterTakesTheComparedTimestampType() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+                final OutputSchema input = new OutputSchema().add(70, "ts", type, true);
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                    for (ExpressionNode predicate : new ExpressionNode[]{call("=", literal("ts"), parameter("$1")),
+                            call("<", parameter("$1"), literal("ts")), call("!=", literal("ts"), parameter("$1")),
+                            call(">=", call("dateadd", constant("'s'"), constant("1"), literal("ts")), parameter("$1")),
+                            call("between", literal("ts"), parameter("$1"), parameter("$2"))}) {
+                        bindVariableService.clear();
+                        binder.bindPredicate(predicate, input, null, sqlExecutionContext);
+                        Assert.assertEquals(type, bindVariableService.getFunction(0).getType());
+                        if (predicate.paramCount == 3) {
+                            Assert.assertEquals(type, bindVariableService.getFunction(1).getType());
+                        }
+                        binder.clear();
+                    }
+                }
+            }
+            bindVariableService.clear();
+        });
+    }
+
     private static ExpressionNode call(String name, ExpressionNode... args) {
         final int type = "between".equals(name) || "in".equals(name) && args.length == 2
                 ? ExpressionNode.SET_OPERATION : ExpressionNode.FUNCTION;

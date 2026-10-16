@@ -87,6 +87,7 @@ import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
@@ -151,17 +152,20 @@ import static io.questdb.griffin.SqlKeywords.*;
  * placeholders of calls left unconstructed. Every phase but {@link #resolveCast} releases the arguments when it
  * fails.
  */
-public class FunctionResolver implements Mutable {
+public class FunctionResolver implements Mutable, SwitchFunctionFactory.EqualityFactory {
     private static final boolean ASSERTIONS_ENABLED = FunctionResolver.class.desiredAssertionStatus();
     private static final Log LOG = LogFactory.getLog(FunctionResolver.class);
     private final IntList argTraits = new IntList();
     private final IntList argTypes = new IntList();
     private final CairoConfiguration configuration;
+    private final ObjList<Function> equalityArgs = new ObjList<>();
+    private final IntList equalityPositions = new IntList();
     private final SqlExecutionRequirements executionRequirements = new SqlExecutionRequirements();
     private final FunctionFactoryCache functionFactoryCache;
     private final ObjList<Class<? extends FunctionFactory>> implicitConversions = new ObjList<>();
     private final Long256Impl long256Sink = new Long256Impl();
     private boolean cursorFunctionInstantiated;
+    private FunctionResolver equalityResolver;
     private int executionRequirementPosition = -1;
     private int nonDeterministicCallIndex = -1;
     private String nonDeterministicCallName;
@@ -454,6 +458,9 @@ public class FunctionResolver implements Mutable {
         nonDeterministicCallPosition = -1;
         cursorFunctionInstantiated = false;
         selectedOverload = null;
+        if (equalityResolver != null) {
+            equalityResolver.clear();
+        }
     }
 
     /**
@@ -746,6 +753,23 @@ public class FunctionResolver implements Mutable {
     }
 
     /**
+     * Resolves and constructs the = of the two operands, as the parser resolves it for {@code left = right}.
+     * Operand ownership is transferred to the returned function on success, or released here on failure.
+     */
+    @Override
+    public Function createEquality(Function left, int leftPosition, Function right, int rightPosition, SqlExecutionContext executionContext) throws SqlException {
+        equalityArgs.clear();
+        equalityArgs.add(left);
+        equalityArgs.add(right);
+        equalityPositions.clear();
+        equalityPositions.add(leftPosition);
+        equalityPositions.add(rightPosition);
+        resolveCastOrOverload("=", rightPosition, equalityArgs, equalityPositions, null, 0, executionContext);
+        coerceArguments(selectedOverload, rightPosition, "=", equalityArgs, equalityPositions, TimestampTextError.INVALID_DATE, executionContext);
+        return createFunction(selectedOverload, rightPosition, "=", equalityArgs, equalityPositions, executionContext);
+    }
+
+    /**
      * Constructs a previously selected overload without parsing or resolving an expression.
      * Argument types, required constants and implicit casts must already have been resolved.
      * The factory may modify both argument lists. Argument ownership is transferred to the
@@ -775,7 +799,12 @@ public class FunctionResolver implements Mutable {
                     .$(" -> ").$safe(factory.getSignature())
                     .$("[factory=").$(factory)
                     .I$();
-            function = factory.newInstance(position, args, argPositions, configuration, executionContext);
+            if (factory.isGroupBy()) {
+                rejectWeakDimsArrayArguments(args, argPositions);
+            }
+            function = overload.isSwitch()
+                    ? ((SwitchFunctionFactory) factory).newInstance(position, args, argPositions, configuration, equalityFactory(), executionContext)
+                    : factory.newInstance(position, args, argPositions, configuration, executionContext);
         } catch (SqlException | ImplicitCastException e) {
             // Best-effort cleanup: keep closing args even if one close() throws, and fold any
             // close failure into the original error as suppressed instead of masking it.
@@ -1453,6 +1482,17 @@ public class FunctionResolver implements Mutable {
         ex.put(ColumnType.nameOf(arg.getType()));
     }
 
+    // An aggregate sizes its state by its array argument's dimensionality, which a bind variable lacks until bound.
+    private static void rejectWeakDimsArrayArguments(@Nullable ObjList<Function> args, IntList argPositions) throws SqlException {
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (ColumnType.isArrayWithWeakDims(args.getQuick(i).getType())) {
+                    throw SqlException.position(argPositions.getQuick(i)).put("array bind variable argument is not supported");
+                }
+            }
+        }
+    }
+
     private void admitStoredView(int requirements, int position, CharSequence name, boolean isStatement, SqlExecutionContext executionContext)
             throws SqlException {
         if (requirements == SqlExecutionRequirements.NONE || executionContext.allowNonDeterministicFunctions()) {
@@ -1557,6 +1597,17 @@ public class FunctionResolver implements Mutable {
             argTypes.add(args.getQuick(i).getType());
         }
         return factory.getResultType(argTypes);
+    }
+
+    /**
+     * The factory a switch builds the = of its WHEN constants with: a resolver of its own, so the nested resolution
+     * leaves the state of the call this resolver constructs untouched.
+     */
+    private SwitchFunctionFactory.EqualityFactory equalityFactory() {
+        if (equalityResolver == null) {
+            equalityResolver = new FunctionResolver(configuration, functionFactoryCache);
+        }
+        return equalityResolver;
     }
 
     private Function functionToConstant0(Function function) {

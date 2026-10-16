@@ -560,27 +560,17 @@ the frame bounds - for an inline `OVER (...)` and for a named `WINDOW w AS (...)
 `expr(...)` parses a `DECLARE` variable's value itself, so substituting that variable splices in
 an already-rewritten subtree.
 
-One production position escapes the rewrite: a live view's `ANCHOR EXPRESSION`.
-`ExpressionParser.parseWindowExpr` builds that node by calling `parseExpr` directly, and
-`SqlParser.rewriteWindowExpression` then walks only `PARTITION BY`, `ORDER BY`, `rowsLoExpr` and
-`rowsHiExpr` - never `WindowExpression.getAnchorExpression()`. `copySpecFrom` does not carry the
-anchor across either. A `||` written there therefore stays an `OPERATION` node on the model.
-
 **The text round-trip that follows is load-bearing - do not optimise it away.**
 `SqlParser.captureAnchoredWindow` renders the anchor node back to SQL with `toSink` and stores the
 text in `LvAnchorSpec.anchorExpressionSql`. Both consumers - `CairoEngine`'s CREATE-time pass-2
 anchor validator and `LiveViewRefreshJob.ensureAnchorFunction` - re-parse that text through
 `SqlCompilerImpl.parseExpression`, which calls the rewriting
 `parser.expr(lexer, (QueryModel) null, this)` overload, and only then hand the result to
-`FunctionParser.parseFunction`. Nothing hands the raw anchor node to `FunctionParser`:
-`SqlParser`'s other read of `getAnchorExpression()` drives AST-level validation alone. A
-maintainer who deletes the round-trip and passes `w.getAnchorExpression()` straight to
-`parseFunction` would feed a `||` `OPERATION` node to `reassociateConstants` - exactly what this
-section rules out.
+`FunctionParser.parseFunction`. Nothing hands the anchor node to `FunctionParser`:
+`SqlParser`'s other read of `getAnchorExpression()` drives AST-level validation alone.
 
 Two `parseExpr` callers skip the rewrites. `ExpressionParser.parseWindowExpr` is the production one;
-`rewriteWindowExpression` re-applies them to every window sub-expression it does reach, which leaves
-`ANCHOR EXPRESSION` as the only unrewritten result. The other is the `@TestOnly`
+`rewriteWindowExpression` re-applies them to every window sub-expression. The other is the `@TestOnly`
 `SqlParser.expr(lexer, listener, callback)` overload, which only
 `SqlCompiler.testParseExpression(CharSequence, ExpressionParserListener)` reaches.
 

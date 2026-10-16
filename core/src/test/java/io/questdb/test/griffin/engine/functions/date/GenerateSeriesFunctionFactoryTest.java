@@ -759,6 +759,30 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testSubqueryArgumentsAreReleased() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            final String predicate = "NOT (SELECT max(k) > 2 FROM t)";
+            final String[] series = {
+                    "generate_series(1, CASE WHEN " + predicate + " THEN 3 ELSE 4 END, 1)",
+                    "generate_series(1, CASE WHEN " + predicate + " THEN 3 ELSE 4 END)",
+                    "generate_series(1.0, CASE WHEN " + predicate + " THEN 3.0 ELSE 4.0 END, 1.0)",
+                    "generate_series(1.0, CASE WHEN " + predicate + " THEN 3.0 ELSE 4.0 END)",
+                    "generate_series('2024-01-01'::timestamp, CASE WHEN " + predicate
+                            + " THEN '2024-01-03'::timestamp ELSE '2024-01-04'::timestamp END, 86_400_000_000)",
+                    "generate_series('2024-01-01'::timestamp, CASE WHEN " + predicate
+                            + " THEN '2024-01-03'::timestamp ELSE '2024-01-04'::timestamp END, '1d')",
+            };
+            for (String call : series) {
+                assertQuery("SELECT count() FROM " + call)
+                        .noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\n4\n");
+            }
+        });
+    }
+
+    @Test
     public void testTimestampLongBindVariables() throws Exception {
         bindVariableService.setTimestamp("t1", -5);
         bindVariableService.setTimestamp("t2", 5);

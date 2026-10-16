@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -75,6 +77,18 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
     @Override
     public int getKeyCount() {
         return symbolKeyLimit;
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi) {
+        if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
+            return -1;
+        }
+        long count = 0;
+        for (int i = keyLo; i < keyHi; i++) {
+            count += reader.countMatchesInRange(symbolKeys.getQuick(i), rowLo, rowHi, BitmapIndexUtils.UNBOUNDED_BLOCK_HOPS);
+        }
+        return count;
     }
 
     @Override

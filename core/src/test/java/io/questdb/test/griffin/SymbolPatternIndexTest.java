@@ -48,7 +48,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -68,6 +67,7 @@ import io.questdb.griffin.engine.table.BaseAsyncHorizonJoinAtom;
 import io.questdb.griffin.engine.table.HeapRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -2599,16 +2599,47 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
+    // Disable parallel GROUP BY so filter stealing cannot bypass the index cursor.
+    @Test
+    public void testOrderInvariantKeyedModelUsesTableOrderScan() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyOrderVersusTimestampOrderFixture();
+            assertQuery("SELECT sym, v, ts FROM t WHERE sym LIKE 'a%' ORDER BY v")
+                    .withPlanContaining("Table-order scan")
+                    .returns("""
+                            sym\tv\tts
+                            ab\t1\t2024-01-01T00:00:00.000000Z
+                            aa\t2\t2024-01-01T01:00:00.000000Z
+                            """);
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            try {
+                assertQuery("SELECT sym, sum(v) FROM t WHERE sym LIKE 'a%' GROUP BY sym")
+                        .expectSize()
+                        .withPlanContaining("SymbolPatternIndex", "Table-order scan")
+                        .returns("""
+                                sym\tsum
+                                ab\t1
+                                aa\t2
+                                """);
+                assertQuery("SELECT DISTINCT sym FROM t WHERE sym LIKE 'a%'")
+                        .expectSize()
+                        .withPlanContaining("SymbolPatternIndex", "Table-order scan")
+                        .returns("""
+                                sym
+                                ab
+                                aa
+                                """);
+            } finally {
+                sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
+            }
+        });
+    }
+
     // Disable parallel GROUP BY so filter stealing cannot bypass the sequential index cursor.
     @Test
     public void testOrderInvariantModelUsesSequentialScan() throws Exception {
         assertMemoryLeak(() -> {
             createKeyOrderVersusTimestampOrderFixture();
-            assertQuery("SELECT sym, v, ts FROM t WHERE sym LIKE 'a%' ORDER BY v")
-                    .withPlanContaining("Cursor-order scan")
-                    .returns("sym\tv\tts\n" +
-                            "ab\t1\t2024-01-01T00:00:00.000000Z\n" +
-                            "aa\t2\t2024-01-01T01:00:00.000000Z\n");
             sqlExecutionContext.setParallelGroupByEnabled(false);
             try {
                 assertQuery("SELECT sum(v) FROM t WHERE sym LIKE 'a%'")
@@ -3741,13 +3772,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFactoryCloseReleasesResourcesWhenPartitionFactoryCloseThrowsWithSequentialCursor() throws Exception {
-        assertIndexFactoryCloseReleasesResourcesOnThrow(OrderByMnemonic.ORDER_BY_INVARIANT);
+        assertIndexFactoryCloseReleasesResourcesOnThrow(ScanPlan.IndexOrder.KEY_PER_FRAME);
     }
 
     // close() cannot retry after a partition-factory failure, so later native owners must still close.
     @Test
     public void testIndexFactoryCloseReleasesResourcesWhenPartitionFactoryCloseThrowsWithHeapCursor() throws Exception {
-        assertIndexFactoryCloseReleasesResourcesOnThrow(OrderByMnemonic.ORDER_BY_UNKNOWN);
+        assertIndexFactoryCloseReleasesResourcesOnThrow(ScanPlan.IndexOrder.TABLE);
     }
 
     @Test
@@ -4334,7 +4365,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         return Long.parseLong(token);
     }
 
-    private void assertIndexFactoryCloseReleasesResourcesOnThrow(int orderByMnemonic) throws Exception {
+    private void assertIndexFactoryCloseReleasesResourcesOnThrow(ScanPlan.IndexOrder indexOrder) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(1_000)");
@@ -4365,8 +4396,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     dfcFactory,
                     symbolColumnIndex,
                     effectiveKeys,
-                    orderByMnemonic,
-                    false,
+                    indexOrder,
                     IndexReader.DIR_FORWARD,
                     columnIndexes,
                     columnSizeShifts

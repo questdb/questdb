@@ -8502,6 +8502,24 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNotKeyed1MNegativeOffset() throws Exception {
+        // A negative OFFSET starts each month at 23:00 on the previous day; the refresh
+        // intervals step one month at a time over that grid.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1M ALIGN TO CALENDAR WITH OFFSET '-01:00'";
+            assertMatViewMatchesSampleBy(viewQuery, "2020-12-30T00:00:00.000000Z", 86_400_000_000L, 200, 4);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed1MNegativeOffsetBerlin() throws Exception {
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-01:00'";
+            assertMatViewMatchesSampleBy(viewQuery, "2020-12-30T00:00:00.000000Z", 86_400_000_000L, 200, 4);
+        });
+    }
+
+    @Test
     public void testSampleByNotKeyed15mBerlinSpringForward() throws Exception {
         // 15m stride = minimum DST gap. canSkipDstGapCorrection returns true for
         // 15m when (from+offset) % day == 0 (it is here, offset=0).

@@ -491,6 +491,52 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedCaseWithEqualityConstant() throws Exception {
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab AS (SELECT (x * 60_000_000)::timestamp ts, x % 3 k FROM long_sequence(10_000)) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    assertQuery("SELECT count(*) FROM tab WHERE CASE k WHEN 1.5 THEN false WHEN 1 THEN true ELSE false END")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count
+                                    3334
+                                    """);
+                    assertQuery("SELECT count(*) FROM tab WHERE switch(rnd_int(1, 2, 0), 1, true, 2, true, 1.5, false, false)")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count
+                                    10000
+                                    """);
+                    assertQuery("SELECT CASE k WHEN 1.5 THEN 'fraction' WHEN 1 THEN 'one' ELSE 'other' END g, count(*) FROM tab ORDER BY g")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    g\tcount
+                                    one\t3334
+                                    other\t6666
+                                    """);
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testEqDecimal() throws Exception {
         // Decimal is not yet supported in Parquet
         Assume.assumeFalse(convertToParquet);
@@ -911,6 +957,42 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 configuration,
                 LOG
         );
+    }
+
+    @Test
+    public void testRuntimeConstantArgumentsReachWorkerFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT, s STRING, sym SYMBOL, x DOUBLE, y DOUBLE, j VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 1, 'a', 'a', 1.0, 1.0, '{"a":1,"b":2}'),
+                    ('2024-01-01T00:00:01', 2, 'b', 'b', 2.5, 2.5, '{"a":3,"b":4}'),
+                    ('2024-01-01T00:00:03', 3, 'c', 'c', 5.0, 5.0, '{"a":5,"b":2}')
+                    """);
+            final String falseSubquery = "NOT (SELECT max(k) > 2 FROM t)";
+            final String[][] cases = {
+                    {"regexp_replace(s, CASE WHEN " + falseSubquery + " THEN 'a' ELSE 'b' END, 'z') = 'z'", "k\n2\n"},
+                    {"regexp_replace(s, 'b', CASE WHEN " + falseSubquery + " THEN 'y' ELSE 'z' END) = 'z'", "k\n2\n"},
+                    {"s ~ CASE WHEN " + falseSubquery + " THEN 'a' ELSE 'b' END", "k\n2\n"},
+                    {"sym ~ CASE WHEN " + falseSubquery + " THEN 'a' ELSE 'b' END", "k\n2\n"},
+                    {"within_box(x, y, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 2.0 END, 0.0, 10.0, 10.0)", "k\n2\n3\n"},
+                    {"within_box(CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 2.0 END, 3.0, 0.0, 0.0, 10.0, 10.0)", "k\n1\n2\n3\n"},
+                    {"geo_distance_meters(x, y, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0) < 200_000", "k\n1\n"},
+                    {"geo_distance_meters(1.0, 1.0, x, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END) < 200_000", "k\n1\n2\n"},
+                    {"geo_within_radius_latlon(x, y, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0, 200_000)", "k\n1\n"},
+                    {"geo_within_radius_latlon(x, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0, 1.0, 200_000)", "k\n1\n2\n"},
+                    {"within_radius(x, y, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0, 1.0)", "k\n1\n"},
+                    {"within_radius(x, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0, 1.0, 2.0)", "k\n1\n2\n"},
+                    {"json_extract(j, CASE WHEN " + falseSubquery + " THEN '.a' ELSE '.b' END)::int = 2", "k\n1\n3\n"},
+            };
+            for (String[] filterAndExpected : cases) {
+                assertQuery("SELECT k FROM t WHERE " + filterAndExpected[0])
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Async")
+                        .returns(filterAndExpected[1]);
+            }
+        });
     }
 
     @Test

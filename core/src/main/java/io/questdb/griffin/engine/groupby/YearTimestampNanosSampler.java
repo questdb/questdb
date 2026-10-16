@@ -76,7 +76,7 @@ public class YearTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Nanos.getYear(value);
+        int y = Nanos.getYear(value - dayMod);
         y = Nanos.EPOCH_YEAR_0 + ((y - Nanos.EPOCH_YEAR_0) / stepYears) * stepYears;
         int month = startMonth > 0 ? startMonth : 1;
         int day = startDay > 0 ? startDay : 1;
@@ -110,7 +110,7 @@ public class YearTimestampNanosSampler implements TimestampSampler {
         if (numYears == 0) {
             return timestamp;
         }
-        final int y = Nanos.getYear(timestamp);
+        final int y = Nanos.getYear(timestamp - dayMod);
         final int newYear = Math.min(y + numYears, NanosTimestampDriver.MAX_NANO_YEAR + 1);
         final boolean leap = CommonUtils.isLeapYear(newYear);
         int month = startMonth > 0 ? startMonth : 1;

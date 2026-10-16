@@ -24,12 +24,14 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -367,6 +369,68 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                             """
             );
         });
+    }
+
+    @Test
+    public void testRuntimeDateComparisonsUseIntervalScan() throws Exception {
+        for (boolean isNanos : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                createRows(isNanos);
+                final ObjList<String> operators = new ObjList<>("=", "<", "<=", ">", ">=", "!=", "<>");
+                final long[] bounds = {1_577_923_200_000L, 1_577_923_199_999L, 1_578_009_600_000L, Numbers.LONG_NULL};
+                for (int i = 0; i < operators.size(); i++) {
+                    final String predicate = "ts" + operators.getQuick(i) + "$1";
+                    bindVariableService.clear();
+                    bindVariableService.setDate(0, bounds[0]);
+                    try (RecordCursorFactory factory = select("SELECT ts,id FROM lp_interval WHERE " + predicate)) {
+                        assertPlan(factory, "Interval forward scan", false, "PageFrame > Row forward scan > Interval forward scan on: lp_interval");
+                        for (long bound : bounds) {
+                            bindVariableService.setDate(0, bound);
+                            try (RecordCursorFactory literal = select("SELECT ts,id FROM lp_interval WHERE "
+                                    + predicate.replace("$1", (bound == Numbers.LONG_NULL ? "NULL" : Long.toString(bound)) + "::DATE"))) {
+                                assertRowsOnly(factory, printFactory(literal));
+                            }
+                        }
+                    }
+                }
+                bindVariableService.clear();
+                execute("DROP TABLE lp_interval");
+            });
+        }
+    }
+
+    @Test
+    public void testRuntimeTextComparisonsUseIntervalScan() throws Exception {
+        for (boolean isNanos : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                createRows(isNanos);
+                final ObjList<String> operators = new ObjList<>("=", "<", "<=", ">", ">=", "!=", "<>");
+                final ObjList<String> bounds = new ObjList<>("2020-01-02T00:00:00.000001Z", "2020-01-02T00:00:00.000000001Z",
+                        "2020-01-02", "2020-01-01T23:59:59.999999999Z", "2020-01-01T23:59:59.9999995Z", null);
+                for (int i = 0; i < operators.size(); i++) {
+                    for (int reversed = 0; reversed < 2; reversed++) {
+                        final String predicate = reversed == 1 ? "$1" + operators.getQuick(i) + "ts" : "ts" + operators.getQuick(i) + "$1";
+                        for (int isVarchar = 0; isVarchar < 2; isVarchar++) {
+                            bindVariableService.clear();
+                            setText(isVarchar == 1, bounds.getQuick(0));
+                            try (RecordCursorFactory factory = select("SELECT ts,id FROM lp_interval WHERE " + predicate)) {
+                                assertPlan(factory, "Interval forward scan", false, "PageFrame > Row forward scan > Interval forward scan on: lp_interval");
+                                for (int b = 0; b < bounds.size(); b++) {
+                                    final String bound = bounds.getQuick(b);
+                                    setText(isVarchar == 1, bound);
+                                    try (RecordCursorFactory literal = select("SELECT ts,id FROM lp_interval WHERE "
+                                            + predicate.replace("$1", bound == null ? "NULL" : "'" + bound + "'"))) {
+                                        assertRowsOnly(factory, printFactory(literal));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                bindVariableService.clear();
+                execute("DROP TABLE lp_interval");
+            });
+        }
     }
 
     @Test
@@ -743,6 +807,46 @@ public class IntervalExtractionTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testUndefinedParametersCompareAtNanosecondPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows(true);
+            execute("CREATE TABLE lp_nanos (id INT, ts TIMESTAMP, ns TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO lp_nanos VALUES
+                    (1, '2020-01-01', '2020-01-02T00:00:00.000000001Z'),
+                    (2, '2020-01-02', '2020-01-02T00:00:00.000000002Z')
+                    """);
+            final ObjList<String> queries = new ObjList<>(
+                    "SELECT ts,id FROM lp_interval WHERE ts = $1",
+                    "SELECT ts,id FROM lp_interval WHERE ts > $1",
+                    "SELECT ts,id FROM lp_interval WHERE $1 > ts",
+                    "SELECT ts,id FROM lp_interval WHERE ts BETWEEN $1 AND $1",
+                    "SELECT ts,id FROM lp_interval WHERE ts != $1 AND id < 5",
+                    "SELECT ts,id FROM lp_interval WHERE ts = $1 OR id = -1",
+                    "SELECT ts,id FROM (SELECT * FROM lp_interval LIMIT 5) WHERE ts = $1",
+                    "SELECT id, ts = $1 eq FROM lp_interval",
+                    "SELECT id FROM lp_nanos WHERE ns = $1"
+            );
+            final ObjList<String> values = new ObjList<>("2020-01-02T00:00:00.000000001Z", "1577923200000000001");
+            final ObjList<String> literals = new ObjList<>("'2020-01-02T00:00:00.000000001Z'", "1577923200000000001");
+            for (int i = 0; i < queries.size(); i++) {
+                final String sql = queries.getQuick(i);
+                bindVariableService.clear();
+                try (RecordCursorFactory factory = select(sql)) {
+                    Assert.assertEquals(sql, ColumnType.TIMESTAMP_NANO, bindVariableService.getFunction(0).getType());
+                    for (int v = 0; v < values.size(); v++) {
+                        bindVariableService.setStr(0, values.getQuick(v));
+                        try (RecordCursorFactory literal = select(sql.replace("$1", literals.getQuick(v)))) {
+                            assertRowsOnly(factory, printFactory(literal));
+                        }
+                    }
+                }
+            }
+            bindVariableService.clear();
+        });
+    }
+
     private static String epoch(long value, boolean isNanos) {
         final long unit = isNanos ? 1_000_000_000L : 1_000_000L;
         final long seconds = value / unit;
@@ -794,6 +898,14 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                             Interval forward scan on: lp_epoch
                               intervals: [""" + intervals + "]\n")
                 .returns(expected);
+    }
+
+    private void setText(boolean isVarchar, String value) throws SqlException {
+        if (isVarchar) {
+            bindVariableService.setVarchar(0, value == null ? null : new Utf8String(value));
+        } else {
+            bindVariableService.setStr(0, value);
+        }
     }
 
     private void setTimestamp(int index, long value, boolean isNanos) throws SqlException {

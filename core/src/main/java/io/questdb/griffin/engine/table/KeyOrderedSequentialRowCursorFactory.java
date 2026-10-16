@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.std.ObjList;
 
@@ -39,5 +40,10 @@ class KeyOrderedSequentialRowCursorFactory extends SequentialRowCursorFactory im
     @Override
     public int getKeyCount() {
         return cursorFactoriesIdx[0];
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi) {
+        return -1;
     }
 }

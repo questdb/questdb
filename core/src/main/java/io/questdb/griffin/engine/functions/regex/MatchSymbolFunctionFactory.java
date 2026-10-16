@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -250,7 +251,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class MatchStaticSymbolTableRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
+    private static class MatchStaticSymbolTableRuntimeConstPatternFunction extends BooleanFunction implements BinaryFunction, SymbolKeySetProvider {
         private final Function pattern;
         private final int patternPosition;
         private final SymbolFunction symbolFun;
@@ -268,10 +269,6 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             this.patternPosition = patternPosition;
         }
 
-        @Override
-        public Function getArg() {
-            return symbolFun;
-        }
 
         @Override
         public boolean getBool(Record rec) {
@@ -288,14 +285,23 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getLeft() {
+            return symbolFun;
+        }
+
+        @Override
         public IntList getMatchedSymbolKeys() {
             return symbolKeys;
         }
 
         @Override
+        public Function getRight() {
+            return pattern;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            pattern.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
             // RegexUtils.createMatcher() compiles the bind value verbatim, so the compiled pattern's
             // own source doubles as the last-value memo: recompile only when the text changed, and a
             // changed text forces the key set rebuild below no matter what the dictionary says.
@@ -356,7 +362,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 target.initialized = initialized;
                 target.isStateInherited = true;
             }
-            UnaryFunction.super.offerStateTo(that);
+            BinaryFunction.super.offerStateTo(that);
         }
 
         @Override

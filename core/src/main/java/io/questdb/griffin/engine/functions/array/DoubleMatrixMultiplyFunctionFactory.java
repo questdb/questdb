@@ -65,23 +65,30 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(
-                configuration,
-                args.getQuick(0),
-                args.getQuick(1),
-                argPositions.getQuick(0),
-                argPositions.getQuick(1)
-        );
+        final Function leftArg = args.getQuick(0);
+        final Function rightArg = args.getQuick(1);
+        final int leftArgPos = argPositions.getQuick(0);
+        final int rightArgPos = argPositions.getQuick(1);
+        validateDimensionality(leftArg, leftArgPos, "left");
+        validateDimensionality(rightArg, rightArgPos, "right");
+        return new Func(configuration, leftArg, rightArg, leftArgPos, rightArgPos);
+    }
+
+    // A bind variable reports unknown (-1) dimensionality until a non-NULL value is bound.
+    private static void validateDimensionality(Function arg, int argPos, String side) throws SqlException {
+        if (ColumnType.decodeWeakArrayDimensionality(arg.getType()) > 2) {
+            throw SqlException.position(argPos).put(side).put(" array is not one or two-dimensional");
+        }
     }
 
     private static class Func extends ArrayFunction implements BinaryFunction {
         private final DirectArray arrayOut;
         private final Function leftArg;
         private final int leftArgPos;
+        private final DerivedArrayView leftDerived = new DerivedArrayView();
         private final Function rightArg;
         private final int rightArgPos;
-        private DerivedArrayView leftDerived;
-        private DerivedArrayView rightDerived;
+        private final DerivedArrayView rightDerived = new DerivedArrayView();
 
         public Func(
                 CairoConfiguration configuration,
@@ -117,12 +124,12 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 arrayOut.ofNull();
                 return arrayOut;
             }
-            if (leftDerived != null) {
+            if (left.getDimCount() == 1) {
                 leftDerived.of(left);
                 leftDerived.prependDimensions(1);
                 left = leftDerived;
             }
-            if (rightDerived != null) {
+            if (right.getDimCount() == 1) {
                 rightDerived.of(right);
                 rightDerived.appendDimensions(1);
                 right = rightDerived;
@@ -179,30 +186,8 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
-
-            // left/right argument may be a bind var, i.e. have weak dimensionality,
-            // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            if (dimsLeft == 1) {
-                if (leftDerived == null) {
-                    leftDerived = new DerivedArrayView();
-                }
-            } else if (dimsLeft == 2) {
-                leftDerived = null;
-            } else {
-                throw SqlException.position(leftArgPos).put("left array is not one or two-dimensional");
-            }
-
-            if (dimsRight == 1) {
-                if (rightDerived == null) {
-                    rightDerived = new DerivedArrayView();
-                }
-            } else if (dimsRight == 2) {
-                rightDerived = null;
-            } else {
-                throw SqlException.position(rightArgPos).put("right array is not one or two-dimensional");
-            }
+            validateDimensionality(leftArg, leftArgPos, "left");
+            validateDimensionality(rightArg, rightArgPos, "right");
         }
 
         @Override

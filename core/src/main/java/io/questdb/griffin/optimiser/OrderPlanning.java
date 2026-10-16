@@ -85,6 +85,9 @@ final class OrderPlanning implements OptimiserPass {
     private boolean isJoinSlaveInput;
     private boolean isRandomAccessRequired;
     private boolean isReorderedTimestampRead;
+    // the consumer of the plan being required is an aggregate without keys
+    private boolean isSingleGroupInput;
+    private AggregatePlan resortedAggregate;
 
     OrderPlanning(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache, ObjectPool<SortPlan> sorts, IntHashSet columnIds) {
         this.configuration = configuration;
@@ -106,6 +109,14 @@ final class OrderPlanning implements OptimiserPass {
     @Override
     public String getName() {
         return "order planning";
+    }
+
+    private static void deriveJoinTimestamps(JoinPlan join) {
+        final ObjList<JoinInput> steps = join.getOrderedInputs();
+        for (int i = 0, n = steps.size(); i < n; i++) {
+            steps.getQuick(i).getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, i + 1));
+        }
+        join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, steps.size()));
     }
 
     private static boolean hasColumns(OutputSchema schema, SortPlan order) {
@@ -151,6 +162,19 @@ final class OrderPlanning implements OptimiserPass {
     }
 
     /**
+     * True when the sort orders by every grouping key of the aggregate beneath it, through the projections and filters
+     * between them: the aggregate emits one row per key, so no tie of the sort keeps the order of the aggregate's input.
+     */
+    private static boolean isKeyOrdered(SortPlan sort, AggregatePlan aggregate) {
+        for (int k = 0, n = aggregate.getGroupingExpressions().size(); k < n; k++) {
+            if (!isSortKey(sort, aggregate.getOutput().getColumnId(k))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * True when the input order, {@code orderColumnId} in {@code direction}, is the order of each window whose function
      * requires its input in the order of the window.
      */
@@ -168,6 +192,36 @@ final class OrderPlanning implements OptimiserPass {
     private static boolean isSingleRow(LogicalPlan plan) {
         plan = LogicalPlans.skipProjectsAndFilters(plan);
         return plan instanceof AggregatePlan aggregate && aggregate.getGroupingExpressions().size() == 0;
+    }
+
+    /**
+     * True when a key of the sort is the column, as the projections and filters beneath the sort pass it on.
+     */
+    private static boolean isSortKey(SortPlan sort, int columnId) {
+        for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
+            int keyId = sort.getColumnIds().getQuick(i);
+            for (LogicalPlan plan = sort.getChild(); keyId >= 0 && keyId != columnId; plan = plan.inputAt(0)) {
+                if (plan instanceof ProjectPlan project) {
+                    keyId = LogicalPlans.projectedSourceColumnId(project, keyId);
+                } else if (!(plan instanceof FilterPlan)) {
+                    break;
+                }
+            }
+            if (keyId == columnId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when the sort orders a time series join input in a way the join cannot read: by the input's designated
+     * timestamp descending, or by a key that is not a timestamp, which leaves the sorted rows without one.
+     */
+    private static boolean isUnreadTemporalOrder(SortPlan sort) {
+        final int timestampId = sort.getChild().getOutput().getTimestampColumnId();
+        return timestampId >= 0 && (sort.getOutput().getTimestampIndex() < 0
+                || sort.getColumnIds().getQuick(0) == timestampId && sort.getDirections().getQuick(0) == SortDirection.DESCENDING);
     }
 
     private static void markMarkoutHorizon(SortPlan sort) {
@@ -257,11 +311,28 @@ final class OrderPlanning implements OptimiserPass {
         return null;
     }
 
-    private static void requireScan(ScanPlan scan, SortDirection direction, SortPlan order, LimitPlan limit, boolean isRowOrderRequired) {
-        scan.setScanDirection(direction);
-        scan.getRequestedOrder().of(order);
-        scan.setLimit(limit == null ? null : limit.getLo(), limit == null ? null : limit.getHi());
-        scan.setRowOrderRequired(isRowOrderRequired);
+    /**
+     * Drops the sorts a time series join cannot read from the top of its input, through the projections and filters
+     * that pass the input's order on; a sort the join may read stays.
+     */
+    private static LogicalPlan removeUnreadOrder(LogicalPlan plan) {
+        switch (plan) {
+            case SortPlan sort when isUnreadTemporalOrder(sort) -> {
+                return removeUnreadOrder(sort.getChild());
+            }
+            case FilterPlan filter when LogicalPlans.isOrderIndependent(filter.getPredicate()) ->
+                    filter.replaceInput(0, removeUnreadOrder(filter.getChild()));
+            case ProjectPlan project when !project.hasUpdateConversions() && LogicalPlans.isOrderTransparent(project) -> {
+                project.replaceInput(0, removeUnreadOrder(project.getChild()));
+                if (project.getOutput().getTimestampIndex() < 0) {
+                    project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project,
+                            project.getChild().getOutput().getTimestampColumnId()));
+                }
+            }
+            default -> {
+            }
+        }
+        return plan;
     }
 
     private static SortDirection scanDirection(ScanPlan scan, int orderColumnId, SortDirection direction) {
@@ -290,9 +361,13 @@ final class OrderPlanning implements OptimiserPass {
             case SortPlan sort -> {
                 final LogicalPlan source = LogicalPlans.skipProjects(sort.getChild());
                 final boolean wasTimestampRead = isReorderedTimestampRead;
+                final AggregatePlan wasResortedAggregate = resortedAggregate;
                 isReorderedTimestampRead = sort.isMarkoutHorizon();
+                resortedAggregate = LogicalPlans.skipProjectsAndFilters(sort.getChild()) instanceof AggregatePlan aggregate
+                        && isKeyOrdered(sort, aggregate) ? aggregate : null;
                 final LogicalPlan input = removeReorderedSorts0(sort.getChild(), true, false);
                 isReorderedTimestampRead = wasTimestampRead;
+                resortedAggregate = wasResortedAggregate;
                 if (source instanceof WindowPlan) {
                     sort.replaceInput(0, input);
                     return sort;
@@ -327,6 +402,9 @@ final class OrderPlanning implements OptimiserPass {
                 isReorderedTimestampRead = wasTimestampRead;
             }
             case JoinPlan join -> {
+                if (isReordered && !isReorderedTimestampRead) {
+                    removeUnreadTemporalOrder(join);
+                }
                 final ObjList<JoinInput> ordered = join.getOrderedInputs();
                 final boolean isMasterReordered = isReordered && LogicalPlans.isMasterOrderPreserved(join);
                 for (int i = 0, n = ordered.size(); i < n; i++) {
@@ -334,10 +412,19 @@ final class OrderPlanning implements OptimiserPass {
                     if (input.getInput() != null) {
                         input.setInput(removeReorderedSorts0(input.getInput(), i == 0 && isMasterReordered, false));
                     }
-                    input.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, i + 1));
                 }
-                join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, ordered.size()));
+                deriveJoinTimestamps(join);
             }
+            case HorizonJoinPlan horizon -> {
+                if (isReordered && !isReorderedTimestampRead) {
+                    removeUnreadTemporalOrder(horizon);
+                }
+                for (int i = 0, n = horizon.inputCount(); i < n; i++) {
+                    horizon.replaceInput(i, removeReorderedSorts0(horizon.inputAt(i), false, false));
+                }
+            }
+            case AggregatePlan aggregate when aggregate == resortedAggregate && LogicalPlans.isAggregateOrderIndependent(aggregate) ->
+                    replaceReorderedInput(aggregate, isReordered, false);
             case SetOperationPlan _ -> {
                 for (int i = 0, n = plan.inputCount(); i < n; i++) {
                     plan.replaceInput(i, removeReorderedSorts0(plan.inputAt(i), isReordered, isReordered));
@@ -437,6 +524,8 @@ final class OrderPlanning implements OptimiserPass {
         final boolean wasRandomAccessRequired = isRandomAccessRequired;
         isRandomAccessRequired = wasRandomAccessRequired
                 && (plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof LimitPlan || plan instanceof SortPlan);
+        final boolean wasSingleGroupInput = isSingleGroupInput;
+        isSingleGroupInput = wasSingleGroupInput && (plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof ScanPlan);
         switch (plan) {
             case WindowPlan window -> requireWindow(window, orderColumnId, direction, order,
                     window.isSelectOrdered() && order != null && order.getChild() == plan, isRowOrderRequired);
@@ -473,6 +562,7 @@ final class OrderPlanning implements OptimiserPass {
             default -> requireUnary(plan, orderColumnId, direction, order, limit, isRowOrderRequired);
         }
         isRandomAccessRequired = wasRandomAccessRequired;
+        isSingleGroupInput = wasSingleGroupInput;
     }
 
     private void requireAggregate(AggregatePlan aggregate, int orderColumnId, SortDirection direction, SortPlan order) {
@@ -499,6 +589,7 @@ final class OrderPlanning implements OptimiserPass {
             }
             inputOrder = projectedOrder(rename, inputOrder);
         }
+        isSingleGroupInput = aggregate.getGroupingExpressions().size() == 0;
         require(PlanToFactoryRules.aggregateBase(aggregate), inputOrderColumnId,
                 inputOrderColumnId < 0 ? null : direction, inputOrder, null, isInputRowOrderRequired);
     }
@@ -549,6 +640,17 @@ final class OrderPlanning implements OptimiserPass {
 
     private void requireNothing(LogicalPlan plan) {
         require(plan, -1, null, null, null, true);
+    }
+
+    private void requireScan(ScanPlan scan, SortDirection direction, SortPlan order, LimitPlan limit, boolean isRowOrderRequired) {
+        scan.setScanDirection(direction);
+        scan.getRequestedOrder().of(order);
+        scan.setLimit(limit == null ? null : limit.getLo(), limit == null ? null : limit.getHi());
+        if (isRowOrderRequired) {
+            scan.setRowOrder(ScanPlan.RowOrder.REQUIRED);
+        } else {
+            scan.setRowOrder(isSingleGroupInput ? ScanPlan.RowOrder.ANY_SINGLE_GROUP : ScanPlan.RowOrder.ANY);
+        }
     }
 
     private void requireSetOperation(SetOperationPlan operation, int orderColumnId, SortDirection direction, boolean isRowOrderRequired) {
@@ -689,5 +791,36 @@ final class OrderPlanning implements OptimiserPass {
         for (int i = 0, n = windowJoin.getSteps().size(); i < n; i++) {
             requireNothing(windowJoin.getSteps().getQuick(i).getSlave());
         }
+    }
+
+    /**
+     * Drops the sorts the time series steps of the join cannot read from their inputs, for a consumer that discards
+     * the join's row order.
+     */
+    static void removeUnreadTemporalOrder(JoinPlan join) {
+        final ObjList<JoinInput> steps = join.getOrderedInputs();
+        boolean hasTemporalStep = false;
+        for (int i = 1, n = steps.size(); i < n; i++) {
+            final JoinInput step = steps.getQuick(i);
+            if (step.getJoinType().isTemporal()) {
+                hasTemporalStep = true;
+                step.setInput(removeUnreadOrder(step.getInput()));
+            }
+        }
+        if (hasTemporalStep) {
+            steps.getQuick(0).setInput(removeUnreadOrder(steps.getQuick(0).getInput()));
+            deriveJoinTimestamps(join);
+        }
+    }
+
+    /**
+     * Drops the sorts the horizon join cannot read from its master and slaves, for a consumer that discards their
+     * row order.
+     */
+    static void removeUnreadTemporalOrder(HorizonJoinPlan horizon) {
+        for (int i = 0, n = horizon.inputCount(); i < n; i++) {
+            horizon.replaceInput(i, removeUnreadOrder(horizon.inputAt(i)));
+        }
+        horizon.getOutput().setTimestampIndex(horizon.getMaster().getOutput().getTimestampIndex());
     }
 }

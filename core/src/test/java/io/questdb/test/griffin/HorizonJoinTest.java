@@ -2072,6 +2072,83 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOrderInsensitiveAggregateOverDescendingInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            execute("CREATE VIEW trades_desc AS (SELECT * FROM trades ORDER BY ts DESC)");
+            drainWalAndViewQueues();
+            final String total = """
+                    sum
+                    270
+                    """;
+            final String keyed = """
+                    sym\tcount\tsum
+                    A\t4\t100
+                    B\t4\t130
+                    """;
+            final String range = "RANGE FROM 0s TO 1s STEP 1s AS h";
+            assertQuery("SELECT sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t HORIZON JOIN quotes q " + range)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(total);
+            assertQuery("SELECT sum(q.bid) FROM trades t HORIZON JOIN (SELECT * FROM quotes ORDER BY ts DESC) q " + range)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(total);
+            assertQuery("SELECT sum(q.bid) FROM trades t HORIZON JOIN quotes q " + range)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(total);
+            assertQuery("SELECT t.sym, count(), sum(q.bid) FROM trades_desc t HORIZON JOIN quotes q ON (t.sym = q.sym) " + range + " ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(keyed);
+            assertQuery("SELECT t.sym, count(), sum(q.bid) FROM trades t HORIZON JOIN quotes q ON (t.sym = q.sym) " + range + " ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(keyed);
+            assertQuery("SELECT first(t.qty) FROM trades_desc t HORIZON JOIN quotes q " + range)
+                    .noLeakCheck()
+                    .fails(39, "left side of time series join doesn't have ASC timestamp order");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOrderInsensitiveAggregateOverNonTimestampOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            final String range = "RANGE FROM 0s TO 1s STEP 1s AS h";
+            final String keyed = """
+                    sym\tcount\tsum
+                    A\t4\t100
+                    B\t4\t130
+                    """;
+            assertQuery("SELECT sum(q.bid) FROM (SELECT * FROM trades ORDER BY qty DESC) t HORIZON JOIN quotes q " + range)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            270
+                            """);
+            assertQuery("SELECT t.sym, count(), sum(q.bid) FROM (SELECT ts, sym FROM trades ORDER BY sym DESC) t HORIZON JOIN quotes q ON (t.sym = q.sym) " + range + " ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(keyed);
+            assertQuery("SELECT t.sym, count(), sum(q.bid) FROM (SELECT ts, sym FROM trades) t HORIZON JOIN quotes q ON (t.sym = q.sym) " + range + " ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(keyed);
+            assertQuery("SELECT first(t.qty) FROM (SELECT * FROM trades ORDER BY qty DESC) t HORIZON JOIN quotes q " + range)
+                    .noLeakCheck()
+                    .fails(68, "left side of time series join has no timestamp");
+        });
+    }
+
+    @Test
     public void testHorizonJoinParallelExecution() throws Exception {
         assertMemoryLeak(() -> {
             // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset
@@ -8287,6 +8364,33 @@ public class HorizonJoinTest extends AbstractCairoTest {
                 INSERT INTO orders VALUES
                     ('1970-01-01T00:00:01.000000Z', 'AAPL', 'US', 100),
                     ('1970-01-01T00:00:01.000000Z', 'AAPL', 'EU', 200)
+                """);
+    }
+
+    private void createTradesAndQuotes() throws Exception {
+        executeWithRewriteTimestamp(
+                "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                leftTableTimestampType.getTypeName()
+        );
+        executeWithRewriteTimestamp(
+                "CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                rightTableTimestampType.getTypeName()
+        );
+        execute("""
+                INSERT INTO trades VALUES
+                    ('2024-01-01T00:00:01.000000Z', 'A', 1),
+                    ('2024-01-01T00:00:02.000000Z', 'B', 2),
+                    ('2024-01-01T00:00:03.000000Z', 'A', 3),
+                    ('2024-01-01T00:00:04.000000Z', 'B', 4)
+                """);
+        execute("""
+                INSERT INTO quotes VALUES
+                    ('2024-01-01T00:00:00.500000Z', 'A', 10),
+                    ('2024-01-01T00:00:01.500000Z', 'B', 20),
+                    ('2024-01-01T00:00:02.000000Z', 'B', 25),
+                    ('2024-01-01T00:00:02.500000Z', 'A', 30),
+                    ('2024-01-01T00:00:03.500000Z', 'B', 40),
+                    ('2024-01-01T00:00:03.800000Z', 'A', 50)
                 """);
     }
 

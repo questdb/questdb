@@ -33,6 +33,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
@@ -117,7 +118,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class MatchStrRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
+    static class MatchStrRuntimeConstPatternFunction extends BooleanFunction implements BinaryFunction {
         private final Function fun;
         private final Function pattern;
         private final int patternPosition;
@@ -130,14 +131,9 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() {
-            return fun;
-        }
-
-        @Override
         public boolean getBool(Record rec) {
             if (matcher != null) {
-                CharSequence cs = getArg().getStrA(rec);
+                CharSequence cs = fun.getStrA(rec);
                 return cs != null && matcher.reset(cs).find();
             }
             return false;
@@ -145,13 +141,22 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public int getComplexity() {
-            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
+            return Function.addComplexity(COMPLEXITY_REGEX, fun.getComplexity());
+        }
+
+        @Override
+        public Function getLeft() {
+            return fun;
+        }
+
+        @Override
+        public Function getRight() {
+            return pattern;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            pattern.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
             this.matcher = RegexUtils.createMatcher(pattern, patternPosition);
         }
 

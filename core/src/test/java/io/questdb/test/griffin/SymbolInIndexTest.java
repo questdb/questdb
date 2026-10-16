@@ -127,6 +127,63 @@ public class SymbolInIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByReadsKeysInTableOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ('k' || (x % 5))::SYMBOL s, x v, x::TIMESTAMP ts FROM long_sequence(1_000)), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.changePageFrameSizes(64, 64);
+            assertQuery("SELECT s, count(), sum(v) FROM t WHERE s IN ('k1','k3') AND v > 10 GROUP BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              keys: [s]
+                              values: [count(*),sum(v)]
+                                FilterOnValues
+                                    Table-order scan
+                                      filter: 10<v
+                                        Index forward scan on: s deferred: true
+                                          filter: s='k3'
+                                        Index forward scan on: s deferred: true
+                                          filter: s='k1'
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            s\tcount\tsum
+                            k3\t198\t100089
+                            k1\t198\t99693
+                            """);
+            assertQuery("SELECT count(), sum(v), max(ts) FROM t WHERE s IN ('k1','k3') AND v > 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("FilterOnValues symbolOrder: desc", "Cursor-order scan")
+                    .returns("""
+                            count\tsum\tmax
+                            396\t199782\t1970-01-01T00:00:00.000998Z
+                            """);
+            assertQuery("SELECT count(), sum(v), max(ts) FROM t WHERE s IN ('k1','k3')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("FilterOnValues symbolOrder: desc", "Cursor-order scan")
+                    .returns("""
+                            count\tsum\tmax
+                            400\t199800\t1970-01-01T00:00:00.000998Z
+                            """);
+            assertQuery("SELECT DISTINCT s FROM t WHERE s IN ('k0','k2','k4')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Table-order scan")
+                    .returns("""
+                            s
+                            k0
+                            k4
+                            k2
+                            """);
+        });
+    }
+
+    @Test
     public void testLiteralParameterSpellingKeepsDistinctIdentity() throws Exception {
         assertMemoryLeak(() -> {
             createRows(false);
@@ -148,8 +205,8 @@ public class SymbolInIndexTest extends AbstractCairoTest {
             final ObjList<String> orders = new ObjList<>("ts", "ts DESC", "s", "s DESC", "s,ts", "s DESC,ts DESC", "s,ts DESC", "id DESC");
             final ObjList<String> ordersRows = new ObjList<>("id\n1\n2\n4\n5\n8\n", "id\n8\n5\n4\n2\n1\n", "id\n1\n4\n5\n2\n8\n", "id\n2\n8\n1\n4\n5\n", "id\n1\n4\n5\n2\n8\n", "id\n8\n2\n5\n4\n1\n", "id\n5\n4\n1\n8\n2\n", "id\n8\n5\n4\n2\n1\n");
             final ObjList<String> ordersRows2 = new ObjList<>("id\n4\n5\n8\n", "id\n8\n5\n4\n", "id\n4\n5\n8\n", "id\n8\n4\n5\n", "id\n4\n5\n8\n", "id\n8\n5\n4\n", "id\n5\n4\n8\n", "id\n8\n5\n4\n");
-            final String[] shapes3 = {"SelectedRecord > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval forward scan on: lp_in", "SelectedRecord > Encode sort light > SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval backward scan on: lp_in", "SelectedRecord > SelectedRecord > FilterOnValues symbolOrder: asc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval forward scan on: lp_in", "SelectedRecord > SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval forward scan on: lp_in", "SelectedRecord > FilterOnValues symbolOrder: asc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval forward scan on: lp_in", "SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index backward scan on: s deferred: true > Index backward scan on: s deferred: true > Interval backward scan on: lp_in", "SelectedRecord > FilterOnValues symbolOrder: asc > Cursor-order scan > Index backward scan on: s deferred: true > Index backward scan on: s deferred: true > Interval backward scan on: lp_in", "Encode sort light > SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval forward scan on: lp_in"};
-            final String[] shapes2 = {"SelectedRecord > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light > SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame backward scan on: lp_in", "SelectedRecord > Encode sort light > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "Encode sort light > SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in"};
+            final String[] shapes3 = {"SelectedRecord > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval forward scan on: lp_in", "SelectedRecord > Encode sort light > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval backward scan on: lp_in", "SelectedRecord > SelectedRecord > FilterOnValues symbolOrder: asc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval forward scan on: lp_in", "SelectedRecord > SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval forward scan on: lp_in", "SelectedRecord > FilterOnValues symbolOrder: asc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval forward scan on: lp_in", "SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index backward scan on: s deferred: true > Index backward scan on: s deferred: true > Interval backward scan on: lp_in", "SelectedRecord > FilterOnValues symbolOrder: asc > Cursor-order scan > Index backward scan on: s deferred: true > Index backward scan on: s deferred: true > Interval backward scan on: lp_in", "Encode sort light > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval forward scan on: lp_in"};
+            final String[] shapes2 = {"SelectedRecord > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame backward scan on: lp_in", "SelectedRecord > Encode sort light > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "Encode sort light > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in"};
             for (int i = 0; i < orders.size(); i++) {
                 assertIndex(
                         "SELECT id FROM lp_in WHERE s IN ('A','B') ORDER BY " + orders.getQuick(i),
@@ -171,7 +228,7 @@ public class SymbolInIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM lp_in WHERE s IN ('A','B') AND ts>=$1 ORDER BY ts DESC",
                     "FilterOnValues",
-                    "SelectedRecord > Encode sort light > SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval backward scan on: lp_in",
+                    "SelectedRecord > Encode sort light > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Interval backward scan on: lp_in",
                     """
                             id
                             8
@@ -188,7 +245,7 @@ public class SymbolInIndexTest extends AbstractCairoTest {
             createRows(false);
             final ObjList<String> tails = new ObjList<>("", " LIMIT 3", " LIMIT -3", " LIMIT 1,4", " ORDER BY ts DESC LIMIT 2", " ORDER BY id DESC LIMIT -2");
             final ObjList<String> tailsRows = new ObjList<>("id\n1\n2\n4\n5\n8\n", "id\n1\n2\n4\n", "id\n4\n5\n8\n", "id\n2\n4\n5\n", "id\n8\n5\n", "id\n2\n1\n");
-            final String[] shapes4 = {"SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "Limit value: 3 > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "Limit value: -3 > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "Limit left: 1 right: 4 > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light lo: 2 > SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame backward scan on: lp_in", "Encode sort light lo: -2 > SelectedRecord > FilterOnValues symbolOrder: desc > Cursor-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in"};
+            final String[] shapes4 = {"SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "Limit value: 3 > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "Limit value: -3 > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "Limit left: 1 right: 4 > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in", "SelectedRecord > Encode sort light lo: 2 > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame backward scan on: lp_in", "Encode sort light lo: -2 > SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s deferred: true > Index forward scan on: s deferred: true > Frame forward scan on: lp_in"};
             for (int i = 0; i < tails.size(); i++) {
                 assertIndex(
                         "SELECT id FROM lp_in WHERE s IN ('A','B') AND length(v)>0" + tails.getQuick(i),
@@ -245,14 +302,13 @@ public class SymbolInIndexTest extends AbstractCairoTest {
                                 Encode sort light
                                   keys: [id]
                                     SelectedRecord
-                                        FilterOnValues symbolOrder: desc
-                                            Cursor-order scan
+                                        FilterOnValues
+                                            Table-order scan
+                                              filter: 0<length(v)
                                                 Index forward scan on: s deferred: true
-                                                  symbolFilter: s='A'
-                                                  filter: 0<length(v)
+                                                  filter: s='A'
                                                 Index forward scan on: s deferred: true
-                                                  symbolFilter: s='B'
-                                                  filter: 0<length(v)
+                                                  filter: s='B'
                                             Frame forward scan on: lp_in_unordered
                             """,
                     """

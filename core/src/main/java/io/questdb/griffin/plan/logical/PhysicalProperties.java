@@ -483,13 +483,12 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The direction a scan that reads the rows of several keys from the index emits them in: by row id only from
-     * forward frames through a heap of the key cursors, which it builds when row order matters or the consumers
-     * order by the designated timestamp, {@code isTimestampOrdered}.
+     * The direction a scan that reads the rows of several keys from the index emits them in: forward when it merges
+     * the keys in table order over forward frames.
      */
-    private static ScanDirection keyListDirection(ScanPlan scan, boolean isTimestampOrdered) {
-        final boolean isHeap = scan.isRowOrderRequired() || isTimestampOrdered;
-        return isHeap && scan.getScanDirection() == SortDirection.ASCENDING ? ScanDirection.FORWARD : ScanDirection.OTHER;
+    private static ScanDirection keyListDirection(ScanPlan scan) {
+        return scan.getIndexOrder().isTableOrder() && scan.getScanDirection() == SortDirection.ASCENDING
+                ? ScanDirection.FORWARD : ScanDirection.OTHER;
     }
 
     private static int latestBy(LatestByPlan latest) {
@@ -644,7 +643,7 @@ public final class PhysicalProperties {
             case SYMBOL_INDEX -> symbolIndex(scan);
             case EXCLUDED_SYMBOL_INDEX ->
                     properties(Capability.YES, Capability.NO, Capability.NO, Capability.of(scan.isRequestedOrderDelivered()),
-                            keyListDirection(scan, scan.getIndexOrder() == ScanPlan.IndexOrder.TIMESTAMP), Capability.NO);
+                            keyListDirection(scan), Capability.NO);
             // The sub-query is the base of its factory.
             case SYMBOL_SUBQUERY ->
                     properties(Capability.YES, Capability.NO, Capability.NO, Capability.NO, ScanDirection.FORWARD,
@@ -855,8 +854,7 @@ public final class PhysicalProperties {
 
     private static int symbolIndex(ScanPlan scan) {
         final boolean isSingleKey = scan.getIndexKeys().size() == 1;
-        final ScanDirection direction = isSingleKey ? ScanDirection.of(scan.getScanDirection())
-                : keyListDirection(scan, scan.getIndexOrder() == ScanPlan.IndexOrder.TIMESTAMP);
+        final ScanDirection direction = isSingleKey ? ScanDirection.of(scan.getScanDirection()) : keyListDirection(scan);
         if (scan.getIndexRead() == ScanPlan.IndexRead.COVERING) {
             return covering(scan, direction);
         }
@@ -864,12 +862,12 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The adaptive pattern scan: its index route emits rows by row id only from forward frames through a heap of the
-     * key cursors, a parallel filter applies the residual within it unless a covering route reads frames, and a
-     * filter above it applies the residual otherwise.
+     * The adaptive pattern scan: its index route emits rows in the order of its key list read, a parallel filter
+     * applies the residual within it unless a covering route reads frames, and a filter above it applies the residual
+     * otherwise.
      */
     private static int symbolPattern(ScanPlan scan) {
-        final ScanDirection direction = keyListDirection(scan, scan.isNativeTimestampOrderRequested());
+        final ScanDirection direction = keyListDirection(scan);
         final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
         final Capability isParallel = residualParallel(scan);
         return properties(choose(isParallel, Capability.YES, Capability.of(!isCovering)), Capability.NO,

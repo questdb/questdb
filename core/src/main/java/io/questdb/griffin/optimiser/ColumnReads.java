@@ -140,6 +140,15 @@ final class ColumnReads implements Mutable {
         }
     }
 
+    /**
+     * The timestamp a time series join binds its master by: one that a sort by another key hides stays read, since
+     * order planning may drop that sort and expose it again.
+     */
+    private static int temporalMasterTimestampId(LogicalPlan master) {
+        final int timestampId = master.getOutput().getTimestampColumnId();
+        return timestampId < 0 ? LogicalPlans.unorderedTimestampColumnId(master) : timestampId;
+    }
+
     @Override
     public void clear() {
         sharedSetOperations.clear();
@@ -189,7 +198,7 @@ final class ColumnReads implements Mutable {
                 for (int i = 0, n = steps.size(); i < n; i++) {
                     final JoinInput step = steps.getQuick(i);
                     if (step.getJoinType().isTemporal()) {
-                        readColumnIds.add(steps.getQuick(0).getInput().getOutput().getTimestampColumnId());
+                        readColumnIds.add(temporalMasterTimestampId(steps.getQuick(0).getInput()));
                         readColumnIds.add(step.getInput().getOutput().getTimestampColumnId());
                     }
                 }
@@ -211,7 +220,7 @@ final class ColumnReads implements Mutable {
                 windowJoin.visitReads(planReads);
             }
             case HorizonJoinPlan horizon -> {
-                readColumnIds.add(horizon.getMaster().getOutput().getTimestampColumnId());
+                readColumnIds.add(temporalMasterTimestampId(horizon.getMaster()));
                 for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
                     readColumnIds.add(horizon.getSlaves().getQuick(i).getInput().getOutput().getTimestampColumnId());
                 }

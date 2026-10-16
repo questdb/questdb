@@ -62,7 +62,6 @@ public final class ScanPlan extends LogicalPlan {
     private IndexOrder indexOrder = IndexOrder.NONE;
     private IndexRead indexRead = IndexRead.NONE;
     private boolean isRandomAccess = true;
-    private boolean isRowOrderRequired = true;
     private boolean isSinglePartition;
     private boolean isTimestampDropped;
     private boolean isUpdate;
@@ -77,6 +76,7 @@ public final class ScanPlan extends LogicalPlan {
     private int nativeTimestampType = ColumnType.UNDEFINED;
     private BoundExpression residual;
     private FilterPlan.Algorithm residualAlgorithm;
+    private RowOrder rowOrder = RowOrder.REQUIRED;
     private SortDirection scanDirection = SortDirection.ASCENDING;
     private TableToken tableToken;
     private String viewName;
@@ -106,7 +106,7 @@ public final class ScanPlan extends LogicalPlan {
         isUpdate = false;
         isWalClientUpdate = false;
         isRandomAccess = true;
-        isRowOrderRequired = true;
+        rowOrder = RowOrder.REQUIRED;
         scanDirection = SortDirection.ASCENDING;
         hints = 0;
         clearAccessPath();
@@ -346,6 +346,13 @@ public final class ScanPlan extends LogicalPlan {
     /**
      * The direction the scan reads the table in, by designated timestamp.
      */
+    /**
+     * What the consumers of the scan require of the order of its rows.
+     */
+    public RowOrder getRowOrder() {
+        return rowOrder;
+    }
+
     public SortDirection getScanDirection() {
         return scanDirection;
     }
@@ -427,15 +434,7 @@ public final class ScanPlan extends LogicalPlan {
      * Whether the access path emits the rows in the order the consumers request.
      */
     public boolean isRequestedOrderDelivered() {
-        return accessPath == AccessPath.SORTED_SYMBOL_INDEX || indexOrder != IndexOrder.NONE;
-    }
-
-    /**
-     * False when every consumer of the scan re-sorts or discards its row order, so an index access path may
-     * emit the rows key by key.
-     */
-    public boolean isRowOrderRequired() {
-        return isRowOrderRequired;
+        return accessPath == AccessPath.SORTED_SYMBOL_INDEX || indexOrder.isRequested();
     }
 
     /**
@@ -563,8 +562,8 @@ public final class ScanPlan extends LogicalPlan {
         this.residualAlgorithm = residualAlgorithm;
     }
 
-    public void setRowOrderRequired(boolean isRowOrderRequired) {
-        this.isRowOrderRequired = isRowOrderRequired;
+    public void setRowOrder(RowOrder rowOrder) {
+        this.rowOrder = rowOrder;
     }
 
     public void setScanDirection(SortDirection scanDirection) {
@@ -713,21 +712,47 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
-     * The requested order an index access path emits its rows in.
+     * The order an index access path reading a list of keys emits its rows in.
      */
     public enum IndexOrder {
         /**
-         * Not the requested order.
+         * Not a read of several keys: the access path reads no index keys, or a single key in index order.
          */
         NONE,
         /**
-         * Ordered by the index key, then by designated timestamp in the index direction.
+         * Ordered by the index key, then by designated timestamp in the index direction, as the consumers request.
          */
         KEY,
         /**
-         * Ordered by designated timestamp.
+         * Ordered by designated timestamp, as the consumers request, merging the keys row by row.
          */
-        TIMESTAMP
+        TIMESTAMP,
+        /**
+         * In table order, merging the keys row by row, so that the consumers may stop at any row.
+         */
+        TABLE,
+        /**
+         * In table order, merging all keys of a page frame before its first row.
+         */
+        TABLE_PER_FRAME,
+        /**
+         * Key by key within each page frame.
+         */
+        KEY_PER_FRAME;
+
+        /**
+         * Whether the order is the one the consumers request.
+         */
+        public boolean isRequested() {
+            return this == KEY || this == TIMESTAMP;
+        }
+
+        /**
+         * Whether each page frame emits its rows in table order.
+         */
+        public boolean isTableOrder() {
+            return this == TIMESTAMP || this == TABLE || this == TABLE_PER_FRAME;
+        }
     }
 
     /**
@@ -746,5 +771,23 @@ public final class ScanPlan extends LogicalPlan {
          * The column values the covering index includes, without the rows.
          */
         COVERING
+    }
+
+    /**
+     * What the consumers of a scan require of the order of its rows.
+     */
+    public enum RowOrder {
+        /**
+         * The order the scan reads its rows in.
+         */
+        REQUIRED,
+        /**
+         * Nothing, as every consumer re-sorts or discards the row order.
+         */
+        ANY,
+        /**
+         * Nothing, as an aggregate without keys folds every row into a single group.
+         */
+        ANY_SINGLE_GROUP
     }
 }

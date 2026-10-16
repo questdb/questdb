@@ -83,7 +83,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.TimeZoneRules;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -198,24 +197,6 @@ final class SampleByFactoryGenerator {
         }
         return fillCount == 0 || fillCount == 1 && isNoneKeyword(fillTokens.getQuick(0))
                 ? SampleByPlan.Algorithm.FILL_NONE : SampleByPlan.Algorithm.FILL_VALUE;
-    }
-
-    /**
-     * Consumes the function: a constant bound converts now, a runtime-constant one converts once it has its value.
-     */
-    private static Function toSampleByUtc(Function function, TimestampDriver driver, TimeZoneRules rules, int timestampType) {
-        if (function == driver.getTimestampConstantNull()) {
-            return function;
-        }
-        if (!function.isConstant()) {
-            return new SampleByUtcBoundFunction(function, rules, timestampType);
-        }
-        final long timestamp = driver.from(function.getTimestamp(null), ColumnType.getTimestampType(function.getType()));
-        if (timestamp == Numbers.LONG_NULL) {
-            return function;
-        }
-        Misc.free(function);
-        return TimestampConstant.newInstance(driver.toUTC(timestamp, rules), timestampType);
     }
 
     /**
@@ -675,6 +656,43 @@ final class SampleByFactoryGenerator {
     }
 
     /**
+     * Consumes the function: a constant bound in a constant timezone converts now, any other bound converts once
+     * it and the timezone have their per-execution values.
+     */
+    private Function toSampleByUtc(
+            Function function,
+            SampleByPlan plan,
+            OutputSchema input,
+            RecordMetadata metadata,
+            Function timezone,
+            TimestampDriver driver,
+            int timestampType,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (function == driver.getTimestampConstantNull()) {
+            return function;
+        }
+        if (function.isConstant() && timezone.isConstant()) {
+            final CharSequence zone = timezone.getStrA(null);
+            final long timestamp = driver.from(function.getTimestamp(null), ColumnType.getTimestampType(function.getType()));
+            if (zone == null || timestamp == Numbers.LONG_NULL) {
+                return function;
+            }
+            final long utc = driver.toUTC(timestamp, driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone));
+            Misc.free(function);
+            return TimestampConstant.newInstance(utc, timestampType);
+        }
+        final Function zone = functionInstantiator.instantiate(plan.getTimezone(), input, metadata, executionContext);
+        try {
+            assignUndefinedType(zone, STRING, executionContext);
+        } catch (Throwable th) {
+            Misc.free(zone, th);
+            throw th;
+        }
+        return new SampleByUtcBoundFunction(function, zone, plan.getTimezonePosition(), timestampType);
+    }
+
+    /**
      * Consumes the aggregate input on entry, including on failure.
      */
     RecordCursorFactory generateFill(
@@ -833,12 +851,8 @@ final class SampleByFactoryGenerator {
                     : functionInstantiator.instantiate(plan.getTo(), input, baseMetadata, executionContext);
             assignUndefinedType(to, timestampType, executionContext);
             if (plan.getFillMode() != SampleByPlan.FILL_LINEAR && plan.getTimezone() != null && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
-                final CharSequence zone = timezone.getStrA(null);
-                if (zone != null) {
-                    final TimeZoneRules rules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
-                    from = toSampleByUtc(from, driver, rules, timestampType);
-                    to = toSampleByUtc(to, driver, rules, timestampType);
-                }
+                from = toSampleByUtc(from, plan, input, baseMetadata, timezone, driver, timestampType, executionContext);
+                to = toSampleByUtc(to, plan, input, baseMetadata, timezone, driver, timestampType, executionContext);
             }
             final TimestampSampler sampler = plan.getPeriod() instanceof ConstantExpression period
                     ? TimestampSamplerFactory.getInstance(driver, period.getLongValue(), plan.getPeriodUnit(), plan.getPeriodUnitPosition())

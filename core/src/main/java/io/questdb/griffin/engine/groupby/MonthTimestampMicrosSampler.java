@@ -72,9 +72,10 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Micros.getYear(value);
+        final long local = value - dayMod;
+        int y = Micros.getYear(local);
         final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Micros.getMonthOfYear(value, y, leap);
+        int m = Micros.getMonthOfYear(local, y, leap);
         // target month
         int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
         int d = startDay > 0 ? startDay : 1;
@@ -104,9 +105,10 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
     }
 
     private long addMonth(long timestamp, int monthCount) {
-        int y = Micros.getYear(timestamp);
+        final long local = timestamp - dayMod;
+        int y = Micros.getYear(local);
         final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Micros.getMonthOfYear(timestamp, y, leap);
+        int m = Micros.getMonthOfYear(local, y, leap);
 
         int _y;
         int _m = m - 1 + monthCount;

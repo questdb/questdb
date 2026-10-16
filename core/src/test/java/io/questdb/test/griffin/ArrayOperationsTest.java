@@ -46,9 +46,9 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             id	array_position	array_position1	insertion_point	insertion_point1	insertion_point2
                             1	2	4	4	2	4
                             2	null	null	null	null	null
-                            3	null	-2147483647	1	1	1
-                            4	null	-2147483647	2	1	2
-                            5	null	-2147483647	1	1	1
+                            3	null	null	1	1	1
+                            4	null	null	2	1	2
+                            5	null	null	1	1	1
                             6	null	null	null	null	null
                             """
             );

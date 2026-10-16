@@ -76,9 +76,10 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Nanos.getYear(value);
+        final long local = value - dayMod;
+        int y = Nanos.getYear(local);
         final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Nanos.getMonthOfYear(value, y, leap);
+        int m = Nanos.getMonthOfYear(local, y, leap);
         // target month
         int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
         int d = startDay > 0 ? startDay : 1;
@@ -108,9 +109,10 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
     }
 
     private long addMonth(long timestamp, int monthCount) {
-        int y = Nanos.getYear(timestamp);
+        final long local = timestamp - dayMod;
+        int y = Nanos.getYear(local);
         final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Nanos.getMonthOfYear(timestamp, y, leap);
+        int m = Nanos.getMonthOfYear(local, y, leap);
 
         int _y;
         int _m = m - 1 + monthCount;

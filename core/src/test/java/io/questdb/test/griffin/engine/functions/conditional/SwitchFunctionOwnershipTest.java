@@ -30,6 +30,8 @@ import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
@@ -63,6 +65,40 @@ public class SwitchFunctionOwnershipTest extends AbstractCairoTest {
                     Assert.assertEquals(1, symbol.closeCount);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testEqualityArmsCloseKeyAndConstantsExactlyOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(new SwitchFunctionFactory());
+
+            // = of LONG and DOUBLE resolves: the switch owns the key, the = arm owns the constant
+            CountingLong key = new CountingLong();
+            CountingDouble constant = new CountingDouble();
+            ObjList<Function> args = new ObjList<>(key, constant, new IntConstant(1), new IntConstant(0));
+            try (Function result = parser.getFunctionResolver().createFunction(descriptor, 0, "switch", args, positions(args.size()), sqlExecutionContext)) {
+                Assert.assertFalse(result.isThreadSafe());
+                Assert.assertEquals(0, key.closeCount);
+            }
+            Assert.assertEquals(1, key.closeCount);
+            Assert.assertEquals(1, constant.closeCount);
+
+            // = of LONG and BOOLEAN does not resolve: the failed resolution releases the constant, the caller the key
+            key = new CountingLong();
+            final CountingDouble arm = new CountingDouble();
+            final CountingBooleanConstant inconvertible = new CountingBooleanConstant();
+            args = new ObjList<>(key, arm, new IntConstant(1), inconvertible, new IntConstant(2), new IntConstant(0));
+            try (Function ignored = parser.getFunctionResolver().createFunction(descriptor, 0, "switch", args, positions(args.size()), sqlExecutionContext)) {
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(3, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "type mismatch [expected=LONG, actual=BOOLEAN]");
+            }
+            Assert.assertEquals(1, key.closeCount);
+            Assert.assertEquals(1, arm.closeCount);
+            Assert.assertEquals(1, inconvertible.closeCount);
         });
     }
 
@@ -139,6 +175,69 @@ public class SwitchFunctionOwnershipTest extends AbstractCairoTest {
         @Override
         public boolean getBool(Record record) {
             throw new AssertionError("discarded CASE branch must not be evaluated");
+        }
+    }
+
+    private static class CountingBooleanConstant extends BooleanFunction {
+        private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
+        private int closeCount;
+
+        @Override
+        public void close() {
+            closeCount++;
+            sink.close();
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return true;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return true;
+        }
+    }
+
+    private static class CountingDouble extends DoubleFunction {
+        private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
+        private int closeCount;
+
+        @Override
+        public void close() {
+            closeCount++;
+            sink.close();
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return 1.5;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return true;
+        }
+    }
+
+    private static class CountingLong extends LongFunction {
+        private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
+        private int closeCount;
+
+        @Override
+        public void close() {
+            closeCount++;
+            sink.close();
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return 1;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return true;
         }
     }
 

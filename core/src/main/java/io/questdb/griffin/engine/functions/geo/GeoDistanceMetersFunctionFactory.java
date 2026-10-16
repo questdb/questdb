@@ -241,6 +241,14 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof ConstPoint1GeoDistanceFunction other) {
+                lat2Func.offerStateTo(other.lat2Func);
+                lon2Func.offerStateTo(other.lon2Func);
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("geo_distance_meters(")
                     .val(lat1).val(',')
@@ -378,6 +386,16 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
                     && lon1Func.isThreadSafe()
                     && lat2Func.isThreadSafe()
                     && lon2Func.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof GeoDistanceFunction other) {
+                lat1Func.offerStateTo(other.lat1Func);
+                lat2Func.offerStateTo(other.lat2Func);
+                lon1Func.offerStateTo(other.lon1Func);
+                lon2Func.offerStateTo(other.lon2Func);
+            }
         }
 
         @Override

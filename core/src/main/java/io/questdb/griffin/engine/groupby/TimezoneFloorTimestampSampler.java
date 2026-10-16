@@ -63,6 +63,11 @@ public class TimezoneFloorTimestampSampler implements TimestampSampler {
     private final TimestampSampler localSampler;
     private final char unit;
     private TimeZoneRules tzRules;
+    // nextTimestamp() looks the zone up once per transition: the offset holds from
+    // zoneOffsetLo up to the transition at zoneOffsetHi.
+    private long zoneOffset;
+    private long zoneOffsetHi = Long.MIN_VALUE;
+    private long zoneOffsetLo = Long.MAX_VALUE;
 
     public TimezoneFloorTimestampSampler(TimestampSampler localSampler, TimeZoneRules tzRules, char unit) {
         this.localSampler = localSampler;
@@ -101,16 +106,44 @@ public class TimezoneFloorTimestampSampler implements TimestampSampler {
 
     @Override
     public long nextTimestamp(long utcTimestamp) {
-        final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, utcTimestamp, unit);
-        final long localNext = localSampler.nextTimestamp(utcTimestamp + tzOff);
-        return CommonUtils.offsetFlooredUtcResult(localNext, tzOff, 0, tzRules, unit);
+        // The floor changes its bucket only where local time reaches the next grid line or at a DST
+        // transition. A transition can keep the bucket, or even return to an earlier one, so walk those
+        // instants until one floors past the given bucket.
+        long instant = utcTimestamp;
+        while (true) {
+            if (instant < zoneOffsetLo || instant >= zoneOffsetHi) {
+                zoneOffset = CommonUtils.getFloorUtcTzOffset(tzRules, instant, unit);
+                zoneOffsetLo = instant;
+                zoneOffsetHi = tzRules.getNextDST(instant);
+            }
+            final long localNext = localSampler.nextTimestamp(localSampler.round(instant + zoneOffset));
+            if (localNext == Long.MAX_VALUE) {
+                return Long.MAX_VALUE;
+            }
+            final long crossing = localNext - zoneOffset;
+            if (crossing <= instant) {
+                // A wrapped grid that does not advance (a month or year grid with a negative
+                // offset) stalls in the caller, which polls the circuit breaker, not here.
+                return crossing;
+            }
+            if (crossing < zoneOffsetHi) {
+                return crossing;
+            }
+            instant = zoneOffsetHi;
+            final long bucket = round(instant);
+            if (bucket > utcTimestamp) {
+                return bucket;
+            }
+        }
     }
 
     @Override
     public long nextTimestamp(long utcTimestamp, long numSteps) {
-        final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, utcTimestamp, unit);
-        final long localNext = localSampler.nextTimestamp(utcTimestamp + tzOff, numSteps);
-        return CommonUtils.offsetFlooredUtcResult(localNext, tzOff, 0, tzRules, unit);
+        long timestamp = utcTimestamp;
+        for (long i = 0; i < numSteps; i++) {
+            timestamp = nextTimestamp(timestamp);
+        }
+        return timestamp;
     }
 
     @Override
@@ -168,6 +201,8 @@ public class TimezoneFloorTimestampSampler implements TimestampSampler {
      */
     public void setTzRules(@NotNull TimeZoneRules tzRules) {
         this.tzRules = tzRules;
+        zoneOffsetHi = Long.MIN_VALUE;
+        zoneOffsetLo = Long.MAX_VALUE;
     }
 
     @Override

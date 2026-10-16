@@ -981,6 +981,23 @@ public final class LogicalPlans {
     }
 
     /**
+     * The column of the plan that holds the designated timestamp of the rows a sort by a key that is not a timestamp
+     * reorders: the sort designates none, and the column projections and filters over it pass that column on; -1
+     * otherwise.
+     */
+    public static int unorderedTimestampColumnId(LogicalPlan plan) {
+        return switch (plan) {
+            case SortPlan sort when sort.getOutput().getTimestampIndex() < 0 -> sort.getChild().getOutput().getTimestampColumnId();
+            case FilterPlan filter -> unorderedTimestampColumnId(filter.getChild());
+            case ProjectPlan project when isColumnProjection(project) -> {
+                final int index = projectedColumnIndex(project, unorderedTimestampColumnId(project.getChild()));
+                yield index < 0 ? -1 : project.getOutput().getColumnId(index);
+            }
+            default -> -1;
+        };
+    }
+
+    /**
      * The type an UPDATE stores a value of type {@code type} as in a column of type {@code targetType}: the target
      * type for a built-in widening cast, except into a timestamp column from a type with a timestamp precision of its
      * own (DATE, text), which the update converts from; the value's own type otherwise.

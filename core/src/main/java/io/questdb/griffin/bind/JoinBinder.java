@@ -503,6 +503,11 @@ final class JoinBinder implements Mutable {
                 validateProvidedTimestamp(inputs.getQuick(0).getInput());
             }
             int timestampId = inputs.getQuick(0).getSourceOutput().getTimestampColumnId();
+            if (hasTemporalStep && timestampId < 0) {
+                // The master orders its rows by a key that is not a timestamp. A consumer that discards the join's row
+                // order drops that sort (OrderPlanning); otherwise operator planning rejects the missing timestamp.
+                timestampId = LogicalPlans.unorderedTimestampColumnId(inputs.getQuick(0).getInput());
+            }
             for (int i = 1, n = inputs.size(); i < n; i++) {
                 final JoinInput step = inputs.getQuick(i);
                 final JoinDependency dependency = graph.getDependencies().getQuick(i);

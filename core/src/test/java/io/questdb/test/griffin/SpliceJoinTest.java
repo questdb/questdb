@@ -134,6 +134,82 @@ public class SpliceJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderInsensitiveAggregateOverDescendingInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01T00:00:01.000000Z', 'A', 1),
+                        ('2024-01-01T00:00:02.000000Z', 'B', 2),
+                        ('2024-01-01T00:00:03.000000Z', 'A', 3),
+                        ('2024-01-01T00:00:04.000000Z', 'B', 4)
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                        ('2024-01-01T00:00:00.500000Z', 'A', 10),
+                        ('2024-01-01T00:00:01.500000Z', 'B', 20),
+                        ('2024-01-01T00:00:02.000000Z', 'B', 25),
+                        ('2024-01-01T00:00:02.500000Z', 'A', 30),
+                        ('2024-01-01T00:00:03.500000Z', 'B', 40),
+                        ('2024-01-01T00:00:03.800000Z', 'A', 50)
+                    """);
+            final String unkeyed = """
+                    count\tsum\tsum1
+                    9\t19\t265
+                    """;
+            assertQuery("SELECT count(), sum(t.qty), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t SPLICE JOIN quotes q")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(unkeyed);
+            assertQuery("SELECT count(), sum(t.qty), sum(q.bid) FROM trades t SPLICE JOIN (SELECT * FROM quotes ORDER BY ts DESC) q")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(unkeyed);
+            assertQuery("SELECT count(), sum(t.qty), sum(q.bid) FROM trades t SPLICE JOIN quotes q")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(unkeyed);
+            final String keyed = """
+                    count\tsum\tsum1
+                    9\t14\t225
+                    """;
+            assertQuery("WITH d AS (SELECT * FROM trades ORDER BY ts DESC) SELECT count(), sum(t.qty), sum(q.bid) FROM d t SPLICE JOIN quotes q ON (sym)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(keyed);
+            assertQuery("SELECT count(), sum(t.qty), sum(q.bid) FROM trades t SPLICE JOIN quotes q ON (sym)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(keyed);
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY ts DESC) t SPLICE JOIN quotes q")
+                    .fails(67, "left side of time series join doesn't have ASC timestamp order");
+            assertQuery("SELECT count(), sum(t.qty), sum(q.bid) FROM (SELECT * FROM trades ORDER BY qty DESC) t SPLICE JOIN quotes q")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(unkeyed);
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY qty DESC) t SPLICE JOIN quotes q")
+                    .fails(68, "left side of time series join has no timestamp");
+            final String resorted = """
+                    qty\tbid
+                    null\t10
+                    1\t10
+                    1\t20
+                    2\t25
+                    2\t30
+                    3\t30
+                    3\t40
+                    3\t50
+                    4\t50
+                    """;
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY qty DESC) t SPLICE JOIN quotes q ORDER BY t.qty, q.bid")
+                    .returns(resorted);
+            assertQuery("SELECT t.qty, q.bid FROM trades t SPLICE JOIN quotes q ORDER BY t.qty, q.bid")
+                    .returns(resorted);
+        });
+    }
+
+    @Test
     public void testTimestampEndpointSlave() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

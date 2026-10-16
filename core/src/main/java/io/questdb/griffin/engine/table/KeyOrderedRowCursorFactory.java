@@ -46,4 +46,11 @@ interface KeyOrderedRowCursorFactory extends RowCursorFactory {
      * The number of keys, known once the cursors are prepared.
      */
     int getKeyCount();
+
+    /**
+     * The number of rows of the keys at {@code keyLo}, inclusive, to {@code keyHi}, exclusive, among the rows
+     * {@code rowLo} to {@code rowHi}, inclusive, of the partition of the page frame, or -1 when the factory cannot tell
+     * without reading the rows.
+     */
+    long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi);
 }

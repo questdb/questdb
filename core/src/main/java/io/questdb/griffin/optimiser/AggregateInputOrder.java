@@ -27,6 +27,8 @@ package io.questdb.griffin.optimiser;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
+import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -51,7 +53,8 @@ final class AggregateInputOrder implements Mutable {
 
     private static boolean isUnorderedAggregate(AggregatePlan aggregate) {
         // Key-only grouping and an explicit GROUP BY clause keep their input order, including
-        // beneath an outer ORDER BY. Only an aggregate with inferred keys drops it.
+        // beneath an outer ORDER BY that leaves ties among their rows (see OrderPlanning). Only an
+        // aggregate with inferred keys drops it here.
         return aggregate.getAggregates().size() > 0 && !aggregate.hasExplicitGrouping()
                 && LogicalPlans.isAggregateOrderIndependent(aggregate);
     }
@@ -104,9 +107,23 @@ final class AggregateInputOrder implements Mutable {
                 }
                 return plan;
             }
+            case JoinPlan join -> {
+                OrderPlanning.removeUnreadTemporalOrder(join);
+                return plan;
+            }
+            case HorizonJoinPlan horizon -> {
+                OrderPlanning.removeUnreadTemporalOrder(horizon);
+                return plan;
+            }
+            case SetOperationPlan union when union.getOperation().isUnion() -> {
+                for (int i = 0, n = union.inputCount(); i < n; i++) {
+                    union.replaceInput(i, removeAggregateInputOrder(union.inputAt(i)));
+                }
+                return plan;
+            }
             default -> {
                 // LIMIT observes order, DISTINCT selects an implementation from it,
-                // and sets have their own branch-order contracts.
+                // and EXCEPT and INTERSECT designate their first branch's timestamp.
                 return plan;
             }
         }

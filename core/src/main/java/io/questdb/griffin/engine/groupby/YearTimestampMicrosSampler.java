@@ -71,7 +71,7 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Micros.getYear(value);
+        int y = Micros.getYear(value - dayMod);
         y = Micros.EPOCH_YEAR_0 + ((y - Micros.EPOCH_YEAR_0) / stepYears) * stepYears;
         int month = startMonth > 0 ? startMonth : 1;
         int day = startDay > 0 ? startDay : 1;
@@ -105,7 +105,7 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
         if (numYears == 0) {
             return timestamp;
         }
-        final int y = Micros.getYear(timestamp);
+        final int y = Micros.getYear(timestamp - dayMod);
         final boolean leap = CommonUtils.isLeapYear(y + numYears);
         int month = startMonth > 0 ? startMonth : 1;
         int day = startDay > 0 ? startDay : 1;

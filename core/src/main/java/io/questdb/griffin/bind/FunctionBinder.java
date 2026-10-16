@@ -55,7 +55,6 @@ import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.BindableColumn;
-import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
@@ -125,7 +124,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final LongList parsedIntervals;
     private final IntList positionStack = new IntList();
     private final FunctionResolver resolver;
-    private final ObjList<BoundExpression> switchArguments = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo;
     private final ObjList<BoundExpression> unconstructed = new ObjList<>();
     private final ObjObjHashMap<BoundExpression, BoundExpression> unconstructedIndex = new ObjObjHashMap<>();
@@ -770,31 +768,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             clearUnconstructed(unconstructedMark);
             ctx.planNodes.staticTypes.rewind(staticTypeMark);
         }
-    }
-
-    /**
-     * Binds a switch whose WHEN arguments its keyed lookup cannot match as = does, over its bound arguments, as the
-     * CASE of key = constant it stands for: the searched CASE the parser rewrote into it, or a simple CASE.
-     */
-    private Function bindSwitchAsCase(int position, int role, boolean isSetOperation, ObjList<Function> args) throws SqlException {
-        final int count = args.size();
-        switchArguments.clear();
-        switchArguments.addAll(arguments);
-        Misc.freeObjList(args);
-        dropLeaves(callLeafMark(), leafMark());
-        final boolean hasElse = (count & 1) == 0;
-        if (hasElse) {
-            pushArgument(switchArguments.getLast());
-        }
-        final int operandRole = role == CALL_WINDOW_ARGUMENT ? CALL_WINDOW_ARGUMENT : CALL_ARGUMENT;
-        for (int i = hasElse ? count - 2 : count - 1; i > 0; i -= 2) {
-            final BoundExpression constant = switchArguments.getQuick(i - 1);
-            pushArgument(switchArguments.getQuick(i));
-            pushArgument(constant);
-            pushArgument(switchArguments.getQuick(0));
-            pushFunction(resolveCall("=", constant.getPosition(), operandRole, false, 2), constant.getPosition());
-        }
-        return resolveCall("case", position, role, isSetOperation, count - 1);
     }
 
     /**
@@ -1668,6 +1641,12 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 FunctionResolver.rejectAggregateArgument(args, i, argPosition);
             }
             FunctionResolver.wrapRuntimeConstants(args);
+            try {
+                typeTimestampComparedParameters(name, args);
+            } catch (Throwable th) {
+                Misc.freeObjList(args, th);
+                throw th;
+            }
         }
         if (role == CALL_WINDOW_ROOT) {
             try {
@@ -1685,9 +1664,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         validateFactory(overload, role, position, args);
         resolver.coerceArguments(overload, position, name, args, positions, this, sqlExecutionContext);
         captureImplicitConversions(args, positions);
-        if (overload.isSwitch() && SwitchFunctionFactory.requiresEquality(args, positions, resolver.getConfiguration(), sqlExecutionContext)) {
-            return bindSwitchAsCase(position, role, isSetOperation, args);
-        }
         return createFunction(overload, name, position, role, isSetOperation, args, positions);
     }
 
@@ -1841,6 +1817,28 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                     ctx.planNodes.types.next().of(function.getType(), position);
             default -> throw new IllegalStateException("unexpected CAST target type");
         };
+    }
+
+    /**
+     * Types an untyped bind variable compared with a TIMESTAMP operand, or a BETWEEN bound of one, at the
+     * operand's precision, so its value parses as the text literal it stands for rather than at the
+     * precision of the overload's signature.
+     */
+    private void typeTimestampComparedParameters(CharSequence name, ObjList<Function> args) throws SqlException {
+        final int count = args.size();
+        final boolean isBetween = count == 3 && SqlKeywords.isBetweenKeyword(name);
+        if (!isBetween && (count != 2 || !isTemporalComparisonOperator(name))) {
+            return;
+        }
+        final int type = args.getQuick(isBetween || args.getQuick(1).isUndefined() ? 0 : 1).getType();
+        if (ColumnType.tagOf(type) != ColumnType.TIMESTAMP) {
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            if (args.getQuick(i).isUndefined()) {
+                args.getQuick(i).assignType(type, sqlExecutionContext.getBindVariableService());
+            }
+        }
     }
 
     /**

@@ -241,6 +241,15 @@ public final class IntervalExtractor implements Mutable {
         };
     }
 
+    /**
+     * A runtime DATE or text bound of a comparison, which the runtime interval model converts at execution: text at
+     * the precision it spells, as interval extraction parses a literal.
+     */
+    private static boolean isRuntimeConvertedBound(BoundExpression bound) {
+        final int type = bound.getDataType();
+        return (ColumnType.isVarcharOrString(type) || type == ColumnType.DATE) && (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0;
+    }
+
     private static boolean isRuntimePoint(BoundExpression bound) {
         final int type = bound.getDataType();
         return (ColumnType.isTimestamp(type) || isIntegralType(type)) && (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0;
@@ -480,7 +489,7 @@ public final class IntervalExtractor implements Mutable {
         final boolean isCursorBound = bound instanceof CursorExpression cursor && isTimestampCursor(cursor)
                 && column.isDirectReference() && column.getDataType() == timestampType;
         final boolean isRuntimeTimestampBound = isCursorBound || !(bound instanceof ConstantExpression) && column.isDirectReference()
-                && column.getDataType() == timestampType && isRuntimePoint(bound);
+                && column.getDataType() == timestampType && (isRuntimePoint(bound) || isRuntimeConvertedBound(bound));
         final long convertedBound = bound instanceof ConstantExpression constantBound && isLosslessPrecisionBound(column, constantBound, timestampType)
                 ? ColumnType.getTimestampDriver(timestampType).from(constantBound.getLongValue(), ColumnType.getTimestampType(bound.getDataType()))
                 : Numbers.LONG_NULL;

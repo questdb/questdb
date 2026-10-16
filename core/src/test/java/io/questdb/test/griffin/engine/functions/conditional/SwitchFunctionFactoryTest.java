@@ -353,10 +353,27 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanKeyWhenNullMatchesNothing() throws Exception {
+        assertQuery("""
+                SELECT b,
+                    CASE b WHEN null THEN 'null' ELSE 'other' END k,
+                    CASE WHEN b = null THEN 'null' ELSE 'other' END s,
+                    CASE b WHEN null THEN 'null' WHEN true THEN 't' WHEN false THEN 'f' END k3
+                FROM t""")
+                .ddl("CREATE TABLE t AS (SELECT x % 2 = 0 b FROM long_sequence(2))")
+                .expectSize()
+                .returns("""
+                        b\tk\ts\tk3
+                        false\tother\tother\tf
+                        true\tother\tother\tt
+                        """);
+    }
+
+    @Test
     public void testBranchTypeMismatch() throws Exception {
         assertQuery("SELECT CASE u WHEN 123 THEN 'a' ELSE 'b' END FROM test")
                 .ddl("CREATE TABLE test AS (SELECT rnd_uuid4() u FROM long_sequence(5))")
-                .fails(19, "there is no matching operator `=` with the argument types: UUID = INT");
+                .fails(19, "type mismatch [expected=UUID, actual=INT]");
     }
 
     @Test
@@ -725,7 +742,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT CASE d WHEN 'a' THEN 1 ELSE 2 END FROM test")
                     .noLeakCheck()
-                    .fails(19, "there is no matching operator `=` with the argument types: DECIMAL(10,2) = CHAR");
+                    .fails(12, "type DECIMAL(10,2) is not supported in 'switch' type of 'case' statement");
         });
     }
 
@@ -931,6 +948,36 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpressionKeyWithEqualityConstant() throws Exception {
+        assertQuery("""
+                SELECT x,
+                    switch(x + 0, 1, 'one', 1.5, 'fraction', 2.0, 'two', 'other') k,
+                    CASE x + 0 WHEN 1.00000000001 THEN 'equality' WHEN 1 THEN 'keyed' END ek,
+                    CASE x + 0 WHEN 1 THEN 'keyed' WHEN 1.00000000001 THEN 'equality' END ke
+                FROM long_sequence(3)""")
+                .expectSize()
+                .withPlanContaining("case([switch(x+0,1L,'one',x+0=1.5,'fraction',x+0=2.0,'two','other')])")
+                .returns("""
+                        x\tk\tek\tke
+                        1\tone\tequality\tkeyed
+                        2\ttwo\t\t
+                        3\tother\t\t
+                        """);
+    }
+
+    @Test
+    public void testExpressionKeyWithFailingEquality() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT switch(x + 0, 1, 'one', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid, 'uuid', 'other') FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(69, "type mismatch [expected=LONG, actual=UUID]");
+            assertQuery("SELECT switch(x + 0, 1.5, 'fraction', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid, 'uuid', 'other') FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(76, "type mismatch [expected=LONG, actual=UUID]");
+        });
+    }
+
+    @Test
     public void testFloat() throws Exception {
         assertQuery("""
                 select\s
@@ -1079,7 +1126,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT CASE ip WHEN 'abc' THEN 1 END FROM t")
                     .noLeakCheck()
-                    .failsWith("invalid IPv4 format: abc");
+                    .fails(20, "invalid IPv4 constant");
         });
     }
 
@@ -1887,6 +1934,19 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolKeyWithEqualityConstant() throws Exception {
+        assertQuery("SELECT sym, CASE sym WHEN 1 THEN 'one' WHEN 'b' THEN 'b' ELSE 'other' END k FROM t")
+                .ddl("CREATE TABLE t AS (SELECT CASE x WHEN 1 THEN '1' WHEN 2 THEN 'b' ELSE 'c' END::symbol sym FROM long_sequence(3))")
+                .expectSize()
+                .returns("""
+                        sym\tk
+                        1\tone
+                        b\tb
+                        c\tother
+                        """);
+    }
+
+    @Test
     public void testSymbolConstIntBasic() throws Exception {
         // single-branch CASE with constant int results triggers inlined
         // SymbolSwitchConstIntFunction: direct int comparison, no picker/CaseFunction
@@ -2366,7 +2426,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT CASE dt WHEN 'abc' THEN 1 END FROM t")
                     .noLeakCheck()
-                    .fails(20, "Invalid date [str=abc]");
+                    .fails(0, "inconvertible value: `abc` [STRING -> DATE]");
         });
     }
 
@@ -2476,7 +2536,49 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT CASE ts WHEN 'abc' THEN 1 END k FROM tanc")
                     .noLeakCheck()
-                    .fails(20, "invalid timestamp");
+                    .fails(0, "inconvertible value: `abc` [STRING -> TIMESTAMP_NS]");
         });
+    }
+
+    @Test
+    public void testVolatileColumnKeyWithEqualityConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT z, CASE z WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 1.5 THEN 3 ELSE 999 END k, CASE WHEN z = 1 THEN 1 WHEN z = 1.5 THEN 3 WHEN z = 2 THEN 2 ELSE 999 END s
+                        FROM (SELECT rnd_int(1, 2, 0) z FROM long_sequence(1_000))
+                    )""");
+            assertQuery("SELECT count(*) total, count_distinct(z) keys, sum(CASE WHEN k = z AND s = z THEN 1 ELSE 0 END) matched FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            total\tkeys\tmatched
+                            1000\t2\t1000
+                            """);
+            assertQuery("""
+                    SELECT count(*) FROM (
+                        SELECT CASE z WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 1.5 THEN 3 ELSE 999 END k
+                        FROM (SELECT rnd_int(1, 2, 0) z FROM long_sequence(1_000))
+                    ) WHERE k = 999""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
+    public void testVolatileKeyWithEqualityConstant() throws Exception {
+        assertQuery("SELECT count(*) FROM (SELECT switch(rnd_int(1, 2, 0), 1, 1, 2, 2, 1.5, 3, 999) z FROM long_sequence(1_000)) WHERE z = 999")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        0
+                        """);
     }
 }

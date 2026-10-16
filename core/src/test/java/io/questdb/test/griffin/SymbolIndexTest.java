@@ -515,6 +515,64 @@ public class SymbolIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByReadsExcludedKeysInTableOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ('k' || (x % 5))::SYMBOL s, x v, x::TIMESTAMP ts FROM long_sequence(1_000)), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.changePageFrameSizes(64, 64);
+            assertQuery("SELECT s, count(), sum(v) FROM t WHERE s NOT IN ('k0', 'k2', 'k4') AND v > 10 GROUP BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              keys: [s]
+                              values: [count(*),sum(v)]
+                                FilterOnExcludedValues
+                                  symbolFilter: s not in ['k0','k2','k4']
+                                    Table-order scan
+                                      filter: 10<v
+                                        Index forward scan on: s
+                                          filter: s=1
+                                        Index forward scan on: s
+                                          filter: s=3
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            s\tcount\tsum
+                            k3\t198\t100089
+                            k1\t198\t99693
+                            """);
+            assertQuery("SELECT s, count(), sum(v) FROM t WHERE s NOT IN ('k0', 'k2', 'k4') AND v > 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Table-order scan")
+                    .returns("""
+                            s\tcount\tsum
+                            k3\t198\t100089
+                            k1\t198\t99693
+                            """);
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s NOT IN ('k0', 'k2', 'k4') AND v > 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("FilterOnExcludedValues symbolOrder: desc", "Cursor-order scan")
+                    .returns("""
+                            count\tsum
+                            396\t199782
+                            """);
+            assertQuery("SELECT DISTINCT s FROM t WHERE s NOT IN ('k0', 'k2')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Table-order scan")
+                    .returns("""
+                            s
+                            k3
+                            k4
+                            k1
+                            """);
+        });
+    }
+
+    @Test
     public void testVarcharConstantKeysUseIndex() throws Exception {
         assertMemoryLeak(() -> {
             createTelemetry();

@@ -541,7 +541,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return own;
         }
         // The backup may order rows differently -- FilterOnValues drains its per-key cursors
-        // one after another under ORDER_BY_INVARIANT, which is not row-id order -- and the
+        // one after another when its index order reads key by key, which is not row-id order -- and the
         // generator elides an ORDER BY ts on whatever we answer here, before either delegate
         // runs. Advertise no ordering rather than the one only half of the pair keeps.
         return SCAN_DIRECTION_OTHER;

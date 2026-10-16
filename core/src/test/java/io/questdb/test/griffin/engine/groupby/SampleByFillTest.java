@@ -913,8 +913,6 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-30T23:00:00.000000Z\tB\t10.0
                             2024-04-01T22:00:00.000000Z\tA\t10.0
                             2024-04-01T22:00:00.000000Z\tB\t2.0
-                            2024-04-03T22:00:00.000000Z\tA\t10.0
-                            2024-04-03T22:00:00.000000Z\tB\t10.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1M FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
                     .noLeakCheck()
@@ -2540,6 +2538,58 @@ public class SampleByFillTest extends AbstractCairoTest {
                         "INSERT INTO test VALUES " +
                                 "('2024-01-01T12:00:00.000000Z', 1.0)," +
                                 "('2024-01-03T12:00:00.000000Z', 3.0)"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
+    }
+
+    @Test
+    public void testFillReExecutionTimezoneBindWithFromToBinds() throws Exception {
+        // FROM/TO binds keep the SAMPLE BY cursor, which takes FROM/TO in UTC for a
+        // sub-day stride. The TIME ZONE bind converts them on every execution of the
+        // same factory; the expected rows match the query with literal values.
+        final String expectedBerlin = """
+                ts\tc\ts
+                2021-03-27T23:00:00.000000Z\t1\t1.0
+                2021-03-28T00:00:00.000000Z\t1\t2.0
+                2021-03-28T01:00:00.000000Z\t1\t2.0
+                """;
+        final String expectedNewYork = """
+                ts\tc\ts
+                2021-03-28T04:00:00.000000Z\tnull\tnull
+                2021-03-28T05:00:00.000000Z\tnull\tnull
+                2021-03-28T06:00:00.000000Z\t1\t4.0
+                2021-03-28T07:00:00.000000Z\t1\t4.0
+                """;
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok("Europe/Berlin", expectedBerlin, bindVariableService -> {
+            bindVariableService.setStr(0, "Europe/Berlin");
+            bindVariableService.setStr(1, "2021-03-28");
+            bindVariableService.setStr(2, "2021-03-28T04");
+        }));
+        cases.add(BindVarTuple.ok("America/New_York", expectedNewYork, bindVariableService -> {
+            bindVariableService.setStr(0, "America/New_York");
+            bindVariableService.setStr(1, "2021-03-28");
+            bindVariableService.setStr(2, "2021-03-28T04");
+        }));
+        cases.add(BindVarTuple.ok("back to Europe/Berlin", expectedBerlin, bindVariableService -> {
+            bindVariableService.setStr(0, "Europe/Berlin");
+            bindVariableService.setStr(1, "2021-03-28");
+            bindVariableService.setStr(2, "2021-03-28T04");
+        }));
+
+        assertQuery("SELECT ts, count() c, sum(v) s FROM x SAMPLE BY 1h FROM $2 TO $3 FILL(PREV) ALIGN TO CALENDAR TIME ZONE $1")
+                .ddl(
+                        "CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO x VALUES
+                                (1.0, '2021-03-27T23:30:00.000000Z'),
+                                (2.0, '2021-03-28T00:30:00.000000Z'),
+                                (3.0, '2021-03-28T02:30:00.000000Z'),
+                                (4.0, '2021-03-28T06:30:00.000000Z'),
+                                (5.0, '2021-03-28T09:30:00.000000Z')
+                                """
                 )
                 .timestamp("ts")
                 .noRandomAccess()

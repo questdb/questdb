@@ -260,6 +260,18 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void offerStateTo(Function that) {
+            UnaryFunction.super.offerStateTo(that);
+            // deferred values sit outside the argument tree the default walks
+            if (deferredValues != null && that instanceof Func other
+                    && other.deferredValues != null && other.deferredValues.size() == deferredValues.size()) {
+                for (int i = 0, n = deferredValues.size(); i < n; i++) {
+                    deferredValues.getQuick(i).offerStateTo(other.deferredValues.getQuick(i));
+                }
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(arg);
             boolean hasLiterals = set != null && set.size() > 0;

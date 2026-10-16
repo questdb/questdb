@@ -207,6 +207,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final SqlBinder binder;
     private final BlockFileWriter blockFileWriter;
     private final CharacterStore characterStore;
+    private final ObjList<Subquery> compiledSubqueries = new ObjList<>();
+    private final ObjList<QueryModel> compiledSubqueryModels = new ObjList<>();
     private final ViewCompilerExecutionContext compileViewContext;
     private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
     private final OutputSchema emptySchema = new OutputSchema();
@@ -310,7 +312,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final IntStack tmpStack = new IntStack();
             this.functionParser = new FunctionParser(configuration, functionResolver, traversalAlgo, tmpFunctions, tmpFunctionPositions, tmpStack);
             this.preparedFunctions = new PreparedFunctions(expressionPoolCapacity);
-            this.functionSources = new TableFunctionSources(functionParser, planNodePools);
+            this.functionSources = new TableFunctionSources(this, functionParser, planNodePools);
             this.expressionRewriter = newExpressionRewriter(functionParser);
             this.functionInstantiator = newFunctionInstantiator(functionParser);
             this.joinGraphBuilder = new JoinGraphBuilder(planNodePools, tmpIds, tmpMasterKeys, tmpSlaveKeys, tmpReadyInputs, tmpJoinChildren,
@@ -605,9 +607,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     /**
      * Binds a sub-query whose rows binding consumes, optimises and authorizes it after the sub-queries it contains,
-     * and generates it; the caller owns the factory.
+     * and generates it; the caller owns the factory. For a sub-query the statement compiled already, it generates the
+     * existing plan again, so a table-function source that code generation creates anew reads the sub-queries binding
+     * read.
      */
     public RecordCursorFactory compileSubqueryFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
+        final int compiled = compiledSubqueryModels.indexOf(model);
+        if (compiled >= 0) {
+            return generateSelectOneShot(model, compiledSubqueries.getQuick(compiled), executionContext, false);
+        }
         final int first = subqueries.size();
         final Subquery subquery = bindSubquery(model, position, executionContext);
         for (int i = first, n = subqueries.size(); i < n; i++) {
@@ -616,6 +624,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         subqueries.setPos(first);
         nonDeterministicCalls.reject(subquery.getRoot(), executionContext);
         optimiser.planAccessPaths(subquery.getRoot(), codeGenerator.getGenerationDepth(), false, executionContext);
+        compiledSubqueryModels.add(model);
+        compiledSubqueries.add(subquery);
         return generateSelectOneShot(model, subquery, executionContext, false);
     }
 
@@ -2582,6 +2592,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private Throwable clearPlan(Throwable failure) {
         root = null;
         subqueries.clear();
+        compiledSubqueryModels.clear();
+        compiledSubqueries.clear();
         failure = Misc.clearBestEffort(failure, preparedFunctions);
         failure = Misc.clearBestEffort(failure, functionSources);
         return Misc.clearBestEffort(failure, planTables);
