@@ -519,8 +519,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+    // the indices in lateralNullChecks of the checks of the group that checkLateralNullRejection() or
+    // collectLateralNullChecks() builds
+    private final IntList lateralNullCheckGroup = new IntList();
+    // the groups of lateralNullChecks, each its size followed by the indices of its checks; the query
+    // fails when every check of a group is true
+    private final IntList lateralNullCheckGroups = new IntList();
+    // the index in lateralNullChecks of each check of the model that collectLateralNullChecks() reads
+    private final IntList lateralNullCheckIndices = new IntList();
     // the type of the probe column of each of lateralNullChecks
     private final IntList lateralNullCheckTypes = new IntList();
+    // the type of the column of each of lateralNullRejectionCandidates
+    private final IntList lateralNullRejectionCandidateTypes = new IntList();
+    // the indices of the candidates of a LateralNullRejection that checkLateralNullRejection() checks
+    // once per execution
+    private final IntList lateralNullRejectionCandidates = new IntList();
     // the lateral NULL checks of the models that the outermost generate() call has generated so far
     private final ObjList<ExpressionNode> lateralNullChecks = new ObjList<>();
     // this list is used to generate record sinks
@@ -973,6 +986,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (parserIndex == 0) {
                 clearSharedFactories();
                 lateralNullChecks.clear();
+                lateralNullCheckGroups.clear();
                 lateralNullCheckTypes.clear();
                 scalarSubQueryConsumerModels.clear();
                 scalarSubQueryConsumers.clear();
@@ -2269,7 +2283,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // conjunct that reads NULL_REJECTING_PROBE_COLUMN of the column type instead of the column, over
     // an operand that takes one value per execution. A LateralNullCheckRecordCursorFactory on top of
     // the plan evaluates them once per execution on the NULL record of the type, and fails the query
-    // when one is true, as the filter would then keep the rows that a RIGHT or FULL join NULL-extends.
+    // when every check of a group is true, as the filter would then keep the rows that a RIGHT or
+    // FULL join NULL-extends. The checks of a group are ANDed in the filter, so the filter drops
+    // those rows while any of them is false.
     // A check over a scalar sub-query owns the value of the sub-query: the filter functions over the
     // same sub-query reuse it, so the filter never reads a value that the check has not seen. The
     // check generates the sub-query again, after the filter, and generationState gives it the state
@@ -2293,6 +2309,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 nullRecords.add(NullRecordFactory.getInstance(metadata));
                 positions.add(node.position);
                 final IQueryModel subQueryModel = scalarSubQueryModel(node);
+                // one check per sub-query, whose value the filter reads
+                assert subQueryModel == null || indexOfLateralNullCheck(subQueryModel) == i;
                 if (subQueryModel != null) {
                     for (int j = 0; j < consumerCount; j++) {
                         final Function consumer = scalarSubQueryConsumers.getQuick(j);
@@ -2303,7 +2321,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
-            return new LateralNullCheckRecordCursorFactory(factory, checks, nullRecords, positions, metadata, receivers, receiverChecks);
+            final IntList groups = new IntList(lateralNullCheckGroups.size());
+            groups.addAll(lateralNullCheckGroups);
+            return new LateralNullCheckRecordCursorFactory(factory, checks, nullRecords, positions, metadata, receivers, receiverChecks, groups);
         } catch (Throwable th) {
             // the frees attach any close failure to th instead of throwing it
             Misc.freeObjList(checks, th);
@@ -2312,6 +2332,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         } finally {
             lateralNullChecks.clear();
+            lateralNullCheckGroups.clear();
             lateralNullCheckTypes.clear();
         }
     }
@@ -2645,8 +2666,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // a computed sub-query column; see LateralNullRejection. As the rewriter requires when it knows
     // the type, a conjunct of the filter must drop the rows that the join NULL-extends on its master
     // side, where the column holds what NullRecordFactory gives its type. A conjunct that drops them
-    // only while a value is not NULL counts when no other one does, and the value is then checked
-    // once per execution. Fails the query otherwise.
+    // only while a value is not NULL counts when no other one does. The filter then drops them while
+    // the value of any such conjunct is not NULL, so the values of all of them form a group, which is
+    // checked once per execution. Fails the query otherwise.
     private void checkLateralNullRejection(
             IQueryModel slaveModel,
             LateralNullRejection check,
@@ -2654,8 +2676,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Nullable CharSequence masterAlias,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        ExpressionNode nullCheck = null;
-        int nullCheckType = ColumnType.UNDEFINED;
+        lateralNullRejectionCandidates.clear();
+        lateralNullRejectionCandidateTypes.clear();
         if (master != null) {
             final RecordMetadata masterMetadata = master.getMetadata();
             for (int i = 0, n = check.size(); i < n; i++) {
@@ -2673,17 +2695,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (check.getNullCheck(i) == null) {
                         return;
                     }
-                    if (nullCheck == null) {
-                        nullCheck = check.getNullCheck(i);
-                        nullCheckType = columnType;
-                    }
+                    lateralNullRejectionCandidates.add(i);
+                    lateralNullRejectionCandidateTypes.add(columnType);
                 }
             }
         }
-        if (nullCheck == null) {
+        if (lateralNullRejectionCandidates.size() == 0) {
             throw SqlException.position(slaveModel.getJoinKeywordPosition()).put(check.getError());
         }
-        collectLateralNullCheck(nullCheck, nullCheckType);
+        lateralNullCheckGroup.clear();
+        for (int i = 0, n = lateralNullRejectionCandidates.size(); i < n; i++) {
+            final int index = collectLateralNullCheck(
+                    check.getNullCheck(lateralNullRejectionCandidates.getQuick(i)),
+                    lateralNullRejectionCandidateTypes.getQuick(i)
+            );
+            if (!lateralNullCheckGroup.contains(index)) {
+                lateralNullCheckGroup.add(index);
+            }
+        }
+        LateralJoinRewriter.addRuntimeNullCheckGroup(lateralNullCheckGroups, lateralNullCheckGroup);
     }
 
     private void clearJitScratch(Throwable failure) {
@@ -2706,21 +2736,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         sharedPrimaryModels.clear();
     }
 
-    private void collectLateralNullCheck(ExpressionNode check, int columnType) {
+    // Returns the index of the check in lateralNullChecks, which hold each check once, so that a
+    // check of several groups, or of a model that the code generator generates more than once, runs
+    // once per execution
+    private int collectLateralNullCheck(ExpressionNode check, int columnType) {
         for (int i = 0, n = lateralNullChecks.size(); i < n; i++) {
-            if (lateralNullChecks.getQuick(i) == check) {
-                return;
+            if (LateralJoinRewriter.isSameRuntimeNullCheck(lateralNullChecks.getQuick(i), lateralNullCheckTypes.getQuick(i), check, columnType)) {
+                return i;
             }
         }
         lateralNullChecks.add(check);
         lateralNullCheckTypes.add(columnType);
+        return lateralNullChecks.size() - 1;
     }
 
     private void collectLateralNullChecks(IQueryModel model) {
         final ObjList<ExpressionNode> checks = model.getLateralNullChecks();
         final IntList checkTypes = model.getLateralNullCheckTypes();
+        lateralNullCheckIndices.clear();
         for (int i = 0, n = checks.size(); i < n; i++) {
-            collectLateralNullCheck(checks.getQuick(i), checkTypes.getQuick(i));
+            lateralNullCheckIndices.add(collectLateralNullCheck(checks.getQuick(i), checkTypes.getQuick(i)));
+        }
+        final IntList groups = model.getLateralNullCheckGroups();
+        for (int i = 0, n = groups.size(); i < n; ) {
+            final int size = groups.getQuick(i++);
+            lateralNullCheckGroup.clear();
+            for (int j = 0; j < size; j++) {
+                lateralNullCheckGroup.add(lateralNullCheckIndices.getQuick(groups.getQuick(i++)));
+            }
+            LateralJoinRewriter.addRuntimeNullCheckGroup(lateralNullCheckGroups, lateralNullCheckGroup);
         }
     }
 
@@ -14450,6 +14494,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return false;
+    }
+
+    // Returns the index of the first of lateralNullChecks that reads the scalar sub-query
+    private int indexOfLateralNullCheck(IQueryModel subQueryModel) {
+        for (int i = 0; ; i++) {
+            if (scalarSubQueryModel(lateralNullChecks.getQuick(i)) == subQueryModel) {
+                return i;
+            }
+        }
     }
 
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {

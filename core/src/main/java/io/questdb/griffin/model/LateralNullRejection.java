@@ -41,8 +41,12 @@ import io.questdb.std.ObjList;
  *     only while a value that reads no column does not convert to the NULL of the column type, which
  *     the code generator then evaluates once per execution on the NULL record of the type</li>
  * </ul>
- * When no candidate drops those rows, the code generator fails the query with the error. A join that
- * the rewriter checks more than once holds a chain of such checks, each of which must hold.
+ * When no candidate drops those rows for every value and no candidate has a NULL check, the code
+ * generator fails the query with the error. Otherwise the NULL checks of the candidates form a group,
+ * and the query fails, once per execution, only when every check of the group is true: the
+ * candidates are ANDed in the filter, so any one of them whose value is not NULL drops those rows.
+ * A join that the rewriter checks more than once holds a chain of such checks, each of which must
+ * hold.
  */
 public class LateralNullRejection implements Mutable {
     private final ObjList<CharSequence> columns = new ObjList<>();

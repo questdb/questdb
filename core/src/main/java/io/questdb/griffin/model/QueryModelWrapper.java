@@ -128,6 +128,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void addLateralNullCheckGroup(IntList checkIndices) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         throw new UnsupportedOperationException();
     }
@@ -425,6 +430,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<QueryColumn> getLateralCountTemplates() {
         return delegate.getLateralCountTemplates();
+    }
+
+    @Override
+    public IntList getLateralNullCheckGroups() {
+        return delegate.getLateralNullCheckGroups();
     }
 
     @Override

@@ -45,14 +45,19 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 /**
- * Fails a query, once per execution, when one of its checks is true. LateralJoinRewriter accepts a
- * correlated lateral sub-query whose RIGHT or FULL join loses the rows that it NULL-extends when a
- * WHERE comparison, such as {@code t.id >= $1}, drops those rows anyway. The comparison drops them
- * only while its value, here {@code $1}, does not convert to the NULL of the column type, and the
- * value of a bind variable, a function such as {@code now()} or a scalar sub-query is known only
- * when the query runs. Each check is the comparison with the column replaced by a probe column,
- * which it evaluates on the NULL record of the column type; when one is true, the comparison would
- * keep the rows that the join NULL-extends, and the plan would lose them, so the query fails.
+ * Fails a query, once per execution, when every check of one of its groups is true.
+ * LateralJoinRewriter accepts a correlated lateral sub-query whose RIGHT or FULL join loses the rows
+ * that it NULL-extends when a WHERE comparison, such as {@code t.id >= $1}, drops those rows anyway.
+ * The comparison drops them only while its value, here {@code $1}, does not convert to the NULL of
+ * the column type, and the value of a bind variable, a function such as {@code now()} or a scalar
+ * sub-query is known only when the query runs. Each check is the comparison with the column replaced
+ * by a probe column, which it evaluates on the NULL record of the column type; when it is true, the
+ * comparison keeps the rows that the join NULL-extends.
+ * <p>
+ * A group holds the checks of the comparisons that may drop the rows of one join. The filter ANDs
+ * them, so it drops those rows while any check of the group is false. When every check of a group is
+ * true, the filter would keep those rows, and the plan would lose them, so the query fails at the
+ * first check of the group. A check of several groups runs once.
  * <p>
  * A check over a scalar sub-query runs the sub-query once per execution and passes its value to
  * the filter functions over the same sub-query, its receivers, so that the filter reads the value
@@ -66,8 +71,11 @@ import io.questdb.std.ObjList;
 public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final String NULL_VALUE_ERROR = "outer column reference in an ON clause at or before a RIGHT or FULL join " +
             "is not supported in a correlated lateral sub-query when this value is NULL";
-    private RecordCursorFactory base;
+    // the result of each of checks in the current execution
+    private final boolean[] checkResults;
     private final ObjList<Function> checks;
+    // each group its size followed by the indices in checks of its checks
+    private final IntList groups;
     private final ObjList<Record> nullRecords;
     private final IntList positions;
     // names the probe column, the only column that each check reads, in the plan
@@ -76,6 +84,7 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
     private final IntList receiverChecks;
     // functions of the base factory, which owns them
     private final ObjList<Function> receivers;
+    private RecordCursorFactory base;
 
     public LateralNullCheckRecordCursorFactory(
             RecordCursorFactory base,
@@ -84,11 +93,14 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
             IntList positions,
             RecordMetadata probeMetadata,
             ObjList<Function> receivers,
-            IntList receiverChecks
+            IntList receiverChecks,
+            IntList groups
     ) {
         super(base.getMetadata());
         this.base = base;
         this.checks = checks;
+        this.checkResults = new boolean[checks.size()];
+        this.groups = groups;
         this.nullRecords = nullRecords;
         this.positions = positions;
         this.probeMetadata = probeMetadata;
@@ -187,6 +199,19 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
         sink.setMetadata(probeMetadata);
         sink.meta("checks").val(checks);
         sink.setMetadata(null);
+        sink.meta("groups").val('[');
+        for (int i = 0, n = groups.size(); i < n; ) {
+            final int size = groups.getQuick(i++);
+            sink.val(i > 1 ? ",[" : "[");
+            for (int j = 0; j < size; j++) {
+                if (j > 0) {
+                    sink.val(',');
+                }
+                sink.val(groups.getQuick(i++));
+            }
+            sink.val(']');
+        }
+        sink.val(']');
         sink.child(base);
     }
 
@@ -195,17 +220,28 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
         return base.usesCompiledFilter();
     }
 
+    // Runs every check once, and passes the value of each to its receivers, which the filter reads
+    // when no group fails
     private void runChecks(SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0, n = checks.size(); i < n; i++) {
             final Function check = checks.getQuick(i);
             check.init(SqlOptimiser.NULL_REJECTING_PROBE_SYMBOL_TABLES, executionContext);
-            if (check.getBool(nullRecords.getQuick(i))) {
-                throw SqlException.$(positions.getQuick(i), NULL_VALUE_ERROR);
-            }
+            checkResults[i] = check.getBool(nullRecords.getQuick(i));
             for (int j = 0, m = receivers.size(); j < m; j++) {
                 if (receiverChecks.getQuick(j) == i) {
                     check.offerStateTo(receivers.getQuick(j));
                 }
+            }
+        }
+        for (int i = 0, n = groups.size(); i < n; ) {
+            final int size = groups.getQuick(i++);
+            final int first = groups.getQuick(i);
+            boolean isEveryCheckTrue = true;
+            for (int j = 0; j < size; j++) {
+                isEveryCheckTrue &= checkResults[groups.getQuick(i++)];
+            }
+            if (isEveryCheckTrue) {
+                throw SqlException.$(positions.getQuick(first), NULL_VALUE_ERROR);
             }
         }
     }

@@ -1821,7 +1821,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             final String ipSql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.ip >= $1) l ORDER BY 1, 2, 3";
             assertQuery(ipSql)
                     .noLeakCheck()
-                    .assertsPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$0::string]\n");
+                    .assertsPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$0::string] groups: [[0]]\n");
         });
     }
 
@@ -1990,7 +1990,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                   filter: null
                                     PageFrame
                                         Row forward scan
-                                        Frame forward scan on: trades [state-shared]]
+                                        Frame forward scan on: trades [state-shared]] groups: [[0]]
                             """);
         });
     }
@@ -2153,7 +2153,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                       filter: 1<x
                                         PageFrame
                                             Row forward scan
-                                            Frame forward scan on: trades [state-shared]]
+                                            Frame forward scan on: trades [state-shared]] groups: [[0]]
                             """);
         });
     }
