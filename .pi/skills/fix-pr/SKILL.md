@@ -23,10 +23,11 @@ to fix, or a finding from a review.
    both before any code changes. Only a flaw in the design sends the
    plan back; the tests it finds missing join the plan, and other bugs it
    finds become separate items or are reported.
-4. Write the failing tests first and build the change. Run the item's tests
-   with coverage (`ci/diff_coverage.py`), read the lines, branches and
-   conditions that never ran, and add tests until everything runs, measuring
-   only the new tests with `--append`. Commit.
+4. Write the failing tests first and build the change as designed; a design
+   that turns out wrong goes back to step 3. Run the item's tests with
+   coverage (`ci/diff_coverage.py`), read the lines, branches and conditions
+   that never ran, and add tests until everything runs, measuring only the
+   new tests with `--append`. Commit.
 5. An independent agent reviews the tests against the plan and the rules; if
    it finds gaps, a fresh agent writes the missing tests. Commit.
 
@@ -142,13 +143,16 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
 2. **Check.** Launch the check helper. It didn't write the plan and can't edit
    anything; its only job is to find what the change would break, a better
    change, or a hole in the test plan. It labels each problem `REDESIGN` (the
-   design is wrong for this item), `ADD` (a gap in the test plan) or
-   `ADJACENT` (a separate bug, including the same kind of bug in other code).
-   Only `REDESIGN` sends the plan back. A `REDESIGN` line that only asks for
-   more tests or a citation counts as `ADD`; one about a separate defect
-   elsewhere, even of the same kind, counts as `ADJACENT`. An `ADJACENT` line
-   that names the item under check counts as `REDESIGN`: its own commits
-   are part of its design.
+   design is wrong for this item), `ADD` (a test the plan lacks that the
+   change would pass) or `ADJACENT` (a separate bug, including the same kind
+   of bug in other code). Only `REDESIGN` sends the plan back. A `REDESIGN`
+   line that only asks for more tests or a citation counts as `ADD`. An `ADD`
+   line that expects the planned change to fail its test counts as
+   `REDESIGN`, or as `ADJACENT` when it shows a separate bug the PR base has
+   too: a failing test is a flaw, not a gap. A line about a separate defect
+   elsewhere, even of the same kind, counts as `ADJACENT`. An `ADJACENT`
+   line that names the item under check counts as `REDESIGN`: its own
+   commits are part of its design.
    - `ADJACENT` lines, whatever else the reply says: handle them like OTHER
      lines in step 1, but list a `PRE-EXISTING` one for the user instead of
      filing it; the check can't write an issue body.
@@ -254,6 +258,13 @@ Unless `--no-issues`, file each one:
   stash, clean, switch branches or create worktrees; the one exception is
   the scratch worktree review-pr creates and removes in the backstop review.
 - Stage only the files a helper changed; never `git add -A` or `git commit -a`.
+- A helper may ask the main session a question mid-task
+  (`contact_supervisor`). Answer only with facts from its task, the state
+  directory or the user. Never approve a change to the design - new logic,
+  another approach - since the main session hasn't read the code: tell the
+  helper to stop and give the reason in its reply (`STOPPED`, or `ASK` or
+  `BLOCK` from the analysis), and handle that reply as usual. Only the
+  analysis and the check decide a design.
 - Never weaken an existing test to make a change pass (CLAUDE.md "Test
   integrity"); a changed expectation needs its reason in the commit message.
 - `java-questdb-client/` is a separate repo: commit inside it first, as
@@ -452,10 +463,13 @@ or its tests. Label each problem:
   symptom, adds avoidable hot-path cost or a race, reimplements existing
   code, changes more than the item needs, or is clearly worse than an
   alternative. Show how.
-- ADD: a gap in the test plan: a missing test, a dimension skipped for a
-  wrong reason, or an expected result without an independent source. Name
-  the dimension, the case, input -> expected, and its source. A problem that
-  more tests or a citation would solve is ADD, never REDESIGN.
+- ADD: a gap in the test plan that the planned change would pass: a missing
+  test, a dimension skipped for a wrong reason, or an expected result
+  without an independent source. Name the dimension, the case, input ->
+  expected, and its source. A problem that more tests or a citation would
+  solve is ADD, never REDESIGN. A test the planned change would fail is a
+  flaw, not a gap: REDESIGN, unless it shows a separate bug the PR base has
+  too, which is ADJACENT.
 - ADJACENT: a separate bug the change neither causes nor must fix to solve
   the item, including the same kind of bug in other code. Mark it PR when
   this PR caused it, this run's commits included (some trigger gets a worse
@@ -507,9 +521,14 @@ Run `git status --porcelain` first and never edit a file it lists.
 5. Don't weaken an existing test (CLAUDE.md "Test integrity"). If an existing
    expectation was wrong, change it and say why on EXISTING and in the commit
    message.
-6. If the plan turns out wrong (another approach or unplanned files are
-   needed), stop: restore the files you modified with `git checkout --`,
-   delete the files you created, and say why.
+6. Build only the design the plan describes. Stop when it turns out wrong:
+   another approach or unplanned files are needed; a planned, amended or
+   existing test that is right fails because of the change; or the change
+   needs logic the plan doesn't describe - a guard, branch, early return or
+   fallback. Don't design that logic yourself and don't ask the supervisor
+   to approve it: the analysis and the check decide a design. Restore the
+   files you modified with `git checkout --`, delete the files you created,
+   and say why on STOPPED.
 7. Commit only your files (`git add <paths>`). Commit message per CLAUDE.md:
    title of at most 50 characters, no type prefix; body with the problem or
    goal, the root cause or design, and the tests.
