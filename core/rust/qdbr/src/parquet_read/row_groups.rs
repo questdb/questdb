@@ -324,12 +324,23 @@ pub(super) fn post_convert(
                 to_type.decimal_precision(),
             )?;
         }
-        // Int32 → Int64 widening. Byte/Short → Long/Timestamp now decode straight to i64
-        // (DecodeAs::Target), so only Byte/Short → Date reaches post_convert here; Date has
-        // no dedicated DeltaBinaryPacked decode arm yet, so it stays a two-pass widen.
         // Byte/Short have no in-band null sentinel, so their only nulls are the column-top
-        // prefix (def-level=0 on the OPTIONAL schema); `leading_nulls` rows are stamped with
-        // the target sentinel to match the native ALTER path.
+        // prefix; `leading_nulls` rows are stamped with the target sentinel to match the
+        // native ALTER path. Byte/Short -> Int/Long/Timestamp decode straight to the target
+        // (DecodeAs::Target). On an Optional chunk the decoder already wrote the target NULL
+        // for the def-level=0 top rows, but a legacy (9.4.x) Required chunk has no def
+        // levels and stores its top rows as 0, which the decode returns as is.
+        (ColumnTypeTag::Byte | ColumnTypeTag::Short, ColumnTypeTag::Int) => {
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::INT);
+        }
+        (
+            ColumnTypeTag::Byte | ColumnTypeTag::Short,
+            ColumnTypeTag::Long | ColumnTypeTag::Timestamp,
+        ) => {
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
+        }
+        // Int32 → Int64 widening. Byte/Short → Date has no dedicated DeltaBinaryPacked
+        // decode arm yet, so it stays a two-pass widen.
         (ColumnTypeTag::Byte, ColumnTypeTag::Date) => {
             convert_numeric_in_place::<i8, i64>(&mut bufs.data_vec, |_| false, 0i64, |v| v as i64)?;
             stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
@@ -492,6 +503,7 @@ pub(super) fn post_convert(
         // without a matching arm here fails loudly via the catch-all below
         // instead of silently leaving the buffer in the source layout.
         (a, b) if a == b => {}
+        // Byte/Short -> Int reach the stamping arm above; the rest have no target sentinel.
         (
             ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int,
             ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int,
@@ -499,11 +511,6 @@ pub(super) fn post_convert(
         (
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-        ) => {}
-        // Byte/Short -> Long/Timestamp: decoded straight to i64 (no in-band sentinel).
-        (
-            ColumnTypeTag::Byte | ColumnTypeTag::Short,
-            ColumnTypeTag::Long | ColumnTypeTag::Timestamp,
         ) => {}
         // Float/Double -> int/time: decoded straight to the target by the range-check
         // converter, which already maps NaN/out-of-range to the target null sentinel.
@@ -1572,6 +1579,8 @@ pub(super) fn plan_decode_conversion(
         // Byte/Short -> Long/Timestamp: Byte/Short have no in-band null sentinel, so the
         // i32->i64 widening decode arm (filling nulls::LONG for def-level=0 rows) is
         // byte-identical to decoding at the source width and widening in post_convert.
+        // A legacy Required chunk has no def levels and decodes its column-top rows as
+        // the stored 0; post_convert stamps the target NULL over them, as for -> Int.
         // (-> Date stays Source below: no DeltaBinaryPacked Date decode arm exists yet.)
         | (Byte | Short, Long | Timestamp)
         // Float/Double -> int/time: the FloatToIntRangeCheckConverter decode arms map
@@ -4331,7 +4340,8 @@ mod multi_dict_tests {
             (ColumnTypeTag::Date, ColumnTypeTag::Long),
             (ColumnTypeTag::Long, ColumnTypeTag::Timestamp),
             (ColumnTypeTag::Timestamp, ColumnTypeTag::Long),
-            // Flipped to DecodeAs::Target: decoded straight to the target, no-op here.
+            // Flipped to DecodeAs::Target: decoded straight to the target, no-op here
+            // (Byte/Short -> Long/Timestamp only stamp a column top, and there is none).
             (ColumnTypeTag::Byte, ColumnTypeTag::Long),
             (ColumnTypeTag::Short, ColumnTypeTag::Timestamp),
             (ColumnTypeTag::Float, ColumnTypeTag::Int),
@@ -4362,6 +4372,127 @@ mod multi_dict_tests {
             post_convert(src.into_type(), dst.into_type(), 0, &mut bufs)
                 .unwrap_or_else(|e| panic!("expected no-op for {src:?} -> {dst:?}, got {e}"));
         }
+    }
+
+    /// BYTE/SHORT -> INT/LONG/TIMESTAMP decode straight to the target width
+    /// (DecodeAs::Target). A legacy Required chunk has no def levels, so its
+    /// column-top rows decode as the stored 0. post_convert must stamp the target
+    /// NULL over the first `leading_nulls` rows, as native ALTER keeps the column
+    /// top NULL, and leave every row after the top as it is, a real 0 included.
+    #[test]
+    fn post_convert_stamps_byte_short_top_for_sentinel_targets() {
+        use crate::allocator::{AcVec, TestAllocatorState};
+        use crate::parquet::tests::ColumnTypeTagExt;
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let make = |bytes: &[u8]| -> ColumnChunkBuffers {
+            let mut data_vec = AcVec::new_in(allocator.clone());
+            data_vec.extend_from_slice(bytes).unwrap();
+            ColumnChunkBuffers {
+                data_size: 0,
+                data_ptr: std::ptr::null_mut(),
+                data_vec,
+                aux_size: 0,
+                aux_ptr: std::ptr::null_mut(),
+                aux_vec: AcVec::new_in(allocator.clone()),
+                page_buffers_size: 0,
+                page_buffers: Vec::new(),
+                column_top: 0,
+                page_buffers_capacity: 0,
+                page_buffers_charged: 0,
+                page_buffers_counted: 0,
+            }
+        };
+
+        let stored_i32 = [0i32, 0, 0, 5, 0];
+        let stored_i32_bytes: Vec<u8> = stored_i32.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        let read_i32 = |bufs: &ColumnChunkBuffers| -> Vec<i32> {
+            assert_eq!(bufs.data_size, bufs.data_vec.len());
+            assert_eq!(bufs.data_ptr, bufs.data_vec.as_ptr() as *mut u8);
+            bufs.data_vec
+                .as_slice()
+                .chunks_exact(4)
+                .map(|c| i32::from_ne_bytes(c.try_into().unwrap()))
+                .collect()
+        };
+        for src in [ColumnTypeTag::Byte, ColumnTypeTag::Short] {
+            for (leading_nulls, expected) in [
+                (3usize, vec![nulls::INT, nulls::INT, nulls::INT, 5, 0]),
+                (0, stored_i32.to_vec()),
+                (7, vec![nulls::INT; 5]),
+            ] {
+                let mut bufs = make(&stored_i32_bytes);
+                post_convert(
+                    src.into_type(),
+                    ColumnTypeTag::Int.into_type(),
+                    leading_nulls,
+                    &mut bufs,
+                )
+                .unwrap();
+                assert_eq!(
+                    read_i32(&bufs),
+                    expected,
+                    "{src:?} -> Int, leading_nulls {leading_nulls}"
+                );
+            }
+        }
+
+        let stored_i64 = [0i64, 0, 0, 5, 0];
+        let stored_i64_bytes: Vec<u8> = stored_i64.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        let read_i64 = |bufs: &ColumnChunkBuffers| -> Vec<i64> {
+            assert_eq!(bufs.data_size, bufs.data_vec.len());
+            bufs.data_vec
+                .as_slice()
+                .chunks_exact(8)
+                .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+                .collect()
+        };
+        let ts_ns = ColumnType::new(ColumnTypeTag::Timestamp, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+        for src in [ColumnTypeTag::Byte, ColumnTypeTag::Short] {
+            for dst in [
+                ColumnTypeTag::Long.into_type(),
+                ColumnTypeTag::Timestamp.into_type(),
+                ts_ns,
+            ] {
+                for (leading_nulls, expected) in [
+                    (3usize, vec![nulls::LONG, nulls::LONG, nulls::LONG, 5, 0]),
+                    (0, stored_i64.to_vec()),
+                    (7, vec![nulls::LONG; 5]),
+                ] {
+                    let mut bufs = make(&stored_i64_bytes);
+                    post_convert(src.into_type(), dst, leading_nulls, &mut bufs).unwrap();
+                    assert_eq!(
+                        read_i64(&bufs),
+                        expected,
+                        "{src:?} -> {dst}, leading_nulls {leading_nulls}"
+                    );
+                }
+            }
+        }
+
+        // Byte <-> Short has no target sentinel: native ALTER reads the column top
+        // as 0, so post_convert leaves it alone.
+        let stored_i16_bytes: Vec<u8> = [0i16, 0, 5].iter().flat_map(|v| v.to_ne_bytes()).collect();
+        let mut bufs = make(&stored_i16_bytes);
+        post_convert(
+            ColumnTypeTag::Byte.into_type(),
+            ColumnTypeTag::Short.into_type(),
+            2,
+            &mut bufs,
+        )
+        .unwrap();
+        assert_eq!(bufs.data_vec.as_slice(), stored_i16_bytes.as_slice());
+        let stored_i8_bytes = [0u8, 0, 5];
+        let mut bufs = make(&stored_i8_bytes);
+        post_convert(
+            ColumnTypeTag::Short.into_type(),
+            ColumnTypeTag::Byte.into_type(),
+            2,
+            &mut bufs,
+        )
+        .unwrap();
+        assert_eq!(bufs.data_vec.as_slice(), stored_i8_bytes.as_slice());
     }
 
     /// DATE (ms), TIMESTAMP (μs) and TIMESTAMP_NS (ns) conversions are pure

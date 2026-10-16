@@ -433,6 +433,160 @@ mod tests {
         Ok(())
     }
 
+    // A 9.4.x-shaped file: BYTE column `b` and SHORT column `s`, both stored Required
+    // (no def levels), added after 3 rows (QdbMeta column_top 3). Row group 0 holds 2
+    // rows, all in the top. Row group 1 holds 5 rows: 1 top row stored as 0, then a real
+    // 0, the type's smallest and largest values, and 5.
+    fn gen_legacy_required_byte_short_top_parquet() -> ParquetResult<Vec<u8>> {
+        let mut qdb_meta = QdbMeta::new(2);
+        for tag in [ColumnTypeTag::Byte, ColumnTypeTag::Short] {
+            qdb_meta.schema.push(QdbMetaCol {
+                column_type: tag.into_type(),
+                column_top: 3,
+                format: None,
+                ascii: None,
+                id: None,
+            });
+        }
+        let mut fields = Vec::new();
+        for (id, name) in [(0, "b"), (1, "s")] {
+            fields.push(Arc::new(
+                Type::primitive_type_builder(name, PhysicalType::INT32)
+                    .with_id(Some(id))
+                    .with_repetition(parquet::basic::Repetition::REQUIRED)
+                    .build()?,
+            ));
+        }
+        let schema = Arc::new(
+            Type::group_type_builder("schema")
+                .with_fields(fields)
+                .build()?,
+        );
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_dictionary_enabled(false)
+                .set_key_value_metadata(Some(vec![KeyValue::new(
+                    "questdb".to_string(),
+                    qdb_meta.serialize()?,
+                )]))
+                .build(),
+        );
+        let row_groups: [[&[i32]; 2]; 2] = [
+            [&[0, 0], &[0, 0]],
+            [&[0, 0, -128, 127, 5], &[0, 0, -32768, 32767, 5]],
+        ];
+        let mut cursor = Cursor::new(Vec::new());
+        let mut fw = SerializedFileWriter::new(&mut cursor, schema, props)?;
+        for columns in row_groups {
+            let mut rg = fw.next_row_group()?;
+            for values in columns {
+                let mut cw = rg.next_column()?.expect("schema has two columns");
+                cw.typed::<parquet::data_type::Int32Type>()
+                    .write_batch(values, None, None)?;
+                cw.close()?;
+            }
+            rg.close()?;
+        }
+        fw.close()?;
+        Ok(cursor.into_inner())
+    }
+
+    fn read_i32s(rgb: &RowGroupBuffers, col: usize) -> Vec<i32> {
+        rgb.column_bufs[col]
+            .data_vec
+            .as_slice()
+            .chunks_exact(4)
+            .map(|c| i32::from_ne_bytes(c.try_into().unwrap()))
+            .collect()
+    }
+
+    fn read_i64s(rgb: &RowGroupBuffers, col: usize) -> Vec<i64> {
+        rgb.column_bufs[col]
+            .data_vec
+            .as_slice()
+            .chunks_exact(8)
+            .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+            .collect()
+    }
+
+    // The footer decoder reads the column top from QdbMeta. A Required BYTE/SHORT chunk
+    // read as INT/LONG must return NULL for the top rows of a row group the top only
+    // partly covers, as native ALTER does, and keep the stored values after the top.
+    #[test]
+    fn decode_row_group_stamps_legacy_required_byte_short_top() -> ParquetResult<()> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let buf = gen_legacy_required_byte_short_top_parquet()?;
+        let buf_len = buf.len() as u64;
+        let mut reader = Cursor::new(&buf);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)?;
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+        let columns = [
+            (0, ColumnTypeTag::Int.into_type()),
+            (1, ColumnTypeTag::Long.into_type()),
+        ];
+        const INT_NULL: i32 = i32::MIN;
+        const LONG_NULL: i64 = i64::MIN;
+
+        assert_eq!(
+            decoder.decode_row_group(&mut ctx, &mut rgb, &columns, 1, 0, 5)?,
+            5
+        );
+        assert_eq!(read_i32s(&rgb, 0), vec![INT_NULL, 0, -128, 127, 5]);
+        assert_eq!(read_i64s(&rgb, 1), vec![LONG_NULL, 0, -32768, 32767, 5]);
+
+        // A window that starts after the top keeps every row. decode_row_group returns
+        // the row count of the pages it read, which is the whole chunk.
+        assert_eq!(
+            decoder.decode_row_group(&mut ctx, &mut rgb, &columns, 1, 1, 5)?,
+            5
+        );
+        assert_eq!(read_i32s(&rgb, 0), vec![0, -128, 127, 5]);
+        assert_eq!(read_i64s(&rgb, 1), vec![0, -32768, 32767, 5]);
+
+        // Compacting filtered decode: rows 0, 1 and 4 of the window.
+        assert_eq!(
+            decoder.decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                1,
+                0,
+                5,
+                &[0, 1, 4],
+            )?,
+            3
+        );
+        assert_eq!(read_i32s(&rgb, 0), vec![INT_NULL, 0, 5]);
+        assert_eq!(read_i64s(&rgb, 1), vec![LONG_NULL, 0, 5]);
+
+        // Filling filtered decode: rows 0 and 2 decode, the others read NULL.
+        assert_eq!(
+            decoder.decode_row_group_filtered::<true>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                1,
+                0,
+                5,
+                &[0, 2],
+            )?,
+            5
+        );
+        assert_eq!(
+            read_i32s(&rgb, 0),
+            vec![INT_NULL, INT_NULL, -128, INT_NULL, INT_NULL]
+        );
+        assert_eq!(
+            read_i64s(&rgb, 1),
+            vec![LONG_NULL, LONG_NULL, -32768, LONG_NULL, LONG_NULL]
+        );
+        Ok(())
+    }
+
     fn gen_test_symbol_parquet(qdb_metadata: Option<String>) -> ParquetResult<(Vec<u8>, usize)> {
         let symbol_col_data: Vec<ByteArray> = vec![
             ByteArray::from("abc"),
