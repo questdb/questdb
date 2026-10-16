@@ -824,9 +824,6 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
             assertScanFiltered("SELECT count(*) FROM (SELECT t0.c, t0.ts " + X_JOINS + ") WHERE c > rnd_int(0, 2, 0)", false);
             // an unstable conjunct gets no copy even when another conjunct rejects NULL
             assertScanFiltered("SELECT count(*) " + Y_JOINS + " WHERE t0.c = 1 AND t0.k < rnd_int(0, 2, 0)", true);
-            assertQuery("SELECT count(*) " + Y_JOINS + " WHERE t0.c = 1 AND t0.k < rnd_int(0, 2, 0)")
-                    .noLeakCheck()
-                    .assertsPlanNotContaining("filter: c=1 and k<rnd_int");
         });
     }
 
@@ -926,6 +923,33 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubQueryCopiesConjunctTrueOnNullAlongWithNullRejecting() throws Exception {
+        // c != 1 is true on the NULL row, but ts IN rejects it, so both filter the t0 scan:
+        // r2 and r3 twice each; r1 fails c != 1, r4 and the NULL rows of t2 rows 2 and 9 fail ts IN
+        assertMemoryLeak(() -> {
+            createTables();
+            final String sql = "SELECT count(*) FROM (SELECT t0.c, t0.ts " + X_JOINS + ") WHERE c != 1 AND ts IN '2024-01-05'";
+            assertCount(sql, 4);
+            final String belowJoin = planBelowCrossJoin(sql);
+            Assert.assertTrue(belowJoin, belowJoin.contains("filter: c!=1\n"));
+            Assert.assertTrue(belowJoin, belowJoin.contains("Interval forward scan on: t0"));
+        });
+    }
+
+    @Test
+    public void testSubQueryUnstableConjunctNotCopiedNextToNullRejecting() throws Exception {
+        // c = 1 rejects the NULL row and filters the t0 scan; rnd_int() changes per call, so its
+        // conjunct stays above the join only
+        assertMemoryLeak(() -> {
+            createTables();
+            final String belowJoin = planBelowCrossJoin("SELECT count(*) FROM (SELECT t0.c, t0.k, t0.ts " + Y_JOINS
+                    + ") WHERE c = 1 AND k < rnd_int(0, 2, 0)");
+            Assert.assertTrue(belowJoin, belowJoin.contains("filter: c=1\n"));
+            Assert.assertFalse(belowJoin, belowJoin.contains("rnd_int"));
+        });
+    }
+
+    @Test
     public void testTrailingLatestOn() throws Exception {
         // LATEST ON on t0 itself picks a -> (c 2) and b -> (c 1); the copy filters those rows, not the
         // scan below LATEST ON, which would pick the older a row (c 1) and count 4
@@ -943,6 +967,18 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
                 assertCount("SELECT count(*) FROM t0a t0 LATEST BY k CROSS JOIN t1 " + join
                         + " JOIN t2 ON t2.k = t1.k WHERE t0.c = 1", 0);
             }
+        });
+    }
+
+    @Test
+    public void testUnstableConjunctNotCopiedNextToNullRejecting() throws Exception {
+        // c = 1 rejects the NULL row and filters the t0 scan; rnd_int() changes per call, so its
+        // conjunct stays above the join only
+        assertMemoryLeak(() -> {
+            createTables();
+            final String belowJoin = planBelowCrossJoin("SELECT count(*) " + Y_JOINS + " WHERE t0.c = 1 AND t0.k < rnd_int(0, 2, 0)");
+            Assert.assertTrue(belowJoin, belowJoin.contains("filter: c=1\n"));
+            Assert.assertFalse(belowJoin, belowJoin.contains("rnd_int"));
         });
     }
 
@@ -1023,13 +1059,8 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
     // The scan of a table before the RIGHT/FULL join carries a filter when the plan below the CROSS
     // join, which holds the scans of t0 and t1, filters or narrows to intervals
     private static void assertScanFiltered(String sql, boolean isScanFiltered) throws SqlException {
-        sink.clear();
-        printSql("EXPLAIN " + sql);
-        final String plan = sink.toString();
-        final int crossJoin = plan.indexOf("Cross Join");
-        Assert.assertTrue(plan, crossJoin > 0);
-        final String belowJoin = plan.substring(crossJoin);
-        Assert.assertEquals(sql + '\n' + plan, isScanFiltered, belowJoin.contains("ilter") || belowJoin.contains("Interval"));
+        final String belowJoin = planBelowCrossJoin(sql);
+        Assert.assertEquals(sql + '\n' + belowJoin, isScanFiltered, belowJoin.contains("ilter") || belowJoin.contains("Interval"));
     }
 
     private void assertScanFilteredCount(String sql, int expectedCount, boolean isScanFiltered) throws Exception {
@@ -1106,6 +1137,16 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
                 (NULL, 2, NULL, '2024-01-05T03:00:00.000000Z'),
                 (1, 3, 'a', '2024-01-06T01:00:00.000000Z')
                 """);
+    }
+
+    // The plan from the CROSS join down, which holds the scans of t0 and t1
+    private static String planBelowCrossJoin(String sql) throws SqlException {
+        sink.clear();
+        printSql("EXPLAIN " + sql);
+        final String plan = sink.toString();
+        final int crossJoin = plan.indexOf("Cross Join");
+        Assert.assertTrue(plan, crossJoin > 0);
+        return plan.substring(crossJoin);
     }
 
     private static TypeCase typeCase(String predicate, boolean isValueKept, boolean isNullKept) {
