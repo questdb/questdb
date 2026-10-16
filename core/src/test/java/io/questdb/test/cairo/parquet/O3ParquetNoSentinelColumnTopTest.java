@@ -56,30 +56,94 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>
  * Partition 2024-01-01 holds rows {@code v} 1..8 at hours 0..7, row group size 4, and columns
  * c1, c2, c3 of the tested type with top 2 (rows 1, 2). 2024-01-02 holds one row, so 2024-01-01
- * is not the last partition. After the O3 commit each case reads the column three ways: ALTER c1
- * TYPE SYMBOL (pre-pass over the footer decoder), a lazy ALTER of c2 read through the {@code _pm}
- * decoder, and CONVERT TO NATIVE then ALTER c3 TYPE SYMBOL.
+ * is not the last partition. After the O3 commit each case reads the column three ways, in this
+ * order: a lazy ALTER of c2 to the lazy target, read through the {@code _pm} decoder while the
+ * partition is still parquet; ALTER c1 TYPE SYMBOL (pre-pass over the footer decoder, which converts
+ * the partition to native); and CONVERT TO NATIVE then ALTER c3 TYPE SYMBOL.
+ * <p>
+ * The lazy targets cover each way the {@code _pm} decoder turns top rows into NULL: through the
+ * chunk's {@code null_count} (BOOLEAN to VARCHAR and INT, BYTE to VARCHAR and DOUBLE, SHORT to
+ * STRING and DOUBLE) and through the definition levels (BYTE to INT, SHORT to LONG).
  */
 @RunWith(Parameterized.class)
 public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
+    // the absent columns of every type, with the SQL literal of the O3 row and whether IS NULL applies: the
+    // types without NULL and the arrays, which IS NULL does not take, compare with tw only
+    private static final String[][] EVERY_TYPE_COLUMNS = {
+            {"cbool", "BOOLEAN", "true", "false"},
+            {"cbyte", "BYTE", "9::BYTE", "false"},
+            {"cshort", "SHORT", "999::SHORT", "false"},
+            {"cchar", "CHAR", "'q'", "false"},
+            {"cint", "INT", "7", "true"},
+            {"clong", "LONG", "8", "true"},
+            {"cfloat", "FLOAT", "1.5", "true"},
+            {"cdouble", "DOUBLE", "3.0", "true"},
+            {"cdate", "DATE", "'2024-01-01T00:00:00.000Z'::DATE", "true"},
+            {"ctimestamp", "TIMESTAMP", "'2024-01-01T00:00:00.000000Z'::TIMESTAMP", "true"},
+            {"cipv4", "IPv4", "'1.2.3.4'::IPv4", "true"},
+            {"cuuid", "UUID", "'11111111-1111-1111-1111-111111111111'::UUID", "true"},
+            {"clong256", "LONG256", "'0x01'::LONG256", "true"},
+            {"cgeo1", "GEOHASH(1c)", "#s", "true"},
+            {"cgeo4", "GEOHASH(4c)", "#sp05", "true"},
+            {"cgeo8", "GEOHASH(8c)", "#sp052w92", "true"},
+            {"cgeo12", "GEOHASH(12c)", "#sp052w92p1p8", "true"},
+            {"cdec2", "DECIMAL(2,1)", "1.5m", "true"},
+            {"cdec18", "DECIMAL(18,2)", "12.34m", "true"},
+            {"cdec38", "DECIMAL(38,4)", "1.2345m", "true"},
+            {"csym", "SYMBOL", "'sym'", "true"},
+            {"cstring", "STRING", "'str'", "true"},
+            {"cvarchar", "VARCHAR", "'42'", "true"},
+            {"cbinary", "BINARY", "from_base64('Ymlu')", "true"},
+            {"carr1", "DOUBLE[]", "ARRAY[1.0, 2.0]", "false"},
+            {"carr2", "DOUBLE[][]", "ARRAY[[1.0], [2.0]]", "false"},
+    };
     private static final String O3_DAY = "2024-01-01";
     private final boolean isWal;
+    private final String lazyTarget;
     private final String type;
 
-    public O3ParquetNoSentinelColumnTopTest(WalMode walMode, String type) {
+    public O3ParquetNoSentinelColumnTopTest(WalMode walMode, String type, String lazyTarget) {
         this.isWal = walMode == WalMode.WITH_WAL;
         this.type = type;
+        this.lazyTarget = lazyTarget;
     }
 
-    @Parameterized.Parameters(name = "{0}-{1}")
+    @Parameterized.Parameters(name = "{0}-{1}-{2}")
     public static Collection<Object[]> data() {
+        final String[][] typeTargets = {
+                {"BOOLEAN", "VARCHAR"},
+                {"BOOLEAN", "INT"},
+                {"BYTE", "VARCHAR"},
+                {"BYTE", "DOUBLE"},
+                {"BYTE", "INT"},
+                {"SHORT", "STRING"},
+                {"SHORT", "DOUBLE"},
+                {"SHORT", "LONG"},
+                {"CHAR", "STRING"},
+        };
         final List<Object[]> params = new ArrayList<>();
         for (WalMode walMode : WalMode.values()) {
-            for (String type : new String[]{"BOOLEAN", "BYTE", "SHORT", "CHAR"}) {
-                params.add(new Object[]{walMode, type});
+            for (String[] typeTarget : typeTargets) {
+                params.add(new Object[]{walMode, typeTarget[0], typeTarget[1]});
             }
         }
         return params;
+    }
+
+    @Test
+    public void testAbsentColumnAppendRewriteAfterDropColumnKeepsTop() throws Exception {
+        // the rewrite drops column cx, present in the parquet file, and writes the null chunks of the
+        // absent c1..c3 in the same commit
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createAbsentColumnTables("cx");
+            for (String t : tables()) {
+                execute("ALTER TABLE " + t + " DROP COLUMN cx");
+            }
+            drainWalQueue();
+            insertO3("2024-01-01T23:00:00.000000Z");
+            assertReaders(topRows(8, 8, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
     }
 
     @Test
@@ -88,20 +152,110 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // rewrites the file with the new schema; every old row reads NULL, the O3 row keeps its value
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
-            for (String t : tables()) {
-                createBaseTable(t, "");
-                execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 8));
-                execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
-            }
-            drainWalQueue();
-            convertToParquet();
-            for (String t : tables()) {
-                addColumns(t);
-            }
-            drainWalQueue();
+            createAbsentColumnTables("");
             insertO3("2024-01-01T23:00:00.000000Z");
             assertReaders(topRows(8, 8, -1, "2024-01-01T23:00:00.000000Z", true));
         });
+    }
+
+    @Test
+    public void testAbsentColumnAppendRewriteThenAppendInPlace() throws Exception {
+        // the second append updates the rewritten file in place and keeps the top of its null chunks,
+        // also after the table reopens
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createAbsentColumnTables("");
+            insertO3("2024-01-01T23:00:00.000000Z");
+            insertO3("2024-01-01T23:30:00.000000Z");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            final List<Row> expected = topRows(8, 8, -1, "2024-01-01T23:00:00.000000Z", true);
+            expected.add(new Row(50, "2024-01-01T23:30:00.000000Z", Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testAbsentColumnAppendRewriteThenMergeAfterLazyAlter() throws Exception {
+        // after the append rewrite c2 changes lazily to the lazy target, then a row at 02:30 merges into
+        // row group 0. The changed type re-encodes every row group of the partition, decoding the null
+        // chunks through the _pm decoder. The merge ends the top (8) past the prefix of rows 1..3: c1, c3
+        // read 0/false in rows 1..8, as native materializes them; c2 reads NULL there, as native reads the
+        // top rows of a column changed to a type with NULL
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createAbsentColumnTables("");
+            insertO3("2024-01-01T23:00:00.000000Z");
+            for (String t : tables()) {
+                execute("ALTER TABLE " + t + " ALTER COLUMN c2 TYPE " + lazyTarget);
+            }
+            drainWalQueue();
+            final String o3c2 = renderAs(o3Text(), lazyTarget);
+            final String o3c2Literal = "VARCHAR".equals(lazyTarget) || "STRING".equals(lazyTarget) ? "'" + o3c2 + "'" : o3c2;
+            for (String t : tables()) {
+                execute("INSERT INTO " + t + " (v, ts, c1, c2, c3, ci, cv) VALUES (50, '2024-01-01T02:30:00.000000Z', "
+                        + o3Literal() + ", " + o3c2Literal + ", " + o3Literal() + ", 50, '50')");
+            }
+            drainWalQueue();
+            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            final String zero = renderAs(zeroText(), type);
+            final String o3 = renderAs(o3Text(), type);
+            final StringSink expected = new StringSink();
+            expected.put("v\tc1\tc2\tc3\n");
+            for (int v = 1; v <= 8; v++) {
+                expected.put(v).put('\t').put(zero).put('\t').put(renderAs(null, lazyTarget)).put('\t').put(zero).put('\n');
+                if (v == 3) {
+                    expected.put("50\t").put(o3).put('\t').put(o3c2).put('\t').put(o3).put('\n');
+                }
+            }
+            expected.put("50\t").put(o3).put('\t').put(o3c2).put('\t').put(o3).put('\n');
+            assertQuery("SELECT v, c1, c2, c3 FROM pt WHERE ts IN '" + O3_DAY + "' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns(expected.toString());
+            assertC2NullCount(O3_DAY, 8);
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '" + O3_DAY + "'");
+            drainWalQueue();
+            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        });
+    }
+
+    @Test
+    public void testAbsentColumnsOfEveryTypeAppendRewriteReadNull() throws Exception {
+        // 8 rows in two row groups of 4: the append rewrite copies both with a null chunk per column
+        assertAbsentColumnsOfEveryTypeReadNull(8);
+    }
+
+    @Test
+    public void testAbsentColumnsOfEveryTypeAppendRewriteThenMergeMatchNative() throws Exception {
+        // 4 rows in one row group of 4: the append rewrite copies it with a null chunk per column and
+        // writes the O3 row in a row group of its own. The row at 02:30 merges into row group 0 and
+        // decodes every null chunk through the _pm decoder; the top (4) ends past the prefix of rows
+        // 1..3 and is materialized: the types with NULL read NULL in rows 1..4, the others 0/false
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createEveryTypeTables(4);
+            insertEveryTypeO3("2024-01-01T23:00:00.000000Z");
+            insertEveryTypeO3("2024-01-01T02:30:00.000000Z");
+            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertEveryTypeNullCounts(4, 2);
+            assertQuery("SELECT v, cbool, cbyte, cshort, cchar FROM pt WHERE ts IN '" + O3_DAY + "' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tcbool\tcbyte\tcshort\tcchar
+                            1\tfalse\t0\t0\t
+                            2\tfalse\t0\t0\t
+                            3\tfalse\t0\t0\t
+                            50\ttrue\t9\t999\tq
+                            4\tfalse\t0\t0\t
+                            50\ttrue\t9\t999\tq
+                            """);
+        });
+    }
+
+    @Test
+    public void testAbsentColumnsOfEveryTypeAppendRewriteWithPartialRowGroupReadNull() throws Exception {
+        // 9 rows in row groups of 4, 4 and 1
+        assertAbsentColumnsOfEveryTypeReadNull(9);
     }
 
     @Test
@@ -518,15 +672,93 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         execute("ALTER TABLE " + table + " ADD COLUMN cd DECIMAL(2,1)");
     }
 
-    private void assertDayRows(String[] days, List<List<Row>> expectedByDay, boolean isAltered, boolean isC3Altered) throws Exception {
-        for (int i = 0, n = expectedByDay.size(); i < n; i++) {
-            assertQuery("SELECT v, c1, c2, c3 FROM pt WHERE ts IN '" + days[i] + "' ORDER BY ts")
+    // the columns of every type are added after the conversion of rowCount rows (row groups of 4); an
+    // append rewrites the file with a null chunk per column and row group. Old rows read NULL, the O3
+    // row its values, before and after a lazy change of the no-sentinel column of the tested type and
+    // of INT, VARCHAR, DOUBLE and SYMBOL columns
+    private void assertAbsentColumnsOfEveryTypeReadNull(int rowCount) throws Exception {
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createEveryTypeTables(rowCount);
+            insertEveryTypeO3("2024-01-01T23:00:00.000000Z");
+            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertEveryTypeNullCounts(rowCount, 1);
+
+            final String noSentinelColumn = everyTypeColumnOf(type);
+            final String[] lazyColumns = {noSentinelColumn, "cint", "cvarchar", "cdouble", "csym"};
+            final String[] lazyTargets = {lazyTarget, "VARCHAR", "INT", "INT", "VARCHAR"};
+            for (String t : tables()) {
+                for (int i = 0; i < lazyColumns.length; i++) {
+                    execute("ALTER TABLE " + t + " ALTER COLUMN " + lazyColumns[i] + " TYPE " + lazyTargets[i]);
+                }
+            }
+            drainWalQueue();
+            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            final StringSink expected = new StringSink();
+            expected.put("v\t").put(String.join("\t", lazyColumns)).put('\n');
+            for (int v = 1; v <= rowCount; v++) {
+                expected.put(v).put('\t').put(renderAs(null, lazyTarget)).put("\t\tnull\tnull\t\n");
+            }
+            expected.put("50\t").put(renderAs(o3Text(), lazyTarget)).put("\t7\t42\t3\tsym\n");
+            assertQuery("SELECT v, " + String.join(", ", lazyColumns) + " FROM pt WHERE ts IN '" + O3_DAY + "' ORDER BY ts")
                     .noLeakCheck()
-                    .returns(render(expectedByDay.get(i), isAltered, isC3Altered));
+                    .returns(expected.toString());
+            for (String column : lazyColumns) {
+                assertNullCounts(column, rowCount, 1);
+            }
+        });
+    }
+
+    private void assertC2NullCount(String day, long expectedCount) throws Exception {
+        final String nullCount = "count\n" + expectedCount + "\n";
+        for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+            sqlExecutionContext.setJitMode(jitMode);
+            assertQuery("SELECT count() FROM pt WHERE ts IN '" + day + "' AND c2 IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(nullCount);
         }
     }
 
-    // c1 to SYMBOL and c2 lazily to the lazy target, then (pt) CONVERT TO NATIVE and c3 to SYMBOL;
+    private void assertDayRows(
+            String[] days,
+            List<List<Row>> expectedByDay,
+            boolean isC1Altered,
+            boolean isC2Altered,
+            boolean isC3Altered
+    ) throws Exception {
+        for (int i = 0, n = expectedByDay.size(); i < n; i++) {
+            assertQuery("SELECT v, c1, c2, c3 FROM pt WHERE ts IN '" + days[i] + "' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns(render(expectedByDay.get(i), isC1Altered, isC2Altered, isC3Altered));
+        }
+    }
+
+    private void assertEveryTypeNullCounts(long nullCount, long notNullCount) throws Exception {
+        for (String[] column : EVERY_TYPE_COLUMNS) {
+            if (Boolean.parseBoolean(column[3])) {
+                assertNullCounts(column[0], nullCount, notNullCount);
+            }
+        }
+    }
+
+    // IS NULL and IS NOT NULL on a column of the parquet partition of pt
+    private void assertNullCounts(String column, long nullCount, long notNullCount) throws Exception {
+        assertQuery("SELECT count() FROM pt WHERE ts IN '" + O3_DAY + "' AND " + column + " IS NULL")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + nullCount + "\n");
+        assertQuery("SELECT count() FROM pt WHERE ts IN '" + O3_DAY + "' AND " + column + " IS NOT NULL")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + notNullCount + "\n");
+    }
+
+    // c2 lazily to the lazy target, read through the _pm decoder while the partition is parquet, then
+    // c1 to SYMBOL (converts the partition to native), then (pt) CONVERT TO NATIVE and c3 to SYMBOL;
     // pt must match tw and the expected rows after each step
     private void assertReaders(List<Row> expected) throws Exception {
         assertReaders(expected, true);
@@ -543,29 +775,26 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     // checks the rows of parquetDays[i] against expectedByDay[i], for the days that have expected rows
     private void assertReaders(boolean isAltering, String[] parquetDays, List<List<Row>> expectedByDay) throws Exception {
         assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
-        assertDayRows(parquetDays, expectedByDay, false, false);
+        assertDayRows(parquetDays, expectedByDay, false, false, false);
         if (!isAltering) {
             return;
         }
         for (String t : tables()) {
-            execute("ALTER TABLE " + t + " ALTER COLUMN c1 TYPE SYMBOL");
-            execute("ALTER TABLE " + t + " ALTER COLUMN c2 TYPE " + lazyTarget());
+            execute("ALTER TABLE " + t + " ALTER COLUMN c2 TYPE " + lazyTarget);
         }
         drainWalQueue();
         assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
-        assertDayRows(parquetDays, expectedByDay, true, false);
+        assertDayRows(parquetDays, expectedByDay, false, true, false);
         // the filter on the lazily changed column, JIT on and off
         for (int i = 0, n = expectedByDay.size(); i < n; i++) {
-            final String nullCount = "count\n" + countTop(expectedByDay.get(i)) + "\n";
-            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
-                sqlExecutionContext.setJitMode(jitMode);
-                assertQuery("SELECT count() FROM pt WHERE ts IN '" + parquetDays[i] + "' AND c2 IS NULL")
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns(nullCount);
-            }
+            assertC2NullCount(parquetDays[i], countTop(expectedByDay.get(i)));
         }
+        for (String t : tables()) {
+            execute("ALTER TABLE " + t + " ALTER COLUMN c1 TYPE SYMBOL");
+        }
+        drainWalQueue();
+        assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        assertDayRows(parquetDays, expectedByDay, true, true, false);
         for (String day : parquetDays) {
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '" + day + "'");
         }
@@ -575,7 +804,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         }
         drainWalQueue();
         assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
-        assertDayRows(parquetDays, expectedByDay, true, true);
+        assertDayRows(parquetDays, expectedByDay, true, true, true);
     }
 
     private void assertShape(int rowGroupSize, String o3Ts, boolean isTopKept) throws Exception {
@@ -612,9 +841,45 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         return count;
     }
 
+    // rows 1..8 of 2024-01-01 converted to parquet before c1..c3 exist: the columns are absent from the
+    // parquet file; extraColumn (empty: none) is an INT column present in the file
+    private void createAbsentColumnTables(String extraColumn) throws Exception {
+        for (String t : tables()) {
+            createBaseTable(t, "");
+            if (!extraColumn.isEmpty()) {
+                execute("ALTER TABLE " + t + " ADD COLUMN " + extraColumn + " INT");
+            }
+            execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 8));
+            execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+        }
+        drainWalQueue();
+        convertToParquet();
+        for (String t : tables()) {
+            addColumns(t);
+        }
+        drainWalQueue();
+    }
+
     private void createBaseTable(String table, String dedup) throws Exception {
         execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
                 + (isWal ? "WAL" : "BYPASS WAL") + dedup);
+    }
+
+    // rows 1..rowCount of 2024-01-01 converted to parquet, then the columns of every type added
+    private void createEveryTypeTables(int rowCount) throws Exception {
+        for (String t : tables()) {
+            createBaseTable(t, "");
+            execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, rowCount));
+            execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+        }
+        drainWalQueue();
+        convertToParquet();
+        for (String t : tables()) {
+            for (String[] column : EVERY_TYPE_COLUMNS) {
+                execute("ALTER TABLE " + t + " ADD COLUMN " + column[0] + " " + column[1]);
+            }
+        }
+        drainWalQueue();
     }
 
     private void createShapeTables(String dedup) throws Exception {
@@ -650,21 +915,34 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         convertToParquet();
     }
 
+    private String everyTypeColumnOf(String columnType) {
+        for (String[] column : EVERY_TYPE_COLUMNS) {
+            if (column[1].equals(columnType)) {
+                return column[0];
+            }
+        }
+        throw new AssertionError("no column of type " + columnType);
+    }
+
+    private void insertEveryTypeO3(String ts) throws Exception {
+        final StringBuilder columns = new StringBuilder("v, ts");
+        final StringBuilder values = new StringBuilder("50, '").append(ts).append('\'');
+        for (String[] column : EVERY_TYPE_COLUMNS) {
+            columns.append(", ").append(column[0]);
+            values.append(", ").append(column[2]);
+        }
+        for (String t : tables()) {
+            execute("INSERT INTO " + t + " (" + columns + ") VALUES (" + values + ")");
+        }
+        drainWalQueue();
+    }
+
     private void insertO3(String ts) throws Exception {
         for (String t : tables()) {
             execute("INSERT INTO " + t + " (v, ts, c1, c2, c3, ci, cv) VALUES (50, '" + ts + "', "
                     + o3Literal() + ", " + o3Literal() + ", " + o3Literal() + ", 50, '50')");
         }
         drainWalQueue();
-    }
-
-    private String lazyTarget() {
-        return switch (type) {
-            case "BOOLEAN" -> "VARCHAR";
-            case "BYTE" -> "INT";
-            case "SHORT" -> "LONG";
-            default -> "STRING";
-        };
     }
 
     // SQL literal of the value of row v (3..8, repeating from row 9), the same in every case: 0/false right after the top,
@@ -696,13 +974,9 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         };
     }
 
-    // renders the expected rows: c1, c2, c3 hold the tested type, or after the ALTERs c1 SYMBOL and c2
-    // the lazy target; after CONVERT TO NATIVE c3 SYMBOL as well
-    private String render(List<Row> rows, boolean isAltered) {
-        return render(rows, isAltered, false);
-    }
-
-    private String render(List<Row> rows, boolean isAltered, boolean isC3Altered) {
+    // renders the expected rows: c1, c2, c3 hold the tested type, or after its ALTER c2 the lazy target,
+    // c1 SYMBOL and c3 SYMBOL
+    private String render(List<Row> rows, boolean isC1Altered, boolean isC2Altered, boolean isC3Altered) {
         final StringSink sink = new StringSink();
         sink.put("v\tc1\tc2\tc3\n");
         for (Row row : rows) {
@@ -713,8 +987,8 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 case VALUE -> textOf(row.v);
             };
             sink.put(row.v).put('\t');
-            sink.put(renderAs(text, isAltered ? "SYMBOL" : type)).put('\t');
-            sink.put(renderAs(text, isAltered ? lazyTarget() : type)).put('\t');
+            sink.put(renderAs(text, isC1Altered ? "SYMBOL" : type)).put('\t');
+            sink.put(renderAs(text, isC2Altered ? lazyTarget : type)).put('\t');
             sink.put(renderAs(text, isC3Altered ? "SYMBOL" : type)).put('\n');
         }
         return sink.toString();
@@ -725,7 +999,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             // a NULL of a type without a sentinel cannot exist in a column of that type: before the ALTERs
             // the column reads its stored value, which the top rows do not have, see topRows()
             return switch (columnType) {
-                case "INT", "LONG" -> "null";
+                case "INT", "LONG", "DOUBLE" -> "null";
                 case "BOOLEAN" -> "false";
                 case "BYTE", "SHORT" -> "0";
                 default -> "";
@@ -734,6 +1008,12 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         if ("CHAR".equals(type) && text.isEmpty()) {
             // CHAR 0 converts to a NULL text
             return "";
+        }
+        if ("BOOLEAN".equals(type) && "INT".equals(columnType)) {
+            return "true".equals(text) ? "1" : "0";
+        }
+        if ("DOUBLE".equals(columnType)) {
+            return Double.toString(Double.parseDouble(text));
         }
         return text;
     }
