@@ -370,7 +370,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     + " WHERE t.x = {K} AND t.ci != 0";
             // no bind variables
             assertSteps(body, rowsStep(bindVariableService::clear, "1\t10\t100\n2\t11\t101"));
-            Assert.assertFalse(planOf(lateralSql(body)).contains("Lateral Null Check"));
+            assertQuery(lateralSql(body)).noLeakCheck().assertsPlanNotContaining("Lateral Null Check");
         });
     }
 
@@ -576,9 +576,10 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     rowsStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), ""),
                     rowsStep(() -> bindVariableService.setInt(0, 101), "2\t10\t101\n2\t11\t101\n3\t10\t102\n3\t11\t102")
             );
-            final String twoRightJoinsPlan = planOf(lateralSql(twoRightJoins));
-            TestUtils.assertContains(twoRightJoinsPlan, "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor");
-            TestUtils.assertContains(twoRightJoinsPlan, "groups: [[0],[1,0]]\n");
+            assertQuery(lateralSql(twoRightJoins)).noLeakCheck().assertsPlanContaining(
+                    "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor",
+                    "groups: [[0],[1,0]]\n"
+            );
 
             execute("CREATE TABLE ys (k INT)");
             execute("INSERT INTO ys VALUES (1), (2), (3)");
@@ -589,12 +590,13 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     rowsStep(() -> bindVariableService.setLong(0, 10), "1\t10\t100\n2\t11\t101"),
                     rowsStep(() -> bindVariableService.setLong(0, Numbers.LONG_NULL), "")
             );
-            final String chainPlan = planOf(lateralSql(chain));
-            TestUtils.assertContains(chainPlan, "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor");
+            assertQuery(lateralSql(chain)).noLeakCheck().assertsPlanContaining(
+                    "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor",
+                    "__qdb_null_probe>=$0::long] groups: [[0],[0,1]]\n"
+            );
             // one check of the sub-query
-            final int subQueryCheck = chainPlan.indexOf("__qdb_null_probe [thread-safe] >= cursor");
-            Assert.assertEquals(chainPlan, -1, chainPlan.indexOf("__qdb_null_probe [thread-safe] >= cursor", subQueryCheck + 1));
-            TestUtils.assertContains(chainPlan, "__qdb_null_probe>=$0::long] groups: [[0],[0,1]]\n");
+            final String chainPlan = planOf(lateralSql(chain));
+            Assert.assertEquals(chainPlan, 1, countOf(chainPlan, "__qdb_null_probe [thread-safe] >= cursor"));
             bindVariableService.clear();
         });
     }
@@ -840,7 +842,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                         rowsStep(() -> bindVariableService.setInt(0, 10), "1\t10\t100"),
                         rowsStep(() -> bindVariableService.setInt(0, 0), "")
                 );
-                Assert.assertFalse(planOf(lateralSql(filter)).contains("Lateral Null Check"));
+                assertQuery(lateralSql(filter)).noLeakCheck().assertsPlanNotContaining("Lateral Null Check");
             }
 
             final String twoChecks = body + "t.i = $1 AND t.cl >= $2";
@@ -851,18 +853,19 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     errorStep(() -> bindIntLong(Numbers.INT_NULL, Numbers.LONG_NULL), "$1"),
                     rowsStep(() -> bindIntLong(10, 10), "1\t10\t100")
             );
-            TestUtils.assertContains(
-                    planOf(lateralSql(twoChecks)),
+            assertQuery(lateralSql(twoChecks)).noLeakCheck().assertsPlanContaining(
                     "Lateral Null Check checks: [__qdb_null_probe=$0::int,__qdb_null_probe>=$1::long] groups: [[0,1]]\n"
             );
             final String reversedChecks = body + "t.cl >= $2 AND t.i = $1";
+            // the error step first, so that assertSteps() also compiles the query with both values NULL
             assertSteps(
                     reversedChecks,
-                    rowsStep(() -> bindIntLong(Numbers.INT_NULL, 10), "2\t11\t101"),
-                    errorStep(() -> bindIntLong(Numbers.INT_NULL, Numbers.LONG_NULL), "$2")
+                    errorStep(() -> bindIntLong(Numbers.INT_NULL, Numbers.LONG_NULL), "$2"),
+                    rowsStep(() -> bindIntLong(Numbers.INT_NULL, 10), "2\t11\t101")
             );
-            TestUtils.assertContains(
-                    planOf(lateralSql(reversedChecks)),
+            // EXPLAIN runs the checks, so it needs bind values that pass them
+            bindIntLong(10, 10);
+            assertQuery(lateralSql(reversedChecks)).noLeakCheck().assertsPlanContaining(
                     "Lateral Null Check checks: [__qdb_null_probe>=$1::long,__qdb_null_probe=$0::int] groups: [[0,1]]\n"
             );
 
@@ -883,14 +886,14 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     errorStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "$1"),
                     rowsStep(() -> bindVariableService.setInt(0, 10), "1\t10\t100")
             );
-            TestUtils.assertContains(planOf(lateralSql(intColumn)), "Lateral Null Check checks: [__qdb_null_probe=$0::int] groups: [[0]]\n");
+            assertQuery(lateralSql(intColumn)).noLeakCheck().assertsPlanContaining("Lateral Null Check checks: [__qdb_null_probe=$0::int] groups: [[0]]\n");
             final String byteColumn = body + "t.i = $1 AND t.bid >= $2";
             assertSteps(
                     byteColumn,
                     errorStep(() -> bindIntLong(Numbers.INT_NULL, 0), "$1"),
                     rowsStep(() -> bindIntLong(10, 0), "1\t10\t100")
             );
-            TestUtils.assertContains(planOf(lateralSql(byteColumn)), "Lateral Null Check checks: [__qdb_null_probe=$0::int] groups: [[0]]\n");
+            assertQuery(lateralSql(byteColumn)).noLeakCheck().assertsPlanContaining("Lateral Null Check checks: [__qdb_null_probe=$0::int] groups: [[0]]\n");
 
             // each type of the column of known type, next to a computed SHORT column
             assertSteps(
@@ -1005,7 +1008,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                                 rowsStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), shape[1]),
                                 rowsStep(() -> bindVariableService.setInt(0, 10), shape[2])
                         );
-                        Assert.assertFalse(planOf(table[0] + lateralSql(body)).contains("Lateral Null Check"));
+                        assertQuery(table[0] + lateralSql(body)).noLeakCheck().assertsPlanNotContaining("Lateral Null Check");
                     }
 
                     // the group lists the WHERE conjunct first
@@ -1020,8 +1023,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                             errorStep(() -> bindIntLong(Numbers.INT_NULL, Numbers.LONG_NULL), "$2"),
                             rowsStep(() -> bindIntLong(10, Numbers.LONG_NULL), "")
                     );
-                    TestUtils.assertContains(
-                            planOf(table[0] + lateralSql(innerOn)),
+                    assertQuery(table[0] + lateralSql(innerOn)).noLeakCheck().assertsPlanContaining(
                             "Lateral Null Check checks: [__qdb_null_probe>=$1::long,__qdb_null_probe>=$0::int] groups: [[0,1]]\n"
                     );
 
@@ -1037,8 +1039,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                             rowsStep(() -> bindIntLong(10, 10), "1\t10\t100"),
                             rowsStep(() -> bindIntLong(Numbers.INT_NULL, 10), "2\t11\t101")
                     );
-                    TestUtils.assertContains(
-                            planOf(table[0] + lateralSql(whereKeyEquality)),
+                    assertQuery(table[0] + lateralSql(whereKeyEquality)).noLeakCheck().assertsPlanContaining(
                             "Lateral Null Check checks: [__qdb_null_probe>=$1::long] groups: [[0]]\n"
                     );
 
@@ -1098,8 +1099,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setInt(0, 10);
             // the filter holds t.i <= $1 as $1 >= t.i
-            TestUtils.assertContains(
-                    planOf(lateralSql(body)),
+            assertQuery(lateralSql(body)).noLeakCheck().assertsPlanContaining(
                     "Lateral Null Check checks: [$0::int>=__qdb_null_probe] groups: [[0]]\n"
             );
             bindVariableService.clear();
@@ -1394,8 +1394,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                 }
             }
             bindIntLong(10, 10);
-            TestUtils.assertContains(
-                    planOf(lateralSql("trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE t.i = $1 AND t.l >= $2")),
+            assertQuery(lateralSql("trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE t.i = $1 AND t.l >= $2")).noLeakCheck().assertsPlanContaining(
                     "Lateral Null Check checks: [__qdb_null_probe=$0::int,__qdb_null_probe>=$1::long] groups: [[0,1]]\n"
             );
             bindVariableService.clear();
@@ -1541,13 +1540,13 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     errorStep(() -> bindShortInt((short) 0, Numbers.INT_NULL), "$2"),
                     rowsStep(() -> bindShortInt((short) 0, 10), "1\t10\t100")
             );
-            TestUtils.assertContains(planOf(lateralSql(shortSql)), "Lateral Null Check checks: [__qdb_null_probe>=$1::int] groups: [[0]]\n");
+            assertQuery(lateralSql(shortSql)).noLeakCheck().assertsPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$1::int] groups: [[0]]\n");
 
             bindVariableService.clear();
             final String constants = body + "t.i = NULL AND t.l >= 10";
             assertSteps(constants, rowsStep(() -> {
             }, "2\t11\t101"));
-            Assert.assertFalse(planOf(lateralSql(constants)).contains("Lateral Null Check"));
+            assertQuery(lateralSql(constants)).noLeakCheck().assertsPlanNotContaining("Lateral Null Check");
 
             // max(id) over no refund is NULL, and NULL >= NULL is true, so only t.id >= 10 drops the
             // NULL-extended rows, whichever side of the comparison the sub-query is on. A CASE
@@ -1563,7 +1562,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                 final String subQueries = body + subQueryFilter;
                 assertSteps(subQueries, rowsStep(() -> {
                 }, "2\t11\t101"));
-                TestUtils.assertContains(planOf(lateralSql(subQueries)), "groups: [[0,1]]\n");
+                assertQuery(lateralSql(subQueries)).noLeakCheck().assertsPlanContaining("groups: [[0,1]]\n");
             }
 
             // both conjuncts have one check
@@ -1573,7 +1572,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     errorStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "$1"),
                     rowsStep(() -> bindVariableService.setInt(0, 10), "1\t10\t100")
             );
-            TestUtils.assertContains(planOf(lateralSql(sameCheck)), "Lateral Null Check checks: [__qdb_null_probe>=$0::int] groups: [[0]]\n");
+            assertQuery(lateralSql(sameCheck)).noLeakCheck().assertsPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$0::int] groups: [[0]]\n");
             bindVariableService.clear();
         });
     }
@@ -1630,8 +1629,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                             errorStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "$1"),
                             rowsStep(() -> bindVariableService.setInt(0, 10), "1\t10\t100")
                     );
-                    TestUtils.assertContains(
-                            planOf(table[0] + lateralSql(sameCheckBody)),
+                    assertQuery(table[0] + lateralSql(sameCheckBody)).noLeakCheck().assertsPlanContaining(
                             "Lateral Null Check checks: [__qdb_null_probe>=$0::int] groups: [[0]]\n"
                     );
                     assertSteps(
@@ -1685,7 +1683,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             final String computedBody = body.replace("{T}", "(SELECT id, x, i, l FROM trades UNION ALL SELECT id, x, i, l FROM trades WHERE id < 0)");
             assertSteps("", "JOIN LATERAL", computedBody, body.replace("{T}", "trades"), rowsStep(() -> {
             }, "2\t11\t101"));
-            TestUtils.assertContains(planOf(lateralSql(computedBody)), "groups: [[0,1]]\n");
+            assertQuery(lateralSql(computedBody)).noLeakCheck().assertsPlanContaining("groups: [[0,1]]\n");
         });
     }
 
@@ -1955,7 +1953,10 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         return new Step(bind, null, errorToken);
     }
 
-    // the plan of the query, one line per row, without running it
+    // The plan of the query, one line per row, without running it. Plan checks go through
+    // assertQuery(sql).assertsPlanContaining(...) unless they count a fragment, which the builder
+    // cannot assert, or read a held factory, whose cursor EXPLAIN cannot open: its random sub-query
+    // values may fail the checks, and [state-shared] shows only after the factory ran.
     private static String planOf(String sql) throws SqlException {
         try (RecordCursorFactory factory = select(sql)) {
             return planOf(factory);
