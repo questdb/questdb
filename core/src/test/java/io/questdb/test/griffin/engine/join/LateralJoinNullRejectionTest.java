@@ -405,14 +405,18 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     public void testRightJoinWithCorrelatedOnAndRefundsFilter() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            Assert.assertEquals(
-                    List.of(
-                            "1\t10\t100", "1\tnull\t101", "1\tnull\t102",
-                            "2\t11\t101", "2\tnull\t100", "2\tnull\t102",
-                            "3\tnull\t100", "3\tnull\t101", "3\tnull\t102"
-                    ),
-                    run(referenceSql(Shape.RIGHT_ON, "r.id > 0"), "reference").rows
-            );
+            assertReference("", Shape.RIGHT_ON.body.replace("{T}", "trades").replace("{P}", "r.id > 0"), """
+                    id\ttid\trid
+                    1\tnull\t101
+                    1\tnull\t102
+                    1\t10\t100
+                    2\tnull\t100
+                    2\tnull\t102
+                    2\t11\t101
+                    3\tnull\t100
+                    3\tnull\t101
+                    3\tnull\t102
+                    """);
             final String body = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid "
                     + "FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE ";
             final int position = body.indexOf("RIGHT JOIN");
@@ -442,26 +446,26 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     """;
             final String noRows = "id\ttid\trid\n";
 
-            assertQuery(body + "t.l BETWEEN 1 AND 10) l").noRandomAccess().expectSize().returns(trade10);
-            assertQuery(body + "t.st IN ('abc')) l").noRandomAccess().expectSize().returns(trade10);
-            assertQuery(body + "t.g4 = #u33d) l").noRandomAccess().expectSize().returns(trade10);
+            assertQuery(body + "t.l BETWEEN 1 AND 10) l").noLeakCheck().noRandomAccess().expectSize().returns(trade10);
+            assertQuery(body + "t.st IN ('abc')) l").noLeakCheck().noRandomAccess().expectSize().returns(trade10);
+            assertQuery(body + "t.g4 = #u33d) l").noLeakCheck().noRandomAccess().expectSize().returns(trade10);
 
             bindVariableService.clear();
             bindVariableService.setLong(0, 5);
-            assertQuery(body + "t.l > $1) l").noRandomAccess().expectSize().returns(trade10);
+            assertQuery(body + "t.l > $1) l").noLeakCheck().noRandomAccess().expectSize().returns(trade10);
             bindVariableService.setLong(0, Numbers.LONG_NULL);
-            assertQuery(body + "t.l > $1) l").noRandomAccess().expectSize().returns(noRows);
+            assertQuery(body + "t.l > $1) l").noLeakCheck().noRandomAccess().expectSize().returns(noRows);
 
             bindVariableService.clear();
             bindVariableService.setInt(0, 0);
-            assertQuery(body + "t.i >= $1) l").noRandomAccess().expectSize().returns(trade10);
+            assertQuery(body + "t.i >= $1) l").noLeakCheck().noRandomAccess().expectSize().returns(trade10);
             bindVariableService.setInt(0, Numbers.INT_NULL);
             final String nullCheckedSql = body + "t.i >= $1) l";
             assertException(nullCheckedSql, nullCheckedSql.indexOf("$1"), NULL_VALUE_SUFFIX);
             bindVariableService.clear();
 
-            assertQuery(body + "t.d <= (SELECT max(d) FROM trades)) l").noRandomAccess().expectSize().returns(trade10);
-            assertQuery(body + "t.d < (SELECT max(d) FROM trades WHERE id = 99)) l").noRandomAccess().expectSize().returns(noRows);
+            assertQuery(body + "t.d <= (SELECT max(d) FROM trades)) l").noLeakCheck().noRandomAccess().expectSize().returns(trade10);
+            assertQuery(body + "t.d < (SELECT max(d) FROM trades WHERE id = 99)) l").noLeakCheck().noRandomAccess().expectSize().returns(noRows);
         });
     }
 
@@ -486,8 +490,17 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     + " RIGHT JOIN refunds r ON r.k = {K} RIGHT JOIN xs x ON x.k = r.k WHERE t.id >= " + subQuery;
             // per outer row, refund k matches both trades, and t.id >= 0 drops the rows that both
             // joins NULL-extend
-            final List<String> expected = List.of("1\t10\t100", "1\t11\t100", "2\t10\t101", "2\t11\t101", "3\t10\t102", "3\t11\t102");
-            Assert.assertEquals(expected, run(referenceSql(body.replace(subQuery, "0")), "reference").rows);
+            final String expectedText = """
+                    id\ttid\trid
+                    1\t10\t100
+                    1\t11\t100
+                    2\t10\t101
+                    2\t11\t101
+                    3\t10\t102
+                    3\t11\t102
+                    """;
+            assertReference("", body.replace(subQuery, "0"), expectedText);
+            final List<String> expected = sortedRows(expectedText);
             final String sql = lateralSql(body);
             sqlExecutionContext.setRandom(TestUtils.generateRandom(LOG));
             int rowCount = 0;
@@ -543,8 +556,17 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                 bindVariableService.setInt(0, 100);
                 // per outer row, refund k matches both trades, and r.id >= 100 drops the rows that
                 // the join with xs NULL-extends
-                final List<String> expected = List.of("1\t10\t100", "1\t11\t100", "2\t10\t101", "2\t11\t101", "3\t10\t102", "3\t11\t102");
-                Assert.assertEquals(expected, run(referenceSql(body.replace(subQuery, "0")), "reference").rows);
+                final String expectedText = """
+                        id\ttid\trid
+                        1\t10\t100
+                        1\t11\t100
+                        2\t10\t101
+                        2\t11\t101
+                        3\t10\t102
+                        3\t11\t102
+                        """;
+                assertReference("", body.replace(subQuery, "0"), expectedText);
+                final List<String> expected = sortedRows(expectedText);
                 final String sql = lateralSql(body);
                 sqlExecutionContext.setRandom(rnd);
                 int rowCount = 0;
@@ -593,8 +615,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     """;
 
             final String subQueries = body + "(SELECT max(id) FROM refunds) <= r.id AND t.id >= (SELECT min(id) FROM trades)";
-            assertQuery("SELECT * FROM (" + referenceSql(subQueries) + ") ORDER BY 1, 2, 3").returns(key3);
-            assertQuery(lateralSql(subQueries))
+            assertReference("", subQueries, key3);
+            assertQuery(lateralSql(subQueries)).noLeakCheck()
                     .withPlanContaining(
                             "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor",
                             "Frame forward scan on: trades [state-shared],__qdb_null_probe [thread-safe] >= cursor",
@@ -605,8 +627,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
 
             // checks of different column types stay apart although their sub-queries look alike
             final String timestampSubQuery = body + "r.ts >= (SELECT max(ts) FROM refunds) AND t.id >= (SELECT min(id) FROM trades)";
-            assertQuery("SELECT * FROM (" + referenceSql(timestampSubQuery) + ") ORDER BY 1, 2, 3").returns(key3);
-            assertQuery(lateralSql(timestampSubQuery))
+            assertReference("", timestampSubQuery, key3);
+            assertQuery(lateralSql(timestampSubQuery)).noLeakCheck()
                     .withPlanContaining(
                             "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor",
                             "Frame forward scan on: trades [state-shared],__qdb_null_probe [thread-safe] >= cursor",
@@ -619,15 +641,15 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setInt(0, 102);
             bindVariableService.setInt(1, 10);
-            assertQuery("SELECT * FROM (" + referenceSql(bindVariables) + ") ORDER BY 1, 2, 3").returns(key3);
-            assertQuery(lateralSql(bindVariables))
+            assertReference("", bindVariables, key3);
+            assertQuery(lateralSql(bindVariables)).noLeakCheck()
                     .withPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$1::int,__qdb_null_probe>=$0::int] groups: [[0],[1,0]]\n")
                     .expectSize()
                     .returns(key3);
             bindVariableService.setInt(0, Numbers.INT_NULL);
             final String noRows = "id\ttid\trid\n";
-            assertQuery("SELECT * FROM (" + referenceSql(bindVariables) + ") ORDER BY 1, 2, 3").returns(noRows);
-            assertQuery(lateralSql(bindVariables)).expectSize().returns(noRows);
+            assertReference("", bindVariables, noRows);
+            assertQuery(lateralSql(bindVariables)).noLeakCheck().expectSize().returns(noRows);
             final String nullCheckedSql = lateralSql(bindVariables);
             bindVariableService.setInt(0, 102);
             bindVariableService.setInt(1, Numbers.INT_NULL);
@@ -647,8 +669,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     3\t10\t102
                     3\t11\t102
                     """;
-            assertQuery("SELECT * FROM (" + referenceSql(sharedCheck) + ") ORDER BY 1, 2, 3").returns(allKeys);
-            assertQuery(lateralSql(sharedCheck))
+            assertReference("", sharedCheck, allKeys);
+            assertQuery(lateralSql(sharedCheck)).noLeakCheck()
                     .withPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$0::int] groups: [[0]]\n")
                     .expectSize()
                     .returns(allKeys);
@@ -730,7 +752,10 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                 final Outcome nullValueError = new Outcome(null, NULL_VALUE_ERROR, sql.indexOf("$1"));
                 Assert.assertEquals(nullValueError, runFactory(factory, sql));
                 execute("INSERT INTO trades (id, x, i, l, ts) VALUES (12, 3, 5, 10, 3::timestamp)");
-                Assert.assertEquals(List.of("2\t11\t101"), run(referenceSql(body), "reference").rows);
+                assertReference("", body, """
+                        id\ttid\trid
+                        2\t11\t101
+                        """);
                 Assert.assertEquals(new Outcome(List.of("2\t11\t101"), null, -1), runFactory(factory, sql));
                 execute("TRUNCATE TABLE trades");
                 Assert.assertEquals(nullValueError, runFactory(factory, sql));
@@ -1011,45 +1036,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         final List<String> failures = new ArrayList<>();
         checkCase(shape, Form.TABLE, column, template, "H", sql, reference, actual, failures);
         Assert.assertEquals(shape + " " + template + ", reference " + summary(reference) + ", query " + summary(actual) + ": " + failures, isAccepted ? 0 : 1, failures.size());
-    }
-
-    private static void assertSteps(String body, Step... steps) throws SqlException {
-        assertSteps("", "JOIN LATERAL", body, body, steps);
-    }
-
-    // Compiles the query once, with the bind values of the first step, and runs it with the bind
-    // values of each step in turn. A step returns its rows, which the reference, the body once per
-    // outer row over referenceBody, returns too, and LEFT JOIN LATERAL adds a NULL row for each outer
-    // row without one; or it fails with the NULL value error at the position of its token.
-    private static void assertSteps(String prefix, String lateralJoin, String body, String referenceBody, Step... steps) throws SqlException {
-        final String sql = prefix + "SELECT o.id, l.tid, l.rid FROM orders o " + lateralJoin
-                + " (SELECT t.id tid, r.id rid FROM " + body.replace("{K}", "o.k") + ") l";
-        bindVariableService.clear();
-        steps[0].bind.set();
-        try (RecordCursorFactory factory = select(sql)) {
-            for (int i = 0; i < steps.length; i++) {
-                final Step step = steps[i];
-                final String header = "step " + i + ": " + sql;
-                step.bind.set();
-                if (step.errorToken != null) {
-                    Assert.assertEquals(header, new Outcome(null, NULL_VALUE_ERROR, sql.indexOf(step.errorToken)), runFactory(factory, header));
-                    continue;
-                }
-                final List<String> rows = sortedRows("header\n" + step.rows);
-                Assert.assertEquals(header, rows, run(prefix + referenceSql(referenceBody), header).rows);
-                final List<String> lateralRows = new ArrayList<>(rows);
-                if (lateralJoin.startsWith("LEFT")) {
-                    for (int k = 0; k < OUTER_KEYS.length; k++) {
-                        final String outerId = (k + 1) + "\t";
-                        if (rows.stream().noneMatch(row -> row.startsWith(outerId))) {
-                            lateralRows.add(outerId + "null\tnull");
-                        }
-                    }
-                    Collections.sort(lateralRows);
-                }
-                Assert.assertEquals(header, new Outcome(lateralRows, null, -1), runFactory(factory, header));
-            }
-        }
     }
 
     private static void bindIntLong(int value1, long value2) throws SqlException {
@@ -1383,6 +1369,11 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         checkCase(shape, form, column, template, header, sql, reference, run(sql, header), failures);
     }
 
+    // Asserts the rows of the reference, the body once per outer row, ordered by the outer row and the ids
+    private void assertReference(String prefix, String body, String expected) throws Exception {
+        assertQuery(prefix + "SELECT * FROM (" + referenceSql(body) + ") ORDER BY 1, 2, 3").noLeakCheck().returns(expected);
+    }
+
     private void assertShape(Shape shape) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1408,6 +1399,45 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                 Assert.fail(failures.size() + " failures in " + caseCount + " cases:\n" + String.join("\n", failures.subList(0, Math.min(40, failures.size()))));
             }
         });
+    }
+
+    private void assertSteps(String body, Step... steps) throws Exception {
+        assertSteps("", "JOIN LATERAL", body, body, steps);
+    }
+
+    // Compiles the query once, with the bind values of the first step, and runs it with the bind
+    // values of each step in turn. A step returns its rows, which the reference, the body once per
+    // outer row over referenceBody, returns too, and LEFT JOIN LATERAL adds a NULL row for each outer
+    // row without one; or it fails with the NULL value error at the position of its token.
+    private void assertSteps(String prefix, String lateralJoin, String body, String referenceBody, Step... steps) throws Exception {
+        final String sql = prefix + "SELECT o.id, l.tid, l.rid FROM orders o " + lateralJoin
+                + " (SELECT t.id tid, r.id rid FROM " + body.replace("{K}", "o.k") + ") l";
+        bindVariableService.clear();
+        steps[0].bind.set();
+        try (RecordCursorFactory factory = select(sql)) {
+            for (int i = 0; i < steps.length; i++) {
+                final Step step = steps[i];
+                final String header = "step " + i + ": " + sql;
+                step.bind.set();
+                if (step.errorToken != null) {
+                    Assert.assertEquals(header, new Outcome(null, NULL_VALUE_ERROR, sql.indexOf(step.errorToken)), runFactory(factory, header));
+                    continue;
+                }
+                assertReference(prefix, referenceBody, "id\ttid\trid\n" + step.rows + (step.rows.isEmpty() ? "" : "\n"));
+                final List<String> rows = sortedRows("header\n" + step.rows);
+                final List<String> lateralRows = new ArrayList<>(rows);
+                if (lateralJoin.startsWith("LEFT")) {
+                    for (int k = 0; k < OUTER_KEYS.length; k++) {
+                        final String outerId = (k + 1) + "\t";
+                        if (rows.stream().noneMatch(row -> row.startsWith(outerId))) {
+                            lateralRows.add(outerId + "null\tnull");
+                        }
+                    }
+                    Collections.sort(lateralRows);
+                }
+                Assert.assertEquals(header, new Outcome(lateralRows, null, -1), runFactory(factory, header));
+            }
+        }
     }
 
     private int assertTemplate(
@@ -1516,8 +1546,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     private record Outcome(List<String> rows, String error, int position) {
     }
 
-    // the bind values of one execution, and its rows for JOIN LATERAL, one per line, or the text of
-    // the SQL at whose position the NULL value error points
+    // the bind values of one execution, and its rows for JOIN LATERAL, one per line in ORDER BY 1, 2, 3
+    // order, or the text of the SQL at whose position the NULL value error points
     private record Step(BindSetter bind, String rows, String errorToken) {
     }
 }
