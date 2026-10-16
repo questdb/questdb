@@ -161,6 +161,17 @@ public class FuzzRunner {
     }
 
     public void applyManyWalParallel(ObjList<ObjList<FuzzTransaction>> fuzzTransactions, Rnd rnd, String tableNameBase, boolean multiTable, boolean waitApply) {
+        applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, multiTable, waitApply, null);
+    }
+
+    public void applyManyWalParallel(
+            ObjList<ObjList<FuzzTransaction>> fuzzTransactions,
+            Rnd rnd,
+            String tableNameBase,
+            boolean multiTable,
+            boolean waitApply,
+            @Nullable Runnable onWalWritersDone
+    ) {
         final ObjList<WalWriter> writers = new ObjList<>();
         final int tableCount = fuzzTransactions.size();
         final AtomicInteger done = new AtomicInteger();
@@ -230,6 +241,15 @@ public class FuzzRunner {
                     TestUtils.unchecked(() -> threads.get(k).join());
                 }
             } finally {
+                // Stop external WAL producers before the apply workers drain and exit. A producer
+                // that waits for this method to return can otherwise keep their drain alive forever.
+                if (onWalWritersDone != null) {
+                    try {
+                        onWalWritersDone.run();
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    }
+                }
                 done.incrementAndGet();
                 Misc.freeObjList(writers);
                 // Join the apply/purge workers before reading errors: a worker that fails after the

@@ -160,6 +160,18 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testIncrementalRefreshKeepsBareZeroArgCallsInLegacyAggregatingDefinition() throws Exception {
+        assertRefreshKeepsBareZeroArgCalls("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+    }
+
+    @Test
+    public void testRangeRefreshKeepsBareZeroArgCallsInLegacyAggregatingDefinition() throws Exception {
+        assertRefreshKeepsBareZeroArgCalls(
+                "REFRESH MATERIALIZED VIEW mv RANGE FROM '2024-01-01T00:00:00Z' TO '2024-01-01T02:00:00Z'"
+        );
+    }
+
+    @Test
     public void testRefreshFailsClosedForPersistedAdministrativeFunction() throws Exception {
         // An administrative function needs the Enterprise security context of its caller, or has side
         // effects, so a materialized view rejects it at refresh too, however its definition got there.
@@ -285,6 +297,11 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
                     .noRandomAccess()
                     .returns("view_name\tview_status\tinvalidation_reason\n");
         });
+    }
+
+    @Test
+    public void testRefreshKeepsBareZeroArgCallsInLegacyAggregatingDefinition() throws Exception {
+        assertRefreshKeepsBareZeroArgCalls("REFRESH MATERIALIZED VIEW mv FULL");
     }
 
     @Test
@@ -531,6 +548,76 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
         });
     }
 
+    /**
+     * A binary without passthrough views stores an aggregating view's query as written, so the stored query
+     * can call a zero-argument function through its bare name (count, pi). The refresh of an aggregating view
+     * reads such a name as a call, so the view keeps refreshing after an upgrade. Full, range and incremental
+     * refresh each tell the refresh context whether the view is passthrough, so each one runs this check. The
+     * view has never refreshed, so each kind compiles the stored query for the first time, and each covers all
+     * of the base table's rows: incremental because there is no earlier refresh to continue from, range
+     * because the caller's bounds span the data.
+     */
+    private void assertRefreshKeepsBareZeroArgCalls(String refreshSql) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('2024-01-01T00:00:00Z', 'a', 1.0),
+                        ('2024-01-01T00:30:00Z', 'a', 2.0),
+                        ('2024-01-01T01:30:00Z', 'a', 3.0)
+                    """);
+            drainWalQueue();
+
+            final String[][] cases = {
+                    {
+                            "SELECT ts, count FROM base SAMPLE BY 1h",
+                            """
+                            ts\tcount
+                            2024-01-01T00:00:00.000000Z\t2
+                            2024-01-01T01:00:00.000000Z\t1
+                            """
+                    },
+                    {
+                            "SELECT ts, pi, sum(v) s FROM base SAMPLE BY 1h",
+                            """
+                            ts\tpi\ts
+                            2024-01-01T00:00:00.000000Z\t3.141592653589793\t3.0
+                            2024-01-01T01:00:00.000000Z\t3.141592653589793\t3.0
+                            """
+                    }
+            };
+            for (String[] c : cases) {
+                final String legacySql = c[0];
+                // MANUAL DEFERRED: no refresh runs at CREATE, so the factory cache stays cold, as on the first
+                // refresh after an upgrade restart. CREATE stores the call with its parentheses.
+                execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + legacySql + ") PARTITION BY DAY");
+                drainWalQueue();
+                installPersistedViewSql("mv", legacySql);
+
+                execute(refreshSql);
+                drainWalAndMatViewQueues();
+
+                // materialized_views reports a range-refreshed view as refreshing (questdb/questdb#7766), so this
+                // reads the invalidation reason rather than the status. A refresh that fails to compile the stored
+                // query leaves either an invalidation reason or an empty view.
+                assertQuery("select view_name, invalidation_reason from materialized_views")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_name\tinvalidation_reason\nmv\t\n");
+                assertQuery("mv")
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(c[1]);
+
+                execute("DROP MATERIALIZED VIEW mv");
+                drainWalQueue();
+            }
+        });
+    }
+
     private void assertRefreshRecompiles(String predicate, boolean addIndexAfterCreate) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
@@ -602,7 +689,8 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
                 current.getPeriodLength(),
                 current.getPeriodLengthUnit(),
                 current.getPeriodDelay(),
-                current.getPeriodDelayUnit()
+                current.getPeriodDelayUnit(),
+                current.isPassthrough()
         );
         // A persisted definition reaches refresh through the graph and the state store.
         engine.getDependentViewGraph().updateViewDefinition(viewToken, legacy);
@@ -622,7 +710,7 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
                 MatViewRefreshSqlExecutionContext refreshContext = new MatViewRefreshSqlExecutionContext(engine, 1);
                 TableReader baseReader = engine.getReader(baseToken)
         ) {
-            refreshContext.of(baseReader);
+            refreshContext.of(baseReader, viewToken, definition.isPassthrough());
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile(viewSql, refreshContext).getRecordCursorFactory().close();
             }

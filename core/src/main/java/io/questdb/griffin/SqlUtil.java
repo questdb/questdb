@@ -49,6 +49,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.FiberLocal;
@@ -63,6 +64,7 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Uuid;
@@ -211,13 +213,51 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
     }
 
+    /**
+     * Collects the name of every table and view the query model reads into {@code outTableNames}, with
+     * {@code viewsOnly} narrowing the result to the views. Names repeat when the query names the same
+     * object more than once; a caller that needs them distinct de-duplicates on the way out.
+     * <p>
+     * The traversal reaches every model a compiled query reads: down the nested-model chain, into each
+     * join model, into the union branch, and into the sub-query hanging off any expression the model
+     * holds. That last one carries a scalar sub-query and an {@code IN (SELECT ...)} the optimiser left
+     * as a sub-query - the shapes that name a table nowhere else in the tree. A CTE needs no case of its
+     * own: the parser inlines it as a nested model wherever it is referenced
+     * ({@code SqlParser#parseSelectFrom}).
+     * <p>
+     * A sub-query is reached two ways, because one of them is only true some of the time.
+     * {@link IQueryModel#getExpressionModels()} is the parser's index of the sub-queries an expression
+     * of that model carries, and the optimiser rewrites a model's expressions - moving a WHERE clause
+     * down into a model built fresh for it - without carrying the index across, so the index of the
+     * model that ends up owning the expression can be empty. The AST walk below is what covers those:
+     * it descends the expressions themselves, where {@link ExpressionNode#queryModel} still hangs off
+     * the node that named the sub-query. The index still earns its place for a sub-query whose
+     * expression this method's field list does not name.
+     * <p>
+     * The models form a graph, not a tree. Both routes above reach a sub-query that the index lists and
+     * an expression still holds, and the LATERAL rewrite shares a model through a
+     * {@link QueryModelWrapper}. The walk unwraps each wrapper and reads each model once, so its cost
+     * grows linearly with the number of models, however deeply the query nests them.
+     * <p>
+     * Names are flyweights over the model's own tokens, so a caller that outlives the model copies them.
+     */
     public static void collectAllTableAndViewNames(
             @NotNull IQueryModel model,
             @NotNull ObjList<CharSequence> outTableNames,
             boolean viewsOnly
     ) {
-        IQueryModel m = model;
-        do {
+        final ObjList<IQueryModel> pending = new ObjList<>();
+        final ObjHashSet<IQueryModel> visited = new ObjHashSet<>();
+        pending.add(model);
+        while (pending.size() > 0) {
+            IQueryModel m = pending.popLast();
+            if (m instanceof QueryModelWrapper wrapper) {
+                m = wrapper.getDelegate();
+            }
+            if (!visited.add(m)) {
+                continue;
+            }
+
             if (!viewsOnly) {
                 final ExpressionNode tableNameExpr = m.getTableNameExpr();
                 if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
@@ -230,22 +270,53 @@ public class SqlUtil {
                 outTableNames.add(unquote(viewNameExpr.token));
             }
 
+            final ObjList<ExpressionNode> expressionModels = m.getExpressionModels();
+            for (int i = 0, n = expressionModels.size(); i < n; i++) {
+                // null once the optimiser has converted the sub-query into a join; the join model
+                // below then carries the same table.
+                final IQueryModel expressionModel = expressionModels.getQuick(i).queryModel;
+                if (expressionModel != null) {
+                    pending.add(expressionModel);
+                }
+            }
+
+            // Every expression a SELECT model can hold that the grammar lets a sub-query appear in.
+            collectSubQueryModels(m.getWhereClause(), pending);
+            collectSubQueryModels(m.getPostJoinWhereClause(), pending);
+            collectSubQueryModels(m.getConstWhereClause(), pending);
+            collectSubQueryModels(m.getOuterJoinExpressionClause(), pending);
+            collectSubQueryModels(m.getJoinCriteria(), pending);
+            collectSubQueryModels(m.getLimitLo(), pending);
+            collectSubQueryModels(m.getLimitHi(), pending);
+            collectSubQueryModels(m.getJoinColumns(), pending);
+            collectSubQueryModels(m.getGroupBy(), pending);
+            collectSubQueryModels(m.getOrderBy(), pending);
+            collectSubQueryModels(m.getSampleByFill(), pending);
+            collectSubQueryModels(m.getLatestBy(), pending);
+            collectSubQueryModels(m.getUnnestExpressions(), pending);
+            // getColumns() is whichever of these two is in play, so the pair covers it at either stage
+            collectSubQueryModelsFromColumns(m.getBottomUpColumns(), pending);
+            collectSubQueryModelsFromColumns(m.getTopDownColumns(), pending);
+
             final ObjList<IQueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
                 final IQueryModel joinModel = joinModels.getQuick(i);
                 if (joinModel == m) {
                     continue;
                 }
-                collectAllTableAndViewNames(joinModel, outTableNames, viewsOnly);
+                pending.add(joinModel);
             }
 
             final IQueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                collectAllTableAndViewNames(unionModel, outTableNames, viewsOnly);
+                pending.add(unionModel);
             }
 
-            m = m.getNestedModel();
-        } while (m != null);
+            final IQueryModel nestedModel = m.getNestedModel();
+            if (nestedModel != null) {
+                pending.add(nestedModel);
+            }
+        }
     }
 
     public static void collectAllTableNames(
@@ -2048,6 +2119,57 @@ public class SqlUtil {
             depMap.put(tableName, columns);
         }
         columns.add(columnName);
+    }
+
+    /**
+     * Descends one expression, adding every sub-query it carries to {@code pending}.
+     * {@link ExpressionNode#queryModel} is the sub-query the node named -
+     * {@code IN (SELECT ...)}, {@code EXISTS (SELECT ...)}, a scalar sub-select - and it stays on the
+     * node for as long as the expression itself survives, which is what makes this the reliable half
+     * of {@link #collectAllTableAndViewNames}'s sub-query coverage.
+     */
+    private static void collectSubQueryModels(
+            @Nullable ExpressionNode node,
+            @NotNull ObjList<IQueryModel> pending
+    ) {
+        if (node == null) {
+            return;
+        }
+        if (node.queryModel != null) {
+            pending.add(node.queryModel);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            collectSubQueryModels(node.args.getQuick(i), pending);
+        }
+        collectSubQueryModels(node.lhs, pending);
+        collectSubQueryModels(node.rhs, pending);
+    }
+
+    private static void collectSubQueryModels(
+            @Nullable ObjList<ExpressionNode> nodes,
+            @NotNull ObjList<IQueryModel> pending
+    ) {
+        if (nodes == null) {
+            return;
+        }
+        for (int i = 0, n = nodes.size(); i < n; i++) {
+            collectSubQueryModels(nodes.getQuick(i), pending);
+        }
+    }
+
+    private static void collectSubQueryModelsFromColumns(
+            @Nullable ObjList<QueryColumn> columns,
+            @NotNull ObjList<IQueryModel> pending
+    ) {
+        if (columns == null) {
+            return;
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (column != null) {
+                collectSubQueryModels(column.getAst(), pending);
+            }
+        }
     }
 
     private static void collectColumnReferencesFromExpression(

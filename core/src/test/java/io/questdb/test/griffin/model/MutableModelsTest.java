@@ -196,6 +196,7 @@ public class MutableModelsTest {
         model.intrinsicValue = IntrinsicModel.TRUE;
         model.keySubQuery = QueryModel.FACTORY.newInstance();
         model.keyExcludedNodes.add(newExpressionNode());
+        model.setBetweenNegated(true);
         // Note: keyValueFuncs and keyExcludedValueFuncs require Function instances
         // which are harder to create, but setting other fields is sufficient
         // to verify the clear() method works correctly
@@ -297,6 +298,11 @@ public class MutableModelsTest {
         model.setFillStride(newExpressionNode());
         model.setAllowPropagationOfOrderByAdvice(false);
         model.getAliasSequenceMap().put("foobar", 1);
+        model.setScalarExpiryRead(true);
+        model.setExpiryKeepFilter(true);
+        model.setExpiryWindowBarrier(true);
+        model.setExpiryViewNameExpr(newExpressionNode());
+        model.getExpiryWindowPartitionBy().add(newExpressionNode());
         // Setup HorizonJoinContext
         HorizonJoinContext hjc = model.getHorizonJoinContext();
         hjc.setMode(HorizonJoinContext.MODE_RANGE);

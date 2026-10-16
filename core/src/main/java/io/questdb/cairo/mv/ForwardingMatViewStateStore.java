@@ -182,6 +182,11 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void requestPendingIncrementalRefreshReenqueue(MatViewState viewState) {
+        delegate.requestPendingIncrementalRefreshReenqueue(viewState);
+    }
+
+    @Override
     public void requestPendingInvalidationReenqueue(MatViewState viewState) {
         delegate.requestPendingInvalidationReenqueue(viewState);
     }
