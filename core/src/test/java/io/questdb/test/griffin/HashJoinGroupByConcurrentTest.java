@@ -222,10 +222,13 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         assertParquetBuildPayloadDecode(true, true, true, false);
     }
 
-    // As above, but both tables key their rows by 36-char VARCHAR strings, which decode to about 60
-    // bytes a Parquet row with the DOUBLE payload. A slot's share of the cache holds 50 bytes a
-    // Parquet row, more than an estimate of 32 bytes for the key would count, so the build has to
-    // count the key at the bytes it staged for it to copy, and the slots stay within the cache.
+    // As above, but both tables key their rows by 36-char texts. lpad() with a '0' fill returns a
+    // STRING, so the key is a STRING despite the test names, and would decode to an 8-byte offset and
+    // 76 bytes of length and UTF-16 chars a row, about 92 bytes a Parquet row with the DOUBLE payload.
+    // A reader never decodes the key, which the key table holds, so the Parquet rows decode to their
+    // 8-byte payload alone, which a slot's share of the cache, 50 bytes a Parquet row, holds. The build
+    // keeps row ids, as the ratios ask, and each of the nine slots decodes the payload of every row
+    // group once, within the cache between them.
     @Test
     public void testParquetBuildPayloadWithinCacheSizeForVarcharKeyedMixedBuildWithLegacyWorkers() throws Exception {
         assertParquetBuildPayloadDecode(false, true, true, true);
@@ -722,13 +725,14 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
 
     private void assertParquetBuildPayloadDecode(boolean isParallelBuild, boolean isCopyFitting, boolean isMixed, boolean isVarcharKeyed) throws Exception {
         // pb holds 100_000 rows in two days of Parquet row groups of 2_000 rows, 50 row groups, and
-        // more rows in its native last partition: one, or 100_000 for a mixed build. Its INT key and
-        // DOUBLE payload decode to 12 bytes a row, so the decode cache holds about two decoded builds.
-        // A 36-char VARCHAR key decodes to a 16-byte slice entry and its 36 bytes, at least; the
-        // decode cache then holds 200 bytes a Parquet row, so that a quarter of it holds 50.
+        // more rows in its native last partition: one, or 100_000 for a mixed build. A reader decodes
+        // the DOUBLE payload alone, 8 bytes a row, and not the key, so for an INT key the decode cache
+        // holds about two decoded builds. For the 36-char text key, a STRING, since lpad() with a '0'
+        // fill returns one, it holds 200 bytes a Parquet row, so that a quarter of it holds 50, which
+        // the payload fits and the key, about 84 bytes a row, would not.
         final long nativeRows = isMixed ? 100_000 : 1;
         final long buildRows = 100_000 + nativeRows;
-        final long decodedBuildSize = 100_000 * ((isVarcharKeyed ? 16 + 36 : Integer.BYTES) + Double.BYTES);
+        final long decodedBuildSize = 100_000 * Double.BYTES;
         final long cacheSize = isVarcharKeyed ? 100_000 * 200 : 2 * decodedBuildSize;
         final int workerCount = isMixed ? 8 : 4;
         final String buildKey = isVarcharKeyed ? "lpad(x::VARCHAR, 36, '0')" : "x::INT";
@@ -738,9 +742,16 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         // row groups it decodes within its share of the cache, but no less than a quarter of it.
         final int slotCount = workerCount + 1;
         final long readerShare = Math.max(cacheSize / slotCount, cacheSize / 4);
-        final long decodedBound = isCopyFitting ? cacheSize : slotCount * readerShare;
-        // A share holds less than a decoded build, so the readers decode row groups again.
-        Assert.assertTrue(readerShare < decodedBuildSize);
+        // A copy that fits runs for a build of Parquet rows alone, whose one native row the probe
+        // repays. The probe does not repay the copy of a mixed build's 100_000 native rows, so that
+        // build copies only when a share holds less than a decoded build, which the readers would
+        // decode again and again.
+        final boolean isCopied = isCopyFitting && (!isMixed || readerShare < decodedBuildSize);
+        // Without the copy, each slot decodes at most its share, or the whole build when that fits it.
+        final long decodedBound = isCopied ? cacheSize : slotCount * Math.min(readerShare, decodedBuildSize);
+        // For an INT key, a share holds less than a decoded build, so without the copy the readers
+        // decode row groups again. For the STRING key, a share holds a decoded build.
+        Assert.assertEquals(!isVarcharKeyed, readerShare < decodedBuildSize);
         // Every worker must hold a probe frame at once, and the gated owner publishes no frame past
         // a full queue, so the queue needs a frame per worker.
         setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, workerCount);
@@ -808,7 +819,7 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                                             decoded <= decodedBound + decodedBound / 8
                                     );
                                     Assert.assertEquals(query, isParallelBuild, atom.isBuiltInRounds());
-                                    Assert.assertEquals(query, isCopyFitting, atom.isPayloadCopied());
+                                    Assert.assertEquals(query, isCopied, atom.isPayloadCopied());
                                     Assert.assertEquals(query, buildRows, atom.getFrozenBuild().getRowCount());
                                 } finally {
                                     atom.getPerWorkerLocks().setTestAcquireLatch(null);

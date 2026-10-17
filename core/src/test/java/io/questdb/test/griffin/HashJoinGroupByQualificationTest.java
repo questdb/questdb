@@ -40,11 +40,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -594,6 +596,12 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         Assert.assertNull(context.getMemoryTracker());
     }
 
+    static HashJoinGroupByBuildChoiceRecordCursorFactory choice(RecordCursorFactory factory) {
+        final HashJoinGroupByBuildChoiceRecordCursorFactory choice = findChoice(factory);
+        Assert.assertNotNull("expected a build choice", choice);
+        return choice;
+    }
+
     static SqlExecutionContextImpl context(CairoEngine engine, int workers) {
         SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, workers)
                 .with(AllowAllSecurityContext.INSTANCE, null, null, -1, null);
@@ -602,12 +610,33 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         return context;
     }
 
+    @Nullable
+    static HashJoinGroupByBuildChoiceRecordCursorFactory findChoice(RecordCursorFactory factory) {
+        // QueryProgress and projections wrap the fused plan.
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current instanceof HashJoinGroupByBuildChoiceRecordCursorFactory choice) {
+                return choice;
+            }
+        }
+        return null;
+    }
+
     static AsyncHashJoinGroupByRecordCursorFactory fused(RecordCursorFactory factory) {
         while (factory != null && !(factory instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
             factory = factory.getBaseFactory();
         }
         Assert.assertNotNull(factory);
         return (AsyncHashJoinGroupByRecordCursorFactory) factory;
+    }
+
+    static String ordinary(CairoEngine engine, String sql, SqlExecutionContextImpl context) throws Exception {
+        context.setParallelHashJoinGroupByEnabled(false);
+        try (RecordCursorFactory baseline = engine.select(sql, context)) {
+            Assert.assertFalse(sql, plan(baseline, context).contains("Hash Join Group By"));
+            return result(baseline, context);
+        } finally {
+            context.setParallelHashJoinGroupByEnabled(true);
+        }
     }
 
     static String plan(RecordCursorFactory factory, SqlExecutionContext context) {

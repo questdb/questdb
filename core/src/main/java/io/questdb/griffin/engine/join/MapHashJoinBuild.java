@@ -613,29 +613,6 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
-     * Average bytes, rounded up, of the distinct keys that the build's key tables hold, as its key
-     * sink staged them: each var-size column's value with its 4-byte length, and each fixed-size
-     * column at its size. A var-size key's average also counts the padding that aligns its entry in
-     * the key table, up to seven bytes a key, and leaves out the entry's own 4-byte key length and its
-     * chain head. Zero for a build without keys. Valid from the freeze until close.
-     */
-    public long getStagedKeySize() {
-        long keyCount = 0;
-        long keyBytes = 0;
-        for (int i = 0, n = maps.size(); i < n; i++) {
-            final Map keyTable = maps.getQuick(i);
-            if (keyTable.isOpen()) {
-                final long size = keyTable.size();
-                keyCount += size;
-                // A var-size key's entry is its 4-byte length, its staged bytes and the 4-byte chain
-                // head, aligned to eight bytes.
-                keyBytes += keySize != -1 ? keySize * size : keyTable.getUsedHeapSize() - size * (Integer.BYTES + Integer.BYTES);
-            }
-        }
-        return keyCount > 0 ? (keyBytes + keyCount - 1) / keyCount : 0;
-    }
-
-    /**
      * True while a parallel build's frames have regions of the heap, which their rows fill; see
      * {@link #beginUnfilteredPartitioning}.
      */

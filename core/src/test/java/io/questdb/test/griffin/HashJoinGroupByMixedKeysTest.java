@@ -51,6 +51,7 @@ import org.junit.Test;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertAgainstBaseline;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDifferential;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.findChoice;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
@@ -626,16 +627,6 @@ public class HashJoinGroupByMixedKeysTest extends AbstractCairoTest {
     private static void bindInterval(String lo, String hi) throws Exception {
         bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp(lo + ":00:00.000000Z"));
         bindVariableService.setTimestamp(1, MicrosFormatUtils.parseTimestamp(hi + ":00:00.000000Z"));
-    }
-
-    private static HashJoinGroupByBuildChoiceRecordCursorFactory findChoice(RecordCursorFactory factory) {
-        // QueryProgress and projections wrap the fused plan.
-        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-            if (current instanceof HashJoinGroupByBuildChoiceRecordCursorFactory choice) {
-                return choice;
-            }
-        }
-        return null;
     }
 
     private static void insertAggregateRows(CairoEngine db, SqlExecutionContext ctx, String table, int keyBase) throws Exception {

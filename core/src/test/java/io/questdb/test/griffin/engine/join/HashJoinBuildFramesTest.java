@@ -24,10 +24,15 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -35,7 +40,9 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
+import io.questdb.griffin.engine.join.MapHashJoinBuild;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -545,6 +552,143 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                 sqlExecutionContext.setMemoryTracker(previous);
             }
         });
+    }
+
+    @Test
+    public void testReadersDecodeNoFilterOnlyColumnOfParquetFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            // msg stands in for a column that only the build's filters read: it stays in the build
+            // scan, yet no reader reads it. Its 300 bytes a row compress well, so a Parquet row group
+            // decodes it to a 16-byte slice entry a row and to the decompressed pages that the entries
+            // point into. The INT key k and the timestamp are not payload either.
+            execute("CREATE TABLE pq (k INT, v DOUBLE, msg VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO pq
+                    SELECT (x % 10)::INT, x, rpad(x::VARCHAR, 300, ' compressible log line'), timestamp_sequence('2020-01-01', 86_400_000L)
+                    FROM long_sequence(3_000)
+                    """);
+            // The first two days, 1_000 rows each, turn into a Parquet row group each; the third stays native.
+            execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+            final MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
+                 RecordCursorFactory factory = select("pq");
+                 // The payload is v alone.
+                 HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(1), factory.getMetadata());
+                 IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
+                sqlExecutionContext.setMemoryTracker(tracker);
+                FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildInt(configuration, build, frames, factory, 0, sqlExecutionContext);
+                final long buildBytes = tracker.getUsed();
+                try (FrozenHashJoinBuild.IntProbe probe = frozen.newProbe()) {
+                    final long readerBytes = tracker.getUsed();
+                    // Key 3 has 100 rows a day, so the probe reader decodes both Parquet row groups.
+                    probe.find(3);
+                    long count = 0;
+                    long sum = 0;
+                    while (probe.hasNext()) {
+                        probe.next();
+                        sum += (long) probe.getRecord().getDouble(0);
+                        count++;
+                    }
+                    Assert.assertEquals(300, count);
+                    Assert.assertEquals(449_400, sum);
+                    assertPayloadOnlyDecode(tracker.getUsed() - readerBytes);
+                }
+                Assert.assertEquals(buildBytes, tracker.getUsed());
+                assertCopyReaderDecodesPayloadOnly(frames, frozen, tracker, buildBytes);
+                build.close();
+                frames.clear();
+                Assert.assertEquals(0, tracker.getUsed());
+            } finally {
+                sqlExecutionContext.setMemoryTracker(previous);
+            }
+        });
+    }
+
+    @Test
+    public void testReadersDecodeNoVarcharKeyOfParquetFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            // The build keys its rows by k, 300 bytes of text a row that compress well, and the
+            // payload is v alone. A reader never reads the key, which the key table holds.
+            execute("CREATE TABLE pk (k VARCHAR, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO pk
+                    SELECT rpad((x % 1_000)::VARCHAR, 300, ' compressible log line'), x, timestamp_sequence('2020-01-01', 86_400_000L)
+                    FROM long_sequence(3_000)
+                    """);
+            execute("ALTER TABLE pk CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+            execute("CREATE TABLE pp (k VARCHAR)");
+            execute("INSERT INTO pp VALUES (rpad('5', 300, ' compressible log line'))");
+            final ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.VARCHAR);
+            final ListColumnFilter keyFilter = new ListColumnFilter();
+            keyFilter.add(1);
+            final BytecodeAssembler asm = new BytecodeAssembler();
+            final MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
+                 RecordCursorFactory factory = select("pk");
+                 RecordCursorFactory probeFactory = select("pp");
+                 HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(1), factory.getMetadata());
+                 MapHashJoinBuild build = new MapHashJoinBuild(configuration, keyTypes, true, 4, 1024, 64)) {
+                final RecordSink buildSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), keyFilter, null);
+                final RecordSink probeSink = RecordSinkFactory.getInstance(configuration, asm, probeFactory.getMetadata(), keyFilter, null);
+                sqlExecutionContext.setMemoryTracker(tracker);
+                FrozenHashJoinBuild.RecordKeyed frozen = FrameBuilds.buildMap(configuration, build, frames, factory, buildSink, sqlExecutionContext);
+                final long buildBytes = tracker.getUsed();
+                try (RecordCursor probeCursor = probeFactory.getCursor(sqlExecutionContext);
+                     FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(probeSink)) {
+                    Assert.assertTrue(probeCursor.hasNext());
+                    final long readerBytes = tracker.getUsed();
+                    // The key's rows are rows 5, 1_005 and 2_005, one a day, so the probe reader
+                    // decodes both Parquet row groups.
+                    probe.find(probeCursor.getRecord());
+                    long count = 0;
+                    long sum = 0;
+                    while (probe.hasNext()) {
+                        probe.next();
+                        sum += (long) probe.getRecord().getDouble(0);
+                        count++;
+                    }
+                    Assert.assertEquals(3, count);
+                    Assert.assertEquals(3_015, sum);
+                    assertPayloadOnlyDecode(tracker.getUsed() - readerBytes);
+                }
+                Assert.assertEquals(buildBytes, tracker.getUsed());
+                assertCopyReaderDecodesPayloadOnly(frames, frozen, tracker, buildBytes);
+                build.close();
+                frames.clear();
+                Assert.assertEquals(0, tracker.getUsed());
+            } finally {
+                sqlExecutionContext.setMemoryTracker(previous);
+            }
+        });
+    }
+
+    // Copies the payload, the DOUBLE v, of every build row through one copy reader, which walks the
+    // rows in build order and keeps the row groups it decoded until the copy publishes, and checks
+    // that it decoded the payload of the two Parquet row groups alone.
+    private static void assertCopyReaderDecodesPayloadOnly(
+            HashJoinBuildFrames frames,
+            FrozenHashJoinBuild frozen,
+            LimitedMemoryTracker tracker,
+            long buildBytes
+    ) {
+        final long copyBytes = frozen.getRowCount() * Double.BYTES;
+        frames.beginCopy(frozen, 1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        frames.copyRows(0, frozen, 0, frozen.getRowCount(), SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        assertPayloadOnlyDecode(tracker.getUsed() - buildBytes - copyBytes);
+        frames.publishCopy();
+        Assert.assertEquals(buildBytes + copyBytes, tracker.getUsed());
+    }
+
+    // A reader that decodes the two Parquet row groups of 1_000 rows each, and of their build scan
+    // columns only the DOUBLE payload, decodes 8 bytes a row and the decoder's bookkeeping, which
+    // measured 832 bytes a row group, 17_664 bytes in all. The upper bound, 12 bytes a row, leaves
+    // room for that bookkeeping and fails a reader that also decodes the narrowest other column of a
+    // build scan here, the 4-byte INT key k, which measured 25_664 bytes, or the 16-byte slice entry
+    // a row of a VARCHAR column.
+    private static void assertPayloadOnlyDecode(long decodedBytes) {
+        final long parquetRows = 2_000;
+        Assert.assertTrue("decoded " + decodedBytes, decodedBytes >= parquetRows * Double.BYTES);
+        Assert.assertTrue("decoded " + decodedBytes, decodedBytes < parquetRows * (Double.BYTES + Integer.BYTES));
     }
 
     private static IntList ints(int... values) {

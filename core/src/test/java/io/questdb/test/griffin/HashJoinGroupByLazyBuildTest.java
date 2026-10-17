@@ -63,6 +63,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.choice;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
 
 /**
@@ -525,14 +526,6 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
         Assert.assertFalse(sql, atom.isPayloadCopied());
         Assert.assertEquals(sql, 0, atom.getBuildFrameCount());
         Assert.assertEquals(sql, idle, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
-    }
-
-    private static HashJoinGroupByBuildChoiceRecordCursorFactory choice(RecordCursorFactory factory) {
-        while (factory != null && !(factory instanceof HashJoinGroupByBuildChoiceRecordCursorFactory)) {
-            factory = factory.getBaseFactory();
-        }
-        Assert.assertNotNull(factory);
-        return (HashJoinGroupByBuildChoiceRecordCursorFactory) factory;
     }
 
     private static void createLifecycleTables(CairoEngine db, SqlExecutionContext context) throws SqlException {

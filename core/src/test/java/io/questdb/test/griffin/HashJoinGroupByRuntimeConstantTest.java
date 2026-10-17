@@ -51,7 +51,9 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDifferential;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.choice;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.ordinary;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
@@ -590,17 +592,6 @@ public class HashJoinGroupByRuntimeConstantTest extends AbstractCairoTest {
         }
     }
 
-    private static HashJoinGroupByBuildChoiceRecordCursorFactory choice(RecordCursorFactory factory) {
-        // QueryProgress and projections wrap the fused plan.
-        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-            if (current instanceof HashJoinGroupByBuildChoiceRecordCursorFactory choice) {
-                return choice;
-            }
-        }
-        Assert.fail("no build choice");
-        return null;
-    }
-
     // Returns two reads of the query's rows, or its error, with the fused path off or on.
     private static String outcome(String sql, SqlExecutionContextImpl context, boolean isEnabled) throws Exception {
         context.setParallelHashJoinGroupByEnabled(isEnabled);
@@ -629,7 +620,7 @@ public class HashJoinGroupByRuntimeConstantTest extends AbstractCairoTest {
             boolean isAlternate,
             long buildRows
     ) throws Exception {
-        final String expected = ordinary(sql, context);
+        final String expected = ordinary(engine, sql, context);
         try (RecordCursor cursor = factory.getCursor(context)) {
             Assert.assertEquals(sql, isAlternate, choice.isAlternateChosen());
             final StringSink sink = new StringSink();
@@ -646,7 +637,7 @@ public class HashJoinGroupByRuntimeConstantTest extends AbstractCairoTest {
 
     // Compares two reads of one execution with the ordinary plan's rows under the same values.
     private String assertExecution(String sql, RecordCursorFactory factory, SqlExecutionContextImpl context) throws Exception {
-        final String expected = ordinary(sql, context);
+        final String expected = ordinary(engine, sql, context);
         Assert.assertEquals(sql, expected, result(factory, context));
         Assert.assertEquals(sql, expected, result(factory, context));
         Assert.assertNull(context.getMemoryTracker());
@@ -687,15 +678,5 @@ public class HashJoinGroupByRuntimeConstantTest extends AbstractCairoTest {
                     (0, 'ES', 1, 'P0'), (1, 'ES', 2, 'P1'), (2, 'IT', 3, 'P2'), (3, 'IT', 4, 'P3'),
                     (4, 'DE', 5, 'P4'), (5, NULL, 6, 'P5'), (6, 'ES', NULL, 'P6'), (NULL, 'FR', 8, NULL)
                 """);
-    }
-
-    private String ordinary(String sql, SqlExecutionContextImpl context) throws Exception {
-        context.setParallelHashJoinGroupByEnabled(false);
-        try (RecordCursorFactory baseline = engine.select(sql, context)) {
-            Assert.assertFalse(sql, plan(baseline, context).contains("Hash Join Group By"));
-            return result(baseline, context);
-        } finally {
-            context.setParallelHashJoinGroupByEnabled(true);
-        }
     }
 }

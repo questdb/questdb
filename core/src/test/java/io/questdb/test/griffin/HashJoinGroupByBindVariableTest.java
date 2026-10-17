@@ -47,9 +47,10 @@ import org.junit.Test;
 
 import static io.questdb.cairo.SqlJitMode.JIT_MODE_DISABLED;
 import static io.questdb.cairo.SqlJitMode.JIT_MODE_ENABLED;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.choice;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.ordinary;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
-import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 /**
  * One fused factory serves every execution of a statement, whatever its bind values. Each test here
@@ -265,17 +266,6 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
         });
     }
 
-    private static HashJoinGroupByBuildChoiceRecordCursorFactory choice(RecordCursorFactory factory) {
-        // QueryProgress and projections wrap the fused plan.
-        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-            if (current instanceof HashJoinGroupByBuildChoiceRecordCursorFactory choice) {
-                return choice;
-            }
-        }
-        Assert.fail("expected a build choice");
-        return null;
-    }
-
     // r holds 3_000 rows, one a minute from 2020-01-01, with 400 ids; p holds 600 rows with 500 ids,
     // so that some r ids find two p rows, some one and some none.
     private static void createTables(CairoEngine db, SqlExecutionContext context) throws Exception {
@@ -292,16 +282,6 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
                     'n' || (x % 10), (x % 100)::DOUBLE, timestamp_sequence('2020-01-01', 300_000_000L)
                 FROM long_sequence(600)
                 """, context);
-    }
-
-    private static String ordinary(CairoEngine db, String sql, SqlExecutionContextImpl context) throws Exception {
-        context.setParallelHashJoinGroupByEnabled(false);
-        try (RecordCursorFactory baseline = db.select(sql, context)) {
-            Assert.assertFalse(sql, plan(baseline, context).contains("Hash Join Group By"));
-            return result(baseline, context);
-        } finally {
-            context.setParallelHashJoinGroupByEnabled(true);
-        }
     }
 
     private static String rows(RecordCursor cursor, RecordCursorFactory factory) {

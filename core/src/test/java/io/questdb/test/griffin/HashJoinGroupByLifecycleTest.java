@@ -488,8 +488,8 @@ public class HashJoinGroupByLifecycleTest extends AbstractCairoTest {
     /**
      * Opens a cursor of the given plan over tables whose build holds k0 to k39, inserts a row with
      * k45 into one of them, then reads the cursor. k45 lands in another bucket of the SYMBOL column's
-     * index than k23, yet the open reader's lookup of k23 finds nothing once the writer has added it;
-     * see PR7618_BUGS_HANDOFF.md. The cursor must still pair p's k23 rows with b's.
+     * index than k23, yet once the writer has added k45, the open reader's lookup of k23 finds
+     * nothing; GitHub issue #7837 tracks the bug. The cursor must still pair p's k23 rows with b's.
      */
     private void assertSymbolMatchesSurviveInsertBetweenOpenAndFirstRead(boolean isFused, String write) throws Exception {
         assertMemoryLeak(() -> {

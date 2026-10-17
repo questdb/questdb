@@ -48,8 +48,8 @@ import java.lang.reflect.Field;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.ordinary;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
-import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 /**
  * A regex holds a {@link java.util.regex.Matcher}, so a build filter that uses one is not thread
@@ -223,16 +223,6 @@ public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
         final Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.get(target);
-    }
-
-    private static String ordinary(CairoEngine db, String sql, SqlExecutionContextImpl context) throws Exception {
-        context.setParallelHashJoinGroupByEnabled(false);
-        try (RecordCursorFactory baseline = db.select(sql, context)) {
-            Assert.assertFalse(sql, plan(baseline, context).contains("Hash Join Group By"));
-            return result(baseline, context);
-        } finally {
-            context.setParallelHashJoinGroupByEnabled(true);
-        }
     }
 
     private void assertWorkerFilters(@Nullable WorkerPoolMode mode, String[] queries, boolean isOuter) throws Exception {

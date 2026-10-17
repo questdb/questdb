@@ -166,6 +166,10 @@ public final class HashJoinGroupByCandidate {
      * {@link io.questdb.cairo.sql.TableReferenceOutOfDateException}, on which the holder of the
      * factory compiles the query again. An execution whose context tolerates row count changes
      * keeps the compile-time choice; see {@link io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom}.
+     * An outer join's ON condition on the build alone that reads a build column outside
+     * {@link #isSupportedValueType(int)}, and does more than compare columns, constants and bind
+     * variables, qualifies only where this holds, so the same recompile returns such a query to
+     * the ordinary plan; see analyse().
      */
     public boolean isKeyCapacityPresized() {
         return isKeyCapacityPresized;
@@ -250,7 +254,9 @@ public final class HashJoinGroupByCandidate {
      * {@link HashJoinGroupByKeys#isSupportedKeyType(int)} instead. A build column that only the
      * build's filters read, its scan's WHERE filter and an outer join's ON condition on the build
      * alone, takes no type check either: the build runs them over its page frames, before the row
-     * heap copies a row.
+     * heap copies a row. An ON condition that reads a build column outside this set, and does more
+     * than compare columns, constants and bind variables, still keeps the ordinary plan when the
+     * build table holds more rows than the probe table; see {@link #isKeyCapacityPresized()}.
      */
     public static boolean isSupportedValueType(int type) {
         return switch (ColumnType.tagOf(type)) {
@@ -395,14 +401,17 @@ public final class HashJoinGroupByCandidate {
             if (analyzer.hasUndefinedBindVariable) {
                 return null;
             }
-            // A RIGHT join builds the table before it whatever its size, and the owner keeps every
-            // row of it before the workers start probing. The ordinary plan hashes the preserved
-            // table instead and streams this one, and it overtook the fused plan between a 31 MiB
-            // and a 61 MiB row heap of copied payloads. The unfiltered row count bounds the heap for
-            // every bind value, as it bounds the INNER build in selectBuildIndex(), and each execution
-            // holds the table to the bound unless its context tolerates row count changes. LEFT joins
-            // take no bound: their ordinary plan chains every row of the same table, and the fused
-            // plan stayed faster.
+            // A RIGHT join builds the table before it whatever its size, so the build's row heap
+            // holds every row of that table before the workers start probing, at getBuildRowSize()
+            // bytes a row: a link, plus the row's id when the build has payload columns. The ordinary
+            // plan hashes the preserved table instead and streams this one. With the parallel build,
+            // the fused plan ran faster than the ordinary plan at every measured size, up to 10
+            // million build rows, so the bound caps the heap's memory rather than marking where the
+            // fused plan turns slower, and its default covers the measured sizes. The unfiltered row
+            // count bounds the heap for every bind value, as it bounds the INNER build in
+            // selectBuildIndex(), and each execution holds the table to the bound unless its context
+            // tolerates row count changes. LEFT joins take no bound: their ordinary plan chains every
+            // row of the same table, and the fused plan stayed faster.
             final long buildRows = buildIndex == 0 ? leftReader.size() : rightReader.size();
             long maxBuildTableRows = Long.MAX_VALUE;
             if (joinType == IQueryModel.JOIN_RIGHT_OUTER) {
@@ -414,7 +423,29 @@ public final class HashJoinGroupByCandidate {
                 }
             }
             final long probeRows = buildIndex == 0 ? rightReader.size() : leftReader.size();
-            return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0), buildRows <= probeRows,
+            final boolean isKeyCapacityPresized = buildRows <= probeRows;
+            // The fused plan runs an ON condition on the build alone over every build row, and the
+            // ordinary plan only over the pairs whose keys match, at most one per probe row when the
+            // build's keys are unique. A condition that reads a variable-size column can cost far
+            // more than the hash insert it spares: a regular expression over 500-character texts
+            // ran up to 29 times slower fused, with a 250k-row build and a 1k-row probe. So such a
+            // condition qualifies only when the probe table holds at least as many rows as the
+            // build table, which keeps the fused plan's evaluations within the probe's rows whatever
+            // the condition costs. This is the presize condition, so the check that each execution
+            // makes for it asks the holder of a reused factory to compile the query again, into the
+            // ordinary plan, once the build table holds more than twice the probe table's rows.
+            // isCheapShaped() exempts a condition that only compares columns, constants and bind
+            // variables: such a comparison costs about as much per build row as a condition over
+            // fixed-size columns, a selective one spares hash inserts, and the ordinary plan hashes
+            // every build row on one thread. A comparison that passes most build rows spares none,
+            // and with a serial build and a small probe it ran up to 1.4 times slower fused, as a
+            // condition over fixed-size columns does; with a parallel build it ran faster. The
+            // build scan's own WHERE filter runs over every build row in both plans, so it does not
+            // depend on the sizes.
+            if (analyzer.hasVarSizeBuildOnColumn && !isCheapShaped(analyzer.buildOnFilter) && !isKeyCapacityPresized) {
+                return null;
+            }
+            return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0), isKeyCapacityPresized,
                     maxBuildTableRows);
         } catch (SqlException e) {
             // The ordinary plan reports errors in its own compile order, and only its interval extraction
@@ -495,6 +526,37 @@ public final class HashJoinGroupByCandidate {
             }
         }
         return false;
+    }
+
+    /**
+     * True when the condition combines with AND, OR and NOT only comparisons ({@code =}, {@code !=},
+     * {@code <>}, {@code <}, {@code <=}, {@code >}, {@code >=}) whose operands are each a column, a
+     * constant or a bind variable. The parser turns IS [NOT] NULL into such a comparison with a NULL
+     * constant. The check reads the expression shape alone, not the operand types, and anything else
+     * fails it: IN, LIKE, a regular expression, an explicit cast such as {@code ::INT}, or any other
+     * function call. An implicit operand conversion has no node in the expression, so it passes: in
+     * {@code b.vc = 5}, FunctionParser converts the VARCHAR to INT on each row.
+     */
+    private static boolean isCheapShaped(ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.OPERATION) {
+            return false;
+        }
+        final CharSequence token = node.token;
+        if (SqlKeywords.isAndKeyword(token) || SqlKeywords.isOrKeyword(token)) {
+            return isCheapShaped(node.lhs) && isCheapShaped(node.rhs);
+        }
+        if (SqlKeywords.isNotKeyword(token)) {
+            return node.paramCount == 1 && isCheapShaped(node.rhs);
+        }
+        if (node.paramCount != 2 || !(Chars.equals(token, "=") || Chars.equals(token, "!=") || Chars.equals(token, "<>")
+                || Chars.equals(token, "<") || Chars.equals(token, "<=") || Chars.equals(token, ">") || Chars.equals(token, ">="))) {
+            return false;
+        }
+        final ExpressionNode lhs = node.lhs;
+        final ExpressionNode rhs = node.rhs;
+        return lhs != null && rhs != null
+                && (lhs.type == ExpressionNode.LITERAL || lhs.type == ExpressionNode.CONSTANT || lhs.type == ExpressionNode.BIND_VARIABLE)
+                && (rhs.type == ExpressionNode.LITERAL || rhs.type == ExpressionNode.CONSTANT || rhs.type == ExpressionNode.BIND_VARIABLE);
     }
 
     private static boolean isParallelSafe(Function function) {
@@ -579,6 +641,13 @@ public final class HashJoinGroupByCandidate {
         private boolean hasRowDependentConjunct;
         private boolean hasRuntimeConstantConjunct;
         private boolean hasUndefinedBindVariable;
+        // Whether the ON condition on the build alone reads a build column outside the payload type
+        // set, which keeps the ordinary plan when the build table holds more rows than the probe table,
+        // unless the condition only compares; see analyse().
+        private boolean hasVarSizeBuildOnColumn;
+        // Whether a filter that resolveFrameFilter() resolved reads a build column outside the payload
+        // type set; checkBuildOnFilter() resets it and captures it for the ON condition.
+        private boolean hasVarSizeFrameFilterColumn;
         // Whether resolve() is resolving an input's own WHERE clause, which may hold a bind variable
         // without a type.
         private boolean isDeferringBindVariables;
@@ -643,11 +712,13 @@ public final class HashJoinGroupByCandidate {
             if (node == null) {
                 return true;
             }
+            hasVarSizeFrameFilterColumn = false;
             if (!checkFilter(node, join, -1, false) || (usedSources != 0 && usedSources != (1 << buildIndex))) {
                 return false;
             }
             buildOnFilter = node;
             resolvedBuildOnFilter = resolveFrameFilter(node, join, -1);
+            hasVarSizeBuildOnColumn = hasVarSizeFrameFilterColumn;
             return true;
         }
 
@@ -768,10 +839,13 @@ public final class HashJoinGroupByCandidate {
             final int source = columnSources.getQuick(index);
             // The row heap copies a build column, so only a build column takes the payload type set.
             // A probe column of any type reaches the joined record straight off its page frame, and
-            // a build filter reads a build column of any type straight off the build's page frame.
-            if (!isResolvingInputColumn && !isResolvingFrameFilter && source == buildIndex
-                    && !isSupportedValueType(metadata.getColumnType(index))) {
-                return null;
+            // a build filter reads a build column of any type straight off the build's page frame,
+            // which the analysis notes for the ON condition; see analyse().
+            if (!isResolvingInputColumn && source == buildIndex && !isSupportedValueType(metadata.getColumnType(index))) {
+                if (!isResolvingFrameFilter) {
+                    return null;
+                }
+                hasVarSizeFrameFilterColumn = true;
             }
             usedSources |= 1 << source;
             if (source == buildIndex && !requiredBuildColumns.contains(columnIndexes.getQuick(index))) {
@@ -893,7 +967,10 @@ public final class HashJoinGroupByCandidate {
          * is no payload column: it takes no payload type check, and the resolution leaves the
          * payload as it found it. The input scan compiles its own WHERE filter, and the planner
          * compiles the ON condition against the build scan's metadata, which holds the column
-         * whatever its type.
+         * whatever its type. The resolution notes a build column outside the payload type set, and
+         * an ON condition that reads one, and does more than compare columns, constants and bind
+         * variables, qualifies only when the probe table holds at least as many rows as the build
+         * table; see {@link HashJoinGroupByCandidate#isKeyCapacityPresized()}.
          */
         private ExpressionNode resolveFrameFilter(ExpressionNode node, IQueryModel model, int source) {
             final int payloadSize = requiredBuildColumns.size();

@@ -41,9 +41,12 @@ import io.questdb.jit.JitUtil;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.choice;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.findChoice;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.ordinary;
 
 /**
  * An INNER join whose input scans a timestamp interval compiles both orientations under a
@@ -407,23 +410,6 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
         bindVariableService.setTimestamp(1, MicrosFormatUtils.parseTimestamp(hi + ":00:00.000000Z"));
     }
 
-    @Nullable
-    private static HashJoinGroupByBuildChoiceRecordCursorFactory findChoice(RecordCursorFactory factory) {
-        // QueryProgress and projections wrap the fused plan.
-        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-            if (current instanceof HashJoinGroupByBuildChoiceRecordCursorFactory choice) {
-                return choice;
-            }
-        }
-        return null;
-    }
-
-    private static HashJoinGroupByBuildChoiceRecordCursorFactory choice(RecordCursorFactory factory) {
-        HashJoinGroupByBuildChoiceRecordCursorFactory choice = findChoice(factory);
-        Assert.assertNotNull(choice);
-        return choice;
-    }
-
     private static String plan(RecordCursorFactory factory, SqlExecutionContext context) {
         TextPlanSink sink = new TextPlanSink();
         sink.of(factory, context);
@@ -450,7 +436,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
      */
     private void assertChoice(String sql, SqlExecutionContextImpl context, boolean isAlternate, long buildRows) throws Exception {
         final boolean isChoice = buildRows > -1;
-        final String expected = ordinary(sql, context);
+        final String expected = ordinary(engine, sql, context);
         try (RecordCursorFactory factory = engine.select(sql, context)) {
             final String plan = plan(factory, context);
             Assert.assertTrue(sql + '\n' + plan, plan.contains("Hash Join Group By"));
@@ -482,7 +468,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             boolean isCountedByKey,
             long expected
     ) throws Exception {
-        Assert.assertEquals(sql, "count\n" + expected + ":LONG\n", ordinary(sql, context));
+        Assert.assertEquals(sql, "count\n" + expected + ":LONG\n", ordinary(engine, sql, context));
         final AsyncHashJoinGroupByAtom primary = choice.getPrimary().getAtom();
         final AsyncHashJoinGroupByAtom alternate = choice.getAlternate().getAtom();
         try (RecordCursor cursor = factory.getCursor(context)) {
@@ -515,7 +501,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             boolean isAlternate,
             long buildRows
     ) throws Exception {
-        assertExecution(sql, factory, choice, context, isAlternate, buildRows, ordinary(sql, context));
+        assertExecution(sql, factory, choice, context, isAlternate, buildRows, ordinary(engine, sql, context));
     }
 
     private void assertExecution(
@@ -565,15 +551,5 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
         context.setParallelGroupByEnabled(true);
         context.setParallelHashJoinGroupByEnabled(true);
         return context;
-    }
-
-    private String ordinary(String sql, SqlExecutionContextImpl context) throws Exception {
-        context.setParallelHashJoinGroupByEnabled(false);
-        try (RecordCursorFactory baseline = engine.select(sql, context)) {
-            Assert.assertFalse(sql, plan(baseline, context).contains("Hash Join Group By"));
-            return result(baseline, context);
-        } finally {
-            context.setParallelHashJoinGroupByEnabled(true);
-        }
     }
 }

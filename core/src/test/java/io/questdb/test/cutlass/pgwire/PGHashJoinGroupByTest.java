@@ -260,7 +260,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                                 Connection connection = getConnection(Mode.EXTENDED, port, threadIndex % 2 == 0, 1);
                                 PreparedStatement statement = connection.prepareStatement(SQL)
                         ) {
-                            barrier.await();
+                            barrier.await(30, TimeUnit.SECONDS);
                             for (int i = 0; i < iterationCount; i++) {
                                 final int bind = (threadIndex + i) % BINDS.length;
                                 bindTyped(statement, BINDS[bind]);
@@ -272,6 +272,9 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                             }
                         } catch (Throwable th) {
                             errors.add(th);
+                            // reset() releases the threads that wait on the barrier, and the timed
+                            // await bounds the wait of any thread that reaches it later.
+                            barrier.reset();
                         }
                     }, "pg-client-" + t);
                     threads[t].start();

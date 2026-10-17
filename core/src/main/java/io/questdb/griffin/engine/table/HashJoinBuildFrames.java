@@ -24,13 +24,10 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrame;
@@ -53,6 +50,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -64,7 +62,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
-import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -86,15 +83,16 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * per execution, and every reader's fixed-size and SYMBOL getters read through it, returning the
  * nulls a page frame record returns for a column the frame lacks. A Parquet frame, and a getter
  * without such a path, reads through the reader's own page frame memory pool and record over the
- * shared, read-only address cache. A Parquet frame decodes into that pool, and every reader of the
- * execution decodes and caches the row groups that its own matches land on, so the readers share
- * the configured Parquet decode cache budget, see
- * {@link #HashJoinBuildFrames(CairoConfiguration, IntList, RecordMetadata, IntList, ColumnTypes, int)},
+ * shared, read-only address cache. That pool decodes the payload columns of a Parquet frame alone:
+ * no reader reads another column of the build scan, such as a key, which the key table holds, or a
+ * column that only the build's own filters read. Every reader of the execution decodes and caches
+ * the row groups that its own matches land on, so the readers share the configured Parquet decode
+ * cache budget, see {@link #HashJoinBuildFrames(CairoConfiguration, IntList, RecordMetadata, int)},
  * and a reader whose matches alternate between more row groups than its share holds decodes them
  * again. To spare the readers that cost, the owner copies a payload that fits the copy whenever
  * the build's Parquet frames decode past a reader's share, see
- * {@link #isReaderCacheExceeded(long, long)}, for a probe whose matches can land on as many of
- * those frames as the copy decodes, and otherwise when the probe repays the copy; see
+ * {@link #isReaderCacheExceeded(long)}, for a probe whose matches can land on as many of those
+ * frames as the copy decodes, and otherwise when the probe repays the copy; see
  * {@code AsyncHashJoinGroupByAtom.maybeCopyPayload()}. A payload that the copy cannot hold keeps
  * that cost.
  * <p>
@@ -103,22 +101,16 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * {@link #copyPayload(FrozenHashJoinBuild, SqlExecutionCircuitBreaker)} before the probes run: one
  * forward pass over the build rows copies their payload columns, row after row in build order,
  * into a block of fixed-size rows, and every reader then reads the copied row that the match's
- * ordinal names. The pass reads each frame once, so it decodes each Parquet row group once as
- * well. A parallel build keeps each hash partition's rows in one region of the heap, or each
- * frame's rows grouped by hash bucket, so its rows are not in build order; its copy runs one task
- * per frame instead, each copying the rows its frame kept through a copy reader of its thread, see
- * {@link #beginCopy}. Only fixed-size payload
- * columns copy; a build with any other payload column keeps reading where the columns live.
+ * ordinal names. The pass reads each frame once, so it decodes the payload columns of each Parquet
+ * row group once as well. A parallel build keeps each hash partition's rows in one region of the
+ * heap, or each frame's rows grouped by hash bucket, so its rows are not in build order; its copy
+ * runs one task per frame instead, each copying the rows its frame kept through a copy reader of
+ * its thread, see {@link #beginCopy}. Only fixed-size payload columns copy; a build with any other
+ * payload column keeps reading where the columns live.
  */
 public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCloseable {
     // The copy pass checks the breaker once per this many rows; a power of two.
     private static final int COPY_ROWS_PER_CHECK = 64 * 1024;
-    // The bytes a row that a var-size column which no key sink stages counts at, by a deliberately
-    // high estimate, since the build knows nothing of its values; see isReaderCacheExceeded().
-    private static final int UNSTAGED_VAR_SIZE_DECODED_BYTES = 256;
-    // The bytes a row that a staged var-size key column counts beyond its aux entry and its staged
-    // value; see isReaderCacheExceeded().
-    private static final int VAR_SIZE_DECODED_SLACK = 1;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final CairoConfiguration configuration;
     // Byte offset of each payload column within a copied row; empty when the payload cannot be copied.
@@ -127,14 +119,16 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     private final int copyRowSize;
     // One reader per thread of a copy, kept across executions; see beginCopy().
     private final ObjList<Reader> copyReaders = new ObjList<>();
-    // Bytes a row that a probe reader decodes a Parquet frame to, before the values of the var-size
-    // key columns: every fixed-size column of the build scan, the aux entry and slack of every
-    // var-size key column, and the estimate of every other var-size column; see isReaderCacheExceeded().
+    // Bytes a row that a reader decodes a Parquet frame to: the size of every payload column, which
+    // the planner admits as fixed-size alone; see isReaderCacheExceeded().
     private final int decodedRowSize;
     private final LongList frameRowCounts = new LongList();
     // Page address of payload column c of native frame f at f * payloadColumns.length + c; zero for a
     // column the frame lacks, and for every column of a Parquet frame, which the readers decode.
     private final LongList payloadAddresses = new LongList();
+    // The build scan columns of the payload, the only columns of a Parquet frame that a reader's pool
+    // decodes; every pool reads it, and none changes it.
+    private final IntHashSet payloadColumnSet = new IntHashSet();
     // Build scan column of each payload column, in payload order.
     private final int[] payloadColumns;
     private final boolean[] payloadSymbols;
@@ -142,10 +136,6 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     private final int[] payloadTypes;
     // The most probe readers that one execution reads through, which share the Parquet decode cache budget.
     private final int readerCount;
-    // The most bytes that a reader decodes the values of the var-size key columns to per byte that
-    // the key sink staged for them: 2 when a STRING column stages as UTF-8, 1 for any other var-size
-    // key column, and 0 for a build scan without one; see isReaderCacheExceeded().
-    private final int stagedKeyDecodeFactor;
     // The copied payload of this execution, or zero while readers read the columns where they live.
     // The owner writes it before the probes are dispatched, which publishes it to their workers.
     private long copyAddress;
@@ -162,7 +152,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
      * Frames of a build that stages no key, read through one probe reader per execution.
      */
     public HashJoinBuildFrames(CairoConfiguration configuration, IntList payloadColumns, RecordMetadata buildMetadata) {
-        this(configuration, payloadColumns, buildMetadata, new IntList(0), new ArrayColumnTypes(), 1);
+        this(configuration, payloadColumns, buildMetadata, 1);
     }
 
     /**
@@ -173,64 +163,36 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
      * even share of the budget instead, but no less than a quarter of it, the budget of a page frame
      * cursor that walks its frames in order: the readers of an execution hold at most
      * max(budget, readerCount * budget / 4) between them, and a reader whose matches land on more
-     * row groups than its share holds decodes them again, see
-     * {@link #isReaderCacheExceeded(long, long)}. The copy readers walk the build's frames in order,
-     * and keep the configured budget.
-     * <p>
-     * The build's key sink stages key {@code k} from build scan column {@code keyColumns[k]} as
-     * {@code keyTypes[k]}; a build that stages no key, such as the INT layout's, passes no key types.
-     * They tell which var-size columns of the build scan the build can measure from the keys it staged.
+     * row groups than its share holds decodes them again, see {@link #isReaderCacheExceeded(long)}.
+     * The copy readers walk the build's frames in order, and keep the configured budget.
      */
     public HashJoinBuildFrames(
             CairoConfiguration configuration,
             IntList payloadColumns,
             RecordMetadata buildMetadata,
-            @Transient IntList keyColumns,
-            @Transient ColumnTypes keyTypes,
             int readerCount
     ) {
         assert readerCount > 0;
         this.configuration = configuration;
         this.readerCount = readerCount;
-        int decodedRowSize = 0;
-        int stagedKeyDecodeFactor = 0;
-        for (int column = 0, columnCount = buildMetadata.getColumnCount(); column < columnCount; column++) {
-            final int type = buildMetadata.getColumnType(column);
-            if (!ColumnType.isVarSize(type)) {
-                decodedRowSize += Math.max(ColumnType.sizeOf(type), 0);
-                continue;
-            }
-            final int tag = ColumnType.tagOf(type);
-            final int keyType = getStagedKeyType(column, keyColumns, keyTypes);
-            if (tag == ColumnType.VARCHAR && keyType == ColumnType.VARCHAR) {
-                // A reader decodes a VARCHAR to a slice entry that points into the decompressed page.
-                decodedRowSize += VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES + VAR_SIZE_DECODED_SLACK;
-                stagedKeyDecodeFactor = Math.max(stagedKeyDecodeFactor, 1);
-            } else if (tag == ColumnType.STRING && (keyType == ColumnType.STRING || keyType == ColumnType.VARCHAR)) {
-                // A reader decodes a STRING to an offset entry and a copy of its UTF-16 chars, which
-                // take up to twice the bytes of the UTF-8 that a VARCHAR key stages.
-                decodedRowSize += Long.BYTES + VAR_SIZE_DECODED_SLACK;
-                stagedKeyDecodeFactor = Math.max(stagedKeyDecodeFactor, keyType == ColumnType.VARCHAR ? 2 : 1);
-            } else {
-                decodedRowSize += UNSTAGED_VAR_SIZE_DECODED_BYTES;
-            }
-        }
-        this.decodedRowSize = decodedRowSize;
-        this.stagedKeyDecodeFactor = stagedKeyDecodeFactor;
         final int n = payloadColumns.size();
         this.payloadColumns = new int[n];
         this.payloadSymbols = new boolean[n];
         this.payloadTypes = new int[n];
         final int[] offsets = new int[n];
         boolean isCopyable = n > 0;
+        int decodedRowSize = 0;
         int offset = 0;
         int rowAlignment = 1;
         for (int i = 0; i < n; i++) {
             final int column = payloadColumns.getQuick(i);
-            final int type = ColumnType.tagOf(buildMetadata.getColumnType(column));
+            final int columnType = buildMetadata.getColumnType(column);
+            final int type = ColumnType.tagOf(columnType);
             this.payloadColumns[i] = column;
             this.payloadSymbols[i] = type == ColumnType.SYMBOL;
             this.payloadTypes[i] = type;
+            payloadColumnSet.add(column);
+            decodedRowSize += Math.max(ColumnType.sizeOf(columnType), 0);
             final int size = getCopySize(type);
             if (size < 0) {
                 isCopyable = false;
@@ -245,6 +207,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         }
         this.copyOffsets = isCopyable ? offsets : new int[0];
         this.copyRowSize = isCopyable ? (offset + rowAlignment - 1) & -rowAlignment : 0;
+        this.decodedRowSize = decodedRowSize;
     }
 
     /**
@@ -378,8 +341,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     /**
      * Bytes of the Parquet decode cache that each probe reader of an execution caches decoded row
      * groups in: an even share of the configured budget among the readers, but no less than a
-     * quarter of it; see
-     * {@link #HashJoinBuildFrames(CairoConfiguration, IntList, RecordMetadata, IntList, ColumnTypes, int)}.
+     * quarter of it; see {@link #HashJoinBuildFrames(CairoConfiguration, IntList, RecordMetadata, int)}.
      */
     public long getReaderCacheSize() {
         final long cacheSize = configuration.getSqlParquetCacheMemorySize();
@@ -410,51 +372,22 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     }
 
     /**
-     * True when the build scan has a VARCHAR or STRING column that the build's key sink stages, whose
-     * decoded size {@link #isReaderCacheExceeded(long, long)} takes from the keys the build staged.
-     */
-    public boolean hasStagedVarSizeKeys() {
-        return stagedKeyDecodeFactor > 0;
-    }
-
-    /**
      * True when Parquet frames of this many rows in all decode to more than a probe reader's share
-     * of the decode cache, {@link #getReaderCacheSize()}. A reader decodes a frame whole, every
-     * column of the build scan, and keeps the frames it decoded until they fill its share, after
-     * which it evicts the least recently used one, so a reader whose matches keep moving between
-     * more frames than its share holds decodes them again and again.
+     * of the decode cache, {@link #getReaderCacheSize()}. A reader decodes the payload columns of a
+     * frame for all its rows, and keeps the frames it decoded until they fill its share, after which
+     * it evicts the least recently used one, so a reader whose matches keep moving between more
+     * frames than its share holds decodes them again and again.
      * <p>
-     * The share's budget counts the data, aux and retained page bytes that a frame decodes to. A
-     * fixed-size column decodes to its size a row. A var-size key column decodes as wide as its
-     * values are, which the keys that the build staged tell: {@code stagedKeySize} bytes a key on
-     * average, over all the key's columns, see {@code MapHashJoinBuild.getStagedKeySize()}.
-     * <ul>
-     * <li>A VARCHAR decodes to a 16-byte slice entry a row, which points into the decompressed page
-     * that the reader retains: a data page that holds the value's bytes and, at most, a 4-byte length
-     * for each, or a dictionary page that holds each distinct value once. The sink stages a 4-byte
-     * header and the value's bytes, so a value counts what the sink staged.</li>
-     * <li>A STRING decodes to an 8-byte offset a row, plus one a frame, and to a copy of the value:
-     * a 4-byte length and two bytes a char, just as the sink stages it. A VARCHAR probe key makes the
-     * sink stage the STRING as UTF-8 instead, a 4-byte header and at least a byte a char, so a value
-     * then counts twice what the sink staged.</li>
-     * </ul>
-     * Each var-size key column counts {@value #VAR_SIZE_DECODED_SLACK} byte a row more for what the
-     * page holds beyond the values, such as the definition levels of a nullable column, at most a
-     * bit a row, and a STRING's extra offset a frame. The staged size errs high where it counts the
-     * other columns of a composite key again, which decode at their fixed size, a SYMBOL's at 4
-     * bytes rather than its staged text, and where it counts the padding that aligns a key's entry
-     * in its key table. It averages over the distinct keys that the build kept, of native and
-     * Parquet frames alike, though, so it errs low for a build whose longer keys repeat more often
-     * than its shorter ones, or whose filter drops longer keys than it keeps. A var-size column that
-     * the sink does not stage counts {@value #UNSTAGED_VAR_SIZE_DECODED_BYTES} bytes a row. The
-     * planner admits a var-size build column as a join key, which the sink stages, or as a column
-     * that only the build's own filters read, its scan's WHERE filter and an outer join's ON
-     * condition on the build alone. Such a filter-only column stays in the build scan, so it counts
-     * at that estimate.
+     * A reader decodes no other column of the build scan: neither a join key, which the key table
+     * holds, nor a column that only the build's own filters read, its scan's WHERE filter and an
+     * outer join's ON condition on the build alone, which the build decodes once per frame through
+     * pools of its own. The planner admits only fixed-size payload columns, so a frame decodes to the
+     * payload's size a row, which the share's budget counts. A payload column that a type change
+     * turned from a var-size type into a fixed-size one after its partition became Parquet decodes
+     * from the stored text instead, which this count misses.
      */
-    public boolean isReaderCacheExceeded(long parquetFrameRows, long stagedKeySize) {
-        final long rowSize = Math.max(decodedRowSize + stagedKeyDecodeFactor * stagedKeySize, 1);
-        return parquetFrameRows > getReaderCacheSize() / rowSize;
+    public boolean isReaderCacheExceeded(long parquetFrameRows) {
+        return parquetFrameRows > getReaderCacheSize() / Math.max(decodedRowSize, 1);
     }
 
     /**
@@ -547,16 +480,6 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
             case ColumnType.LONG256, ColumnType.DECIMAL256 -> 32;
             default -> -1;
         };
-    }
-
-    // The type tag that the key sink stages this build scan column as, or -1 when it stages no key from it.
-    private static int getStagedKeyType(int column, IntList keyColumns, ColumnTypes keyTypes) {
-        for (int key = 0, n = Math.min(keyColumns.size(), keyTypes.getColumnCount()); key < n; key++) {
-            if (keyColumns.getQuick(key) == column) {
-                return ColumnType.tagOf(keyTypes.getColumnType(key));
-            }
-        }
-        return -1;
     }
 
     // Copies the payload columns of the row the reader is positioned at, which reads them where they live.
@@ -1094,14 +1017,15 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         }
 
         // Rebinds the reader to the current execution without taking symbol tables: the copy pass
-        // copies a SYMBOL's key and never resolves it.
+        // copies a SYMBOL's key and never resolves it. The reader reads payload columns alone, so its
+        // pool decodes no other column of a Parquet frame.
         private void reopen(ParquetDecodeHint hint) {
             copyRow = 0;
             frameIndex = -1;
             recordFrameIndex = -1;
             isDirect = false;
             pool.setMemoryTracker(memoryTracker);
-            pool.of(addressCache, hint);
+            pool.of(addressCache, hint, payloadColumnSet);
             record.of(frameCursor);
         }
 

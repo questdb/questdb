@@ -702,6 +702,98 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVariableSizeBuildOnFilterFollowsTableSizes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("ALTER TABLE p ADD COLUMN name VARCHAR");
+            execute("ALTER TABLE p ADD COLUMN tag STRING");
+            execute("ALTER TABLE p ADD COLUMN bin BINARY");
+            execute("ALTER TABLE p ADD COLUMN arr DOUBLE[]");
+            // p, the build of both outer joins, holds two rows and r, the probe, one.
+            execute("INSERT INTO p (plant_id, country, installed_kwp, name, tag) VALUES (1, 'x', 5, 'x', 't'), (2, 'y', 7, 'y', 's')");
+            execute("INSERT INTO r (plant_id, reading_ts, energy_kwh) VALUES (1, '2020-01-01', 10)");
+            bindVariableService.setStr(0, "x");
+            final String[] froms = {
+                    "SELECT r.plant_id, sum(r.energy_kwh) FROM r LEFT JOIN p ON r.plant_id = p.plant_id AND ",
+                    "SELECT r.plant_id, sum(r.energy_kwh) FROM p RIGHT JOIN r ON r.plant_id = p.plant_id AND "
+            };
+            // ON conditions on the build alone that read a column the row heap cannot copy, by
+            // itself or inside a function, and do more than compare columns, constants and bind
+            // variables. One expensive operand of AND or OR, on either side, makes the whole
+            // condition expensive, and so does a function call on either side of a comparison.
+            final String[] expensiveConditions = {
+                    "p.name ~ 'x'",
+                    "NOT p.name ~ 'x'",
+                    "p.name LIKE 'x%'",
+                    "p.tag IN ('t', 's')",
+                    "p.tag::VARCHAR = 't'",
+                    "array_sum(p.arr) > 0.5",
+                    "length(p.name) > 0",
+                    "p.name = 'x' AND p.name ~ 'y'",
+                    "p.name ~ 'x' AND p.name = 'y'",
+                    "(p.name = 'x' OR p.name ~ 'y')",
+                    "p.name = upper('x')",
+                    "(p.name ~ 'x') = true"
+            };
+            // ON conditions that combine with AND, OR and NOT only comparisons of columns,
+            // constants and bind variables. IS NULL and IS NOT NULL parse as a comparison with a
+            // NULL constant.
+            final String[] cheapConditions = {
+                    "p.name = 'x'",
+                    "p.tag = 't'",
+                    "p.name IS NULL",
+                    "p.bin IS NOT NULL",
+                    "p.name <> 'x'",
+                    "p.name <= 'x'",
+                    "p.name = $1",
+                    "p.name = p.tag",
+                    "p.installed_kwp > 0 AND p.tag = 't'",
+                    "NOT (p.name < 'm' OR p.name >= 'x')"
+            };
+            for (String from : froms) {
+                // The fused plan would run the condition on each build row, and the ordinary plan
+                // runs it only on the pairs whose keys match, so a build table with more rows than
+                // the probe table keeps the ordinary plan for an expensive condition. A comparison
+                // costs about as much as the hash insert it spares, so it stays a candidate.
+                for (String condition : expensiveConditions) {
+                    assertCandidate(from + condition, false);
+                }
+                for (String condition : cheapConditions) {
+                    assertCandidate(from + condition, true);
+                }
+                // The rule follows the types of the columns a condition reads: a condition over
+                // fixed-size columns stays a candidate, a text cast of one included.
+                assertCandidate(from + "p.installed_kwp > 0", true);
+                assertCandidate(from + "p.country ~ 'x'", true);
+                assertCandidate(from + "p.country::VARCHAR ~ 'x'", true);
+            }
+            // The build scan's own WHERE clause runs on each build row in both plans, and an INNER
+            // join has no ON condition on the build: the optimizer moves the conjunct into the WHERE
+            // clause of p, which the INNER join probes, as the smaller r builds.
+            assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM r LEFT JOIN (SELECT * FROM p WHERE name ~ 'x') p "
+                    + "ON r.plant_id = p.plant_id", true);
+            assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM (SELECT * FROM p WHERE name ~ 'x') p "
+                    + "RIGHT JOIN r ON r.plant_id = p.plant_id", true);
+            assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM r JOIN p ON r.plant_id = p.plant_id AND p.name ~ 'x'", true);
+            // With as many rows in the probe table as in the build table, each expensive condition
+            // is a candidate, which presizes its key table and reads none of its columns as a
+            // payload.
+            execute("INSERT INTO r (plant_id, reading_ts, energy_kwh) VALUES (2, '2020-01-02', 20)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String from : froms) {
+                    for (String condition : expensiveConditions) {
+                        final HashJoinGroupByCandidate candidate = candidate(compiler, from + condition);
+                        Assert.assertNotNull(condition, candidate);
+                        Assert.assertNotNull(condition, candidate.getBuildOnFilter());
+                        Assert.assertTrue(condition, candidate.isKeyCapacityPresized());
+                        Assert.assertEquals(condition, 0, candidate.getRequiredBuildColumns().size());
+                    }
+                }
+            }
+        });
+    }
+
     private void assertCandidate(String sql, boolean isCandidateExpected) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             Assert.assertEquals(sql, isCandidateExpected, candidate(compiler, sql) != null);
