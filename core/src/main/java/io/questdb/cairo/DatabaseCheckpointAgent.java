@@ -78,6 +78,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseCheckpointAgent.class);
+    private static final long WAL_PURGE_LOCK_WAIT_STEP_MILLIS = 10_000;
     private final CharSequenceLongHashMap checkpointSeqTxns = new CharSequenceLongHashMap(); // protected with #lock
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -222,10 +223,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 // Suspend the WalPurgeJob to prevent WAL _event files from being deleted.
                 // This is needed for both incremental and non-incremental backups because
                 // mat view refresh intervals are loaded from _event files during checkpoint creation.
-                final long timeout = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
-                while (!engine.tryLockWalPurgeJob(timeout, TimeUnit.MILLISECONDS)) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                }
+                lockWalPurgeJob(circuitBreaker);
                 ownsWalPurgeJobRunLock = true;
 
                 TableToken tableToken = null;
@@ -752,6 +750,41 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 ownsWalPurgeJobRunLock = false;
             }
             lock.unlock();
+        }
+    }
+
+    /**
+     * Waits for the WalPurgeJob to finish its current sweep and pauses it. The fair lock hands
+     * over at the end of the sweep in progress, so the wait is bounded by a single sweep. The
+     * wait is done in steps of at most {@link #WAL_PURGE_LOCK_WAIT_STEP_MILLIS}, or the query
+     * timeout if shorter; between steps it checks the circuit breaker, which carries the
+     * statement's own timeout, and engine shutdown, and logs progress. Once the lock is acquired,
+     * the circuit breaker is checked again and the lock is released if the breaker has tripped.
+     */
+    private void lockWalPurgeJob(SqlExecutionCircuitBreaker circuitBreaker) {
+        if (!engine.tryLockWalPurgeJob(0, TimeUnit.MILLISECONDS)) {
+            final long queryTimeoutMillis = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
+            final long stepMillis = queryTimeoutMillis > 0
+                    ? Math.min(queryTimeoutMillis, WAL_PURGE_LOCK_WAIT_STEP_MILLIS)
+                    : WAL_PURGE_LOCK_WAIT_STEP_MILLIS;
+            final long startNanos = System.nanoTime();
+            do {
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                if (engine.isClosing()) {
+                    throw CairoException.nonCritical().put("checkpoint cancelled, database is closing");
+                }
+                final long waitedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+                if (waitedMillis > 0) {
+                    LOG.info().$("waiting for WAL purge job to pause [waitedMs=").$(waitedMillis).I$();
+                }
+            } while (!engine.tryLockWalPurgeJob(stepMillis, TimeUnit.MILLISECONDS));
+        }
+        // the statement may have been cancelled or timed out while waiting for the lock
+        try {
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        } catch (Throwable th) {
+            engine.unlockWalPurgeJob();
+            throw th;
         }
     }
 
