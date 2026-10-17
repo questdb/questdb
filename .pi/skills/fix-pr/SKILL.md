@@ -13,6 +13,8 @@ to fix, or a finding from a review.
 
 1. Understand the item. Validate a bug or finding; pin down the behavior of a
    feature. State the problem or goal and the user impact in one line each.
+   An item whose symptoms have more than one root cause is split, one item
+   per cause.
 2. Skip it if it is false, already done, or its impact is negligible. Ask the
    user when a feature's behavior is ambiguous.
 3. Design the best root-cause change - argued correct for every input it
@@ -136,6 +138,9 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
      blocked with the REASON and go to the next item.
    - `ASK`: show the QUESTIONS, wait for the user's answers, and run the
      analysis again with them.
+   - `SPLIT`: replace the item with its ITEMS lines, at the front of the
+     queue in their order, with the IDs <ID>a, <ID>b, ...; each names
+     `<state>/<ID>/analysis.md` as context.
    - `OTHER` lines: a `PR` bug becomes a new item at the end of the queue,
      unless it names an item of this run, which it reopens (step 6); a
      `PRE-EXISTING` one goes to the issue list. Skip a bug already queued or
@@ -270,9 +275,15 @@ Unless `--no-issues`, file each one:
 - `java-questdb-client/` is a separate repo: commit inside it first, as
   CLAUDE.md says.
 - Don't call a failure pre-existing or flaky without proof.
-- If a helper fails to launch or crashes, retry once; then stop and report.
-  The review helper is the exception: after it fails twice, the main
-  session runs the review itself ("Keep the main session small").
+- If a helper fails to launch, retry once; then stop and report. If it
+  times out or ends without its reply lines and the repository is
+  unchanged, launch a fresh one once - for the analysis, as a continuation
+  of what the first one wrote. Don't resume the old session: it has to
+  rebuild its whole context in one turn. If the fresh one fails too, mark
+  the item blocked with what it left and go to the next item; if two items
+  in a row end this way, stop and report. The review helper is the
+  exception: after it fails twice, the main session runs the review itself
+  ("Keep the main session small").
 
 ## Final summary
 
@@ -310,7 +321,11 @@ Fill in the `<placeholders>`; keep tasks this short.
 Analyze one item in <repo>. Follow CLAUDE.md, including "Testing".
 Don't change existing files or commit. For probes, create new files; when
 done, copy those that reproduce the problem to <state>/<ID>/probes/ for the
-build, and delete them from the repo.
+build, and delete them from the repo. Probes run the code as it is, at HEAD
+or the PR base. Don't build or run changed copies of production code: a
+design is argued here and tried by the build, after the check.
+Write <state>/<ID>/analysis.md as you go, adding each step's result as you
+reach it, so that a timeout loses nothing.
 
 Item <ID> (<feature | bug | review finding | bug found in this run>): <verbatim item>
 PR base: <sha>. Items of this run so far: <one line per item: ID, commits,
@@ -324,6 +339,8 @@ only answers the example is not a revision. Or show with file:line why an
 objection is wrong. Fold these test-plan gaps and the amendments into the
 new plan where they still apply: <ADD lines, or none>.]
 [Answers from the user: <answers>]
+[Continuation only: an earlier helper ran out of time on this item. Continue
+from what it wrote in <state>/<ID>/; don't repeat its probes.]
 
 1. Understand the item.
    - Bug or finding: check it against the current code; run something if
@@ -335,8 +352,9 @@ new plan where they still apply: <ADD lines, or none>.]
 2. Problem or goal: one plain line.
 3. Impact on users: one line - who, how badly, how often.
 4. Decide: BUILD a feature, FIX a bug or finding, SKIP (false, already done,
-   or negligible impact), ASK when the feature needs a decision, or BLOCK
-   when no change within the item can be argued correct (step 6). A finding
+   or negligible impact), ASK when the feature needs a decision, BLOCK when
+   no change within the item can be argued correct (step 6), or SPLIT when
+   the item has more than one root cause (step 5). A finding
    that a test is missing or ineffective for behavior this PR adds or changes
    is a FIX. A bug found in this run that the PR base already has is a SKIP;
    report it on OTHER as PRE-EXISTING (step 9).
@@ -344,7 +362,9 @@ new plan where they still apply: <ADD lines, or none>.]
    where the symptom shows - and the assumption that fails there. Use
    `git log` and `git blame` to learn why the code is written that way; the
    change must keep whatever that protects. No guard, catch or special case at
-   the symptom unless that layer owns the check.
+   the symptom unless that layer owns the check. If the item's symptoms come
+   from more than one root cause, decide SPLIT: name one sub-item per root
+   cause, in the order to fix them, and stop there.
 6. For BUILD and FIX: find the best change, not the first one that works.
    Weigh the real alternatives, such as another layer, and choose the one that:
    - is correct for every input it reaches, by the argument below;
@@ -359,18 +379,18 @@ new plan where they still apply: <ADD lines, or none>.]
    - reuses what exists: search for a helper, an established pattern or an
      earlier fix of the same kind of bug, and build on it.
    Between equally good changes, choose the smaller.
-   Argue the change correct before you prototype it; a few sentences do for
-   a small change. State what the changed code must guarantee for the result
-   to be right, and show that every input the change newly lets through, and
-   every path it adds or skips, keeps each guarantee. A guard protects all
-   the code after it, not only the case it was written for: before relaxing
-   one, find what each later step assumes about the inputs it kept out.
+   Argue the change correct; a few sentences do for a small change. State
+   what the changed code must guarantee for the result to be right, and show
+   that every input the change newly lets through, and every path it adds or
+   skips, keeps each guarantee. A guard protects all the code after it, not
+   only the case it was written for: before relaxing one, find what each
+   later step assumes about the inputs it kept out.
    Before adding an early return, list what the code it skips ensured.
    Where the change can't tell which way an input goes, as with an unknown
-   type, it takes the safe side. Probes and prototypes test the argument;
-   they don't replace it, and a variant chosen because it fails fewer probes
-   has no argument. If no change within the item can be argued correct,
-   decide BLOCK and say what a sound fix would take.
+   type, it takes the safe side. Don't pick between variants by trying them:
+   probes show how the current code behaves, and the design follows from the
+   argument. If no change within the item can be argued correct, decide
+   BLOCK and say what a sound fix would take.
 7. For BUILD and FIX: write the test plan. Go through the 14 dimensions of
    CLAUDE.md "What exhaustive means". For each that applies, list the tests:
    name, input -> expected result, and where the expected result comes from
@@ -403,15 +423,15 @@ new plan where they still apply: <ADD lines, or none>.]
    a bug is security-sensitive and [crash] when hostile input can crash or
    hang the server through it.
 
-Write <state>/<ID>/analysis.md, starting with the verbatim item; include the
-argument that the change is correct, the alternatives you rejected and why,
-and the test plan as a table: dimension, applies, tests or reason. Reply with
-only these lines:
-DECISION: BUILD | FIX | SKIP | ASK | BLOCK
+analysis.md starts with the verbatim item and holds the argument that the
+change is correct, the alternatives you rejected and why, and the test plan
+as a table: dimension, applies, tests or reason. Reply with only these
+lines:
+DECISION: BUILD | FIX | SKIP | ASK | BLOCK | SPLIT
 PROBLEM: <one line>
 IMPACT: <one line>
 EFFECT: <the PR body bullet; the JMH benchmark to report, if any> | none
-CHANGE: <one line, naming the files> | REASON: <one line, for SKIP or BLOCK> | QUESTIONS: <for ASK, one line each>
+CHANGE: <one line, naming the files> | REASON: <one line, for SKIP or BLOCK> | QUESTIONS: <for ASK, one line each> | ITEMS: <for SPLIT, one line per sub-item: its root cause and the tests or symptoms it covers>
 WHY: <one line: why this change beats the alternatives>
 TESTS: <one line: the dimensions covered and the ones not applicable>
 OTHER: none | one line per bug: PR, PR <item ID> or PRE-EXISTING [security] [crash], file:line, problem, issue body path (PRE-EXISTING only)
