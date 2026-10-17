@@ -36,6 +36,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.wal.seq.TableSequencerImpl;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -134,6 +135,34 @@ public class WriterPool extends AbstractPool {
     }
 
     /**
+     * Force-reclaims every entry the calling thread still has checked out or locked: closes its writer,
+     * releases any held {@code .lock} fd, resets ownership and evicts the entry. Only the caller's own
+     * entries are reclaimed; a healthy engine sees no effect.
+     *
+     * @return the number of entries reclaimed
+     */
+    @TestOnly
+    public int releaseCrashOrphanedWriters() {
+        final long thread = Thread.currentThread().threadId();
+        int reclaimed = 0;
+        final Iterator<Entry> iterator = entries.values().iterator();
+        while (iterator.hasNext()) {
+            final Entry e = iterator.next();
+            if (e.owner != thread) {
+                continue;
+            }
+            closeWriter(thread, e, PoolListener.EV_EXPIRE, PoolConstants.CR_POOL_CLOSE); // frees writer mem (no-op if locked)
+            if (e.lockFd != -1 && ff.close(e.lockFd)) {
+                e.lockFd = -1; // release the .lock fd a lock()'d orphan still holds
+            }
+            e.owner = UNALLOCATED;
+            iterator.remove();
+            reclaimed++;
+        }
+        return reclaimed;
+    }
+
+    /**
      * <p>
      * Creates or retrieves existing TableWriter from pool. Because of TableWriter compliance with <b>single
      * writer model</b> pool ensures there is single TableWriter instance for given table name. Table name is unique in
@@ -152,6 +181,7 @@ public class WriterPool extends AbstractPool {
      * @return cached TableWriter instance.
      */
     public TableWriter get(TableToken tableToken, @NotNull String lockReason) {
+        assert TableSequencerImpl.assertNoWriteLocksHeld();
         // writer cannot be null because our async command is null
         TableWriter w = getWriterEntry(tableToken, lockReason, null);
         assert w != null;
@@ -468,6 +498,13 @@ public class WriterPool extends AbstractPool {
             e.owner = UNALLOCATED;
             notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);
             throw ex;
+        } catch (Throwable th) {
+            // Required completion during construction can fail outside the Cairo exception hierarchy too.
+            // Release ownership even when no writer was published.
+            e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
+            e.owner = UNALLOCATED;
+            notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);
+            throw th;
         }
     }
 

@@ -132,6 +132,9 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp
     ) {
+        // Refreshing the file this reader has open: the writer extends .v before it publishes a larger size, so
+        // only a first open can meet a torn file, as in reloadConditionally().
+        final boolean isRefresh = isOpen() && columnNameTxn == this.columnTxn && partitionTxn == this.partitionTxn;
         this.columnTop = columnTop;
         this.columnTxn = columnNameTxn;
         this.partitionTxn = partitionTxn;
@@ -159,6 +162,16 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
             }
 
             readIndexMetadataAtomically();
+
+            if (valueMemSize > 0 && !isRefresh) {
+                LPSZ vName = BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn);
+                long vActual = ff.length(vName);
+                if (valueMemSize > vActual) {
+                    throw CairoException.critical(0)
+                            .put("bitmap index value file too short [expected=").put(valueMemSize)
+                            .put(", actual=").put(vActual).put(", path=").put(vName).put(']');
+                }
+            }
 
             this.valueMem.of(
                     configuration.getFilesFacade(),

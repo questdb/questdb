@@ -153,10 +153,23 @@ public class ColumnPurgeOperator implements Closeable {
         return false;
     }
 
+    /**
+     * True when the table's save point still lies inside the superseded range, so recovery would restore a
+     * {@code _txn}/{@code _cv} that names these column files. Separate from the reader check because it holds
+     * when no reader does, notably at startup, where there are no readers but the save point is what the
+     * next recovery restores.
+     */
+    private boolean isVersionHeldByEpoch(long columnVersion, ColumnPurgeTask task) {
+        return task.getTableToken().isWal()
+                && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
+                .isRangeAvailableToEpoch(columnVersion + 1, task.getUpdateTxn());
+    }
+
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
         long updateTxn = task.getUpdateTxn();
         try {
-            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
+            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn)
+                    || isVersionHeldByEpoch(columnVersion, task);
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
@@ -390,7 +403,14 @@ public class ColumnPurgeOperator implements Closeable {
                     if (columnVersion < minUnlockedTxnRangeStarts) {
                         // When a backup checkpoint is in progress, defer column purge — the
                         // checkpoint may reference these column versions via snapshotted metadata.
+                        //
+                        // The save point is checked in every mode, STARTUP_ONLY included. That mode skips the
+                        // reader check because no readers exist at startup, but the save point is not a reader:
+                        // it is what the next recovery restores. Purging a version it names would leave
+                        // recovery restoring a _txn/_cv whose column files are gone, and the writer reopen would
+                        // fail ("SymbolMap does not exist") and suspend the table.
                         if (engine.getCheckpointStatus().isInProgress()
+                                || isVersionHeldByEpoch(columnVersion, task)
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
                             // Reader lock still exists
                             allDone = false;

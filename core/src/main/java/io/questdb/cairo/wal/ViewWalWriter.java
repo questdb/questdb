@@ -25,10 +25,12 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -127,6 +129,11 @@ public class ViewWalWriter extends WalWriterBase {
                 '}';
     }
 
+    @Override
+    void syncSegmentFilesBeforeSequencing(int commitMode) {
+        // A view segment holds the event files only.
+    }
+
     private boolean breachedRolloverSizeThreshold() {
         final long threshold = configuration.getWalSegmentRolloverSize();
         if (threshold == 0) {
@@ -160,9 +167,22 @@ public class ViewWalWriter extends WalWriterBase {
     }
 
     private long getSequencerTxn() {
-        long seqTxn = sequencer.nextTxn(tableToken, walId, 0L, segmentId, lastSegmentTxn, Long.MAX_VALUE, -1L, 0L);
-        assert seqTxn != NO_TXN;
-        return lastSeqTxn = seqTxn;
+        try {
+            long seqTxn = nextSeqTxn(0L, Long.MAX_VALUE, -1L, 0L);
+            assert seqTxn != NO_TXN;
+            // Group commit leaves the log's flush to a batch that only table WAL writers run.
+            // Local view commits keep the configured grade; the object store does not hold them.
+            if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
+                final SeqTxnTracker tracker = sequencer.getTxnTracker(tableToken);
+                final long orphanSweepMark = tracker.snapshotOrphanSweepMark();
+                tracker.markWriterDurable(walId, orphanSweepMark, sequencer.fdatasyncTxnLog(tableToken));
+            }
+            return lastSeqTxn = seqTxn;
+        } catch (CairoException e) {
+            // The log is flushed in the append or right after it. A failed flush stops the engine, as on the commit path.
+            sequencer.handleDataSyncFailure(e);
+            throw e;
+        }
     }
 
     private void mayRollSegmentOnNextRow() {
@@ -175,14 +195,13 @@ public class ViewWalWriter extends WalWriterBase {
     private void openNewSegment() {
         final int newSegmentId = segmentId + 1;
         final long oldLastSegmentTxn = lastSegmentTxn;
+        long dirFd = -1;
         try {
             final int segmentPathLen = createSegmentDir(newSegmentId);
             segmentId = newSegmentId;
-            final long dirFd;
+            // Local view commits keep the configured grade; the object store does not hold them.
             final int commitMode = configuration.getCommitMode();
-            if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
-                dirFd = -1;
-            } else {
+            if (!Os.isWindows() && commitMode != CommitMode.NOSYNC) {
                 dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
             }
 
@@ -190,11 +209,20 @@ public class ViewWalWriter extends WalWriterBase {
             syncIfRequired();
 
             if (dirFd != -1) {
-                ff.fsyncAndClose(dirFd);
+                final long fd = dirFd;
+                // fsyncAndClose closes the fd even when the flush fails
+                dirFd = -1;
+                ff.fsyncAndClose(fd);
+                fsyncSegmentDirEntries(commitMode, newSegmentId);
             }
             lastSegmentTxn = -1;
-            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
+            path.trimTo(pathSize).slash().put(newSegmentId);
+            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path).I$();
         } finally {
+            if (dirFd != -1) {
+                // An event file open or flush failed before the segment directory was flushed: release its fd.
+                ff.close(dirFd);
+            }
             int oldMinSegmentLocked = minSegmentLocked;
             if (moveMinSegmentLock(newSegmentId)) {
                 notifySegmentClosure(oldLastSegmentTxn, oldMinSegmentLocked);
@@ -204,6 +232,7 @@ public class ViewWalWriter extends WalWriterBase {
     }
 
     private void syncIfRequired() {
+        // Local view commits keep the configured grade; the object store does not hold them.
         final int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             events.sync();

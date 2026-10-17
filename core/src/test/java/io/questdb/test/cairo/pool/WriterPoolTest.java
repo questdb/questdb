@@ -1564,6 +1564,46 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriterOpenErrorReleasesEntry() throws Exception {
+        final TestFilesFacade ff = new TestFilesFacade() {
+            boolean isFailed;
+
+            @Override
+            public long openRWNoCache(LPSZ name, int opts) {
+                if (!isFailed && Utf8s.endsWithAscii(name, zTableToken.getDirName() + ".lock")) {
+                    isFailed = true;
+                    throw new Error("writer construction failure");
+                }
+                return super.openRWNoCache(name, opts);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return isFailed;
+            }
+        };
+        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+        assertWithPool(pool -> {
+            try (TableWriter ignored = pool.get(zTableToken, "testing")) {
+                Assert.fail("writer construction must fail");
+            } catch (Error e) {
+                Assert.assertEquals("writer construction failure", e.getMessage());
+            }
+            Assert.assertEquals(0, pool.getBusyCount());
+            try (TableWriter ignored = pool.get(zTableToken, "testing")) {
+                Assert.assertEquals(1, pool.getBusyCount());
+            }
+            Assert.assertEquals(0, pool.getBusyCount());
+        }, configuration);
+        Assert.assertTrue(ff.wasCalled());
+    }
+
+    @Test
     public void testWriterOpenFailOnce() throws Exception {
 
         final TestFilesFacade ff = new TestFilesFacade() {

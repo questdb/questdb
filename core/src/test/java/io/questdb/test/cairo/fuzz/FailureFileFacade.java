@@ -70,6 +70,14 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public boolean allocateRange(long fd, long offset, long size) {
+        if (checkForFailure()) {
+            return false;
+        }
+        return ff.allocateRange(fd, offset, size);
+    }
+
+    @Override
     public boolean allowMixedIO(CharSequence root) {
         return ff.allowMixedIO(root);
     }
@@ -198,14 +206,54 @@ public class FailureFileFacade implements FilesFacade {
         return ff.findType(findPtr);
     }
 
+    /**
+     * Forwarded like every other syscall. Without this the default implementation runs against the wrapped
+     * facade's fd but bypasses this wrapper, so on Darwin, where barrierFsync is a distinct syscall rather
+     * than a routed fdatasync, the fault injection never sees a WAL commit barrier.
+     */
+    @Override
+    public void barrierFsync(long fd) {
+        try {
+            ff.barrierFsync(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
+    }
+
+    @Override
+    public void fdatasync(long fd) {
+        try {
+            ff.fdatasync(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
+    }
+
+    @Override
+    public void syncfs(long fd) {
+        try {
+            ff.syncfs(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
+    }
+
     @Override
     public void fsync(long fd) {
-        ff.fsync(fd);
+        try {
+            ff.fsync(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
     public void fsyncAndClose(long fd) {
-        ff.fsyncAndClose(fd);
+        try {
+            ff.fsyncAndClose(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
@@ -375,7 +423,11 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public void msync(long addr, long len, boolean async) {
-        ff.msync(addr, len, async);
+        try {
+            ff.msync(addr, len, async);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
@@ -421,6 +473,14 @@ public class FailureFileFacade implements FilesFacade {
             return -1;
         }
         return ff.openRW(name, opts);
+    }
+
+    @Override
+    public long openRWExisting(LPSZ name) {
+        if (checkForFailure()) {
+            return -1;
+        }
+        return ff.openRWExisting(name);
     }
 
     @Override
@@ -645,5 +705,16 @@ public class FailureFileFacade implements FilesFacade {
             failureGenerated.incrementAndGet();
         }
         return fail;
+    }
+
+    /**
+     * The wrapped facade records a failed flush against itself, so it would not reach the engine configured with
+     * this wrapper. Raise it again through the factory against this facade.
+     */
+    private CairoException raiseAsOwnFlushFailure(CairoException e) {
+        if (!e.isDataSyncFailure()) {
+            return e;
+        }
+        return CairoException.dataSyncFailure(this, e.getErrno(), e.getDataSyncOperation(), e.getFlyweightMessage());
     }
 }

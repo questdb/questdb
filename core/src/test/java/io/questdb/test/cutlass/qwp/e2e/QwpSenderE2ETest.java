@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
@@ -103,6 +104,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         // turn this test into a wire-throughput stress test in disguise.
         sendChunk = Integer.MAX_VALUE;
         recvChunk = Integer.MAX_VALUE;
+        // For the same reason, pin NOSYNC: under the suite's ADAPTIVE mode every
+        // WAL commit flushes its column and event files before sequencing. On
+        // Windows that is a FlushFileBuffers per file per commit, which slows
+        // this ingest 25-35x (~10 s -> 340-400 s) and can stall the server long
+        // enough to trip the client's 30 s backpressure and 300 s close drain.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < 25_000_000; i++) {

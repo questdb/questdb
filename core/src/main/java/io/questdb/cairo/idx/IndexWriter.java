@@ -65,12 +65,24 @@ public interface IndexWriter extends Closeable, Mutable {
     void closeNoTruncate();
 
     /**
-     * Commits the index to disk based on the configuration's commit mode.
+     * Publishes buffered index writes and flushes them according to the owning writer's commit mode
+     * (see {@link #setCommitMode(int)}).
      */
     void commit();
 
     default void commitDense() {
         commit();
+    }
+
+    /**
+     * Passes the owning writer's commit mode to this indexer, so {@link #commit()} flushes at the grade that
+     * writer commits under: a table not yet enrolled in adaptive runs at SYNC while the instance runs
+     * ADAPTIVE. Under {@link io.questdb.cairo.CommitMode#ADAPTIVE}, {@link #commit()} publishes buffered
+     * writes but does not flush, same as {@code CommitMode.appliesColumnSync} for columns.
+     *
+     * @param commitMode the mode the owning writer commits under
+     */
+    default void setCommitMode(int commitMode) {
     }
 
     default void configureCovering(

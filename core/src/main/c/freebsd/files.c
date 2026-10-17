@@ -196,6 +196,12 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
     return ftruncate((int) fd, len) == 0;
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocateRange
+        (JNIEnv *e, jclass cl, jint fd, jlong offset, jlong size) {
+    // allocate() already reserves only the space past what the file has allocated
+    return Java_io_questdb_std_Files_allocate(e, cl, fd, size);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
     const char *from = (const char *) lpszFrom;
@@ -247,21 +253,21 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
 
 #else
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
-        (JNIEnv *e, jclass cl, jint fd, jlong len) {
-    int rc = posix_fallocate(fd, 0, len);
+// Reserves disk space for [offset, size) and extends the file to size bytes if it is shorter.
+static jboolean allocate0(jint fd, jlong offset, jlong size) {
+    int rc = posix_fallocate(fd, offset, size - offset);
     if (rc == 0) {
         return JNI_TRUE;
     }
-    if (rc == EINVAL && len > 0) {
+    if (rc == EINVAL && size > offset) {
         // Some file systems (such as ZFS) do not support posix_fallocate
         struct stat st;
         int rc = fstat((int) fd, &st);
         if (rc != 0) {
             return JNI_FALSE;
         }
-        if (st.st_size < len) {
-            rc = ftruncate(fd, len);
+        if (st.st_size < size) {
+            rc = ftruncate(fd, size);
             if (rc != 0) {
                 return JNI_FALSE;
             }
@@ -271,6 +277,19 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
 
     errno = rc; // communicate errno to caller
     return JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
+        (JNIEnv *e, jclass cl, jint fd, jlong len) {
+    return allocate0(fd, 0, len);
+}
+
+// posix_fallocate visits every extent the file already has in the requested range, so on a
+// fragmented file allocate(fd, len) costs more with each call. The caller passes the offset up to
+// which the file is already allocated, and only the new tail is reserved.
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocateRange
+        (JNIEnv *e, jclass cl, jint fd, jlong offset, jlong len) {
+    return allocate0(fd, offset, len);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy

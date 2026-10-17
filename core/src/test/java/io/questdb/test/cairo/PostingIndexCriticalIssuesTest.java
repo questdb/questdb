@@ -10213,6 +10213,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
+            completeDurableEpoch("t_pq_leak");
             // Drain any queued posting-seal purges; the leaked intermediate is
             // never queued, so this would not reclaim it.
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
@@ -10224,7 +10225,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // (2000 + 2 O3 rows in the converted partition + 10 in the next).
             assertQuery("SELECT count() FROM t_pq_leak WHERE sym = 'A'")
                     .noLeakCheck()
-                    .returnsOnce("count\n2012\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2012\n");
 
             final TableToken token = engine.getTableTokenIfExists("t_pq_leak");
             Assert.assertNotNull("table must exist", token);
@@ -10305,6 +10308,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
+            completeDurableEpoch("t_pq_inplace");
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
                 runPostingSealPurgeJob(purgeJob);
             }
@@ -10312,7 +10316,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             assertQuery("SELECT count() FROM t_pq_inplace WHERE sym = 'A'")
                     .noLeakCheck()
-                    .returnsOnce("count\n2012\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2012\n");
 
             final TableToken token = engine.getTableTokenIfExists("t_pq_inplace");
             Assert.assertNotNull("table must exist", token);
@@ -10540,13 +10546,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             Assert.assertNull("concurrent reader threw: " + bgError.get(), bgError.get());
             assertQuery("SELECT count() FROM xq WHERE sym = 'A'")
                     .noLeakCheck()
-                    .returnsOnce("count\n" + expectedA + "\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + expectedA + "\n");
 
             // The reclaim must also have kept the partition free of leaked
             // intermediates across every rewrite: exactly one value file remains.
-            // The rewrite purges are deferred and scoreboard-gated, so with the
-            // readers stopped and writers released (nothing pinned) a purge-job
-            // pass reclaims every superseded .pv.
+            // Readers and both adaptive save points must leave the superseded versions before the purge.
+            completeDurableEpoch("xq");
             engine.releaseAllWriters();
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
                 runPostingSealPurgeJob(purgeJob);
@@ -12647,6 +12654,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         closer.join();
         if (closeError.get() != null) {
             throw new AssertionError("row cursor close failed off the operating thread", closeError.get());
+        }
+    }
+
+    private static void completeDurableEpoch(String tableName) {
+        // Advancing just once leaves the older recovery generation pinned to the superseded posting files.
+        try (TableWriter writer = getWriter(tableName)) {
+            writer.completeDurableEpochAfter("test posting seal cleanup");
         }
     }
 

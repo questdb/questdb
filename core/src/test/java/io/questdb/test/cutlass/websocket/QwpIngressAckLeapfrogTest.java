@@ -26,7 +26,9 @@ package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -111,7 +113,12 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             try (CairoEngine demotableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
                 private final DurableAckRegistry laggingRegistry = new DurableAckRegistry() {
                     @Override
-                    public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+                    public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+                        return -1L;
+                    }
+
+                    @Override
+                    public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
                         // uploads never catch up: the deferral stays armed for
                         // the whole grace window
                         return -1L;
@@ -120,6 +127,15 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     @Override
                     public boolean isEnabled() {
                         return true;
+                    }
+
+                    @Override
+                    public boolean isTierSetAvailable(int tiers) {
+                        return true;
+                    }
+
+                    @Override
+                    public void onTableDropped(TableToken tableToken) {
                     }
                 };
 
@@ -475,13 +491,27 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             try (CairoEngine durableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
                 private final DurableAckRegistry uploadingRegistry = new DurableAckRegistry() {
                     @Override
-                    public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+                    public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+                        return -1L;
+                    }
+
+                    @Override
+                    public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
                         return durableWatermark.get();
                     }
 
                     @Override
                     public boolean isEnabled() {
                         return true;
+                    }
+
+                    @Override
+                    public boolean isTierSetAvailable(int tiers) {
+                        return !DurabilityTier.hasLocal(tiers);
+                    }
+
+                    @Override
+                    public void onTableDropped(TableToken tableToken) {
                     }
                 };
 
@@ -509,6 +539,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     );
                     state.of(-1, AllowAllSecurityContext.INSTANCE);
                     state.setDurableAckEnabled(true);
+                    state.setDurableAckTiers(DurabilityTier.REPLICATED);
                     getLV().set(context, state);
 
                     // Uploads still lag: the commit is acknowledged, but no

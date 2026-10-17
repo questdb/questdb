@@ -26,7 +26,9 @@ package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -618,7 +620,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     );
                     Assert.assertFalse(
                             "test setup: durable work must NOT be fully uploaded",
-                            state.isDurableWorkFullyUploaded(demotableEngine.getDurableAckRegistry())
+                            state.isDurableWorkFullyCovered(demotableEngine.getDurableAckRegistry())
                     );
                     int lookupsBeforeCompletion = registryLookups.get();
 
@@ -794,7 +796,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
      * Grace-expiry diagnostics, false alarm: {@code roleChangeCloseWithUploadGrace}
      * raises "closing with un-acked durable work, client replay may duplicate"
      * purely on grace expiry, without consulting
-     * {@code isDurableWorkFullyUploaded}. A slow-but-clean close -- uploads
+     * {@code isDurableWorkFullyCovered}. A slow-but-clean close -- uploads
      * catching up AFTER the deadline but BEFORE the next re-entry -- leaves an
      * empty replay window (the final durable ack precedes the CLOSE, locked
      * below), yet still fires the duplicate-risk alarm.
@@ -853,7 +855,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     );
                     Assert.assertTrue(
                             "test setup: durable work must be fully uploaded",
-                            state.isDurableWorkFullyUploaded(demotableEngine.getDurableAckRegistry())
+                            state.isDurableWorkFullyCovered(demotableEngine.getDurableAckRegistry())
                     );
 
                     // Phase D: a data frame re-enters through the deferral
@@ -969,7 +971,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     );
                     Assert.assertTrue(
                             "test setup: durable work must be fully uploaded",
-                            state.isDurableWorkFullyUploaded(demotableEngine.getDurableAckRegistry())
+                            state.isDurableWorkFullyCovered(demotableEngine.getDurableAckRegistry())
                     );
 
                     // Phase D: the writer is NOT quiesced -- the next data
@@ -4392,7 +4394,12 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         return new CairoEngine(new DefaultTestCairoConfiguration(root)) {
             private final DurableAckRegistry testRegistry = new DurableAckRegistry() {
                 @Override
-                public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+                public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+                    return -1L;
+                }
+
+                @Override
+                public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
                     if (registryLookups != null) {
                         registryLookups.incrementAndGet();
                     }
@@ -4402,6 +4409,15 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 @Override
                 public boolean isEnabled() {
                     return true;
+                }
+
+                @Override
+                public boolean isTierSetAvailable(int tiers) {
+                    return !DurabilityTier.hasLocal(tiers);
+                }
+
+                @Override
+                public void onTableDropped(TableToken tableToken) {
                 }
             };
 
@@ -4491,6 +4507,14 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         state.of(-1, AllowAllSecurityContext.INSTANCE);
         // durable-ack opt-in, as negotiated via X-QWP-Request-Durable-Ack
         state.setDurableAckEnabled(true);
+        // This harness's registry (newEngineWithRegistry) models only the
+        // uploaded tier (getReplicatedDurableSeqTxn), with no local tracking,
+        // so the connection must negotiate REPLICATED for
+        // collectDurableProgress to read that tier. The harness builds the
+        // state directly, bypassing the handshake in
+        // QwpIngressUpgradeProcessor, and pins the tier that negotiation of
+        // the X-QWP-Request-Durable-Ack header would resolve.
+        state.setDurableAckTiers(DurabilityTier.REPLICATED);
         getLV().set(context, state);
         return state;
     }
@@ -4509,6 +4533,14 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         state.of(-1, AllowAllSecurityContext.INSTANCE);
         // durable-ack opt-in, as negotiated via X-QWP-Request-Durable-Ack
         state.setDurableAckEnabled(true);
+        // This harness's registry (newEngineWithRegistry) models only the
+        // uploaded tier (getReplicatedDurableSeqTxn), with no local tracking,
+        // so the connection must negotiate REPLICATED for
+        // collectDurableProgress to read that tier. The harness builds the
+        // state directly, bypassing the handshake in
+        // QwpIngressUpgradeProcessor, and pins the tier that negotiation of
+        // the X-QWP-Request-Durable-Ack header would resolve.
+        state.setDurableAckTiers(DurabilityTier.REPLICATED);
         getLV().set(context, state);
         return state;
     }

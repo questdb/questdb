@@ -25,8 +25,10 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -34,6 +36,10 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
+import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
@@ -52,6 +58,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.SymbolMapDiff;
@@ -118,6 +125,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -140,12 +148,71 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void apply1RowCommits1Writer() throws Exception {
+        // 1,000,000 single-row commits. On macOS a commit's device barrier is fcntl(F_FULLFSYNC), and a
+        // million of them do not fit the 20-minute test timeout. The behaviour under test, 1-row commit
+        // application, is platform-independent and stays covered on Linux.
+        Assume.assumeFalse("1M single-row commits cannot complete under F_FULLFSYNC (see comment)", Os.isOSX());
         testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 1);
     }
 
     @Test
     public void apply1RowCommitsManyWriters() throws Exception {
+        // Skipped on macOS for the same reason as apply1RowCommits1Writer.
+        Assume.assumeFalse("1M single-row commits cannot complete under F_FULLFSYNC (see comment)", Os.isOSX());
         testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 16);
+    }
+
+    /**
+     * Adaptive coverage for the 1-row-commit apply path, at a row count that fits the 20-minute test
+     * timeout with margin. The 1M arms run under nosync because under adaptive they time out on real
+     * storage.
+     */
+    @Test
+    public void apply1RowCommitsAdaptive() throws Exception {
+        testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 20_000, 1, "adaptive");
+    }
+
+    /**
+     * Benchmark, not a behavioural test: measures the adaptive apply time of a fixed row count at several
+     * rows-per-commit values, since the durability cost is per commit. Runs only with
+     * {@code -Dquestdb.bench.batchSweep=true}; the result is in the BATCH SWEEP log lines. Run it on a
+     * real filesystem: on tmpfs fdatasync is a no-op and the numbers mean nothing.
+     */
+    @Test
+    public void adaptiveBatchSizeSweep() throws Exception {
+        // A property gate rather than @Ignore, because @Ignore also skips a test selected explicitly.
+        Assume.assumeTrue(
+                "set -Dquestdb.bench.batchSweep=true to run the batch-size sweep",
+                Boolean.getBoolean("questdb.bench.batchSweep")
+        );
+        batchSizeSweep("adaptive");
+    }
+
+    /**
+     * The {@code nosync} baseline for {@link #adaptiveBatchSizeSweep()}. It is a separate test method
+     * because the commit mode is fixed when the per-test configuration is built, so one method cannot run
+     * two modes.
+     */
+    @Test
+    public void nosyncBatchSizeSweep() throws Exception {
+        Assume.assumeTrue(
+                "set -Dquestdb.bench.batchSweep=true to run the batch-size sweep",
+                Boolean.getBoolean("questdb.bench.batchSweep")
+        );
+        batchSizeSweep("nosync");
+    }
+
+    private void batchSizeSweep(String commitMode) throws Exception {
+        final int totalRows = 100_000;
+        for (int rowsPerCommit : new int[]{1, 10, 100, 1_000}) {
+            final long start = System.nanoTime();
+            testApplyRowCommits(Micros.SECOND_MICROS, totalRows, 1, commitMode, rowsPerCommit);
+            final long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            LOG.info().$("BATCH SWEEP mode=").$(commitMode)
+                    .$(" rowsPerCommit=").$(rowsPerCommit)
+                    .$(" totalRows=").$(totalRows)
+                    .$(" elapsedMs=").$(elapsedMs).$();
+        }
     }
 
     @Test
@@ -976,6 +1043,54 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertFalse(eventCursor.hasNext());
             }
+        });
+    }
+
+    @Test
+    public void testWalWriterWritesSymbolsInFullWhenColumnVersionIsBehindTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cv_behind (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO cv_behind VALUES (0, 'a')");
+            execute("ALTER TABLE cv_behind ADD COLUMN y LONG");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("cv_behind");
+            engine.releaseInactive();
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                final long version = mem.getLong(ColumnVersionReader.OFFSET_VERSION_64);
+                Assert.assertTrue(version > 0);
+                // _txn still names `version`; a stable _cv one behind it is a state no writer can repair. The
+                // symbol-map bootstrap must neither loop on it nor fail every later INSERT.
+                mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version - 1);
+                mem.close();
+                try {
+                    // Freeze the clock: the diagnosis must not depend on a deadline arriving. The tick guard
+                    // turns a regression into a bounded failure instead of a hung test.
+                    final AtomicInteger ticks = new AtomicInteger();
+                    testMicrosClock = () -> {
+                        if (ticks.incrementAndGet() > 100_000) {
+                            throw new AssertionError("WalWriter spun on a _cv that is behind _txn");
+                        }
+                        return 1_000_000L;
+                    };
+                    try (WalWriter walWriter = engine.getWalWriter(token)) {
+                        // The table's symbol keys are out of reach, so the writer does not reuse them: it writes
+                        // every symbol value into the segment, and WAL apply maps them.
+                        Assert.assertEquals(0, walWriter.getSymbolCountWatermark(1));
+                        final TableWriter.Row row = walWriter.newRow(1);
+                        row.putSym(1, "a");
+                        row.append();
+                        walWriter.commit();
+                    }
+                } finally {
+                    testMicrosClock = defaultMicrosecondClock;
+                    mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                    mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version);
+                }
+            }
+            drainWalQueue();
+            assertQuery("select s, count() from cv_behind").expectSize().returns("s\tcount\na\t2\n");
         });
     }
 
@@ -2254,7 +2369,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 path.of(root).concat("v1_drop");
                 ff.mkdir(path.$(), configuration.getMkDirMode());
 
-                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
+                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> new long[]{0, -1});
                 v1.create(path.of(root).concat("v1_drop"), 65_897);
                 v1.open(path);
 
@@ -2352,6 +2467,13 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertSegmentLocked(tableName, 1, 1);
 
                 drainWalQueue();
+                if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                    // The WAL purge keeps the WAL above the older of the two save points, which recovery falls back
+                    // to; one more save point at the applied cut moves the older one past segment 0.
+                    try (TableWriter writer = getWriter(tableToken)) {
+                        writer.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                    }
+                }
                 drainPurgeJob();
 
                 // Segment 0 was purged since writer moved to segment 1
@@ -5555,6 +5677,102 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * {@code ALTER TABLE ... REBASE WAL} on a nosync instance, from a source that still has the save point an
+     * adaptive run left (nothing opened it since the mode changed). The clone is a new table with no lazy state:
+     * it must not carry the source's save point, which binds metadata the clone no longer has, and a startup
+     * then leaves it as it is.
+     */
+    @Test
+    public void testRebaseWalCloneDoesNotInheritTheSourceSavePoint() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+                execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken oldToken = engine.verifyTableName("t");
+                engine.releaseInactive();
+
+                // The operator turns adaptive off. Nothing opens the table in between, so it keeps its save point.
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(oldToken);
+                    Assert.assertTrue("precondition: the source still has its save point",
+                            DurableEpochManifest.exists(ff, path, path.size()));
+                }
+
+                execute("alter table t suspend wal");
+                execute("alter table t rebase wal");
+                drainWalQueue();
+
+                final TableToken newToken = engine.verifyTableName("t");
+                Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(newToken);
+                    Assert.assertFalse("a nosync clone has no save point", DurableEpochManifest.exists(ff, path, path.size()));
+                }
+
+                // A startup leaves the clone as it is.
+                new RecoveryCoordinator(engine).recover();
+                assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * REBASE clones {@code _meta} and then resets its metadataVersion in place. That field is checksummed
+     * into the meta-format minor-version word, so rewriting it without re-stamping the checksum switches
+     * off the version gate, and every gated tail field then reads as absent on the clone, for example TTL
+     * as 0. Nothing fails: the rebased table silently loses properties.
+     *
+     * <p>The ADD COLUMN lifts metadataVersion off 0, so that resetting it to 0 changes the value the
+     * checksum covers; without it the reset is a no-op and the test proves nothing.
+     */
+    @Test
+    public void testRebaseWalPreservesVersionGatedMetadata() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table t (ts timestamp, x int) timestamp(ts) partition by day ttl 3 days wal");
+                execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                // Lift metadataVersion off zero, so the clone's reset changes it.
+                execute("alter table t add column y int");
+                drainWalQueue();
+
+                final TableToken oldToken = engine.verifyTableName("t");
+                engine.releaseInactive();
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, oldToken)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("precondition: TTL is set before the rebase", 72, md.getTtlHoursOrMonths());
+                    Assert.assertTrue("precondition: metadataVersion must be off 0, or the reset changes nothing",
+                            md.getMetadataVersion() > 0);
+                }
+
+                execute("alter table t suspend wal");
+                execute("alter table t rebase wal");
+                drainWalQueue();
+
+                final TableToken newToken = engine.verifyTableName("t");
+                Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, newToken)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("REBASE must not silently drop TTL", 72, md.getTtlHoursOrMonths());
+                }
+                assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
     @Test
     public void testRebaseWalComplexTablePreservesDataAndIndexes() throws Exception {
         // REBASE clones the applied table via hard-links. This exercises the clone over a table with
@@ -5999,6 +6217,94 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
             drainWalQueue();
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalSeedsAppliedAloneThenEachInsertApplied() throws Exception {
+        // An idle REBASE: the apply job reaches the two empty seed transactions before any new row and applies
+        // them on their own. That must leave the table as it was, and every later insert, applied in a pass of
+        // its own, must become visible.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            // in order in the same day, out of order before the table's min (a new partition), a later day
+            final String[] inserts = {"2022-02-24T01:00:00.000000Z", "2022-02-23T23:00:00.000000Z", "2022-02-26T01:00:00.000000Z"};
+            for (boolean empty : new boolean[]{true, false}) {
+                final String name = empty ? "empty_table" : "table_with_rows";
+                execute("create table " + name + " (x long, ts timestamp) timestamp(ts) partition by day wal");
+                String min = null;
+                String max = null;
+                int rowCount = 0;
+                if (!empty) {
+                    min = max = "2022-02-24T00:00:00.000000Z";
+                    rowCount = 1;
+                    execute("insert into " + name + " values (0, '" + min + "')");
+                }
+                drainWalQueue();
+                execute("alter table " + name + " suspend wal");
+                execute("alter table " + name + " rebase wal");
+                drainWalQueueBounded(name + " seeds");
+                assertRebasedTableState(name, name + " seeds", 2, min, max, rowCount);
+
+                for (int i = 0; i < inserts.length; i++) {
+                    final String ts = inserts[i];
+                    execute("insert into " + name + " values (" + (i + 1) + ", '" + ts + "')");
+                    final String label = name + " insert " + ts;
+                    drainWalQueueBounded(label);
+                    min = min == null || ts.compareTo(min) < 0 ? ts : min;
+                    max = max == null || ts.compareTo(max) > 0 ? ts : max;
+                    rowCount++;
+                    assertRebasedTableState(name, label, 3 + i, min, max, rowCount);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRebaseWalSeedsAppliedWithTheFirstInsertKeepTheMinTimestamp() throws Exception {
+        // The two empty seed transactions REBASE WAL writes are applied in one block with the first insert when
+        // no apply pass runs in between. A transaction with no rows must not move the table's min or max
+        // timestamp; the seeds record min and max timestamp 0.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    // row before the REBASE (null: an empty table), first insert after it, expected min, expected max
+                    {"2022-02-24T00:00:00.000000Z", "2022-02-24T01:00:00.000000Z", "2022-02-24T00:00:00.000000Z", "2022-02-24T01:00:00.000000Z"},
+                    {"2022-02-24T00:00:00.000000Z", "2022-02-23T23:00:00.000000Z", "2022-02-23T23:00:00.000000Z", "2022-02-24T00:00:00.000000Z"},
+                    {"2022-02-24T00:00:00.000000Z", "2022-02-26T01:00:00.000000Z", "2022-02-24T00:00:00.000000Z", "2022-02-26T01:00:00.000000Z"},
+                    {null, "2022-02-24T01:00:00.000000Z", "2022-02-24T01:00:00.000000Z", "2022-02-24T01:00:00.000000Z"},
+            };
+            int n = 0;
+            for (String[] c : cases) {
+                final String name = "t" + n++;
+                execute("create table " + name + " (x long, ts timestamp) timestamp(ts) partition by day wal");
+                final int rowCount = c[0] != null ? 2 : 1;
+                if (c[0] != null) {
+                    execute("insert into " + name + " values (1, '" + c[0] + "')");
+                }
+                drainWalQueue();
+                execute("alter table " + name + " suspend wal");
+                execute("alter table " + name + " rebase wal");
+                // No apply pass between the REBASE and the insert.
+                execute("insert into " + name + " values (2, '" + c[1] + "')");
+                drainWalQueue();
+                final String label = name + " insert=" + c[1];
+                Assert.assertFalse(label, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(name)));
+                assertQuery("select table_min_timestamp, table_max_timestamp from tables() where table_name = '" + name + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("table_min_timestamp\ttable_max_timestamp\n" + c[2] + '\t' + c[3] + '\n');
+                assertQuery("select min(ts), max(ts), count() from " + name)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("min\tmax\tcount\n" + c[2] + '\t' + c[3] + '\t' + rowCount + '\n');
+                assertQuery("select count() from table_partitions('" + name + "') where minTimestamp < '2022'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
+            }
         });
     }
 
@@ -6556,6 +6862,19 @@ public class WalWriterTest extends AbstractCairoTest {
                 .wal();
     }
 
+    // drainWalQueue() that fails instead of spinning for ever when the apply job keeps reporting work.
+    private static void drainWalQueueBounded(String label) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+            final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            do {
+                int runs = 0;
+                while (walApplyJob.run()) {
+                    Assert.assertTrue(label + ": the WAL apply job keeps reporting work", ++runs < 100);
+                }
+            } while (checkWalTransactionsJob.run());
+        }
+    }
+
     private static int rowsCrossingAppendPages(long requestedPageSize) {
         // PropServerConfiguration wraps CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE
         // in Files.ceilPageSize(), and Files.PAGE_SIZE is the OS allocation
@@ -6740,6 +7059,40 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
+    // Applied up to the sequencer, not suspended, the rows and the table's min and max as expected (null min and
+    // max: no rows), and no partition without rows.
+    private void assertRebasedTableState(String name, String label, long txn, String min, String max, int rowCount) throws Exception {
+        Assert.assertFalse(label, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(name)));
+        assertQuery("select writerTxn, sequencerTxn from wal_tables() where name = '" + name + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("writerTxn\tsequencerTxn\n" + txn + '\t' + txn + '\n');
+        final String minText = min != null ? min : "";
+        final String maxText = max != null ? max : "";
+        if (min != null) {
+            assertQuery("select table_min_timestamp, table_max_timestamp from tables() where table_name = '" + name + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_min_timestamp\ttable_max_timestamp\n" + min + '\t' + max + '\n');
+        } else {
+            // No rows: the values of a table that never had any.
+            try (TableReader reader = engine.getReader(engine.verifyTableName(name))) {
+                Assert.assertEquals(label, Long.MAX_VALUE, reader.getMinTimestamp());
+                Assert.assertEquals(label, Long.MIN_VALUE, reader.getMaxTimestamp());
+            }
+        }
+        assertQuery("select min(ts), max(ts), count() from " + name)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("min\tmax\tcount\n" + minText + '\t' + maxText + '\t' + rowCount + '\n');
+        assertQuery("select count() from table_partitions('" + name + "') where numRows = 0")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n0\n");
+    }
+
     private void assertWalFileExist(Path path, TableToken tableName, String walName, int segment, String fileName) {
         final int pathLen = path.size();
         try {
@@ -6829,8 +7182,42 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount) throws Exception {
+        // The volume arms run under nosync; see the overload's javadoc.
+        testApply1RowCommitManyWriters(tsStep, totalRows, walWriterCount, "nosync");
+    }
+
+    /**
+     * Applies {@code totalRows} single-row commits across {@code walWriterCount} writers.
+     * <p>
+     * The caller passes the commit mode instead of inheriting the suite default: each commit under a
+     * syncing mode costs a device barrier, so a million commits under adaptive or sync exceed the
+     * 20-minute test timeout. The behaviour under test, 1-row commit application, does not depend on the
+     * mode; {@link #apply1RowCommitsAdaptive()} covers the adaptive path at a row count that fits.
+     */
+    private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount, String commitMode) throws Exception {
+        testApplyRowCommits(tsStep, totalRows, walWriterCount, commitMode, 1);
+    }
+
+    /**
+     * As above, but committing every {@code rowsPerCommit} rows; {@link #adaptiveBatchSizeSweep()} varies it.
+     */
+    private void testApplyRowCommits(long tsStep, int totalRows, int walWriterCount, String commitMode, int rowsPerCommit) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
+            // setProperty takes effect only while the per-test configuration is being built, so a second
+            // call of this helper in one test method silently keeps the first call's mode. The assertion
+            // enforces one commit mode per test method.
+            final int expectedMode = CommitMode.fromString(commitMode);
+            Assert.assertEquals(
+                    "requested commit mode '" + commitMode + "' did not reach the engine (got "
+                            + configuration.getCommitMode() + "). setProperty is honoured only while the"
+                            + " per-test configuration is being built -- use ONE mode per @Test method.",
+                    expectedMode,
+                    configuration.getCommitMode()
+            );
+            // Dropped first because adaptiveBatchSizeSweep calls this helper once per batch size.
+            execute("drop table if exists sm");
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
 
@@ -6864,7 +7251,9 @@ public class WalWriterTest extends AbstractCairoTest {
                     stringSink.put(i % symbolCount);
                     row.putSym(5, stringSink);
                     row.append();
-                    writer.commit();
+                    if (rowsPerCommit <= 1 || (i + 1) % rowsPerCommit == 0) {
+                        writer.commit();
+                    }
 
                     ts += tsStep;
                 }

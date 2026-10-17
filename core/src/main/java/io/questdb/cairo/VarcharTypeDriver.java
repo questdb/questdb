@@ -154,13 +154,20 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 if (value.isAscii()) {
                     flags |= HEADER_FLAG_ASCII;
                 }
-                auxMem.putInt((size << HEADER_FLAGS_WIDTH) | flags);
-                auxMem.putVarchar(value, 0, VARCHAR_INLINED_PREFIX_BYTES);
+                // Write the data vector before the aux entry that references it: the
+                // 48-bit data offset (written last, below) is the pointer, the data its
+                // target. StringTypeDriver.appendValue and the data-before-aux msync in
+                // TableWriter.syncColumns0 use the same order. Program order becomes
+                // durability order only where an msync enforces it (the sync and async
+                // commit modes). putVarchar returns the pre-write append offset, so the
+                // stored offset is unchanged.
                 offset = dataMem.putVarchar(value, 0, size);
                 if (offset >= VARCHAR_MAX_COLUMN_SIZE) {
                     throw CairoException.critical(0).put("varchar data column is too large [offset=")
                             .put(offset).put(", max=").put(VARCHAR_MAX_COLUMN_SIZE).put(']');
                 }
+                auxMem.putInt((size << HEADER_FLAGS_WIDTH) | flags);
+                auxMem.putVarchar(value, 0, VARCHAR_INLINED_PREFIX_BYTES);
             }
         } else {
             auxMem.putInt(VARCHAR_HEADER_FLAG_NULL);
@@ -569,22 +576,44 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row) {
-        long auxFileOffset = VARCHAR_AUX_WIDTH_BYTES * row;
         if (row < 0) {
             return 0;
         }
+        final long dataEnd = dataVectorEndAtFromFd(ff, auxFd, row);
+        // Torn-write guard: a split entry's data offset must be >= the previous row's data end
+        // (data offsets are monotonic). A torn/un-flushed aux entry leaves offset 0 while the
+        // previous row's data end is non-zero. Computed from a single direct read of the previous
+        // entry (no recursion).
+        final long auxFileOffset = VARCHAR_AUX_WIDTH_BYTES * row;
         final int raw = readInt(ff, auxFd, auxFileOffset);
+        if (row > 0 && !hasNullOrInlinedFlag(raw)) {
+            final long prevDataVectorSize = dataVectorEndAtFromFd(ff, auxFd, row - 1);
+            final long offsetLo = readInt(ff, auxFd, auxFileOffset + 8L);
+            final long offsetHi = readInt(ff, auxFd, auxFileOffset + 12L);
+            final long dataOffset = Numbers.encodeLowHighInts((int) offsetLo, (int) offsetHi) >>> 16;
+            if (dataOffset < prevDataVectorSize) {
+                throw CairoException.critical(0)
+                        .put("Invalid data offset read from varchar aux file, possible torn write [auxFd=").put(auxFd)
+                        .put(", row=").put(row).put(", dataOffset=").put(dataOffset)
+                        .put(", prevDataVectorSize=").put(prevDataVectorSize)
+                        .put(", fileSize=").put(ff.length(auxFd)).put(']');
+            }
+        }
+        return dataEnd;
+    }
 
+    // Reads the data-vector end (offset+size, or offset for null/inlined) of one aux entry from the fd.
+    // Non-recursive; one entry only.
+    private static long dataVectorEndAtFromFd(FilesFacade ff, long auxFd, long row) {
+        final long auxFileOffset = VARCHAR_AUX_WIDTH_BYTES * row;
+        final int raw = readInt(ff, auxFd, auxFileOffset);
         final int offsetLo = readInt(ff, auxFd, auxFileOffset + 8L);
         final int offsetHi = readInt(ff, auxFd, auxFileOffset + 12L);
         final long dataOffset = Numbers.encodeLowHighInts(offsetLo, offsetHi) >>> 16;
-
         if (hasNullOrInlinedFlag(raw)) {
             return dataOffset;
         }
-        // size of the string at this offset
-        final int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
-        return dataOffset + size;
+        return dataOffset + ((raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK);
     }
 
     @Override
@@ -707,12 +736,41 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
+            // Crash-consistency guard. Reopen places the append cursor from the data
+            // offset in bytes 8-15 of the last aux entry, written after the row's data. A
+            // torn entry can leave that offset zeroed under a valid-looking header, and
+            // the next append would overwrite committed rows. Data offsets are monotonic,
+            // so a last row that starts before the previous row's data end proves the aux
+            // vector is damaged, and the open fails. This O(1) check catches one torn
+            // entry, not a whole unflushed aux page (zeroed entries compare 0 < 0), which
+            // nosync may lose on power loss by design.
+            // Read entry[pos-2]'s data end first, while its page is mapped: the paged aux
+            // memory (MemoryPMARImpl) would otherwise touch an unmapped page whenever
+            // (pos-1)*WIDTH lands on a page boundary.
+            long prevDataVectorSize = -1;
+            if (pos > 1) {
+                auxMem.jumpTo(getAuxVectorOffset(pos - 2));
+                prevDataVectorSize = getDataVectorSize(auxMem.getAppendAddress());
+            }
+
             // first we need to calculate already used space. both data and aux vectors.
             long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
             auxMem.jumpTo(auxVectorOffset);
             long auxEntryPtr = auxMem.getAppendAddress();
 
             long dataVectorSize = getDataVectorSize(auxEntryPtr);
+
+            if (prevDataVectorSize != -1) {
+                long lastDataOffset = getDataOffset(auxEntryPtr);
+                if (lastDataOffset < prevDataVectorSize) {
+                    throw CairoException.critical(0)
+                            .put("varchar aux vector is damaged, possible torn write on the last entry [pos=").put(pos)
+                            .put(", lastDataOffset=").put(lastDataOffset)
+                            .put(", prevDataVectorSize=").put(prevDataVectorSize)
+                            .put(']');
+                }
+            }
+
             long auxVectorSize = getAuxVectorSize(pos);
             long totalDataSizeBytes = dataVectorSize + auxVectorSize;
 
