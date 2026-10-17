@@ -16,7 +16,9 @@ to fix, or a finding from a review.
    An item whose symptoms have more than one root cause is split, one item
    per cause.
 2. Skip it if it is false, already done, or its impact is negligible. Ask the
-   user when a feature's behavior is ambiguous.
+   user when a feature's behavior is ambiguous, or when sound fixes differ in
+   what users notice, before planning either. The user's decisions, given up
+   front or as answers, bind every item and its check.
 3. Design the best root-cause change - argued correct for every input it
    reaches, alternatives weighed; no regressions, slowdowns, races or
    reinvented code - and the test plan that proves it, dimension by
@@ -63,6 +65,9 @@ for them.
 
 - `--include-adjacent`: fix Adjacent review findings instead of filing them;
   file one that ends blocked.
+- `--decisions=<file>`: design decisions every item follows, such as "make
+  outer-to-inner column substitution type-safe". The answers to the
+  analysis's questions join them.
 - `--no-issues`: list Adjacent items instead of filing them.
 - `--review-level=N`: `review-pr` level of each backstop review; default `3`,
   the level of the review before approval.
@@ -116,6 +121,8 @@ follow it with the helper's arguments.
    continue. Commits never include them. If this session doesn't think at
    max (`$PI_REASONING_LEVEL`), say so and ask too.
 3. Create a state directory outside the repo: `mktemp -d /tmp/fix-pr.XXXXXX`.
+   Write the user's design decisions, from the request and `--decisions`, to
+   `<state>/decisions.md`, or create it empty.
 4. Parse the items. Each entry of a list of features or bugs is one item. From
    a `review-pr` report, queue Critical and Moderate findings and Adjacent
    ones this PR introduced (their Origin, or compare with the PR base), list
@@ -137,8 +144,8 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
    - `SKIP`: record the reason and go to the next item.
    - `BLOCK`: no change within the item can be argued correct. Mark the item
      blocked with the REASON and go to the next item.
-   - `ASK`: show the QUESTIONS, wait for the user's answers, and run the
-     analysis again with them.
+   - `ASK`: show the QUESTIONS, wait for the user's answers, add them to
+     `<state>/decisions.md`, and run the analysis again with them.
    - `SPLIT`: replace the item with its ITEMS lines, at the front of the
      queue in their order, with the IDs <ID>a, <ID>b, ...; each names
      `<state>/<ID>/analysis.md` as context.
@@ -331,6 +338,8 @@ reach it, so that a timeout loses nothing.
 Item <ID> (<feature | bug | review finding | bug found in this run>): <verbatim item>
 PR base: <sha>. Items of this run so far: <one line per item: ID, commits,
 summary; or none>.
+The user's design decisions are in <state>/decisions.md; follow them. A hint
+in the item that came from a helper, not the user, is not a decision.
 [Revision only: your previous proposal is in <state>/<ID>/analysis.md, with
 test-plan amendments in <state>/<ID>/amendments.md if that file exists. Its
 design was sent back: <REDESIGN lines, the build's STOPPED reason, or the bug
@@ -339,7 +348,7 @@ breaks, correct it, and derive the design again from there; a change that
 only answers the example is not a revision. Or show with file:line why an
 objection is wrong. Fold these test-plan gaps and the amendments into the
 new plan where they still apply: <ADD lines, or none>.]
-[Answers from the user: <answers>]
+[Answers from the user: <answers>. Continue from your analysis.md.]
 [Continuation only: an earlier helper ran out of time on this item. Continue
 from what it wrote in <state>/<ID>/; don't repeat its probes.]
 
@@ -353,12 +362,17 @@ from what it wrote in <state>/<ID>/; don't repeat its probes.]
 2. Problem or goal: one plain line.
 3. Impact on users: one line - who, how badly, how often.
 4. Decide: BUILD a feature, FIX a bug or finding, SKIP (false, already done,
-   or negligible impact), ASK when the feature needs a decision, BLOCK when
-   no change within the item can be argued correct (step 6), or SPLIT when
-   the item has more than one root cause (step 5). A finding
-   that a test is missing or ineffective for behavior this PR adds or changes
-   is a FIX. A bug found in this run that the PR base already has is a SKIP;
-   report it on OTHER as PRE-EXISTING (step 9).
+   or negligible impact), ASK when a decision belongs to the user and
+   decisions.md doesn't settle it, BLOCK when no change within the item can
+   be argued correct (step 6), or SPLIT when the item has more than one root
+   cause (step 5). The user decides a feature's behavior, and any choice
+   between sound changes that users would notice differently, in behavior or
+   speed, or that differ in how much work beyond the item they take. Ask as
+   soon as you meet such a choice, before writing a test plan, with each
+   option's cost and the one you'd pick. A finding that a test is missing or
+   ineffective for behavior this PR adds or changes is a FIX. A bug found in
+   this run that the PR base already has is a SKIP; report it on OTHER as
+   PRE-EXISTING (step 9).
 5. For FIX: find the root cause - the first place the code goes wrong, not
    where the symptom shows - and the assumption that fails there. Use
    `git log` and `git blame` to learn why the code is written that way; the
@@ -397,7 +411,10 @@ from what it wrote in <state>/<ID>/; don't repeat its probes.]
    type, it takes the safe side. Don't pick between variants by trying them:
    probes show how the current code behaves, and the design follows from the
    argument. If no change within the item can be argued correct, decide
-   BLOCK and say what a sound fix would take.
+   BLOCK and say what a sound fix would take. Before you reply, attack the
+   design as the check will: an input it newly lets through, a path it
+   skips, a test it would fail, a query it rejects, a decision it breaks.
+   Fix what you find; each flaw the check finds instead costs a revision.
 7. For BUILD and FIX: write the test plan. Go through the 14 dimensions of
    CLAUDE.md "What exhaustive means". For each that applies, list the tests:
    name, input -> expected result, and where the expected result comes from
@@ -453,8 +470,9 @@ didn't write them. Don't edit anything.
 Read <state>/<ID>/analysis.md: the item, the proposed change and the
 argument that it is correct, the rejected alternatives, what else uses the
 code it changes, and the test plan. Items of this run so far: <one line per
-item: ID, commits, summary; or none>. Then read the code and try to break
-the proposal:
+item: ID, commits, summary; or none>. The user's design decisions are in
+<state>/decisions.md: don't object to a choice they make. Then read the
+code and try to break the proposal:
 - Does the argument hold? Find an input the change newly lets through, or
   a path it adds or skips, that breaks a guarantee the result depends on,
   whether or not the argument names it.
@@ -492,8 +510,8 @@ or its tests. Label each problem:
   breaks what works today, leaves the item's problem reachable, patches the
   symptom, adds avoidable hot-path cost or a race, reimplements existing
   code, changes more than the item needs, rejects a query PostgreSQL or
-  DuckDB answer instead of returning its rows, or is clearly worse than an
-  alternative. Show how.
+  DuckDB answer instead of returning its rows, breaks a user's decision in
+  decisions.md, or is clearly worse than an alternative. Show how.
 - ADD: a gap in the test plan that the planned change would pass: a missing
   test, a dimension skipped for a wrong reason, or an expected result
   without an independent source. Name the dimension, the case, input ->
