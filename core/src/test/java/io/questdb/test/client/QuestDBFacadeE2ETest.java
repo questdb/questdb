@@ -122,7 +122,8 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                         s.table("rt").longColumn("i", 1).at(1_000_000L, java.time.temporal.ChronoUnit.MICROS);
                         s.table("rt").longColumn("i", 2).at(2L * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
                         s.table("rt").longColumn("i", 3).at(3L * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
-                        // close() flushes -- assertion below proves it ran.
+                        // close() returns the slot; the pool's housekeeper ships
+                        // the rows within auto_flush_interval (100ms by default).
                     }
                     // ws ingest is async: close() returns before the server
                     // commits, so wait for the WAL txn to be applied (not just
@@ -670,7 +671,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
      * Sender with its own buffer, asserted directly with {@code assertNotSame}.
      * <p>
      * Asserts both pools hand out two leases at once without blocking, the
-     * close-on-return flush lands every row, and each query sees the exact
+     * final flush lands every row, and each query sees the exact
      * rows and sum for its own table (no cross-talk between the two Senders or
      * the two Query handles).
      */
@@ -690,7 +691,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 // auto-flush would fire on the next at() after any >=100ms stall
                 // (GC/JIT on a loaded CI agent), injecting a third txn per table.
                 // That would both break the awaitTxn(name, 2) barrier below (it
-                // returns at writerTxn >= 2, before the close-flush txn applies,
+                // returns at writerTxn >= 2, before the final-flush txn applies,
                 // so the reader would see a partial table) and degrade the
                 // choreographed shared mid-flush (a premature auto-flush drains
                 // the buffer it is meant to transmit). WS rejects
@@ -698,7 +699,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 // magnitude beyond the test's runtime -- stands in for it. With
                 // that, rows=1000 (> both row counts) and bytes=0, exactly two
                 // non-empty flushes per table are guaranteed: the shared
-                // mid-flush and the close flush.
+                // mid-flush and the final flush.
                 String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";auto_flush_interval=3600000;";
                 try (QuestDB db = QuestDB.builder()
                         .fromConfig(config)
@@ -738,11 +739,15 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                                 b.flush();
                             }
                         }
-                        // close() on each flushes whatever remains.
+                        // Ship the remainder explicitly: a pooled close() only
+                        // returns the slot, and the housekeeper settles idle
+                        // slots on the 1h auto_flush_interval cadence.
+                        a.flush();
+                        b.flush();
                     }
                     // ws ingest is async. With interval auto-flush disabled in the
                     // config, each table sees exactly two non-empty flushes (the
-                    // shared mid-flush + its close flush); wait for both.
+                    // shared mid-flush + the final flush); wait for both.
                     server.awaitTxn("alpha", 2);
                     server.awaitTxn("beta", 2);
 
