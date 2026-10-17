@@ -40,8 +40,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * fdatasync of every writer whose pending commit is older than the group window, so an idle writer's last commit
  * becomes durable within the window. A writer adds itself when it enters the pending state and removes itself once
  * its backlog is flushed, or on close; one added or removed during a sweep is handled by the next sweep.
- * {@link WalWriter#forceDurableIfPending(long, long)} synchronizes on the writer, so at most one of the flusher and
- * a committing thread flushes it.
+ * {@link WalWriter#forceDurableIfPending(long)} synchronizes on the writer, so at most one of the flusher and a
+ * committing thread flushes it.
  */
 public class WalGroupCommitFlushQueue {
     private static final Log LOG = LogFactory.getLog(WalGroupCommitFlushQueue.class);
@@ -69,8 +69,9 @@ public class WalGroupCommitFlushQueue {
 
     /**
      * Forces the deferred fdatasync of every registered writer whose oldest pending commit is at least
-     * {@code windowUs} old at {@code nowMicros}. A writer whose backlog the flush drains, or that has no pending
-     * work, removes itself through {@link #unregister(WalWriter)}.
+     * {@code windowUs} old. Each writer reads the clock under its own monitor, which orders the read after its
+     * batch start. A writer whose backlog the flush drains, or that has no pending work, removes itself through
+     * {@link #unregister(WalWriter)}.
      * <p>
      * A failure other than a data sync failure is logged and drops the writer from the set, so one distressed
      * writer cannot abort the sweep. A data sync failure is rethrown, because the writer has already stopped the
@@ -78,14 +79,14 @@ public class WalGroupCommitFlushQueue {
      *
      * @return {@code true} if at least one writer was flushed
      */
-    public boolean sweep(long nowMicros, long windowUs) {
+    public boolean sweep(long windowUs) {
         if (pending.isEmpty()) {
             return false;
         }
         boolean did = false;
         for (WalWriter w : pending) {
             try {
-                if (w.forceDurableIfPending(nowMicros, windowUs)) {
+                if (w.forceDurableIfPending(windowUs)) {
                     did = true;
                 }
             } catch (Throwable th) {

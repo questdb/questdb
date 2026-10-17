@@ -861,7 +861,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         boolean busy = false;
         final long groupWindowUs = configuration.getAdaptiveCommitGroupWindowUs();
         if (groupWindowUs > 0) {
-            busy = engine.getWalGroupCommitFlushQueue().sweep(t, groupWindowUs);
+            busy = engine.getWalGroupCommitFlushQueue().sweep(groupWindowUs);
         }
         if (last + checkInterval < t) {
             last = t;

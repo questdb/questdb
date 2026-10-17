@@ -2588,7 +2588,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * an idle tail within W.
      * <p>
      * Synchronized on the writer monitor, so the pending fields and the flush decision agree with
-     * {@link #forceDurableIfPending(long, long)} and {@link #flushPendingDurable()}.
+     * {@link #forceDurableIfPending(long)} and {@link #flushPendingDurable()}.
      */
     private synchronized void recordPendingDurable(long seqTxn) {
         if (pendingDurableSeqTxn < 0) {
@@ -2686,18 +2686,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Background flusher entry point: if this writer's oldest pending commit is at least {@code windowUs} old
-     * at {@code nowMicros}, runs the batched flush, so the commit becomes durable within W after commits stop.
-     * Synchronized on the writer monitor, as is {@link #flushPendingDurable()}, so it never flushes twice.
+     * Background flusher entry point: if this writer's oldest pending commit is at least {@code windowUs} old,
+     * runs the batched flush, so the commit becomes durable within W after commits stop. Synchronized on the
+     * writer monitor, as is {@link #flushPendingDurable()}, so it never flushes twice.
      *
      * @return {@code true} if a flush was performed
      */
-    synchronized boolean forceDurableIfPending(long nowMicros, long windowUs) {
-        // Both nowMicros and pendingSinceMicros must be in microseconds; a millisecond clock would make every
-        // batch look 1000 times younger and break the window bound.
+    synchronized boolean forceDurableIfPending(long windowUs) {
         if (pendingDurableSeqTxn < 0) {
             return false;
         }
+        // Read under the monitor, which orders the read after recordPendingDurable's batch start, so a negative
+        // age means the clock stepped back. A read taken by the caller before the sweep could predate the batch.
+        final long nowMicros = configuration.getMicrosecondClock().getTicks();
         final long elapsedMicros = nowMicros - pendingSinceMicros;
         if (elapsedMicros >= 0 && elapsedMicros < windowUs) {
             return false; // still within the window: leave it for a later sweep or the next commit

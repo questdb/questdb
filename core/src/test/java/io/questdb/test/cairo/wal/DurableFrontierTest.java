@@ -35,10 +35,12 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.test.cairo.crash.AbstractCrashConsistencyTest;
 import io.questdb.test.cairo.wal.GroupCommitTestUtils.ExposedFlusher;
@@ -132,6 +134,47 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
         } finally {
             engine.resetDurabilityFailure();
         }
+    }
+
+    /**
+     * The background flusher reads its clock before it sweeps, so a batch can start between the two. The sweep
+     * must judge that batch's age by the writer's own clock read, not take the earlier timestamp for a backwards
+     * clock step and flush the batch long before the group window.
+     */
+    @Test
+    public void testBackgroundFlusherDoesNotFlushABatchStartedAfterItsClockRead() throws Exception {
+        setGroupCommit(WINDOW_US, 16);
+        assertMemoryLeak(() -> {
+            final SeqTxnTracker tracker = createTable("x");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("x"))) {
+                final AtomicBoolean armed = new AtomicBoolean();
+                final AtomicBoolean committed = new AtomicBoolean();
+                // The flusher's clock read, then a commit one microsecond later, before the flusher sweeps.
+                final Clock clock = () -> {
+                    final long t = configuration.getMicrosecondClock().getTicks();
+                    if (armed.get() && committed.compareAndSet(false, true)) {
+                        setCurrentMicros(t + 1);
+                        commitRow(w, 0, 1);
+                    }
+                    return t;
+                };
+                try (StaleClockFlusher flusher = new StaleClockFlusher(clock)) {
+                    armed.set(true);
+                    flusher.flushNow();
+                    Assert.assertTrue("the commit must land between the clock read and the sweep", committed.get());
+                    final long pending = tracker.getSeqTxn();
+                    Assert.assertTrue(
+                            "a commit 1 us old must wait for the " + WINDOW_US
+                                    + " us group window, the durable frontier is " + tracker.getLocalDurableSeqTxn(),
+                            tracker.getLocalDurableSeqTxn() < pending
+                    );
+                    setCurrentMicros(T0 + WINDOW_US + 50_000);
+                    flusher.flushNow();
+                    Assert.assertEquals("the flusher must flush the batch once the window ends",
+                            pending, tracker.getLocalDurableSeqTxn());
+                }
+            }
+        });
     }
 
     /**
@@ -1022,6 +1065,16 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                 injected = true;
                 throw CairoException.dataSyncFailure(this, 5, operation, "injected sequencer log flush failure");
             }
+        }
+    }
+
+    private static class StaleClockFlusher extends WalPurgeJob {
+        StaleClockFlusher(Clock clock) {
+            super(engine, configuration.getFilesFacade(), clock);
+        }
+
+        void flushNow() {
+            runSerially();
         }
     }
 
