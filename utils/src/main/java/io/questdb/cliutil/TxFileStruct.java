@@ -32,6 +32,7 @@ class TxFileStruct {
     public ArrayList<AttachedPartition> ATTACHED_PARTITIONS;
     public int ATTACHED_PARTITIONS_COUNT;
     public ArrayList<SymbolInfo> SYMBOLS;
+    public long TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT;
     public int TX_OFFSET_CHECKSUM;
     public long TX_OFFSET_COLUMN_VERSION;
     public long TX_OFFSET_DATA_VERSION;
@@ -53,7 +54,8 @@ class TxFileStruct {
     @Override
     public String toString() {
         return "TxFileStruct{" +
-                "TX_OFFSET_TXN=" + TX_OFFSET_TXN +
+                "TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT=" + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT +
+                ", TX_OFFSET_TXN=" + TX_OFFSET_TXN +
                 ", TX_OFFSET_COLUMN_VERSION=" + TX_OFFSET_COLUMN_VERSION +
                 ", TX_OFFSET_FIXED_ROW_COUNT=" + TX_OFFSET_FIXED_ROW_COUNT +
                 ", TX_OFFSET_TRANSIENT_ROW_COUNT=" + TX_OFFSET_TRANSIENT_ROW_COUNT +
