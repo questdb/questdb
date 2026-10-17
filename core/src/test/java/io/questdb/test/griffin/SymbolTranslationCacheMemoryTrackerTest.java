@@ -59,10 +59,12 @@ import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
@@ -108,7 +110,9 @@ import java.util.concurrent.CountDownLatch;
  *   <li>the time-series and HORIZON joins read a one-row slave, so their maps hold at most two
  *   keys;</li>
  *   <li>the hash joins translate every build-side symbol to VALUE_NOT_FOUND, so their join key
- *   map holds one key, and the build side fits the first 512 KiB page of the slave chain.</li>
+ *   map holds one key, and the build side fits the first 512 KiB page of the slave chain;</li>
+ *   <li>the HORIZON joins without an aggregate keep every master row, and their sync cursor holds
+ *   one batch of master rows in tracked lists, so the sync test caps the batch at 1,000 rows.</li>
  * </ul>
  * For each query, the helper first drains the cursor with translation caching disabled and
  * expects no breach, which shows that nothing but the cache growth can cross the 1 MiB limit.
@@ -165,7 +169,8 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                         AsyncHorizonJoinRecordCursorFactory.class,
                         AsyncHorizonJoinNotKeyedRecordCursorFactory.class,
                         AsyncMultiHorizonJoinRecordCursorFactory.class,
-                        AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class
+                        AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class,
+                        AsyncHorizonJoinProjectionRecordCursorFactory.class
                 );
             }
         });
@@ -195,7 +200,8 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                                 AsyncHorizonJoinRecordCursorFactory.class,
                                 AsyncHorizonJoinNotKeyedRecordCursorFactory.class,
                                 AsyncMultiHorizonJoinRecordCursorFactory.class,
-                                AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class
+                                AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class,
+                                AsyncHorizonJoinProjectionRecordCursorFactory.class
                         );
                     },
                     configuration,
@@ -307,6 +313,11 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         // generator reads the context, so the test switches the context itself. The next
         // setUp() restores the flag from the configuration.
         sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+        // The sync projection cursor matches the master rows in batches of this many rows, and
+        // holds the row ids, the timestamps and the slave row ids of a batch in tracked lists.
+        // The test configuration allows 100,000 rows, so a single batch would hold all 40,000
+        // master rows and its lists alone would cross the limit.
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
         assertMemoryLeak(() -> {
             createTimeSeriesTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -317,7 +328,8 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                         HorizonJoinRecordCursorFactory.class,
                         HorizonJoinNotKeyedRecordCursorFactory.class,
                         MultiHorizonJoinRecordCursorFactory.class,
-                        MultiHorizonJoinNotKeyedRecordCursorFactory.class
+                        MultiHorizonJoinNotKeyedRecordCursorFactory.class,
+                        HorizonJoinProjectionRecordCursorFactory.class
                 );
             }
         });
@@ -610,7 +622,8 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
             Class<? extends RecordCursorFactory> keyedFactory,
             Class<? extends RecordCursorFactory> notKeyedFactory,
             Class<? extends RecordCursorFactory> multiKeyedFactory,
-            Class<? extends RecordCursorFactory> multiNotKeyedFactory
+            Class<? extends RecordCursorFactory> multiNotKeyedFactory,
+            Class<? extends RecordCursorFactory> projectionFactory
     ) throws Exception {
         // The horizon offset is the only GROUP BY key, so the keyed data maps hold a single key.
         assertCachesChargeTracker(
@@ -657,6 +670,31 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                         RANGE FROM 0s TO 0s STEP 1s AS h
                         """,
                 multiNotKeyedFactory,
+                isWorkerReducing
+        );
+        // Without an aggregate, the join keeps every master row, and one projection factory serves
+        // both the single-slave and the multi-slave shape.
+        assertCachesChargeTracker(
+                compiler,
+                sqlExecutionContext,
+                """
+                        SELECT m.k1, s.price FROM m
+                        HORIZON JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)
+                        RANGE FROM 0s TO 0s STEP 1s AS h
+                        """,
+                projectionFactory,
+                isWorkerReducing
+        );
+        assertCachesChargeTracker(
+                compiler,
+                sqlExecutionContext,
+                """
+                        SELECT m.k1, s.price, s2.price FROM m
+                        HORIZON JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)
+                        HORIZON JOIN s s2 ON (m.k1 = s2.k1 AND m.k2 = s2.k2)
+                        RANGE FROM 0s TO 0s STEP 1s AS h
+                        """,
+                projectionFactory,
                 isWorkerReducing
         );
     }
