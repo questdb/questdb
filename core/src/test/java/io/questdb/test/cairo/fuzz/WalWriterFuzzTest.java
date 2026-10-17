@@ -32,6 +32,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -41,12 +42,14 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -64,6 +67,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -92,10 +97,10 @@ import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE
  */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
     private static boolean ASYNC_MUNMAP = false;
-    // the purges of the last runTxnZeroCoveredSymbolFuzz(): the purge job consumed and saved them in its
-    // log, it refused them (see addPurgesRefusedByTruncate()), and the check before VACUUM TABLE skipped
-    // their POSTING files
-    private final Set<String> txnZeroRunRefusedPurges = new HashSet<>();
+    // the purges of the last runTxnZeroCoveredSymbolFuzz() that a purge job refused because the truncate
+    // version changed, as the truncate refusal listener of the configuration reports them: the check
+    // before VACUUM TABLE skips their POSTING files. The purge jobs of the worker pool add to it.
+    private final Set<String> txnZeroRunRefusedPurges = ConcurrentHashMap.newKeySet();
     private boolean existingFilesParanoia;
     private boolean fsAllowsMixedIO;
     private long txnZeroRunPurgeTasksConsumed = -1;
@@ -1068,7 +1073,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     /**
      * As {@link #assertNoPostingFilesOfDroppedColumnVersions(String)}, but skips the files of the column
-     * versions in refusedPurges, see {@link #addPurgesRefusedByTruncate}.
+     * versions in refusedPurges, see {@link #listenToTruncateRefusals}.
      */
     private void assertNoPostingFilesOfDroppedColumnVersions(String tableName, Set<String> refusedPurges) {
         final Pattern coverFileName = Pattern.compile("^(.+)\\.pc[0-9]+\\.([0-9]+)(\\.[0-9]+)?\\.[0-9]+$");
@@ -1141,12 +1146,12 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * Adds to refusedPurges the column versions of tableName that the purge log holds with another
-     * truncate version than the table has. DROP PARTITION, ATTACH, DETACH and TRUNCATE change it, and
-     * ColumnPurgeOperator refuses those purges, see ColumnPurgeJobTest#testPurgeRespectsTableTruncates.
-     * VACUUM TABLE removes their files.
+     * Adds to purges the column versions of tableName that the purge log holds with another truncate
+     * version than the table has. DROP PARTITION, ATTACH, DETACH and TRUNCATE change it. The purge job
+     * refuses such a purge when it reads the truncate version after the change, and completes it when it
+     * reads the version before, so these are the purges that the job could have refused.
      */
-    private void addPurgesRefusedByTruncate(String tableName, Set<String> refusedPurges) throws SqlException {
+    private void addPurgesWithChangedTruncateVersion(String tableName, Set<String> purges) throws SqlException {
         final TableToken tableToken = engine.verifyTableName(tableName);
         final long truncateVersion;
         final int timestampType;
@@ -1170,8 +1175,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                         record.getSymA(2),
                         record.getLong(3)
                 );
-                LOG.info().$("purge refused by truncate [table=").$(tableToken).$(", key=").$(key).I$();
-                refusedPurges.add(key);
+                purges.add(key);
             }
         }
     }
@@ -1256,7 +1260,30 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         return tableDir != null && tableDir.getName().contains("column_versions_purge_log~");
     }
 
-    // the key of a purged column version in a partition, see addPurgesRefusedByTruncate()
+    /**
+     * Installs the truncate refusal listener of the configuration, which adds the key of each entry that
+     * a purge job refuses to {@link #txnZeroRunRefusedPurges}. The purge log keeps partition timestamps
+     * in micros, so the key takes the timestamp that the log gives back: the same value for a partition,
+     * another one for the table root entry of a nanosecond table.
+     */
+    private void listenToTruncateRefusals() {
+        txnZeroRunRefusedPurges.clear();
+        node1.getConfigurationOverrides().setColumnPurgeTruncateRefusalListener((task, offset) -> {
+            final LongList info = task.getUpdatedColumnInfo();
+            final TimestampDriver driver = task.getTimestampTypeDriver();
+            final String key = refusedPurgeKey(
+                    task.getTableToken().getDirName(),
+                    driver.fromMicros(driver.toMicros(info.getQuick(offset + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP))),
+                    info.getQuick(offset + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN),
+                    task.getColumnName(),
+                    info.getQuick(offset + ColumnPurgeTask.OFFSET_COLUMN_VERSION)
+            );
+            LOG.info().$("purge refused by truncate [key=").$(key).I$();
+            txnZeroRunRefusedPurges.add(key);
+        });
+    }
+
+    // the key of a purged column version in a partition, see listenToTruncateRefusals()
     private static String refusedPurgeKey(String tableDirName, long partitionTimestamp, long partitionNameTxn, CharSequence columnName, long columnNameTxn) {
         return tableDirName + "/" + partitionTimestamp + "/" + partitionNameTxn + "/" + columnName + "/" + columnNameTxn;
     }
@@ -1368,10 +1395,11 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      * FuzzRunner.setTxnZeroCoveredSymbol(). runFuzz() checks that the covered queries read what the
      * uncovered ones read and that the WAL tables equal the non-WAL twin. After the column purge, which
      * replays the purges left in the purge log, no POSTING index file of a dropped column version or index
-     * stays in a live partition of any of the three tables, apart from the files of the purges that the
-     * purge job refuses, see {@link #addPurgesRefusedByTruncate}. The check is skipped when the purge log
-     * lost purges. Then VACUUM TABLE and the column purge run on the three tables, VACUUM TABLE of each
-     * WAL table while the WAL apply adds a POSTING index to a SYMBOL column, see
+     * stays in a live partition of any of the three tables, apart from the files of the purges that a
+     * purge job refuses because the truncate version changed, see {@link #listenToTruncateRefusals}. Each
+     * of those must be in the purge log with another truncate version than the table has. The check is
+     * skipped when the purge log lost purges. Then VACUUM TABLE and the column purge run on the three
+     * tables, VACUUM TABLE of each WAL table while the WAL apply adds a POSTING index to a SYMBOL column, see
      * {@link #vacuumWhileAddingPostingIndex}. The tables must still match, read their covered values and
      * hold no POSTING index file of a dropped column version or index, with no exemption.
      *
@@ -1381,6 +1409,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     private void runTxnZeroCoveredSymbolFuzz(Rnd rnd, String expectedVacuumedCoveringIndexes) throws Exception {
         fuzzer.setTxnZeroCoveredSymbol(rnd);
         final long purgeTasksConsumedBeforeRun = engine.getMessageBus().getColumnPurgeSubSeq().current();
+        // before runFuzz() starts the worker pool, whose purge job calls the listener
+        listenToTruncateRefusals();
         runFuzz(rnd);
         assertMemoryLeak(() -> {
             final String tableName = getTestName();
@@ -1396,14 +1426,18 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             txnZeroRunPurgeTasksConsumed = purgeTasksConsumed;
             txnZeroRunPurgeTasksLogged = purgeTasksLogged;
             // read before purgeColumnVersions(), whose purge job replays and truncates the purge log
-            final Set<String> refusedPurges = txnZeroRunRefusedPurges;
-            refusedPurges.clear();
-            addPurgesRefusedByTruncate(tableNameNoWal, refusedPurges);
+            final Set<String> purgesWithChangedTruncateVersion = new HashSet<>();
+            addPurgesWithChangedTruncateVersion(tableNameNoWal, purgesWithChangedTruncateVersion);
             for (String walTableName : walTableNames) {
-                addPurgesRefusedByTruncate(walTableName, refusedPurges);
+                addPurgesWithChangedTruncateVersion(walTableName, purgesWithChangedTruncateVersion);
             }
             purgeColumnVersions();
             if (purgeTasksLogged == purgeTasksConsumed) {
+                // the purge job saves each purge in its log before it tries it, and truncate versions only grow
+                final Set<String> refusedPurgesOutsideLog = new TreeSet<>(txnZeroRunRefusedPurges);
+                refusedPurgesOutsideLog.removeAll(purgesWithChangedTruncateVersion);
+                Assert.assertEquals("refused purges outside the purge log", "[]", refusedPurgesOutsideLog.toString());
+                final Set<String> refusedPurges = new HashSet<>(txnZeroRunRefusedPurges);
                 assertNoPostingFilesOfDroppedColumnVersions(tableNameNoWal, refusedPurges);
                 for (String walTableName : walTableNames) {
                     assertNoPostingFilesOfDroppedColumnVersions(walTableName, refusedPurges);

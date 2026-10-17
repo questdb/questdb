@@ -44,11 +44,13 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
+import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
+import java.util.function.ObjIntConsumer;
 
 public class CairoConfigurationWrapper implements CairoConfiguration {
     private final AtomicReference<CairoConfiguration> delegate = new AtomicReference<>();
@@ -197,6 +199,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getColumnPurgeTaskPoolCapacity() {
         return getDelegate().getColumnPurgeTaskPoolCapacity();
+    }
+
+    @Override
+    public @Nullable ObjIntConsumer<ColumnPurgeTask> getColumnPurgeTruncateRefusalListener() {
+        return getDelegate().getColumnPurgeTruncateRefusalListener();
     }
 
     @Override

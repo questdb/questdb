@@ -36,6 +36,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.griffin.PurgingOperator;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.mp.Sequence;
@@ -62,9 +63,14 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -88,6 +94,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             1970-01-04T02:00:00.000000Z\t4
             """;
     private final TestTimestampType timestampType;
+    // the entries that the purge job reported as refused because the truncate version changed, see
+    // listenToTruncateRefusals()
+    private final ArrayList<String> truncateRefusedEntries = new ArrayList<>();
     private int iteration = 1;
 
     public ColumnPurgeJobTest(TestTimestampType timestampType) {
@@ -104,6 +113,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     @Before
     public void setUpUpdates() {
         iteration = 1;
+        truncateRefusedEntries.clear();
         setCurrentMicros(0);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
     }
@@ -942,6 +952,307 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeCompletedBeforeTruncateIsNotReportedAsRefused() throws Exception {
+        // The purge of the first UPDATE completes before DROP PARTITION, and the purge of the second UPDATE
+        // waits for a reader until after it. The purge log holds the rows of both with the truncate version
+        // from before DROP PARTITION and marks them all completed, but the job refuses only the second
+        // purge: it reports the instance that the second UPDATE replaced, in the partitions that DROP
+        // PARTITION keeps.
+        assertMemoryLeak(() -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 9, 9);
+                    final String[] dirs = {partitionDir("t", 0), partitionDir("t", 2)};
+                    for (String dir : dirs) {
+                        for (String col : new String[]{"x", "str", "sym"}) {
+                            Assert.assertEquals(walMode + ", " + dir, "[]", filesOfInstance(listFiles(dir), col, TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                        }
+                    }
+                    final List<String> expected = new ArrayList<>();
+                    for (String col : new String[]{"x", "str", "sym"}) {
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-01", 0, getColumnNameTxn("t", col, 0)));
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-03", 2, getColumnNameTxn("t", col, 2)));
+                    }
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    Assert.assertEquals(walMode, "[]", truncateRefusedEntries.toString());
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 18, 18);
+                    // the rows of the completed purge carry the old truncate version too
+                    assertQuery("SELECT count() c, count(completed) completed FROM \"" + purgeJob.getLogTableName()
+                            + "\" WHERE truncate_version <> 1 AND column_version = " + TableUtils.COLUMN_NAME_TXN_NONE)
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("c\tcompleted\n9\t9\n");
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRefusedByTruncateAfterPartialRemoval() throws Exception {
+        // The job removes sym.d of instance NONE of sym in 1970-01-01, fails to remove its sym.k and
+        // purges the other partitions. DROP PARTITION follows, and the job refuses the retry: it reports
+        // the entry of 1970-01-01 only, whose sym.k and sym.v stay. The entry of 1970-01-03 has no files
+        // left, and the existence check completes it.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                failedRemoveCount.set(0);
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    final String firstDir = partitionDir("t", 0);
+                    final String lastDir = partitionDir("t", 2);
+                    final String expected = truncateRefusalKeyOfT("sym", "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE);
+                    failingFileSuffix.set(Files.SEPARATOR + new File(firstDir).getName() + Files.SEPARATOR + "sym.k");
+                    remainingFailures.set(1);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(walMode, 1, failedRemoveCount.get());
+                    Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals(walMode, "[sym.k, sym.v]", filesOfInstance(listFiles(firstDir), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    Assert.assertEquals(walMode, "[]", filesOfInstance(listFiles(lastDir), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    Assert.assertEquals(walMode, "[]", truncateRefusedEntries.toString());
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(walMode, "[" + expected + "]", truncateRefusedEntries.toString());
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals(walMode, 1, failedRemoveCount.get());
+                    Assert.assertEquals(walMode, "[sym.k, sym.v]", filesOfInstance(listFiles(firstDir), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRefusedByTruncateAfterPartialRemovalOfPostingIndex() throws Exception {
+        // The job fails to remove a sealed .pv file of instance NONE of sym in each partition, and
+        // removes sym.d and sym.pk. DROP PARTITION follows, and the job refuses the retry: the scan for
+        // sealed files finds the .pv files, so it reports the entries of 1970-01-01 and 1970-01-03, whose
+        // .pv files stay.
+        final AtomicBoolean isValueFileFailureArmed = new AtomicBoolean();
+        // the partition directory and the name of the .pv file whose removal failed there
+        final Map<String, String> failedValueFiles = new ConcurrentHashMap<>();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isValueFileFailureArmed.get()) {
+                    final File file = new File(Utf8s.stringFromUtf8Bytes(name));
+                    // the first sealed .pv file of sym in each partition
+                    if (file.getName().startsWith("sym.pv.") && failedValueFiles.putIfAbsent(file.getParent(), file.getName()) == null) {
+                        return false;
+                    }
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                failedValueFiles.clear();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX TYPE POSTING");
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    final String[] dirs = {partitionDir("t", 0), partitionDir("t", 2)};
+                    for (String dir : dirs) {
+                        final String files = filesOfInstance(listFiles(dir), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString();
+                        Assert.assertTrue(walMode + ", " + files, files.contains("sym.pk") && files.contains("sym.pv."));
+                    }
+                    final List<String> expected = Arrays.asList(
+                            truncateRefusalKeyOfT("sym", "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE),
+                            truncateRefusalKeyOfT("sym", "1970-01-03", 2, TableUtils.COLUMN_NAME_TXN_NONE)
+                    );
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    isValueFileFailureArmed.set(true);
+                    purgeJob.run();
+                    isValueFileFailureArmed.set(false);
+                    Assert.assertEquals(walMode, 3, failedValueFiles.size());
+                    Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    final String[] failedNames = new String[dirs.length];
+                    for (int i = 0; i < dirs.length; i++) {
+                        failedNames[i] = failedValueFiles.get(new File(dirs[i]).getPath());
+                        Assert.assertNotNull(walMode + ", " + dirs[i] + " in " + failedValueFiles, failedNames[i]);
+                        Assert.assertEquals(walMode, "[" + failedNames[i] + "]", filesOfInstance(listFiles(dirs[i]), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    }
+                    Assert.assertEquals(walMode, "[]", truncateRefusedEntries.toString());
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    for (int i = 0; i < dirs.length; i++) {
+                        Assert.assertEquals(walMode, "[" + failedNames[i] + "]", filesOfInstance(listFiles(dirs[i]), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    }
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRefusedByTruncateCompletesWithoutRetry() throws Exception {
+        // DROP PARTITION changes the truncate version while the purge of UPDATE waits for a reader. The job
+        // refuses the purge, marks its rows completed, does not retry it, and leaves the files of instance
+        // NONE of x, str and sym in the partitions that DROP PARTITION keeps.
+        assertMemoryLeak(() -> {
+            // the test installs no listener, and Overrides.reset() cleared that of an earlier test
+            Assert.assertNull(engine.getConfiguration().getColumnPurgeTruncateRefusalListener());
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    final String[] dirs = {partitionDir("t", 0), partitionDir("t", 2)};
+                    final String[] listings = new String[dirs.length];
+                    for (int i = 0; i < dirs.length; i++) {
+                        listings[i] = listFiles(dirs[i]);
+                        Assert.assertEquals(walMode, "[x.d]", filesOfInstance(listings[i], "x", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                        Assert.assertEquals(walMode, "[str.d, str.i]", filesOfInstance(listings[i], "str", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                        Assert.assertEquals(walMode, "[sym.d, sym.k, sym.v]", filesOfInstance(listings[i], "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    }
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    for (int repeat = 0; repeat < 2; repeat++) {
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                        // the first run after DROP PARTITION, at 60 micros, completes all 9 rows
+                        assertQuery("SELECT count() c, count(completed) completed, min(completed) first, max(completed) last FROM \""
+                                + purgeJob.getLogTableName() + "\"")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("""
+                                        c\tcompleted\tfirst\tlast
+                                        9\t9\t1970-01-01T00:00:00.000060Z\t1970-01-01T00:00:00.000060Z
+                                        """);
+                        for (int i = 0; i < dirs.length; i++) {
+                            Assert.assertEquals(walMode, listings[i], listFiles(dirs[i]));
+                        }
+                    }
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRefusedByTruncateReportsEachEntryWithFiles() throws Exception {
+        // Two UPDATEs run while a reader holds the table, and DROP PARTITION follows. The job refuses the
+        // purges of both and reports each entry of instance NONE and of the instance of the first UPDATE
+        // in the partitions that DROP PARTITION keeps. The entries of the dropped partition have no files
+        // left, and the existence check completes them. Later runs report nothing.
+        assertMemoryLeak(() -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    final List<String> expected = new ArrayList<>();
+                    for (String col : new String[]{"x", "str", "sym"}) {
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE));
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-03", 2, TableUtils.COLUMN_NAME_TXN_NONE));
+                    }
+                    try (TableReader ignore = getReader("t")) {
+                        execute("UPDATE t SET x = 100, str = 'z', sym = 'Z'");
+                        drainWalQueue();
+                        for (String col : new String[]{"x", "str", "sym"}) {
+                            final long firstColumnNameTxn = getColumnNameTxn("t", col, 0);
+                            final long lastColumnNameTxn = getColumnNameTxn("t", col, 2);
+                            Assert.assertTrue(walMode + ", " + col, firstColumnNameTxn > 0 && lastColumnNameTxn > 0);
+                            expected.add(truncateRefusalKeyOfT(col, "1970-01-01", 0, firstColumnNameTxn));
+                            expected.add(truncateRefusalKeyOfT(col, "1970-01-03", 2, lastColumnNameTxn));
+                        }
+                        // a reader of the first UPDATE keeps its instance, which UPDATE would purge at once otherwise
+                        try (TableReader ignore2 = getReader("t")) {
+                            execute("UPDATE t SET x = 200, str = 'y', sym = 'Y'");
+                            drainWalQueue();
+                            runPurgeJob(purgeJob);
+                        }
+                    }
+                    Assert.assertEquals(walMode, 6, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 18, 0);
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 18, 18);
+
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRefusedByTruncateReportsSymbolRootFiles() throws Exception {
+        // RENAME COLUMN of sym runs while a reader holds the table, and DROP PARTITION follows. The job
+        // refuses the purge of the old name and reports its entries: the symbol table files in the table
+        // root and the column files in the partitions that DROP PARTITION keeps. All of them stay.
+        assertMemoryLeak(() -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    final File tableDir = new File(configuration.getDbRoot().toString(), engine.verifyTableName("t").getDirName());
+                    Assert.assertEquals(walMode, "[sym.c, sym.k, sym.o, sym.v]", symbolRootFiles(tableDir).toString());
+                    final List<String> expected = Arrays.asList(
+                            truncateRefusalKey("sym", PurgingOperator.TABLE_ROOT_PARTITION, -1, TableUtils.COLUMN_NAME_TXN_NONE),
+                            truncateRefusalKeyOfT("sym", "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE),
+                            truncateRefusalKeyOfT("sym", "1970-01-03", 2, TableUtils.COLUMN_NAME_TXN_NONE)
+                    );
+                    final String[] dirs = {partitionDir("t", 0), partitionDir("t", 2)};
+                    try (TableReader ignore = getReader("t")) {
+                        execute("ALTER TABLE t RENAME COLUMN sym TO sym2");
+                        drainWalQueue();
+                        runPurgeJob(purgeJob);
+                    }
+                    Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals(walMode, "[sym.c, sym.k, sym.o, sym.v]", symbolRootFiles(tableDir).toString());
+                    for (String dir : dirs) {
+                        Assert.assertEquals(walMode, "[sym.d, sym.k, sym.v]", filesOfInstance(listFiles(dir), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    }
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
     public void testPurgeDuringDropTable() throws Exception {
         assertPurgeDuringDropTable(false);
     }
@@ -1009,6 +1320,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(() -> {
+            listenToTruncateRefusals();
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
                 engine.releaseInactive();
@@ -1028,6 +1340,8 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 for (int i = 0; i < 3; i++) {
                     Assert.assertEquals(listings[i], listFiles(partitionDir("t", i)));
                 }
+                // the job drops the purge of an orphan table, which no truncate refused
+                Assert.assertEquals("[]", truncateRefusedEntries.toString());
             }
             assertRowsOfRetryTable();
         });
@@ -1052,6 +1366,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         };
         assertMemoryLeak(() -> {
             execute("CREATE TABLE other (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            listenToTruncateRefusals();
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 final String[] oldFiles = dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
                 final String[] listings = listRetryTablePartitions(oldFiles);
@@ -1064,6 +1379,8 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 for (int i = 0; i < 3; i++) {
                     Assert.assertEquals(listings[i], listFiles(partitionDir("t", i)));
                 }
+                // the job drops the purge of an orphan table, which no truncate refused
+                Assert.assertEquals("[]", truncateRefusedEntries.toString());
             }
             assertRowsOfRetryTable();
         });
@@ -2031,6 +2348,44 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplayedPurgeRefusedByTruncateReportsEntries() throws Exception {
+        // The purge job closes with the purge of UPDATE incomplete in its log, and DROP PARTITION follows.
+        // A new purge job replays the purge, refuses it, reports each entry in the partitions that DROP
+        // PARTITION keeps, leaves the files there and truncates the log.
+        assertMemoryLeak(() -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                final String[] dirs;
+                final String[] listings;
+                final List<String> expected = new ArrayList<>();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    dirs = new String[]{partitionDir("t", 0), partitionDir("t", 2)};
+                    listings = new String[]{listFiles(dirs[0]), listFiles(dirs[1])};
+                    for (String col : new String[]{"x", "str", "sym"}) {
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE));
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-03", 2, TableUtils.COLUMN_NAME_TXN_NONE));
+                    }
+                }
+                dropMiddlePartitionOfTruncateTable(walMode);
+                engine.releaseInactive();
+                Assert.assertEquals(walMode, "[]", truncateRefusedEntries.toString());
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 0, 0);
+                    for (int i = 0; i < dirs.length; i++) {
+                        Assert.assertEquals(walMode, listings[i], listFiles(dirs[i]));
+                    }
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
     public void testReplayedPurgeRetriesPostingCoverInfoFile() throws Exception {
         // The purge job cannot remove the .pci file of the old instance of sym in the middle partition
         // and closes with the task incomplete in the purge log. A new purge job replays the task and
@@ -2627,6 +2982,98 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         1970-01-02T02:00:00.000000Z\t2\tB
                         1970-01-03T02:00:00.000000Z\t3\tA
                         """, timestampType.getTypeName()));
+    }
+
+    /**
+     * Creates t with x LONG, str STRING and sym SYMBOL {@code symIndexClause}, and one row in each of the
+     * daily partitions 1970-01-01, 1970-01-02 and 1970-01-03.
+     */
+    private void createTruncateTable(String walMode, String symIndexClause) throws SqlException {
+        execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", x LONG, str STRING, sym SYMBOL " + symIndexClause
+                + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t VALUES
+                ('1970-01-01T02:00:00.000000Z', 1, 'a', 'A'),
+                ('1970-01-02T02:00:00.000000Z', 2, 'b', 'B'),
+                ('1970-01-03T02:00:00.000000Z', 3, 'c', 'A')""");
+        drainWalQueue();
+    }
+
+    // DROP PARTITION of 1970-01-02 of t moves the truncate version of t from 0 to 1
+    private void dropMiddlePartitionOfTruncateTable(String walMode) throws SqlException {
+        engine.releaseInactive();
+        execute("ALTER TABLE t DROP PARTITION LIST '1970-01-02'");
+        drainWalQueue();
+        try (TableReader reader = getReader("t")) {
+            Assert.assertEquals(walMode, 1, reader.getTxFile().getTruncateVersion());
+            Assert.assertEquals(walMode, 2, reader.getTxFile().getPartitionCount());
+        }
+    }
+
+    private void dropTruncateTable() throws SqlException {
+        execute("DROP TABLE t");
+        drainWalQueue();
+    }
+
+    private static long getPartitionNameTxn(String tableName, int partitionIndex) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getTxFile().getPartitionNameTxn(partitionIndex);
+        }
+    }
+
+    // records the entries that the purge job reports as refused because the truncate version changed
+    private void listenToTruncateRefusals() {
+        node1.getConfigurationOverrides().setColumnPurgeTruncateRefusalListener((task, offset) -> {
+            final LongList info = task.getUpdatedColumnInfo();
+            truncateRefusedEntries.add(truncateRefusalKey(
+                    task.getColumnName(),
+                    info.getQuick(offset + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP),
+                    info.getQuick(offset + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN),
+                    info.getQuick(offset + ColumnPurgeTask.OFFSET_COLUMN_VERSION)
+            ));
+        });
+    }
+
+    private static List<String> sorted(List<String> keys) {
+        final List<String> sorted = new ArrayList<>(keys);
+        Collections.sort(sorted);
+        return sorted;
+    }
+
+    // resets the clock of the purge job runs and the reported entries for the next iteration over WAL modes
+    private void startTruncateIteration() {
+        iteration = 1;
+        setCurrentMicros(0);
+        truncateRefusedEntries.clear();
+    }
+
+    // the key of an entry of a purge task that the truncate refusal listener receives
+    private static String truncateRefusalKey(CharSequence columnName, long partitionTimestamp, long partitionNameTxn, long columnVersion) {
+        return columnName + "/" + partitionTimestamp + "/" + partitionNameTxn + "/" + columnVersion;
+    }
+
+    // the key of the entry of columnName in the partition of t that holds the day partition, at partitionIndex
+    private String truncateRefusalKeyOfT(String columnName, String partition, int partitionIndex, long columnVersion) throws NumericException {
+        return truncateRefusalKey(
+                columnName,
+                timestampType.getDriver().parseFloorLiteral(partition),
+                getPartitionNameTxn("t", partitionIndex),
+                columnVersion
+        );
+    }
+
+    /**
+     * Runs UPDATE of x, str and sym of t while a reader holds the table, so the purge job saves the three
+     * purges in its log, one row per partition, and purges none.
+     */
+    private void updateTruncateTableWithReader(ColumnPurgeJob purgeJob, String walMode) throws Exception {
+        final int outstandingPurgeTasks = purgeJob.getOutstandingPurgeTasks();
+        try (TableReader ignore = getReader("t")) {
+            execute("UPDATE t SET x = 100, str = 'z', sym = 'Z'");
+            drainWalQueue();
+            runPurgeJob(purgeJob);
+        }
+        Assert.assertEquals(walMode, outstandingPurgeTasks + 3, purgeJob.getOutstandingPurgeTasks());
     }
 
     // the number of rows of the purge log, and of those the purge job marked complete

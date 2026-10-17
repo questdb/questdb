@@ -41,11 +41,13 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.function.ObjIntConsumer;
 
 import static io.questdb.cairo.DebugUtils.LOG;
 
@@ -54,6 +56,7 @@ public class Overrides {
     private final Properties defaultProperties = new Properties();
     private final Properties properties = new Properties();
     private boolean changed = true;
+    private ObjIntConsumer<ColumnPurgeTask> columnPurgeTruncateRefusalListener = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
@@ -91,6 +94,10 @@ public class Overrides {
         } else {
             return getDefaultConfiguration(root);
         }
+    }
+
+    public ObjIntConsumer<ColumnPurgeTask> getColumnPurgeTruncateRefusalListener() {
+        return columnPurgeTruncateRefusalListener;
     }
 
     public Map<String, String> getEnv() {
@@ -141,6 +148,7 @@ public class Overrides {
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
         rostiAllocFacade = null;
+        columnPurgeTruncateRefusalListener = null;
         ff = null;
         mangleTableDirNames = true;
         factoryProvider = null;
@@ -151,6 +159,10 @@ public class Overrides {
         changed = true;
         spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
         freeLeakedReaders = false;
+    }
+
+    public void setColumnPurgeTruncateRefusalListener(ObjIntConsumer<ColumnPurgeTask> listener) {
+        this.columnPurgeTruncateRefusalListener = listener;
     }
 
     public void setCurrentMicros(long currentMicros) {

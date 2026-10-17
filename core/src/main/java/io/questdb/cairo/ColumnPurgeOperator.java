@@ -43,6 +43,7 @@ import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.function.ObjIntConsumer;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
@@ -53,6 +54,8 @@ public class ColumnPurgeOperator implements Closeable {
     private static final int TABLE_STATE_LIVE = 0;
     private static final int TABLE_STATE_REFUSED = 1;
     private static final int TABLE_STATE_RETRY = 2;
+    // DROP PARTITION, ATTACH, DETACH or TRUNCATE changed the truncate version after the purge was queued
+    private static final int TABLE_STATE_TRUNCATE_REFUSED = 3;
     private final LongList completedRowIds = new LongList();
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -301,7 +304,7 @@ public class ColumnPurgeOperator implements Closeable {
                 txReader.unsafeLoadAll();
                 if (txReader.getTruncateVersion() != task.getTruncateVersion()) {
                     LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
-                    return TABLE_STATE_REFUSED;
+                    return TABLE_STATE_TRUNCATE_REFUSED;
                 }
                 return TABLE_STATE_LIVE;
             default:
@@ -383,9 +386,15 @@ public class ColumnPurgeOperator implements Closeable {
                             allDone = false;
                             continue;
                         }
-                        if (tableState == TABLE_STATE_REFUSED) {
+                        if (tableState == TABLE_STATE_REFUSED || tableState == TABLE_STATE_TRUNCATE_REFUSED) {
                             // the current table state precludes us from purging its columns
                             // nothing to do here
+                            if (tableState == TABLE_STATE_TRUNCATE_REFUSED) {
+                                final ObjIntConsumer<ColumnPurgeTask> listener = engine.getConfiguration().getColumnPurgeTruncateRefusalListener();
+                                if (listener != null) {
+                                    listener.accept(task, i);
+                                }
+                            }
                             completedRowIds.add(updateRowId);
                             continue;
                         }
