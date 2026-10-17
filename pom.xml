@@ -75,7 +75,11 @@
                 <configuration>
                     <tagNameFormat>@{project.version}</tagNameFormat>
                     <arguments>-Dmaven.test.skipTests=true -Dmaven.test.skip=true</arguments>
-                    <releaseProfiles>build-web-console,maven-central-release</releaseProfiles>
+                    <!-- No Central profile here: release:perform must not publish. The release
+                         plugin's own check-dependency-snapshots phase rejects unreleased
+                         (snapshot-versioned) dependencies before it rewrites any POM, and the
+                         Central deploy carries its own requireReleaseDeps rule in core/pom.xml. -->
+                    <releaseProfiles>build-web-console</releaseProfiles>
                     <scmCommentPrefix>[maven-release-plugin]</scmCommentPrefix>
                     <scmReleaseCommitComment>[maven-release-plugin] prepare release @{releaseLabel}
                     </scmReleaseCommitComment>
