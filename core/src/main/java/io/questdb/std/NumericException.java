@@ -33,6 +33,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class NumericException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final NumericException INSTANCE = new NumericException();
+    private static final boolean DEBUG_STACK_TRACE = Boolean.getBoolean("questdb.debug.numeric.exception.stacktrace");
     private static final FiberLocal<NumericException> tlInstance = new FiberLocal<>(NumericException::new);
     private final StringSink message = new StringSink();
     private int messagePosition = 0;
@@ -45,8 +46,9 @@ public class NumericException extends RuntimeException implements Sinkable, Flyw
      */
     public static NumericException instance() {
         NumericException ex = tlInstance.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new NumericException()) != null;
+        if (DEBUG_STACK_TRACE) {
+            ex = new NumericException();
+        }
         ex.clear();
         return ex;
     }
