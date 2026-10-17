@@ -8420,6 +8420,83 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNoFillSubQueryNullDesignatedTimestamp() throws Exception {
+        // The view joins a SAMPLE BY sub-query without FILL that designates a timestamp column holding NULL. The
+        // sub-query takes the SAMPLE BY cursor path, which gives the rows with the NULL a bucket of their own, as the
+        // GROUP BY path does. The refresh must not fail on the NULL, and the view keeps that bucket. The sub-query
+        // reads a second table, fills, on purpose. When the sub-query scans the view's own base table a second time,
+        // the refresh fails with a NullPointerException or leaves the view valid with no rows, with or without
+        // SAMPLE BY and with or without a NULL, so that shape cannot show what the cursor does with the NULL.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            executeWithRewriteTimestamp("CREATE TABLE fills (filled_at #TIMESTAMP, sym SYMBOL, qty DOUBLE)");
+            execute("""
+                    INSERT INTO fills VALUES
+                        ('2024-01-01T00:05:00.000000Z', 'a', 1.0),
+                        (NULL, 'b', 2.0),
+                        ('2024-01-01T02:30:00.000000Z', 'a', 4.0),
+                        ('2024-01-03T09:30:00.000000Z', 'b', 8.0),
+                        ('2024-02-10T09:30:00.000000Z', 'a', 16.0),
+                        (NULL, 'a', 32.0),
+                        ('2025-03-10T09:30:00.000000Z', 'b', 64.0)
+                    """);
+            final String viewSql = """
+                    SELECT o.ts, o.sym, m.filled_at fill_month, first(m.s) fill_qty, sum(o.qty) qty
+                    FROM orders o
+                    JOIN (
+                        SELECT filled_at, sym, sum(qty) s
+                        FROM ((SELECT * FROM fills ORDER BY filled_at) TIMESTAMP(filled_at))
+                        SAMPLE BY 1M
+                    ) m ON (sym)
+                    SAMPLE BY 1d
+                    """;
+            execute("CREATE MATERIALIZED VIEW orders_1d WITH BASE orders AS (" + viewSql + ") PARTITION BY MONTH");
+            execute("""
+                    INSERT INTO orders VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 10.0),
+                        ('2024-01-01T01:00:00.000000Z', 'b', 20.0),
+                        ('2024-01-02T01:00:00.000000Z', 'a', 40.0)
+                    """);
+            drainQueues();
+
+            // the sub-query stays on the SAMPLE BY cursor path
+            assertQuery(viewSql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Sample By\n");
+            assertQuery("SELECT view_name, base_table_name, view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            orders_1d\torders\tvalid\t
+                            """);
+
+            final String expected = """
+                    ts\tsym\tfill_month\tfill_qty\tqty
+                    2024-01-01T00:00:00.000000Z\ta\t\t32.0\t10.0
+                    2024-01-01T00:00:00.000000Z\ta\t2024-01-01T00:00:00.000000Z\t5.0\t10.0
+                    2024-01-01T00:00:00.000000Z\ta\t2024-02-01T00:00:00.000000Z\t16.0\t10.0
+                    2024-01-01T00:00:00.000000Z\tb\t\t2.0\t20.0
+                    2024-01-01T00:00:00.000000Z\tb\t2024-01-01T00:00:00.000000Z\t8.0\t20.0
+                    2024-01-01T00:00:00.000000Z\tb\t2025-03-01T00:00:00.000000Z\t64.0\t20.0
+                    2024-01-02T00:00:00.000000Z\ta\t\t32.0\t40.0
+                    2024-01-02T00:00:00.000000Z\ta\t2024-01-01T00:00:00.000000Z\t5.0\t40.0
+                    2024-01-02T00:00:00.000000Z\ta\t2024-02-01T00:00:00.000000Z\t16.0\t40.0
+                    """;
+            assertQuery(viewSql + " ORDER BY ts, sym, fill_month")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+            assertQuery("orders_1d ORDER BY ts, sym, fill_month")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+        });
+    }
+
+    @Test
     public void testSampleByNotKeyed15mBerlinSpringForward() throws Exception {
         // 15m stride = minimum DST gap. canSkipDstGapCorrection returns true for
         // 15m when (from+offset) % day == 0 (it is here, offset=0).
