@@ -34,6 +34,11 @@ import io.questdb.std.ObjList;
 
 public class ArgMaxTimestampUuidGroupByFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.getTimestampType(argTypes.getQuick(0));
+    }
+
+    @Override
     public String getSignature() {
         return "arg_max(NZ)";
     }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -40,6 +41,11 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.IPv4;
+    }
 
     @Override
     public String getSignature() {

@@ -103,7 +103,7 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                                                 Frame forward scan on: orders
                                         Hash
                                             SelectedRecord
-                                                Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_total>=rates.min_amount
+                                                Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_total>=min_amount
                                                     Cross Join
                                                         PageFrame
                                                             Row forward scan
@@ -133,7 +133,7 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                                                 Frame forward scan on: orders
                                         Hash
                                             SelectedRecord
-                                                Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_total>=rates.min_amount
+                                                Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_total>=min_amount
                                                     Cross Join
                                                         PageFrame
                                                             Row forward scan

@@ -74,6 +74,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -987,8 +988,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("compression_codec", "gzip");
                     params.put("row_group_size", "500");
 
-                    Thread thread = startCancelThread(engine, sqlExecutionContext);
-                    thread.start();
+                    FutureTask<Void> cancel = startCancelThread(engine, sqlExecutionContext);
                     // With direct export (no temp table), data may start streaming before
                     // the cancel arrives, causing the server to disconnect.
                     try {
@@ -1000,7 +1000,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 msg.contains("peer disconnect") || msg.contains("malformed chunk")
                         );
                     }
-                    thread.join();
+                    cancel.get();
                 });
     }
 
@@ -1015,8 +1015,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("row_group_size", "500");
                     params.put("rmode", "nodelay");
 
-                    Thread thread = startCancelThread(engine, sqlExecutionContext);
-                    thread.start();
+                    FutureTask<Void> cancel = startCancelThread(engine, sqlExecutionContext);
                     String expectedError = "cancelled by user";
                     try {
                         testHttpClient.assertGetContains("/exp", expectedError, params);
@@ -1030,7 +1029,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 msg.contains("peer disconnect") || msg.contains("malformed chunk")
                         );
                     }
-                    thread.join();
+                    cancel.get();
                 });
     }
 
@@ -2656,37 +2655,34 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         }
     }
 
-    private static @NotNull Thread startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
-        return new Thread(() -> {
+    private static @NotNull FutureTask<Void> startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
+        FutureTask<Void> task = new FutureTask<>(() -> {
             try {
-                long copyID;
-                do {
-                    copyID = engine.getCopyExportContext().getActiveExportId();
-                } while (copyID == -1);
+                final long[] copyID = new long[1];
+                assertEventually(() -> {
+                    copyID[0] = engine.getCopyExportContext().getActiveExportId();
+                    Assert.assertNotEquals("export did not start", -1, copyID[0]);
+                });
                 Os.sleep(500);
 
                 StringSink sink = new StringSink();
-                Numbers.appendHex(sink, copyID, true);
+                Numbers.appendHex(sink, copyID[0], true);
                 String copyIDStr = sink.toString();
                 sink.clear();
                 sink.put("COPY '").put(copyIDStr).put("' CANCEL;");
-                try {
-                    new QueryAssertion(engine, sqlExecutionContext, () -> {
-                    }, sink.toString())
-                            .noLeakCheck()
-                            .returnsOnce("id\tstatus\n" +
-                                    copyIDStr + "\tcancelled\n");
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-                // wait cancel finish
-                do {
-                    copyID = engine.getCopyExportContext().getActiveExportId();
-                } while (copyID != -1);
+                new QueryAssertion(engine, sqlExecutionContext, () -> {
+                }, sink.toString())
+                        .noLeakCheck()
+                        .returnsOnce("id\tstatus\n" +
+                                copyIDStr + "\tcancelled\n");
+                assertEventually(() -> Assert.assertEquals("export was not cancelled", -1, engine.getCopyExportContext().getActiveExportId()));
+                return null;
             } finally {
                 Path.clearThreadLocals();
             }
         });
+        new Thread(task).start();
+        return task;
     }
 
     private static HttpClient.ResponseHeaders startExport(

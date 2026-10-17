@@ -42,6 +42,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -87,7 +88,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             @Nullable Function ownerMasterFilter,
             @Nullable ObjList<Function> perWorkerMasterFilters,
             @Nullable IntHashSet filterUsedColumnIndexes,
-            boolean vectorized,
+            @Nullable IntList argumentColumnIndex,
             long masterTsScale,
             long slaveTsScale,
             int workerCount
@@ -121,7 +122,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 ownerMasterFilter,
                 perWorkerMasterFilters,
                 filterUsedColumnIndexes,
-                vectorized,
+                argumentColumnIndex,
                 masterTsScale,
                 slaveTsScale,
                 workerCount

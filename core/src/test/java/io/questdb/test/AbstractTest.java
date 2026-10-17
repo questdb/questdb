@@ -26,6 +26,7 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.Metrics;
+import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
@@ -34,7 +35,7 @@ import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.QuietCloseable;
@@ -72,6 +73,7 @@ public class AbstractTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        ParanoiaState.PLAN_PARANOIA_MODE = true;
         TestOs.init();
         Zip.init();
         // it is necessary to initialize logger before tests start

@@ -90,7 +90,7 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
      * but {@link LiveViewRefreshJob} recompiles the view's SELECT on its own
      * ({@code ensureCompiledFactory}), a path the CREATE gate never runs - a restart, for
      * instance, rebuilds the factory straight from the persisted definition. Forcing the
-     * guard off here makes {@code FunctionParser} reject a non-deterministic function on
+     * guard off here makes {@code NonDeterministicCalls} reject a non-deterministic function on
      * that recompile too, as defense in depth, mirroring
      * {@code MatViewRefreshSqlExecutionContext}.
      */
@@ -195,6 +195,11 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
     @Override
     public boolean isPartitionFormatChangeTolerated() {
         return true;
+    }
+
+    @Override
+    public boolean isReaderPinned(TableToken tableToken) {
+        return baseTableReader != null && tableToken.equals(baseTableReader.getTableToken());
     }
 
     public void of(TableReader baseTableReader) {

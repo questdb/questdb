@@ -32,6 +32,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -185,10 +186,7 @@ public class LoopingRecordSink implements RecordSink {
                 break;
             case ColumnType.TIMESTAMP:
                 long ts = r.getTimestamp(idx);
-                if (tsNanos) {
-                    ts *= 1000L;
-                }
-                w.putTimestamp(ts);
+                w.putTimestamp(tsNanos ? CommonUtils.microsToNanos(ts) : ts);
                 break;
             case ColumnType.BYTE:
                 w.putByte(r.getByte(idx));

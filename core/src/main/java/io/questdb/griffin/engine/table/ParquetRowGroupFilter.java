@@ -36,6 +36,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -91,7 +92,7 @@ public final class ParquetRowGroupFilter {
             long filterBufEnd
     ) {
         try {
-            boolean skip = skipper.canSkipRowGroup(rowGroupIndex, filterList, filterBufEnd);
+            boolean skip = canSkip(rowGroupIndex, skipper, filterList, filterBufEnd);
             if (skip) {
                 rowGroupsSkipped.incrementAndGet();
             }
@@ -117,7 +118,8 @@ public final class ParquetRowGroupFilter {
      *
      * @param metadata                 the partition metadata for column index resolution
      * @param pushdownFilterConditions the filter conditions to apply
-     * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count, op), ptr, columnType] per filter
+     * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count, op), ptr, columnType] per filter,
+     *                                 ordinary filters before null-matching ones, then the count of the ordinary ones
      * @param filterValues             reusable memory buffer for filter values
      * @param resolveByColumnId        when true, resolve the Parquet column by the condition's
      *                                 stable writer index (column id); when false, by name.
@@ -166,8 +168,17 @@ public final class ParquetRowGroupFilter {
             filterList.reopen();
             filterValues.jumpTo(0);
 
-            for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
-                final PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(i);
+            // The ordinary conditions go first, the null-matching ones after them: canSkip checks the former in one
+            // call and each of the latter alone.
+            int ordinaryCount = 0;
+            for (int k = 0, n = pushdownFilterConditions.size(); k < 2 * n; k++) {
+                if (k == n) {
+                    ordinaryCount = (int) (filterList.size() / LONGS_PER_FILTER);
+                }
+                final PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(k % n);
+                if (condition.isNullMatching() != (k >= n)) {
+                    continue;
+                }
                 final int opType = condition.getOperationType();
                 final ObjList<Function> valueFunctions = condition.getValueFunctions();
                 final int valueCount = valueFunctions.size();
@@ -205,7 +216,7 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
-                if (valueCount == 0) {
+                if (valueCount == 0 || condition.isNullMatching() && hasNullValue(valueFunctions)) {
                     continue;
                 }
 
@@ -385,11 +396,12 @@ public final class ParquetRowGroupFilter {
                                 Function f = valueFunctions.getQuick(j);
                                 int vType = f.getType();
                                 if (ColumnType.isTimestamp(vType) || vType == ColumnType.DATE) {
-                                    if (columnType == vType) {
-                                        filterValues.putLong(f.getTimestamp(null));
-                                    } else {
-                                        filterValues.putLong(driver.from(f.getTimestamp(null), ColumnType.getTimestampType(vType)));
-                                    }
+                                    // A finer bound rounds to the column's precision on the side that
+                                    // keeps every row the predicate keeps.
+                                    final long value = f.getTimestamp(null);
+                                    final int valueType = ColumnType.getTimestampType(vType);
+                                    filterValues.putLong(opType == PushdownFilterExtractor.OP_LT || opType == PushdownFilterExtractor.OP_GE
+                                            ? driver.ceilFrom(value, valueType) : driver.floorFrom(value, valueType));
                                 } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                     // getLong() throws on a FLOAT/DOUBLE function, and the row-level filter
                                     // compares this column at double width, so the bound takes the same
@@ -607,6 +619,7 @@ public final class ParquetRowGroupFilter {
             for (long i = 1, n = filterList.size(); i < n; i += LONGS_PER_FILTER) {
                 filterList.set(i, baseAddress + filterList.get(i));
             }
+            filterList.add(ordinaryCount);
             return true;
         } catch (CairoException e) {
             LOG.error().$("error during filter list preparation [msg=").$(e.getFlyweightMessage()).$(']').$();
@@ -620,6 +633,25 @@ public final class ParquetRowGroupFilter {
     @TestOnly
     public static void resetRowGroupsSkipped() {
         rowGroupsSkipped.set(0);
+    }
+
+    /**
+     * A row group is skipped when the ordinary conditions rule out every row together, or when a null-matching
+     * condition rules out every row of a group without NULLs. The last long of the list counts the ordinary ones.
+     */
+    private static boolean canSkip(int rowGroupIndex, ParquetRowGroupSkipper skipper, DirectLongList filterList, long filterBufEnd) {
+        final long descriptorLongs = filterList.size() - 1;
+        final int ordinaryCount = (int) filterList.get(descriptorLongs);
+        if (ordinaryCount > 0 && skipper.canSkipRowGroup(rowGroupIndex, filterList.getAddress(), ordinaryCount, filterBufEnd)) {
+            return true;
+        }
+        for (long i = (long) ordinaryCount * LONGS_PER_FILTER; i < descriptorLongs; i += LONGS_PER_FILTER) {
+            if (skipper.hasNoNulls(rowGroupIndex, (int) filterList.get(i))
+                    && skipper.canSkipRowGroup(rowGroupIndex, filterList.getAddress() + i * Long.BYTES, 1, filterBufEnd)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int clampLongToInt(long v) {
@@ -670,6 +702,15 @@ public final class ParquetRowGroupFilter {
             default: // OP_GE
                 return Math.nextDown(bound);
         }
+    }
+
+    private static boolean hasNullValue(ObjList<Function> valueFunctions) {
+        for (int i = 0, n = valueFunctions.size(); i < n; i++) {
+            if (isNullValue(valueFunctions.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -773,6 +814,39 @@ public final class ParquetRowGroupFilter {
     // for why the model carries both.
     private static boolean isFloatEqStrictAtSinglePrecision(float l, float bound) {
         return FLOAT_TOLERANCE > Math.abs(l - bound);
+    }
+
+    // A type without a NULL check here reads as NULL, which only costs the pruning of a null-matching condition.
+    private static boolean isNullValue(Function value) {
+        return switch (ColumnType.tagOf(value.getType())) {
+            case ColumnType.BYTE, ColumnType.SHORT -> false;
+            case ColumnType.CHAR -> value.getChar(null) == Numbers.CHAR_NULL;
+            case ColumnType.INT -> value.getInt(null) == Numbers.INT_NULL;
+            case ColumnType.IPv4 -> value.getIPv4(null) == Numbers.IPv4_NULL;
+            case ColumnType.LONG -> value.getLong(null) == Numbers.LONG_NULL;
+            case ColumnType.DATE -> value.getDate(null) == Numbers.LONG_NULL;
+            case ColumnType.TIMESTAMP -> value.getTimestamp(null) == Numbers.LONG_NULL;
+            case ColumnType.FLOAT -> Numbers.isNull(value.getFloat(null));
+            case ColumnType.DOUBLE -> Numbers.isNull(value.getDouble(null));
+            case ColumnType.STRING, ColumnType.SYMBOL -> value.getStrA(null) == null;
+            case ColumnType.VARCHAR -> value.getVarcharA(null) == null;
+            case ColumnType.UUID -> Uuid.isNull(value.getLong128Lo(null), value.getLong128Hi(null));
+            case ColumnType.DECIMAL8 -> value.getDecimal8(null) == Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16 -> value.getDecimal16(null) == Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32 -> value.getDecimal32(null) == Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64 -> value.getDecimal64(null) == Decimals.DECIMAL64_NULL;
+            case ColumnType.DECIMAL128 -> {
+                final Decimal128 d = Misc.getThreadLocalDecimal128();
+                value.getDecimal128(null, d);
+                yield d.isNull();
+            }
+            case ColumnType.DECIMAL256 -> {
+                final Decimal256 d = Misc.getThreadLocalDecimal256();
+                value.getDecimal256(null, d);
+                yield d.isNull();
+            }
+            default -> true;
+        };
     }
 
     /**

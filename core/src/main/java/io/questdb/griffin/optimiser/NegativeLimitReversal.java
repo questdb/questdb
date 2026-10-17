@@ -1,0 +1,189 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.optimiser;
+
+import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.LimitPlan;
+import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.PlanRewriter;
+import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
+import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+
+/**
+ * Reads the last rows of an ascending timestamp-led sort as the first rows of the reversed sort.
+ */
+final class NegativeLimitReversal implements OptimiserPass {
+    private final ObjectPool<ConstantExpression> constants;
+    private final IntList limitKeyIds;
+    private final ObjList<LogicalPlan> restoredSorts;
+    private final ObjectPool<SortPlan> sorts;
+    private final PlanRewriter negativeLimits = this::reverseNegativeLimit;
+
+    NegativeLimitReversal(ObjectPool<ConstantExpression> constants, ObjectPool<SortPlan> sorts, IntList limitKeyIds, ObjList<LogicalPlan> restoredSorts) {
+        this.constants = constants;
+        this.sorts = sorts;
+        this.limitKeyIds = limitKeyIds;
+        this.restoredSorts = restoredSorts;
+    }
+
+    @Override
+    public LogicalPlan apply(LogicalPlan plan) throws SqlException {
+        return reverseNegativeLimits(plan);
+    }
+
+    @Override
+    public String getName() {
+        return "negative limit reversal";
+    }
+
+    /**
+     * A negative constant, or the negation of an integer value.
+     */
+    private static boolean isNegatedCount(BoundExpression lo) {
+        if (lo instanceof ConstantExpression) {
+            return LogicalPlans.mayBeNegativeLimit(lo);
+        }
+        if (!(lo instanceof FunctionExpression call) || call.getArgumentCount() != 1 || !Chars.equals(call.getName(), '-')) {
+            return false;
+        }
+        return switch (call.argumentAt(0).getDataType()) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isTableSource(LogicalPlan plan) {
+        plan = LogicalPlans.skipProjectsAndFilters(plan);
+        return plan instanceof ScanPlan;
+    }
+
+    private BoundExpression reversedCount(BoundExpression lo) {
+        if (lo instanceof FunctionExpression negation) {
+            return negation.argumentAt(0);
+        }
+        return lo.getDataType() == ColumnType.INT
+                ? constants.next().ofInt((int) -((ConstantExpression) lo).getLongValue(), lo.getPosition())
+                : constants.next().ofLong(-((ConstantExpression) lo).getLongValue(), lo.getPosition());
+    }
+
+    private LogicalPlan reverseNegativeLimit(LogicalPlan plan) {
+        if (plan instanceof SortPlan) {
+            LogicalPlan parent = plan;
+            while (parent.inputAt(0) instanceof ProjectPlan) {
+                parent = parent.inputAt(0);
+            }
+            if (restoredSorts.indexOf(parent.inputAt(0)) >= 0) {
+                parent.replaceInput(0, parent.inputAt(0).inputAt(0));
+            }
+            return plan;
+        }
+        if (!(plan instanceof LimitPlan limit)) {
+            return plan;
+        }
+        final LogicalPlan upperTop = limit.getChild();
+        LogicalPlan upperBottom = limit;
+        while (upperBottom.inputAt(0) instanceof ProjectPlan) {
+            upperBottom = upperBottom.inputAt(0);
+        }
+        if (!(upperBottom.inputAt(0) instanceof SortPlan sort)) {
+            return plan;
+        }
+        final IntList ids = sort.getColumnIds();
+        final ObjList<SortDirection> directions = sort.getDirections();
+        final BoundExpression lo = limit.getLo();
+        if (limit.getHi() != null || !isNegatedCount(lo) || directions.size() < 2 || directions.getQuick(0) != SortDirection.ASCENDING
+                || sort.isMarkoutHorizon() || ids.getQuick(0) != sort.getChild().getOutput().getTimestampColumnId()) {
+            return plan;
+        }
+        final LogicalPlan lowerTop = sort.getChild();
+        ProjectPlan lowerBottom = null;
+        LogicalPlan source = lowerTop;
+        while (source instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)) {
+            lowerBottom = project;
+            source = project.getChild();
+        }
+        if (!isTableSource(source)) {
+            return plan;
+        }
+        final SortPlan restored = sorts.next().of(lowerTop, sort.getPosition());
+        final IntList sourceIds = limitKeyIds;
+        sourceIds.clear();
+        for (int i = 0, n = ids.size(); i < n; i++) {
+            int sourceId = ids.getQuick(i);
+            for (LogicalPlan p = lowerTop; p != source && sourceId >= 0; p = p.inputAt(0)) {
+                final int index = p.getOutput().getColumnIndexById(sourceId);
+                sourceId = index >= 0 && ((ProjectPlan) p).getExpressions().getQuick(index) instanceof ColumnExpression column
+                        && column.isDirectReference() && !column.isCast() ? column.getColumnId() : -1;
+            }
+            if (sourceId < 0) {
+                return plan;
+            }
+            restored.getColumnIds().add(ids.getQuick(i));
+            restored.getDirections().add(directions.getQuick(i));
+            sourceIds.add(sourceId);
+        }
+        for (int i = 0, n = directions.size(); i < n; i++) {
+            ids.setQuick(i, sourceIds.getQuick(i));
+            directions.setQuick(i, directions.getQuick(i) == SortDirection.DESCENDING ? SortDirection.ASCENDING : SortDirection.DESCENDING);
+        }
+        sort.markReversal();
+        sort.replaceInput(0, source);
+        limit.of(sort, reversedCount(lo), null, limit.getPosition());
+        limit.deriveOutput();
+        if (lowerBottom != null) {
+            lowerBottom.replaceInput(0, limit);
+        }
+        restored.replaceInput(0, lowerBottom == null ? limit : lowerTop);
+        restoredSorts.add(restored);
+        if (upperBottom == limit) {
+            return restored;
+        }
+        upperBottom.replaceInput(0, restored);
+        return upperTop;
+    }
+
+    /**
+     * Reads the last rows of an ascending timestamp-led multi-key sort as the
+     * first rows of the reversed sort below the projection, then restores the order below the projection, which may
+     * drop the sort keys: {@code ORDER BY ts, a LIMIT -n} becomes {@code ORDER BY ts, a} over
+     * {@code ORDER BY ts DESC, a DESC LIMIT n}. An enclosing sort replaces the restoring one.
+     */
+    private LogicalPlan reverseNegativeLimits(LogicalPlan root) throws SqlException {
+        restoredSorts.clear();
+        return root.rewriteBottomUp(negativeLimits);
+    }
+}

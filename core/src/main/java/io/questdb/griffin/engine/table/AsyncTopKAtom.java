@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
@@ -101,7 +102,10 @@ public class AsyncTopKAtom implements StatefulAtom, PerWorkerLockOwner, Reopenab
     ) throws SqlException {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
 
+        boolean isFilterContextAdopted = false;
         try {
+            final long memoryPoolMaxBytes = configuration.getSqlParquetCacheMemorySize();
+            isFilterContextAdopted = true;
             this.filterCtx = new AsyncFilterContext(
                     configuration,
                     compiledFilter,
@@ -112,7 +116,7 @@ public class AsyncTopKAtom implements StatefulAtom, PerWorkerLockOwner, Reopenab
                     perWorkerFilters,
                     workerCount,
                     0,
-                    configuration.getSqlParquetCacheMemorySize(),
+                    memoryPoolMaxBytes,
                     0L
             );
 
@@ -200,7 +204,14 @@ public class AsyncTopKAtom implements StatefulAtom, PerWorkerLockOwner, Reopenab
                 }
             }
         } catch (Throwable th) {
-            close();
+            if (!isFilterContextAdopted) {
+                Misc.free(compiledFilter, th);
+                Misc.free(bindVarMemory, th);
+                Misc.freeObjList(bindVarFunctions, th);
+                Misc.free(ownerFilter, th);
+                Misc.freeObjList(perWorkerFilters, th);
+            }
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -220,8 +231,18 @@ public class AsyncTopKAtom implements StatefulAtom, PerWorkerLockOwner, Reopenab
 
     @Override
     public void close() {
-        clear();
-        Misc.free(filterCtx);
+        Throwable failure = Misc.freeObjListBestEffort(null, rankMaps);
+        failure = Misc.freeBestEffort(failure, ownerChain);
+        failure = Misc.freeBestEffort(failure, ownerTopK);
+        failure = Misc.freeBestEffort(failure, ownerEncoder);
+        failure = Misc.freeBestEffort(failure, ownerRecordA);
+        failure = Misc.freeBestEffort(failure, ownerRecordB);
+        failure = Misc.freeObjListBestEffort(failure, perWorkerChains);
+        failure = Misc.freeObjListBestEffort(failure, perWorkerTopK);
+        failure = Misc.freeObjListBestEffort(failure, perWorkerEncoders);
+        failure = Misc.freeObjListBestEffort(failure, perWorkerRecordsB);
+        failure = Misc.freeBestEffort(failure, filterCtx);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public void freePerWorkerChainsAndPools() {

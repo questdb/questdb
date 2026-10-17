@@ -68,6 +68,9 @@ public class ParanoiaState {
     public static final boolean VM_PARANOIA_MODE = false;
     // Set to true to enable stricter File Descriptor double close checks, trace closed usages.
     public static boolean FD_PARANOIA_MODE = false;
+    // Set to true to verify a logical plan's invariants after binding and after every optimiser pass; an optimiser
+    // reads it when it is created. The tests enable it.
+    public static boolean PLAN_PARANOIA_MODE = false;
 
     public static boolean isInsideJUnitTest() {
         StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();

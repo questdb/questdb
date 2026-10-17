@@ -176,46 +176,49 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.latestByFilter = latestByFilter;
         this.patternKeys = patternKeys;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
-        // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
-        // POOLED ObjList owned by the compiler's WhereClauseParser (ObjectPool<IntrinsicModel>).
+        // Defensive copy. The caller passes a POOLED ObjList owned by the compiler.
         // SqlCompilers are pooled and shared across threads/connections, so when another
-        // thread borrows the same compiler and recompiles, models.next() -> IntrinsicModel.clear()
-        // -> keyValueFuncs.clear() nulls the backing array (Arrays.fill BEFORE pos=0). A concurrent
-        // getCursor() on this still-cached factory would then read a stale size() (> 0) and a null
+        // thread borrows the same compiler and recompiles, clearing that list nulls the backing
+        // array (Arrays.fill BEFORE pos=0). A concurrent getCursor() on this still-cached factory would then read a stale size() (> 0) and a null
         // slot in Function.init(...), producing the intermittent NPE in issue #7294. We keep our own
         // list of the same Function instances -- which this factory owns and frees in close() (the
         // pooled model only clears references, never frees) -- to decouple from the model's lifecycle.
         this.keyValueFuncs = keyValueFuncs != null ? new ObjList<>(keyValueFuncs) : null;
-        if (this.keyValueFuncs != null) {
-            this.keyValueKeyCache = new IntList(this.keyValueFuncs.size());
-            keyValueKeyCache.setAll(this.keyValueFuncs.size(), SymbolTable.VALUE_NOT_FOUND);
-        } else {
-            this.keyValueKeyCache = null;
-        }
-        int[] requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
+        try {
+            if (this.keyValueFuncs != null) {
+                this.keyValueKeyCache = new IntList(this.keyValueFuncs.size());
+                keyValueKeyCache.setAll(this.keyValueFuncs.size(), SymbolTable.VALUE_NOT_FOUND);
+            } else {
+                this.keyValueKeyCache = null;
+            }
+            int[] requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
 
-        int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
-        // Read the owned defensive copy (this.keyValueFuncs), never the pooled parameter. The two are
-        // content-identical here (compiling thread owns the model exclusively during construction), but
-        // the copy is the reference this factory owns and frees in close(); using it consistently avoids
-        // a refactor hazard if the defensive copy above is ever changed or removed.
-        final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
-        if (keyValueFuncsCopy != null || patternKeys != null) {
-            final int multiKeyCapacity = patternKeys != null ? 16 : keyValueFuncsCopy.size();
-            final MergeObserver mergeObserver = TEST_MERGE_OBSERVER.get();
-            this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata, mergeObserver);
-            this.singleKeyCursor = null;
-            this.multiKeyPageFrameCursor = !latestBy
-                    ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes, mergeObserver)
-                    : null;
-            this.singleKeyPageFrameCursor = null;
-        } else {
-            this.singleKeyCursor = new SingleKeyCoveringCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
-            this.multiKeyCursor = null;
-            this.singleKeyPageFrameCursor = !latestBy
-                    ? new SingleKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
-                    : null;
-            this.multiKeyPageFrameCursor = null;
+            int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
+            // Read the owned defensive copy (this.keyValueFuncs), never the pooled parameter. The two are
+            // content-identical here (compiling thread owns the model exclusively during construction), but
+            // the copy is the reference this factory owns and frees in close(); using it consistently avoids
+            // a refactor hazard if the defensive copy above is ever changed or removed.
+            final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
+            if (keyValueFuncsCopy != null || patternKeys != null) {
+                final int multiKeyCapacity = patternKeys != null ? 16 : keyValueFuncsCopy.size();
+                final MergeObserver mergeObserver = TEST_MERGE_OBSERVER.get();
+                this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata, mergeObserver);
+                this.singleKeyCursor = null;
+                this.multiKeyPageFrameCursor = !latestBy
+                        ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes, mergeObserver)
+                        : null;
+                this.singleKeyPageFrameCursor = null;
+            } else {
+                this.singleKeyCursor = new SingleKeyCoveringCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
+                this.multiKeyCursor = null;
+                this.singleKeyPageFrameCursor = !latestBy
+                        ? new SingleKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
+                        : null;
+                this.multiKeyPageFrameCursor = null;
+            }
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
         }
     }
 
@@ -538,7 +541,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return own;
         }
         // The backup may order rows differently -- FilterOnValues drains its per-key cursors
-        // one after another under ORDER_BY_INVARIANT, which is not row-id order -- and the
+        // one after another when its index order reads key by key, which is not row-id order -- and the
         // generator elides an ORDER BY ts on whatever we answer here, before either delegate
         // runs. Advertise no ordering rather than the one only half of the pair keeps.
         return SCAN_DIRECTION_OTHER;

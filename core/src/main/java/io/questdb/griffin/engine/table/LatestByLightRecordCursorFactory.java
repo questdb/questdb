@@ -85,17 +85,22 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         assert base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.recordSink = recordSink;
-        ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
-        mapValueTypes.add(ROW_ID_VALUE_IDX, ColumnType.LONG);
-        if (!orderedByTimestampAsc) {
-            mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
-        }
-        // openOnInit=false: the cursor binds the per-query tracker and reopens the map in of(),
-        // so the map's malloc/free pairs are charged symmetrically to the per-query counter.
-        Map latestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes, false);
-        this.cursor = new LatestByLightRecordCursor(latestByMap);
         this.timestampIndex = timestampIndex;
         this.orderedByTimestampAsc = orderedByTimestampAsc;
+        try {
+            ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
+            mapValueTypes.add(ROW_ID_VALUE_IDX, ColumnType.LONG);
+            if (!orderedByTimestampAsc) {
+                mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
+            }
+            // openOnInit=false: the cursor binds the per-query tracker and reopens the map in of(),
+            // so the map's malloc/free pairs are charged symmetrically to the per-query counter.
+            Map latestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes, false);
+            this.cursor = new LatestByLightRecordCursor(latestByMap);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

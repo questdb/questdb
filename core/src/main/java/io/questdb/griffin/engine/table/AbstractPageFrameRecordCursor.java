@@ -60,18 +60,14 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
             frameAddressCache = new PageFrameAddressCache();
             frameMemoryPool = new PageFrameMemoryPool(configuration);
         } catch (Throwable th) {
-            close();
+            closeFrameResources();
             throw th;
         }
     }
 
     @Override
     public void close() {
-        Misc.free(frameMemoryPool);
-        Misc.free(recordA);
-        Misc.free(recordB);
-        Misc.free(frameAddressCache);
-        frameCursor = Misc.free(frameCursor);
+        closeFrameResources();
     }
 
     @TestOnly
@@ -131,5 +127,13 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         frameMemoryPool.of(frameAddressCache);
         frameCount = 0;
         frameCursor.toTop();
+    }
+
+    private void closeFrameResources() {
+        Misc.free(frameMemoryPool);
+        Misc.free(recordA);
+        Misc.free(recordB);
+        Misc.free(frameAddressCache);
+        frameCursor = Misc.free(frameCursor);
     }
 }

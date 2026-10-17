@@ -62,11 +62,6 @@ public class GeoIntColumn extends GeoIntFunction implements ColumnFunction {
         return rec.getGeoInt(columnIndex);
     }
 
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
     static {
         int bits = ColumnType.GEOINT_MAX_BITS - ColumnType.GEOINT_MIN_BITS + 1;
         COLUMNS = new GeoIntColumn[STATIC_COLUMN_COUNT * bits];

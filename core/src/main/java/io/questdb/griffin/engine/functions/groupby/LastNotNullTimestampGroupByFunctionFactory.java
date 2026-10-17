@@ -34,6 +34,11 @@ import io.questdb.std.ObjList;
 
 public class LastNotNullTimestampGroupByFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.getTimestampType(argTypes.getQuick(0));
+    }
+
+    @Override
     public String getSignature() {
         return "last_not_null(N)";
     }

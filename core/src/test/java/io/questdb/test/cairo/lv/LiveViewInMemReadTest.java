@@ -3424,8 +3424,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         //
         // It does not, and cannot, with the current pushdown rules. A predicate that
         // an LV read cannot turn into an intrinsic index scan (LV tables never carry
-        // an index) is re-attached to the model by generateTableQuery0
-        // (model.setWhereClause(intrinsicModel.filter)) and applied by a Filter node
+        // an index) stays in the residual ScanFactoryGenerator leaves and is applied by a Filter node
         // wrapping the LiveView; the base cursor the LiveView routes through is an
         // unfiltered full forward scan. So every row the tier yields - overlap AND
         // lead - passes through the outer filter. (A timestamp-interval predicate is

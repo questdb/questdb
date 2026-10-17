@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -278,7 +278,7 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidLoTypeFreesParsedFunction() throws Exception {
-        // toLimitFunction() parses the LIMIT expression before validating it, so a rejected
+        // OrderBinder.bindLimit() parses the LIMIT expression before validating it, so a rejected
         // expression that owns native memory leaked it: an ARRAY constant holds a DirectArray, and
         // neither the type coercion nor the explicit type check freed the parsed function. The
         // callers cannot free it either - they never receive it.
@@ -401,6 +401,148 @@ public class LimitTest extends AbstractCairoTest {
             testLimitDefinesBindVariables0("select * from y limit $1, $2", 2);
             testLimitDefinesBindVariables0("select * from y order by timestamp limit $1, $2", 2);
             testLimitDefinesBindVariables0("select * from y order by timestamp desc limit $1, $2", 2);
+        });
+    }
+
+    @Test
+    public void testLimitDoesNotReachInnerJoinMaster() throws Exception {
+        // a LIMIT caps the page frames the master's filter dispatches ahead of the join
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1);
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            // of the first three filtered master rows, the third does not match the slave
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT 3")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .withPlan("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: b.l=a.l
+                                        Async JIT Filter workers: 1
+                                          filter: 5<i
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:06.000000Z\t1\t102
+                            1970-01-01T00:00:07.000000Z\t2\t103
+                            1970-01-01T00:00:10.000000Z\t0\t101
+                            """);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT 4")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:06.000000Z\t1\t102
+                            1970-01-01T00:00:07.000000Z\t2\t103
+                            1970-01-01T00:00:10.000000Z\t0\t101
+                            1970-01-01T00:00:10.000000Z\t0\t100
+                            """);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT 50")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:06.000000Z\t1\t102
+                            1970-01-01T00:00:07.000000Z\t2\t103
+                            1970-01-01T00:00:10.000000Z\t0\t101
+                            1970-01-01T00:00:10.000000Z\t0\t100
+                            1970-01-01T00:00:11.000000Z\t1\t102
+                            1970-01-01T00:00:12.000000Z\t2\t103
+                            1970-01-01T00:00:15.000000Z\t0\t101
+                            1970-01-01T00:00:15.000000Z\t0\t100
+                            1970-01-01T00:00:16.000000Z\t1\t102
+                            1970-01-01T00:00:17.000000Z\t2\t103
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            1970-01-01T00:00:20.000000Z\t0\t100
+                            """);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 100 LIMIT 3")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .returns("ts\tl\tv\n");
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT 0")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("ts\tl\tv\n");
+        });
+    }
+
+    @Test
+    public void testLimitDoesNotReachJoinMasterUnderSlaveFilter() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1);
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            // the slave filter rejects the master row 6
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a LEFT JOIN sp b ON a.l = b.l WHERE a.i > 5 AND b.v > 102 LIMIT 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlan("""
+                            Limit value: 2 skip-rows-max: 0 take-rows-max: 2
+                                SelectedRecord
+                                    Filter filter: 102<b.v
+                                        Hash Left Outer Join Light
+                                          condition: b.l=a.l
+                                            Async JIT Filter workers: 1
+                                              filter: 5<i
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:07.000000Z\t2\t103
+                            1970-01-01T00:00:12.000000Z\t2\t103
+                            """);
+            // the slave filter rejects the master row 8
+            final String asOfRows = """
+                    ts\tl\tv
+                    1970-01-01T00:00:06.000000Z\t1\t102
+                    1970-01-01T00:00:07.000000Z\t2\t103
+                    1970-01-01T00:00:11.000000Z\t1\t102
+                    """;
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a ASOF JOIN sp b ON (l) WHERE a.i > 5 AND b.v > 101 LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlan("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                SelectedRecord
+                                    Filter filter: 101<b.v
+                                        AsOf Join Fast
+                                          condition: b.l=a.l
+                                            Async JIT Filter workers: 1
+                                              filter: 5<i
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: sp
+                            """)
+                    .returns(asOfRows);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a LT JOIN sp b ON (l) WHERE a.i > 5 AND b.v > 101 LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(asOfRows);
         });
     }
 
@@ -769,6 +911,555 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitReachesAsOfJoinMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a ASOF JOIN sp b ON (l) WHERE a.i > 5 LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
+                                SelectedRecord
+                                    AsOf Join Fast
+                                      condition: b.l=a.l
+                                        Async JIT Filter workers: 1
+                                          limit: 3
+                                          filter: 5<i
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:18.000000Z\t3\tnull
+                            1970-01-01T00:00:19.000000Z\t4\tnull
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            """);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a ASOF JOIN sp b ON (l) WHERE a.i > 5 LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlan("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                SelectedRecord
+                                    AsOf Join Fast
+                                      condition: b.l=a.l
+                                        Async JIT Filter workers: 1
+                                          limit: 3
+                                          filter: 5<i
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:06.000000Z\t1\t102
+                            1970-01-01T00:00:07.000000Z\t2\t103
+                            1970-01-01T00:00:08.000000Z\t3\tnull
+                            """);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a ASOF JOIN sp b ON (l) LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -3 skip-rows: 17 take-rows: 3
+                                SelectedRecord
+                                    AsOf Join Fast
+                                      condition: b.l=a.l
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:18.000000Z\t3\tnull
+                            1970-01-01T00:00:19.000000Z\t4\tnull
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitReachesLeftJoinMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            // the last master row matches two slave rows
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a LEFT JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
+                                SelectedRecord
+                                    Hash Left Outer Join Light
+                                      condition: b.l=a.l
+                                        Async JIT Filter workers: 1
+                                          limit: 3
+                                          filter: 5<i
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:19.000000Z\t4\tnull
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            1970-01-01T00:00:20.000000Z\t0\t100
+                            """);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a LEFT JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlan("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                SelectedRecord
+                                    Hash Left Outer Join Light
+                                      condition: b.l=a.l
+                                        Async JIT Filter workers: 1
+                                          limit: 3
+                                          filter: 5<i
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:06.000000Z\t1\t102
+                            1970-01-01T00:00:07.000000Z\t2\t103
+                            1970-01-01T00:00:08.000000Z\t3\tnull
+                            """);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a LEFT JOIN sp b ON a.l = b.l LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
+                                SelectedRecord
+                                    Hash Left Outer Join Light
+                                      condition: b.l=a.l
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:19.000000Z\t4\tnull
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            1970-01-01T00:00:20.000000Z\t0\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitReachesLtJoinMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a LT JOIN sp b ON (l) WHERE a.i > 5 LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
+                                SelectedRecord
+                                    Lt Join Light
+                                      condition: b.l=a.l
+                                        Async JIT Filter workers: 1
+                                          limit: 3
+                                          filter: 5<i
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:18.000000Z\t3\tnull
+                            1970-01-01T00:00:19.000000Z\t4\tnull
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            """);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a LT JOIN sp b ON (l) WHERE a.i > 5 LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlan("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                SelectedRecord
+                                    Lt Join Light
+                                      condition: b.l=a.l
+                                        Async JIT Filter workers: 1
+                                          limit: 3
+                                          filter: 5<i
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:06.000000Z\t1\t102
+                            1970-01-01T00:00:07.000000Z\t2\t103
+                            1970-01-01T00:00:08.000000Z\t3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitReachesTrailingCrossJoinInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (SELECT x aid, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b AS (SELECT x bid FROM long_sequence(3))");
+            execute("CREATE TABLE c AS (SELECT x cid FROM long_sequence(2))");
+            assertQuery("SELECT a.aid, b.bid FROM a CROSS JOIN b JOIN c ON b.bid = c.cid WHERE a.aid > 1 LIMIT -5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
+                                SelectedRecord
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: c.cid=b.bid
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                        Async JIT Filter workers: 1
+                                          limit: 5
+                                          filter: 1<aid
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: a
+                            """)
+                    .returns("""
+                            aid\tbid
+                            16\t2
+                            17\t2
+                            18\t2
+                            19\t2
+                            20\t2
+                            """);
+            assertQuery("SELECT a.aid, b.bid FROM a CROSS JOIN b JOIN c ON b.bid = c.cid WHERE a.aid > 1 LIMIT 5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                                SelectedRecord
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: c.cid=b.bid
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                        Async JIT Filter workers: 1
+                                          limit: 5
+                                          filter: 1<aid
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                            """)
+                    .returns("""
+                            aid\tbid
+                            2\t1
+                            3\t1
+                            4\t1
+                            5\t1
+                            6\t1
+                            """);
+            assertQuery("SELECT b.bid, a.aid FROM b CROSS JOIN a WHERE a.aid > 1 LIMIT -5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
+                                SelectedRecord
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                                        Async JIT Filter workers: 1
+                                          limit: 5
+                                          filter: 1<aid
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: a
+                            """)
+                    .returns("""
+                            bid\taid
+                            3\t16
+                            3\t17
+                            3\t18
+                            3\t19
+                            3\t20
+                            """);
+            // the filter of a returns no more rows from its end than the maximum negative LIMIT
+            assertQuery("SELECT count() FROM (SELECT b.bid, a.aid FROM b CROSS JOIN a WHERE a.aid > 1 LIMIT -10_001)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            57
+                            """);
+            // the filter reads both inputs, so it may reject the last rows of a
+            assertQuery("SELECT b.bid, a.aid FROM b CROSS JOIN a WHERE a.aid > b.bid * 6 LIMIT -5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
+                                SelectedRecord
+                                    Filter filter: b.bid*6<a.aid
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                            """)
+                    .returns("""
+                            bid\taid
+                            2\t18
+                            2\t19
+                            2\t20
+                            3\t19
+                            3\t20
+                            """);
+            // a is not the last input, so the last rows read more of a than the LIMIT
+            assertQuery("SELECT b.bid, a.aid, c.cid FROM b CROSS JOIN a CROSS JOIN c WHERE a.aid > 1 LIMIT -5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
+                                SelectedRecord
+                                    Cross Join
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                            Async JIT Filter workers: 1
+                                              filter: 1<aid
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                            """)
+                    .returns("""
+                            bid\taid\tcid
+                            3\t18\t2
+                            3\t19\t1
+                            3\t19\t2
+                            3\t20\t1
+                            3\t20\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNegativeLimitBindVariableMultipleOrderTerms() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 5),
+                        ('2024-01-01T00:00:00.000000Z', NULL),
+                        ('2024-01-01T00:00:01.000000Z', 3),
+                        ('2024-01-01T00:00:02.000000Z', 7),
+                        ('2024-01-01T00:00:02.000000Z', NULL),
+                        ('2024-01-01T00:00:02.000000Z', 1),
+                        ('2024-01-01T00:00:03.000000Z', 4),
+                        ('2024-01-01T00:00:03.000000Z', NULL)
+                    """);
+            final String query = "SELECT ts, v FROM t ORDER BY ts, v LIMIT -$1";
+            final String lastThree = """
+                    ts\tv
+                    2024-01-01T00:00:02.000000Z\t7
+                    2024-01-01T00:00:03.000000Z\tnull
+                    2024-01-01T00:00:03.000000Z\t4
+                    """;
+            final String firstThree = """
+                    ts\tv
+                    2024-01-01T00:00:00.000000Z\tnull
+                    2024-01-01T00:00:00.000000Z\t5
+                    2024-01-01T00:00:01.000000Z\t3
+                    """;
+            final String none = "ts\tv\n";
+            final String all = """
+                    ts\tv
+                    2024-01-01T00:00:00.000000Z\tnull
+                    2024-01-01T00:00:00.000000Z\t5
+                    2024-01-01T00:00:01.000000Z\t3
+                    2024-01-01T00:00:02.000000Z\tnull
+                    2024-01-01T00:00:02.000000Z\t1
+                    2024-01-01T00:00:02.000000Z\t7
+                    2024-01-01T00:00:03.000000Z\tnull
+                    2024-01-01T00:00:03.000000Z\t4
+                    """;
+
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [ts, v]
+                                Encode sort light lo: 3 partiallySorted: true
+                                  keys: [ts desc, v desc]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: t
+                            """)
+                    .returns(lastThree);
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT 3").noLeakCheck().timestamp("ts").expectSize().returns(firstThree);
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT 0").noLeakCheck().timestamp("ts").expectSize().returns(none);
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT NULL::LONG")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: nullL partiallySorted: true
+                              keys: [ts, v]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns(all);
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT NULL::INT")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: null partiallySorted: true
+                              keys: [ts, v]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns(all);
+
+            final int[] types = {ColumnType.LONG, ColumnType.INT, ColumnType.SHORT, ColumnType.BYTE};
+            final long[] minValues = {Numbers.LONG_NULL, Numbers.INT_NULL, Short.MIN_VALUE, Byte.MIN_VALUE};
+            for (int i = 0; i < types.length; i++) {
+                bindVariableService.clear();
+                setLimitBindVariable(types[i], 3);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlan("""
+                                Encode sort light
+                                  keys: [ts, v]
+                                    Encode sort light lo: $0::%s partiallySorted: true
+                                      keys: [ts desc, v desc]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: t
+                                """.formatted(ColumnType.nameOf(types[i]).toLowerCase()))
+                        .returns(lastThree);
+                try (RecordCursorFactory factory = select(query)) {
+                    assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(lastThree);
+                    setLimitBindVariable(types[i], -3);
+                    assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(firstThree);
+                    setLimitBindVariable(types[i], 0);
+                    assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(none);
+                    setLimitBindVariable(types[i], minValues[i]);
+                    assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(all);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNegativeLimitBindVariablePastMaxNegativeLimit() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            // a filter learns a bind variable's value only once it runs, and past the most rows it holds it reads all
+            // of them forward and keeps the last ones
+            bindVariableService.clear();
+            bindVariableService.setLong(0, -5);
+            assertQuery("SELECT i FROM t WHERE i > 5 LIMIT $1")
+                    .noLeakCheck()
+                    .assertsPlanContaining("limit: -5", "Row forward scan");
+            final String[] filters = {
+                    "SELECT i FROM t WHERE i > 5",
+                    "SELECT * FROM (SELECT i FROM t WHERE i > 5)",
+                    "WITH a AS (SELECT i FROM t WHERE i > 5) SELECT * FROM a",
+            };
+            for (String query : filters) {
+                printSql(query);
+                final String all = sink.toString();
+                try (RecordCursorFactory factory = select(query + " LIMIT $1")) {
+                    for (long n : new long[]{-5, -3, -7}) {
+                        bindVariableService.setLong(0, n);
+                        assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns(lastRows(all, (int) -n));
+                    }
+                }
+            }
+            final String[] joins = {
+                    "SELECT a.ts, a.i, b.v FROM t a LEFT JOIN sp b ON a.l = b.l WHERE a.i > 5",
+                    "SELECT a.ts, a.i, b.v FROM (SELECT * FROM t WHERE i > 5) a LEFT JOIN sp b ON a.l = b.l",
+                    "SELECT a.ts, a.i, b.v FROM t a ASOF JOIN sp b ON (l) WHERE a.i > 5",
+                    "SELECT a.ts, a.i, b.v FROM (SELECT * FROM t WHERE i > 5) a ASOF JOIN sp b ON (l)",
+                    "SELECT a.ts, a.i, b.v FROM (SELECT * FROM t WHERE i > 5) a LT JOIN sp b ON (l)",
+            };
+            for (String query : joins) {
+                printSql(query);
+                final String all = sink.toString();
+                bindVariableService.setLong(0, -5);
+                try (RecordCursorFactory factory = select(query + " LIMIT $1")) {
+                    for (long n : new long[]{-5, -3, -7}) {
+                        bindVariableService.setLong(0, n);
+                        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().noRandomAccess().expectSize()
+                                .returns(lastRows(all, (int) -n));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNegativeLimitEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");
@@ -777,6 +1468,73 @@ public class LimitTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("sym\tts\n");
+        });
+    }
+
+    @Test
+    public void testNegativeLimitMultipleOrderTermsHiddenKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 5),
+                        ('2024-01-01T00:00:00.000000Z', NULL),
+                        ('2024-01-01T00:00:01.000000Z', 3),
+                        ('2024-01-01T00:00:02.000000Z', 7),
+                        ('2024-01-01T00:00:02.000000Z', NULL),
+                        ('2024-01-01T00:00:02.000000Z', 1),
+                        ('2024-01-01T00:00:03.000000Z', 4),
+                        ('2024-01-01T00:00:03.000000Z', NULL)
+                    """);
+            assertQuery("SELECT v FROM t ORDER BY ts, v LIMIT -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [ts, v]
+                                    Encode sort light lo: 3 partiallySorted: true
+                                      keys: [ts desc, v desc]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: t
+                            """)
+                    .returns("""
+                            v
+                            7
+                            null
+                            4
+                            """);
+            assertQuery("SELECT ts FROM t ORDER BY ts, v LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [ts, v]
+                                    Encode sort light lo: 3 partiallySorted: true
+                                      keys: [ts desc, v desc]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: t
+                            """)
+                    .returns("""
+                            ts
+                            2024-01-01T00:00:02.000000Z
+                            2024-01-01T00:00:03.000000Z
+                            2024-01-01T00:00:03.000000Z
+                            """);
+            assertQuery("SELECT v + 1 x, ts FROM t ORDER BY ts, v LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            x\tts
+                            8\t2024-01-01T00:00:02.000000Z
+                            null\t2024-01-01T00:00:03.000000Z
+                            5\t2024-01-01T00:00:03.000000Z
+                            """);
         });
     }
 
@@ -1101,6 +1859,529 @@ public class LimitTest extends AbstractCairoTest {
                             -3\tgoogl\t1.0\t2001-01-01T00:00:00.000000Z
                             -2\tgoogl\t2.0\t2002-01-01T00:00:00.000000Z
                             -1\tgoogl\t3.0\t2003-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testNegativeLimitOverJoinBuildsSlaveOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT (100 + x)::INT k FROM long_sequence(3))");
+            execute("CREATE TABLE sn AS (SELECT (2_000 + x)::INT k FROM long_sequence(3))");
+            // the slave filter counts the slave rows each build of the hash table reads; the master suffix grows from
+            // the last two filtered master rows to all of them before the join emits two rows
+            final String query = "SELECT m.i, s.k FROM m JOIN (SELECT k FROM s WHERE test_latched_counter()) s ON m.i = s.k WHERE m.i > 0 LIMIT -2";
+            assertSlaveRowReads(query, 3);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: s.k=m.i
+                                        Async JIT Filter workers: 1
+                                          limit: 2
+                                          filter: 0<i
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: m
+                                        Hash
+                                            Async Filter workers: 1
+                                              filter: test_latched_counter()
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: s
+                            """)
+                    .returns("""
+                            i\tk
+                            102\t102
+                            103\t103
+                            """);
+            final String noMatch = "SELECT m.i, s.k FROM m JOIN (SELECT k FROM sn WHERE test_latched_counter()) s ON m.i = s.k WHERE m.i > 0 LIMIT -1";
+            assertSlaveRowReads(noMatch, 3);
+            assertQuery(noMatch)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("i\tk\n");
+        });
+    }
+
+    @Test
+    public void testNegativeLimitOverJoinPastMaxNegativeLimitBuildsSlaveTwice() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT (100 + x)::INT k FROM long_sequence(3))");
+            // the last 100 filtered master rows, the most the master filter holds, join no slave row, so the join runs
+            // once more over all master rows
+            final String query = "SELECT m.i, s.k FROM m JOIN (SELECT k FROM s WHERE test_latched_counter()) s ON m.i = s.k WHERE m.i > 0 LIMIT -2";
+            assertSlaveRowReads(query, 6);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tk
+                            102\t102
+                            103\t103
+                            """);
+        });
+    }
+
+    @Test
+    public void testNegativeLimitOverJoinsReturnsLastJoinedRows() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, x % 7 l, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT (x * 37)::INT k, x % 7 l, x v, (x * 37_000_000 + 500_000)::TIMESTAMP ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            // each join emits rows for some master rows only, so a LIMIT reads a growing suffix of the master rows under
+            // the open join, and past the 100 rows the master filter holds, all of them
+            final String[] joins = {
+                    "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k WHERE m.l > 0",
+                    "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k AND m.l = s.l WHERE m.l > 0 AND s.v > 2",
+                    "SELECT m.i, s.v FROM m LEFT JOIN s ON m.i = s.k WHERE m.l > 0 AND s.v > 2",
+                    "SELECT m.i, s.v FROM m ASOF JOIN s ON (l) WHERE m.l > 0 AND s.v > 18",
+                    "SELECT m.i, s.v FROM m LT JOIN s ON (l) WHERE m.l > 0 AND s.v > 18",
+                    "SELECT m.i, s.v FROM m CROSS JOIN s WHERE m.l > 0 AND m.i = s.k + 1",
+                    "SELECT m.i, s.v FROM m JOIN s ON m.i > s.k AND m.i < s.k + 3 WHERE m.l > 0",
+            };
+            for (String join : joins) {
+                printSql(join);
+                final String all = sink.toString();
+                for (int n : new int[]{1, 3, 64, 100}) {
+                    final String query = join + " LIMIT -" + n;
+                    assertQuery(query).noLeakCheck().assertsPlanContaining("limit: " + n);
+                    assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(lastRows(all, n));
+                    assertQuery(query).noLeakCheck().noRandomAccess().expectSize().fullFatJoins().returns(lastRows(all, n));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNegativeLimitPastMaxNegativeLimitOverFilteredInputs() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            execute("CREATE TABLE c AS (SELECT x::INT c FROM long_sequence(2))");
+            // no filter can hold the last five rows, so each LIMIT reads all rows of its input
+            final String lastFive = """
+                    i
+                    16
+                    17
+                    18
+                    19
+                    20
+                    """;
+            assertQuery("SELECT * FROM (SELECT i FROM t WHERE i > 5) LIMIT -5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastFive);
+            assertQuery("SELECT i FROM t WHERE i > 5 LIMIT -5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(lastFive);
+            final String innerLastFive = """
+                    ts\tl\tv
+                    1970-01-01T00:00:15.000000Z\t0\t100
+                    1970-01-01T00:00:16.000000Z\t1\t102
+                    1970-01-01T00:00:17.000000Z\t2\t103
+                    1970-01-01T00:00:20.000000Z\t0\t101
+                    1970-01-01T00:00:20.000000Z\t0\t100
+                    """;
+            assertQuery("SELECT a.ts, a.l, b.v FROM (SELECT * FROM t WHERE i > 5) a JOIN sp b ON a.l = b.l LIMIT -5")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(innerLastFive);
+            assertQuery("WITH a AS (SELECT * FROM t WHERE i > 5) SELECT a.ts, a.l, b.v FROM a JOIN sp b ON a.l = b.l LIMIT -5")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(innerLastFive);
+            assertQuery("SELECT a.i, b.v FROM (SELECT * FROM t WHERE i > 5) a LEFT JOIN sp b ON a.l = b.l LIMIT -5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tv
+                            17\t103
+                            18\tnull
+                            19\tnull
+                            20\t101
+                            20\t100
+                            """);
+            assertQuery("SELECT a.i, c.c FROM (SELECT * FROM t WHERE i > 5) a CROSS JOIN c LIMIT -5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tc
+                            18\t2
+                            19\t1
+                            19\t2
+                            20\t1
+                            20\t2
+                            """);
+            assertQuery("SELECT a.i, b.v, c.c FROM (SELECT * FROM t WHERE i > 5) a JOIN sp b ON a.l = b.l CROSS JOIN c LIMIT -5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tv\tc
+                            17\t103\t2
+                            20\t101\t1
+                            20\t101\t2
+                            20\t100\t1
+                            20\t100\t2
+                            """);
+
+            // a filter learns a bind variable's value only once it runs, and reads all rows past the most it holds
+            bindVariableService.clear();
+            bindVariableService.setLong(0, -5);
+            assertQuery("SELECT a.ts, a.l, b.v FROM (SELECT * FROM t WHERE i > 5) a JOIN sp b ON a.l = b.l LIMIT $1")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(innerLastFive);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT $1")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(innerLastFive);
+            assertQuery("SELECT a.i, c.c FROM (SELECT * FROM t WHERE i > 5) a CROSS JOIN c LIMIT $1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tc
+                            18\t2
+                            19\t1
+                            19\t2
+                            20\t1
+                            20\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNegativeLimitReachesAsOfJoinMasterUnderSlaveFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            // the slave filter rejects the master rows 18 and 19
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a ASOF JOIN sp b ON (l) WHERE a.i > 5 AND b.v > 100 LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
+                                SelectedRecord
+                                    Filter filter: 100<b.v
+                                        AsOf Join Fast
+                                          condition: b.l=a.l
+                                            Async JIT Filter workers: 1
+                                              limit: 3
+                                              filter: 5<i
+                                                PageFrame
+                                                    Row backward scan
+                                                    Frame backward scan on: t
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:16.000000Z\t1\t102
+                            1970-01-01T00:00:17.000000Z\t2\t103
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            """);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a LT JOIN sp b ON (l) WHERE a.i > 5 AND b.v > 100 LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
+                                SelectedRecord
+                                    Filter filter: 100<b.v
+                                        Lt Join Light
+                                          condition: b.l=a.l
+                                            Async JIT Filter workers: 1
+                                              limit: 3
+                                              filter: 5<i
+                                                PageFrame
+                                                    Row backward scan
+                                                    Frame backward scan on: t
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:16.000000Z\t1\t102
+                            1970-01-01T00:00:17.000000Z\t2\t103
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            """);
+        });
+    }
+
+    @Test
+    public void testNegativeLimitReachesInnerJoinMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            // of the last three filtered master rows, only the last one matches the slave, twice
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT -3")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: b.l=a.l
+                                        Async JIT Filter workers: 1
+                                          limit: 3
+                                          filter: 5<i
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:17.000000Z\t2\t103
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            1970-01-01T00:00:20.000000Z\t0\t100
+                            """);
+            // the first of the last five rows is the last row the master row 15 joins
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT -5")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:15.000000Z\t0\t100
+                            1970-01-01T00:00:16.000000Z\t1\t102
+                            1970-01-01T00:00:17.000000Z\t2\t103
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            1970-01-01T00:00:20.000000Z\t0\t100
+                            """);
+            // the join emits 12 rows from all 15 filtered master rows
+            final String all = """
+                    ts\tl\tv
+                    1970-01-01T00:00:06.000000Z\t1\t102
+                    1970-01-01T00:00:07.000000Z\t2\t103
+                    1970-01-01T00:00:10.000000Z\t0\t101
+                    1970-01-01T00:00:10.000000Z\t0\t100
+                    1970-01-01T00:00:11.000000Z\t1\t102
+                    1970-01-01T00:00:12.000000Z\t2\t103
+                    1970-01-01T00:00:15.000000Z\t0\t101
+                    1970-01-01T00:00:15.000000Z\t0\t100
+                    1970-01-01T00:00:16.000000Z\t1\t102
+                    1970-01-01T00:00:17.000000Z\t2\t103
+                    1970-01-01T00:00:20.000000Z\t0\t101
+                    1970-01-01T00:00:20.000000Z\t0\t100
+                    """;
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT -12")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(all);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT -50")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(all);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 100 LIMIT -3")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("ts\tl\tv\n");
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT -10, -5")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:10.000000Z\t0\t101
+                            1970-01-01T00:00:10.000000Z\t0\t100
+                            1970-01-01T00:00:11.000000Z\t1\t102
+                            1970-01-01T00:00:12.000000Z\t2\t103
+                            1970-01-01T00:00:15.000000Z\t0\t101
+                            """);
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT 3")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:06.000000Z\t1\t102
+                            1970-01-01T00:00:07.000000Z\t2\t103
+                            1970-01-01T00:00:10.000000Z\t0\t101
+                            """);
+
+            bindVariableService.clear();
+            bindVariableService.setLong(0, -3);
+            final String query = "SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT $1";
+            try (RecordCursorFactory factory = select(query)) {
+                assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().noRandomAccess().expectSize().returns("""
+                        ts\tl\tv
+                        1970-01-01T00:00:17.000000Z\t2\t103
+                        1970-01-01T00:00:20.000000Z\t0\t101
+                        1970-01-01T00:00:20.000000Z\t0\t100
+                        """);
+                bindVariableService.setLong(0, 3);
+                assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().noRandomAccess().returns("""
+                        ts\tl\tv
+                        1970-01-01T00:00:06.000000Z\t1\t102
+                        1970-01-01T00:00:07.000000Z\t2\t103
+                        1970-01-01T00:00:10.000000Z\t0\t101
+                        """);
+                bindVariableService.setLong(0, -5);
+                assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().noRandomAccess().expectSize().returns("""
+                        ts\tl\tv
+                        1970-01-01T00:00:15.000000Z\t0\t100
+                        1970-01-01T00:00:16.000000Z\t1\t102
+                        1970-01-01T00:00:17.000000Z\t2\t103
+                        1970-01-01T00:00:20.000000Z\t0\t101
+                        1970-01-01T00:00:20.000000Z\t0\t100
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testNegativeLimitReachesInnerJoinMasterOverManyRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(10_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE k AS (SELECT (2_000 + x)::INT ki, x v FROM long_sequence(3))");
+            // only the master rows 2001 to 2003 join, far from the last rows of the master
+            assertQuery("SELECT m.i, k.v FROM m JOIN k ON m.i = k.ki WHERE m.i > 0 LIMIT -2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: k.ki=m.i
+                                        Async JIT Filter workers: 1
+                                          limit: 2
+                                          filter: 0<i
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: m
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: k
+                            """)
+                    .returns("""
+                            i\tv
+                            2002\t2
+                            2003\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testNegativeLimitReachesInnerJoinMasterPastMaxNegativeLimit() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            // the master scan cannot return the last six rows, so the join reads all of them
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT -3")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:17.000000Z\t2\t103
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            1970-01-01T00:00:20.000000Z\t0\t100
+                            """);
+            // the master filter cannot hold the last five rows, so the LIMIT reads all rows of the join
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a JOIN sp b ON a.l = b.l WHERE a.i > 5 LIMIT -5")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: b.l=a.l
+                                        Async JIT Filter workers: 1
+                                          filter: 5<i
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:15.000000Z\t0\t100
+                            1970-01-01T00:00:16.000000Z\t1\t102
+                            1970-01-01T00:00:17.000000Z\t2\t103
+                            1970-01-01T00:00:20.000000Z\t0\t101
+                            1970-01-01T00:00:20.000000Z\t0\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testNegativeLimitReachesLeftJoinMasterUnderSlaveFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createJoinLimitTables();
+            assertQuery("SELECT a.ts, a.l, b.v FROM t a LEFT JOIN sp b ON a.l = b.l WHERE a.i > 5 AND b.v > 100 LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -3 skip-rows: baseRows-3 take-rows-max: 3
+                                SelectedRecord
+                                    Filter filter: 100<b.v
+                                        Hash Left Outer Join Light
+                                          condition: b.l=a.l
+                                            Async JIT Filter workers: 1
+                                              limit: 3
+                                              filter: 5<i
+                                                PageFrame
+                                                    Row backward scan
+                                                    Frame backward scan on: t
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: sp
+                            """)
+                    .returns("""
+                            ts\tl\tv
+                            1970-01-01T00:00:16.000000Z\t1\t102
+                            1970-01-01T00:00:17.000000Z\t2\t103
+                            1970-01-01T00:00:20.000000Z\t0\t101
                             """);
         });
     }
@@ -1594,8 +2875,8 @@ public class LimitTest extends AbstractCairoTest {
     public void testTopKDoesNotPeelExtraNullColumnSplice() throws Exception {
         // WINDOW JOIN with always-false ON wraps the master in an ExtraNullColumnCursorFactory
         // that splices in NULL columns for every aggregate from the (vacant) right side. The
-        // unified parallel top-K gate must not peel that wrapper; without canPeelForTopK guarding
-        // the splice, top-K iterates the master directly and silently drops the window aggregate.
+        // parallel top-K must not build itself under that wrapper; otherwise top-K iterates the
+        // master directly and silently drops the window aggregate.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1627,7 +2908,7 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testTopKDoesNotPeelExtraNullColumnSpliceOrderByNullColumn() throws Exception {
         // ORDER BY a column that exists only in the spliced layer. Pre-fix this hit
-        // AssertionError: index out of bounds, 3 >= 3 from buildAsyncTopKOverStolenFilter
+        // AssertionError: index out of bounds, 3 >= 3 from SortFactoryGenerator
         // because the gate translated the projected index against the unwrapped master metadata.
         // Post-fix the splice is the page-frame leaf, baseMetadata covers the null column, and
         // top-K runs to completion (all rows tie on NULL — comparator stability picks any 3).
@@ -1720,7 +3001,7 @@ public class LimitTest extends AbstractCairoTest {
                     .returns(expected);
 
             // repeated execution must not leak filter, function, page-frame or
-            // comparator state across the steal/halfClose/transfer boundary.
+            // comparator state across the stolen filter's transfer to the top-K.
             for (int i = 0; i < 5; i++) {
                 assertQuery("select x + 1 as x_plus from tab where ts2 in '1970' order by ts2 desc limit 1")
                         .noLeakCheck()
@@ -1904,6 +3185,37 @@ public class LimitTest extends AbstractCairoTest {
         testLimit(expected, expected, query);
     }
 
+    private static void assertSlaveRowReads(String query, int expectedReads) throws SqlException {
+        TestLatchedCounterFunctionFactory.reset(null);
+        try (
+                RecordCursorFactory factory = select(query);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            while (cursor.hasNext()) {
+                cursor.getRecord();
+            }
+        }
+        Assert.assertEquals(expectedReads, TestLatchedCounterFunctionFactory.getCount());
+    }
+
+    private static String lastRows(String rows, int count) {
+        final int headerEnd = rows.indexOf('\n');
+        int start = rows.length() - 1;
+        for (int i = 0; i < count && start > headerEnd; i++) {
+            start = rows.lastIndexOf('\n', start - 1);
+        }
+        return rows.substring(0, headerEnd + 1) + rows.substring(start + 1);
+    }
+
+    private static void setLimitBindVariable(int type, long value) throws SqlException {
+        switch (type) {
+            case ColumnType.LONG -> bindVariableService.setLong(0, value);
+            case ColumnType.INT -> bindVariableService.setInt(0, (int) value);
+            case ColumnType.SHORT -> bindVariableService.setShort(0, (short) value);
+            default -> bindVariableService.setByte(0, (byte) value);
+        }
+    }
+
     private static void testLimitDefinesBindVariables0(String sqlText, int bindVarCount) throws SqlException {
         // ensure clear test environment
         sqlExecutionContext.getBindVariableService().clear();
@@ -1930,18 +3242,8 @@ public class LimitTest extends AbstractCairoTest {
                     " from long_sequence(100)" +
                     ") timestamp(timestamp)");
 
-            String expectedMessage = "absolute LIMIT value is too large, maximum allowed value: " + maxLimit;
-            int expectedPosition = 34;
-
-            String query = "select * from y where i > 0 limit -" + (maxLimit + 1);
-            try (final RecordCursorFactory factory = select(query)) {
-                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    Assert.fail();
-                }
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
-                Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
-            }
+            // the filter cannot hold the last rows a constant past the maximum selects, so the LIMIT reads all rows
+            assertRowCount("select * from y where i > 0 limit -" + (maxLimit + 1), 100);
 
             // Numbers.LONG_NULL IS Long.MIN_VALUE, so that bit pattern is not a negative limit of
             // magnitude 2^63 - it is a NULL limit, which means "no limit". The unfiltered path has
@@ -1958,16 +3260,22 @@ public class LimitTest extends AbstractCairoTest {
             assertRowCount("select * from y where i > 0 limit null::long", 100);
             assertRowCount("select * from y limit null::long", 100);
 
-            // A genuinely over-large negative limit is still rejected.
-            String tooLarge = "select * from y where i > 0 limit -" + (maxLimit + 1);
-            try (final RecordCursorFactory factory = select(tooLarge)) {
-                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    Assert.fail();
-                }
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
-            }
+            // past the maximum, a filter given a bind variable's value reads all rows and keeps the last ones
+            sqlExecutionContext.getBindVariableService().setLong("lim", -(maxLimit + 1));
+            assertRowCount("select * from y where i > 0 limit :lim", 100);
         });
+    }
+
+    private void createJoinLimitTables() throws SqlException {
+        execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x % 5 l, x::INT i FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE sp (ts TIMESTAMP, l LONG, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO sp VALUES
+                    ('1970-01-01T00:00:00.500000Z', 0, 100),
+                    ('1970-01-01T00:00:01.500000Z', 0, 101),
+                    ('1970-01-01T00:00:02.500000Z', 1, 102),
+                    ('1970-01-01T00:00:03.500000Z', 2, 103)
+                """);
     }
 
     private void assertRowCount(String query, long expected) throws SqlException {

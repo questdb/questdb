@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
@@ -92,6 +93,11 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
             }
         }
         return true;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.UNDEFINED;
     }
 
     @Override

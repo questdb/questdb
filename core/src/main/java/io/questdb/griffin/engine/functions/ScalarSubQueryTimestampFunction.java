@@ -43,15 +43,30 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
     // filter so it does not have to be generated twice.
     private Function cursorFunction;
     private final RecordCursorFactory factory;
+    private final boolean isFactoryDeterminismReported;
     private final int position;
     private ScalarTimestampBoundHolder publishHolder;
     private long value = Numbers.LONG_NULL;
 
     public ScalarSubQueryTimestampFunction(Function cursorFunction, int position) {
-        super(getTimestampType(cursorFunction));
+        this(cursorFunction, position, getTimestampType(cursorFunction), true);
+    }
+
+    /**
+     * Reads the single-column sub-query as {@code timestampType}, converting the column the way a constant of its
+     * type converts. Like {@link CursorFunction}, it reports the sub-query as deterministic, so a call over it keeps
+     * the semantics it was bound with when the generated factory replaces the binding-time one.
+     */
+    public ScalarSubQueryTimestampFunction(Function cursorFunction, int position, int timestampType) {
+        this(cursorFunction, position, timestampType, false);
+    }
+
+    private ScalarSubQueryTimestampFunction(Function cursorFunction, int position, int timestampType, boolean isFactoryDeterminismReported) {
+        super(timestampType);
         this.cursorFunction = cursorFunction;
         this.factory = cursorFunction.getRecordCursorFactory();
         this.position = position;
+        this.isFactoryDeterminismReported = isFactoryDeterminismReported;
         assert factory != null;
     }
 
@@ -93,7 +108,7 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
             publishHolder.reset();
         }
         cursorFunction.init(symbolTableSource, executionContext);
-        value = ScalarSubQueryUtils.readTimestamp(factory, executionContext, position);
+        value = ScalarSubQueryUtils.readTimestamp(factory, executionContext, position, getType());
         // Publish the single per-execution value so the retained residual filter (and its per-worker
         // clones) read the exact same frozen bound instead of opening the sub-query a second time.
         if (publishHolder != null) {
@@ -103,7 +118,7 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
 
     @Override
     public boolean isNonDeterministic() {
-        return factory.isNonDeterministic();
+        return isFactoryDeterminismReported && factory.isNonDeterministic();
     }
 
     @Override
@@ -111,11 +126,10 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
         return true;
     }
 
-    // Runtime-constant does NOT imply stable here: init() re-opens the wrapped cursor, so
-    // stability holds only when the sub-query factory proves it (fail-safe default: unstable).
+    // The generator evaluates a sub-query at most once per execution and shares its rows between consumers.
     @Override
     public boolean isStableWithinExecution() {
-        return factory.isStableWithinExecution();
+        return true;
     }
 
     public void setPublishHolder(ScalarTimestampBoundHolder publishHolder) {

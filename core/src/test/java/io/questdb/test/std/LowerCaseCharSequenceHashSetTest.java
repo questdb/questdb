@@ -35,6 +35,29 @@ import java.util.HashSet;
 public class LowerCaseCharSequenceHashSetTest {
 
     @Test
+    public void testClear() {
+        final LowerCaseCharSequenceHashSet set = new LowerCaseCharSequenceHashSet();
+        set.clear();
+        Assert.assertEquals(0, set.size());
+        for (int i = 0; i < 100; i++) {
+            Assert.assertTrue(set.add("k" + i));
+        }
+        set.clear();
+        Assert.assertEquals(0, set.size());
+        for (int i = 0, n = set.getKeyCount(); i < n; i++) {
+            Assert.assertNull(set.getKey(i));
+        }
+        Assert.assertTrue(set.add("a"));
+        Assert.assertTrue(set.remove("A") > -1);
+        set.clear();
+        set.clear();
+        Assert.assertTrue(set.excludes("a"));
+        Assert.assertTrue(set.add("A"));
+        Assert.assertTrue(set.contains("a"));
+        Assert.assertEquals(1, set.size());
+    }
+
+    @Test
     public void testSaturation() {
         final int N = 10_000;
         final Rnd rnd = new Rnd();

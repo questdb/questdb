@@ -33,8 +33,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampNanosSampler implements TimestampSampler {
     private final int stepYears;
-    // Time of day of the bucket starts. A negative value comes from setOffset() and places each bucket start that
-    // long before the start of its calendar year, on the last day of the previous year.
+    private long anchor;
     private long dayMod;
     private int startDay;
     private int startMonth;
@@ -78,25 +77,27 @@ public class YearTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        // a negative offset moves each bucket start into the previous year, so the bucket of a value
-        // follows the calendar year of the value shifted by the offset
-        int y = Nanos.getYear(value - Math.min(dayMod, 0));
-        y = Nanos.EPOCH_YEAR_0 + ((y - Nanos.EPOCH_YEAR_0) / stepYears) * stepYears;
-        int month = startMonth > 0 ? startMonth : 1;
-        int day = startDay > 0 ? startDay : 1;
-        return Nanos.toNanos(y, CommonUtils.isLeapYear(y), month, day) + dayMod;
+        final long years = Nanos.getYear(value - dayMod) - Nanos.getYear(anchor - dayMod);
+        final long steps = years - Math.floorMod(years, stepYears);
+        final long bucket = addYears(anchor, Math.toIntExact(steps));
+        if (bucket > value) {
+            return addYears(anchor, Math.toIntExact(steps - stepYears));
+        }
+        final long next = addYears(anchor, Math.toIntExact(steps + stepYears));
+        return next <= value ? next : bucket;
     }
 
     @Override
     public void setOffset(long timestamp) {
-        // the offset applies to the calendar grid, which starts on the first day of the year
-        this.startMonth = 0;
-        this.startDay = 0;
+        this.anchor = timestamp;
         this.dayMod = timestamp;
+        this.startDay = 0;
+        this.startMonth = 0;
     }
 
     @Override
     public void setStart(long timestamp) {
+        this.anchor = timestamp;
         final int y = Nanos.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
         this.startMonth = Nanos.getMonthOfYear(timestamp, y, leap);
@@ -117,8 +118,7 @@ public class YearTimestampNanosSampler implements TimestampSampler {
         if (numYears == 0) {
             return timestamp;
         }
-        // the calendar year of a bucket start that a negative offset moved into the previous year
-        final int y = Nanos.getYear(timestamp - Math.min(dayMod, 0));
+        final int y = Nanos.getYear(timestamp - dayMod);
         final int newYear = Math.min(y + numYears, NanosTimestampDriver.MAX_NANO_YEAR + 1);
         final boolean leap = CommonUtils.isLeapYear(newYear);
         int month = startMonth > 0 ? startMonth : 1;

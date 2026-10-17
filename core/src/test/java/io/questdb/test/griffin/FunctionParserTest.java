@@ -40,8 +40,8 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -56,7 +56,9 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
@@ -112,14 +114,14 @@ import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cairo.security.NoSystemAdminSecurityContext;
@@ -986,6 +988,28 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testFoldedTextConstantsPreserveDecodedValues() throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<String> values = new ObjList<>();
+            values.add(null);
+            values.add("");
+            values.add("'");
+            values.add("'edge'");
+            values.add("'leading");
+            values.add("O'Reilly");
+            values.add("True");
+            values.add("fAlSe");
+            values.add("'\u03bb\u4e2d'");
+            for (int i = 0, n = values.size(); i < n; i++) {
+                final String value = values.getQuick(i);
+                assertFoldedTextValue(ColumnType.STRING, value);
+                assertFoldedTextValue(ColumnType.VARCHAR, value);
+                assertFoldedTextValue(ColumnType.SYMBOL, value);
+            }
+        });
+    }
+
+    @Test
     public void testFunctionDoesNotExist() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
@@ -1027,7 +1051,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         assertFail(0, "bad function factory (NULL), check log", "x()", metadata);
     }
 
-    // The next three tests pin the cleanup contract of FunctionParser.checkAndCreateFunction():
+    // The next three tests pin the cleanup contract of FunctionResolver.createFunction():
     // when a factory fails to construct (throwing SqlException, throwing a generic exception, or
     // returning null), every already-parsed argument must be closed and the intended validation
     // error must survive. Functions can allocate native memory, so a fail-fast cleanup that
@@ -1801,97 +1825,73 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testNonDeterministicRejectionFreesFunctionNativeMemory() throws Exception {
-        // A context that forbids non-deterministic functions (e.g. materialized-view validation)
-        // rejects such a function AFTER it is successfully constructed. The rejection must close the
-        // returned function - not merely free its argument list - so a function that owns native
-        // memory it allocated during construction (over and above its arguments) does not leak.
-        //
-        // No production function currently reaches this exact path: rnd_* functions allocate lazily
-        // in init() (rejected before init), and the diff's InLongConstFunction derives its
-        // non-determinism from its key, which is rejected at the key node before the IN function is
-        // ever built. This test therefore uses a synthetic function that both allocates native memory
-        // in its constructor and reports isNonDeterministic()==true, exercising the FunctionParser
-        // rejection path directly and guarding it against future functions with that shape.
-        functions.add(new FunctionFactory() {
+    public void testSelectedFunctionConstructsWithoutParsingOrOverloadLookup() throws SqlException {
+        final AtomicInteger constructionCount = new AtomicInteger();
+        final FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new AddIntFunctionFactory() {
             @Override
-            public String getSignature() {
-                return "nondet_alloc()";
+            public int getExecutionRequirements() {
+                return SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS;
             }
 
             @Override
-            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-                return new NonDeterministicAllocatingFunction();
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext executionContext) {
+                constructionCount.incrementAndGet();
+                assertEquals(17, position);
+                assertEquals(11, argPositions.getQuick(0));
+                assertEquals(19, argPositions.getQuick(1));
+                assertSame(sqlExecutionContext, executionContext);
+                return super.newInstance(position, args, argPositions, configuration, executionContext);
             }
         });
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        assertMemoryLeak(() -> {
-            final FunctionParser functionParser = createFunctionParser();
-            final boolean allowed = sqlExecutionContext.allowNonDeterministicFunctions();
-            sqlExecutionContext.setAllowNonDeterministicFunction(false);
-            try {
-                parseFunction("nondet_alloc()", metadata, functionParser);
-                fail("expected non-deterministic rejection");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "non-deterministic function cannot be used in materialized view");
-            } finally {
-                sqlExecutionContext.setAllowNonDeterministicFunction(allowed);
-            }
-        });
+        // The selected descriptor need not be in this parser's overload cache. No parse call
+        // initializes its execution context, and construction must not repeat overload lookup.
+        final FunctionParser parser = createFunctionParser();
+        final ObjList<Function> args = new ObjList<>();
+        args.add(new IntConstant(40));
+        args.add(new IntConstant(2));
+        final IntList argPositions = new IntList();
+        argPositions.add(11);
+        argPositions.add(19);
+        try (Function function = parser.getFunctionResolver().createFunction(overload, 17, "+", args, argPositions, sqlExecutionContext)) {
+            assertEquals(1, constructionCount.get());
+            assertEquals(0, args.size());
+            assertEquals(17, parser.getFunctionResolver().getExecutionRequirements().getLiveWalProgressPosition());
+            parser.clear();
+            assertEquals(42, function.getInt(null));
+        }
     }
 
     @Test
-    public void testNonDeterministicFunctionIsClosedWhenRejected() throws Exception {
-        final AtomicInteger closeCount = new AtomicInteger();
-        functions.add(new FunctionFactory() {
+    public void testSelectedFunctionRejectsAdministrativeFactoryBeforeConstruction() throws SqlException {
+        final AtomicInteger constructionCount = new AtomicInteger();
+        final FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new FunctionFactory() {
+            @Override
+            public int getExecutionRequirements() {
+                return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+            }
+
             @Override
             public String getSignature() {
-                return "test_non_deterministic()";
+                return "ent_secure()";
             }
 
             @Override
-            public Function newInstance(
-                    int position,
-                    ObjList<Function> args,
-                    IntList argPositions,
-                    CairoConfiguration configuration,
-                    SqlExecutionContext sqlExecutionContext
-            ) {
-                return new BooleanFunction() {
-                    @Override
-                    public void close() {
-                        closeCount.incrementAndGet();
-                    }
-
-                    @Override
-                    public boolean getBool(Record rec) {
-                        return true;
-                    }
-
-                    @Override
-                    public boolean isNonDeterministic() {
-                        return true;
-                    }
-                };
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext executionContext) {
+                constructionCount.incrementAndGet();
+                return BooleanConstant.TRUE;
             }
         });
-
-        final boolean isAllowed = sqlExecutionContext.allowNonDeterministicFunctions();
+        final boolean allowed = sqlExecutionContext.allowNonDeterministicFunctions();
         sqlExecutionContext.setAllowNonDeterministicFunction(false);
         try {
-            try {
-                parseFunction("test_non_deterministic()", new GenericRecordMetadata(), createFunctionParser());
-                fail("expected non-deterministic function rejection");
-            } catch (SqlException e) {
-                assertEquals(0, e.getPosition());
-                TestUtils.assertContains(
-                        e.getFlyweightMessage(),
-                        "non-deterministic function cannot be used in materialized view: test_non_deterministic"
-                );
-            }
-            assertEquals(1, closeCount.get());
+            createFunctionParser().getFunctionResolver().createFunction(overload, 23, "admin_alias", null, null, sqlExecutionContext);
+            fail("expected administrative function rejection");
+        } catch (SqlException e) {
+            assertEquals(23, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "administrative function cannot be used in materialized view: admin_alias");
+            assertEquals(0, constructionCount.get());
         } finally {
-            sqlExecutionContext.setAllowNonDeterministicFunction(isAllowed);
+            sqlExecutionContext.setAllowNonDeterministicFunction(allowed);
         }
     }
 
@@ -1901,7 +1901,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(countingFactory("list_objects()", SqlExecutionRequirements.DISCLOSES_OBJECTS, constructionCount));
         try (SqlExecutionContextImpl nonAdmin = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
             // outside materialized and live views, the function lists what the caller may see
-            Misc.free(createFunctionParser().parseFunction(expr("list_objects()"), new GenericRecordMetadata(), nonAdmin));
+            Misc.free(parseFunction("list_objects()", new GenericRecordMetadata(), createFunctionParser(), nonAdmin));
             assertEquals(1, constructionCount.get());
 
             // NoSystemAdminSecurityContext.isSystemAdmin() is true: authorizeSystemAdmin() decides
@@ -1938,7 +1938,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         // and the refresh, which has no caller to authorize, compiles what CREATE accepted
         try (SqlExecutionContext refreshContext = new MatViewRefreshLikeContext(new NoSystemAdminSecurityContext())) {
-            Misc.free(createFunctionParser().parseFunction(expr("list_objects()"), new GenericRecordMetadata(), refreshContext));
+            Misc.free(parseFunction("list_objects()", new GenericRecordMetadata(), createFunctionParser(), refreshContext));
         }
         assertEquals(3, constructionCount.get());
     }
@@ -2457,6 +2457,102 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         assertEquals(expected, function.getDouble(record), 0.00001);
     }
 
+    private void assertFoldedTextValue(int type, String value) throws SqlException {
+        functions.clear();
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "decoded_text()";
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext executionContext) {
+                return switch (type) {
+                    case ColumnType.STRING -> new StrFunction() {
+                        @Override
+                        public CharSequence getStrA(Record rec) {
+                            return value;
+                        }
+
+                        @Override
+                        public CharSequence getStrB(Record rec) {
+                            return value;
+                        }
+
+                        @Override
+                        public boolean isConstant() {
+                            return true;
+                        }
+                    };
+                    case ColumnType.VARCHAR -> new VarcharFunction() {
+                        private final Utf8String utf8Value = value == null ? null : new Utf8String(value);
+
+                        @Override
+                        public Utf8Sequence getVarcharA(Record rec) {
+                            return utf8Value;
+                        }
+
+                        @Override
+                        public Utf8Sequence getVarcharB(Record rec) {
+                            return utf8Value;
+                        }
+
+                        @Override
+                        public boolean isConstant() {
+                            return true;
+                        }
+                    };
+                    default -> new SymbolFunction() {
+                        @Override
+                        public int getInt(Record rec) {
+                            return value == null ? SymbolTable.VALUE_IS_NULL : 0;
+                        }
+
+                        @Override
+                        public CharSequence getSymbol(Record rec) {
+                            return value;
+                        }
+
+                        @Override
+                        public CharSequence getSymbolB(Record rec) {
+                            return value;
+                        }
+
+                        @Override
+                        public boolean isConstant() {
+                            return true;
+                        }
+
+                        @Override
+                        public boolean isSymbolTableStatic() {
+                            return false;
+                        }
+
+                        @Override
+                        public CharSequence valueBOf(int key) {
+                            return key == SymbolTable.VALUE_IS_NULL ? null : value;
+                        }
+
+                        @Override
+                        public CharSequence valueOf(int key) {
+                            return key == SymbolTable.VALUE_IS_NULL ? null : value;
+                        }
+                    };
+                };
+            }
+        });
+        try (Function function = parseFunction("decoded_text()", new GenericRecordMetadata(), createFunctionParser())) {
+            assertEquals(type, function.getType());
+            TestUtils.assertEquals(value, function.getStrA(null));
+            TestUtils.assertEquals(value, function.getStrB(null));
+            if (type == ColumnType.SYMBOL) {
+                final int key = value == null ? SymbolTable.VALUE_IS_NULL : 0;
+                assertEquals(key, function.getInt(null));
+                TestUtils.assertEquals(value, ((SymbolFunction) function).valueOf(key));
+            }
+        }
+    }
+
     private void assertCastToFloat(Record record) throws SqlException {
         functions.add(new AddFloatFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -2633,7 +2729,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     private void assertParseFails(String expression, SqlExecutionContext context, int expectedPos, String expectedMessage) throws SqlException {
         try {
-            Misc.free(createFunctionParser().parseFunction(expr(expression), new GenericRecordMetadata(), context));
+            Misc.free(parseFunction(expression, new GenericRecordMetadata(), createFunctionParser(), context));
             fail("expected rejection of " + expression);
         } catch (SqlException e) {
             assertEquals(expectedPos, e.getPosition());
@@ -2708,38 +2804,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         @Override
         public boolean isMatViewRefresh() {
             return true;
-        }
-    }
-
-    /**
-     * A non-deterministic function that allocates tracked native memory in its constructor and frees
-     * it in {@link #close()}. Used to prove that FunctionParser closes the returned function when it
-     * rejects a non-deterministic function, rather than leaking the memory the function owns.
-     */
-    private static class NonDeterministicAllocatingFunction extends LongFunction {
-        private static final long ALLOC_BYTES = 1024;
-        private long addr = Unsafe.malloc(ALLOC_BYTES, MemoryTag.NATIVE_DEFAULT);
-
-        @Override
-        public void close() {
-            if (addr != 0) {
-                addr = Unsafe.free(addr, ALLOC_BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            return 42;
-        }
-
-        @Override
-        public boolean isNonDeterministic() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("nondet_alloc()");
         }
     }
 }

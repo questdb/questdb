@@ -103,7 +103,7 @@ public class CoveringIndexBackupFilterTest extends AbstractCairoTest {
     @Test
     public void testWhereInListBackupAppliesResidualFilterExactlyOnce() throws Exception {
         // The WHERE IN-list site builds FilterOnValuesRecordCursorFactory with a null filter --
-        // "the filter stays with the wrapper above us" -- and wrapCoveringWithFilter applies it to
+        // "the filter stays with the wrapper above us" -- and FilterFactoryGenerator.generateCovering applies it to
         // whichever delegate runs. A dropped filter returns the 10.0 row; a doubled one cannot
         // change these rows but is caught by the no_covering cross-check below, which compiles the
         // filter into the scan instead of above it.

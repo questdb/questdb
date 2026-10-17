@@ -24,11 +24,8 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -36,32 +33,87 @@ import java.util.Arrays;
 public class UnionTest extends AbstractCairoTest {
 
     @Test
-    public void testAggregateOverUnionAllLegacyFlagReintroducesCrash() throws Exception {
-        // The cairo.sql.legacy.union.column.propagation flag restores the pre-fix by-name emit,
-        // which reintroduces the column-count divergence so the otherwise-fixed query fails again
-        // with an AssertionError during code generation. Guards the rollback switch against
-        // silently becoming a no-op. Reset the flag in finally so it cannot leak into other tests
-        // in this class (overrides are otherwise only cleared at @AfterClass).
-        setProperty(PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, "true");
-        try {
-            assertMemoryLeak(() -> {
-                execute("create table u1 (a symbol, close double)");
-                execute("create table u2 (a symbol, close double)");
-                execute("insert into u1 values ('x', 1.0), ('y', 2.0)");
-                execute("insert into u2 values ('z', 3.0)");
-
-                final String unionSql = "select a, close price from u1 union all select a, close price from u2";
-                boolean threw = false;
-                try (RecordCursorFactory ignored = select("select count() from (" + unionSql + ")")) {
-                    // unreachable: the legacy by-name emit diverges the branch column counts
-                } catch (AssertionError e) {
-                    threw = true;
-                }
-                Assert.assertTrue("legacy flag should restore the by-name emit and reintroduce the crash", threw);
-            });
-        } finally {
-            setProperty(PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, "false");
-        }
+    public void testAggregateOverUnionAllDropsBranchOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                        ('1970-01-01T00:00:01.000000Z', 1, 1),
+                        ('1970-01-01T00:00:02.000000Z', 2, 2),
+                        ('1970-01-01T00:00:03.000000Z', 1, 3),
+                        ('1970-01-01T00:00:04.000000Z', 2, 4)
+                    """);
+            execute("CREATE TABLE b (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO b VALUES
+                        ('1970-01-01T00:00:00.500000Z', 1, 10),
+                        ('1970-01-01T00:00:01.500000Z', 2, 20),
+                        ('1970-01-01T00:00:02.500000Z', 1, 30),
+                        ('1970-01-01T00:00:03.500000Z', 2, 5),
+                        ('1970-01-01T00:00:03.800000Z', 1, 7)
+                    """);
+            final String joined = """
+                    sum\tcount
+                    68\t5
+                    """;
+            assertQuery("SELECT sum(v), count() FROM (SELECT b.v FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b UNION ALL SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(joined);
+            assertQuery("SELECT sum(v), count() FROM (SELECT b.v FROM a ASOF JOIN b UNION ALL SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(joined);
+            final String distinct = """
+                    count\tmin
+                    5\t1
+                    """;
+            assertQuery("SELECT count(), min(v) FROM (SELECT b.v FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b UNION SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(distinct);
+            assertQuery("SELECT count(), min(v) FROM (SELECT b.v FROM a ASOF JOIN b UNION SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(distinct);
+            assertQuery("SELECT sum(v) FROM (SELECT v FROM b UNION ALL SELECT b.v FROM a LT JOIN (SELECT * FROM b ORDER BY ts DESC) b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            139
+                            """);
+            assertQuery("SELECT sum(v) FROM (SELECT v FROM (SELECT * FROM a ORDER BY ts DESC) UNION ALL SELECT v FROM b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              values: [sum(v)]
+                                Union All
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: b
+                            """)
+                    .returns("""
+                            sum
+                            82
+                            """);
+            assertQuery("SELECT first(v) FROM (SELECT b.v FROM (SELECT * FROM a ORDER BY ts DESC) a ASOF JOIN b UNION ALL SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .fails(75, "left side of time series join doesn't have ASC timestamp order");
+            assertQuery("SELECT sum(v) FROM (SELECT b.v FROM (SELECT * FROM a ORDER BY ts DESC LIMIT 2) a ASOF JOIN b UNION ALL SELECT 1 FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .fails(81, "left side of time series join doesn't have ASC timestamp order");
+        });
     }
 
     @Test
@@ -866,6 +918,165 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllKeepsLateralAliasDependency() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("""
+                    SELECT b FROM (
+                        SELECT x+1 a, a+1 b FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x+10 a, a+1 b FROM long_sequence(3)
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Union All
+                                SelectedRecord
+                                    VirtualRecord
+                                      functions: [x+1,a+1]
+                                        long_sequence count: 3
+                                SelectedRecord
+                                    VirtualRecord
+                                      functions: [x+10,a+1]
+                                        long_sequence count: 3
+                            """)
+                    .returns("""
+                            b
+                            3
+                            4
+                            5
+                            12
+                            13
+                            14
+                            """);
+            assertQuery("""
+                    SELECT c FROM (
+                        SELECT x a, a+1 b, b*10 c, x*100 d FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x+5 a, a+1 b, b*10 c, x*7 d FROM long_sequence(3)
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Union All
+                                SelectedRecord
+                                    VirtualRecord
+                                      functions: [x+1,b*10]
+                                        long_sequence count: 3
+                                SelectedRecord
+                                    VirtualRecord
+                                      functions: [x+5,a+1,b*10]
+                                        long_sequence count: 3
+                            """)
+                    .returns("""
+                            c
+                            20
+                            30
+                            40
+                            70
+                            80
+                            90
+                            """);
+            assertQuery("""
+                    SELECT b FROM (
+                        SELECT x a, a+1 b FROM long_sequence(2)
+                        UNION ALL (
+                            SELECT x+10 a, a+1 b FROM long_sequence(2)
+                            UNION ALL
+                            SELECT x+20 a, a*2 b FROM long_sequence(2)
+                        )
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            b
+                            2
+                            3
+                            12
+                            13
+                            42
+                            44
+                            """);
+            assertQuery("""
+                    SELECT b FROM (
+                        SELECT x, row_number() OVER (ORDER BY x) rn, rn*10 b FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x, row_number() OVER (ORDER BY x DESC) rn, rn*10 b FROM long_sequence(3)
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            b
+                            10
+                            20
+                            30
+                            30
+                            20
+                            10
+                            """);
+            assertQuery("""
+                    SELECT b FROM (
+                        SELECT x+1 a, a+1 b FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x+10 a, a+1 b FROM long_sequence(3)
+                    ) ORDER BY b DESC""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b
+                            14
+                            13
+                            12
+                            5
+                            4
+                            3
+                            """);
+            assertQuery("""
+                    SELECT t.b, u.x FROM (
+                        SELECT x a, a+1 b FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x+10 a, a+1 b FROM long_sequence(2)
+                    ) t JOIN long_sequence(20) u ON t.b = u.x""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            b\tx
+                            2\t2
+                            3\t3
+                            4\t4
+                            12\t12
+                            13\t13
+                            """);
+            assertQuery("""
+                    WITH t AS (
+                        SELECT x a, a+1 b FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x+10 a, a+1 b FROM long_sequence(2)
+                    )
+                    SELECT b FROM t UNION ALL SELECT a FROM t""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            b
+                            2
+                            3
+                            4
+                            12
+                            13
+                            1
+                            2
+                            3
+                            11
+                            12
+                            """);
+        });
+    }
+
+    @Test
     public void testUnionAllOfAllSupportedTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -1360,6 +1571,25 @@ public class UnionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns(expected2);
+        });
+    }
+
+    @Test
+    public void testUnionAllOrderByWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT x FROM long_sequence(2) UNION ALL SELECT x + 10 FROM long_sequence(2) ORDER BY -row_number() OVER (ORDER BY x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            12
+                            11
+                            2
+                            1
+                            """);
+            assertQuery("SELECT x, row_number() OVER () r FROM long_sequence(2) UNION ALL SELECT x, row_number() OVER () r FROM long_sequence(2) ORDER BY row_number() OVER ()")
+                    .noLeakCheck()
+                    .fails(129, "window function called in non-window context, make sure to add OVER clause");
         });
     }
 
@@ -2681,12 +2911,15 @@ public class UnionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Union All
-                                Limit value: 1 skip-rows: 0 take-rows: 1
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: trades
-                                Limit value: 1 skip-rows: 0 take-rows: 1
-                                    SelectedRecord
+                                Timestamp Endpoint
+                                  value: min(timestamp)
+                                    Limit value: 1 skip-rows: 0 take-rows: 1
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                Timestamp Endpoint
+                                  value: max(timestamp)
+                                    Limit value: 1 skip-rows: 0 take-rows: 1
                                         PageFrame
                                             Row backward scan
                                             Frame backward scan on: trades

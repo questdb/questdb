@@ -46,6 +46,11 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LAG_NAME + "(LV)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

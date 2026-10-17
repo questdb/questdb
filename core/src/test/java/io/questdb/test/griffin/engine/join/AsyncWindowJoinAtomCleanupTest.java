@@ -190,7 +190,7 @@ public class AsyncWindowJoinAtomCleanupTest extends AbstractCairoTest {
                 null,
                 null,
                 null,
-                false,
+                null,
                 1,
                 1,
                 WORKER_COUNT

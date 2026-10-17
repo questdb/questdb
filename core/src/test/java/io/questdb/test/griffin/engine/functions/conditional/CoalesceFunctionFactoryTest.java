@@ -40,6 +40,32 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoalesceCharOrSymbolBeforeUuidOrIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT 'a'::char c, 'abc' s, 'abc'::symbol sym, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid u, '1.2.3.4'::ipv4 ip
+                        FROM long_sequence(1)
+                    )""");
+            assertQuery("SELECT coalesce(null::varchar, 'a', null::uuid)")
+                    .noLeakCheck()
+                    .fails(31, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+            assertQuery("SELECT coalesce(s, c, u) FROM t")
+                    .noLeakCheck()
+                    .fails(19, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+            assertQuery("SELECT coalesce(s, sym, u) FROM t")
+                    .noLeakCheck()
+                    .fails(19, "inconvertible types: SYMBOL -> UUID [from=SYMBOL, to=UUID]");
+            assertQuery("SELECT coalesce(s, c, ip) FROM t")
+                    .noLeakCheck()
+                    .fails(19, "inconvertible types: CHAR -> IPv4 [from=CHAR, to=IPv4]");
+            assertQuery("SELECT coalesce(s, sym, ip) FROM t")
+                    .noLeakCheck()
+                    .fails(19, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+        });
+    }
+
+    @Test
     public void testCoalesceDecimal128() throws Exception {
         assertQuery("select coalesce(null::decimal(24, 1), 12.34m) c")
                 .noLeakCheck()
@@ -524,6 +550,37 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashOfOneType() throws Exception {
+        assertQuery("""
+                SELECT x, coalesce(g1, h1) c1, coalesce(g2, h2) c2, coalesce(g5, h5) c5, coalesce(g8, h8) c8,
+                    coalesce(g10, h10) c10, coalesce(b3, c3) cb, coalesce(g5, NULL, h5) c3
+                FROM geo ORDER BY x
+                """)
+                .ddl("CREATE TABLE geo (x INT, g1 GEOHASH(1c), h1 GEOHASH(1c), g2 GEOHASH(2c), h2 GEOHASH(2c), g5 GEOHASH(5c), "
+                                + "h5 GEOHASH(5c), g8 GEOHASH(8c), h8 GEOHASH(8c), g10 GEOHASH(10c), h10 GEOHASH(10c), b3 GEOHASH(3b), c3 GEOHASH(3b))",
+                        """
+                                INSERT INTO geo VALUES
+                                (1, #u, #v, #u3, #v3, #u33d8, #v33d8, #u33d8b12, #v33d8b12, #u33d8b1234, #v33d8b1234, ##101, ##110),
+                                (2, NULL, #v, NULL, #v3, NULL, #v33d8, NULL, #v33d8b12, NULL, #v33d8b1234, NULL, ##110),
+                                (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+                                """)
+                .expectSize()
+                .returns("""
+                        x\tc1\tc2\tc5\tc8\tc10\tcb\tc3
+                        1\tu\tu3\tu33d8\tu33d8b12\tu33d8b1234\t101\tu33d8
+                        2\tv\tv3\tv33d8\tv33d8b12\tv33d8b1234\t110\tv33d8
+                        3\t\t\t\t\t\t\t
+                        """);
+    }
+
+    @Test
+    public void testGeoHashOfTwoPrecisions() throws Exception {
+        assertQuery("SELECT x, coalesce(g1, g2) c FROM geo")
+                .ddl("CREATE TABLE geo (x INT, g1 GEOHASH(1c), g2 GEOHASH(2c))")
+                .fails(23, "inconvertible types: GEOHASH(2c) -> GEOHASH(1c)");
+    }
+
+    @Test
     public void testIPv4Args() throws Exception {
         assertQuery("select coalesce(a, b, x) c1, coalesce(a, b) c2, a, b, x\n" +
                 "from test")
@@ -564,6 +621,22 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         6\t6\t6\tnull\tnull
                         40\t40\tnull\t40\t4
                         5\tnull\tnull\tnull\t5
+                        """);
+    }
+
+    @Test
+    public void testInterval() throws Exception {
+        assertQuery("""
+                SELECT x, coalesce(
+                    CASE WHEN x = 1 THEN interval('2024-01-01'::timestamp, '2024-01-02'::timestamp) END,
+                    interval('2024-02-01'::timestamp, '2024-02-02'::timestamp)
+                ) c FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\tc
+                        1\t('2024-01-01T00:00:00.000Z', '2024-01-02T00:00:00.000Z')
+                        2\t('2024-02-01T00:00:00.000Z', '2024-02-02T00:00:00.000Z')
                         """);
     }
 

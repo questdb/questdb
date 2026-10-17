@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -36,6 +38,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -44,8 +47,18 @@ import org.jetbrains.annotations.Nullable;
 public class LeftStrFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
+
+    @Override
     public String getSignature() {
         return "left(SI)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return !isNullCount(args.getQuick(1));
     }
 
     @Override
@@ -58,19 +71,25 @@ public class LeftStrFunctionFactory implements FunctionFactory {
     ) {
         final Function strFunc = args.getQuick(0);
         final Function countFunc = args.getQuick(1);
+        if (isNullCount(countFunc)) {
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
+            return StrConstant.NULL;
+        }
         if (countFunc.isConstant()) {
-            int count = countFunc.getInt(null);
-            if (count != Numbers.INT_NULL) {
-                return new ConstCountFunc(strFunc, count);
-            } else {
-                return StrConstant.NULL;
-            }
+            return new ConstCountFunc(strFunc, countFunc.getInt(null));
         }
         return new Func(strFunc, countFunc);
     }
 
     private static int getPos(int len, int count) {
         return count > -1 ? Math.max(0, Math.min(len, count)) : Math.max(0, len + count);
+    }
+
+    /**
+     * Whether the count is a constant NULL, which makes the call a NULL constant.
+     */
+    private static boolean isNullCount(Function countFunc) {
+        return countFunc.isConstant() && countFunc.getInt(null) == Numbers.INT_NULL;
     }
 
     private static class ConstCountFunc extends StrFunction implements UnaryFunction {

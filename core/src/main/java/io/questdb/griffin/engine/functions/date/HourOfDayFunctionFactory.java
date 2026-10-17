@@ -39,6 +39,11 @@ import io.questdb.std.ObjList;
 public class HourOfDayFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return "hour(N)";
     }

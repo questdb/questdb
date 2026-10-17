@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -35,6 +36,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -44,15 +46,24 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final LimitRecordCursor cursor;
 
+    /**
+     * {@code masterSuffixLimit}: the LIMIT count of the master filter of the join the base runs, which the base factory
+     * owns. When the join emits fewer rows than a negative LIMIT selects and older master rows may pass the filter, the
+     * cursor rewinds the join over a longer suffix of master rows, which keeps the join's slave side, and past the most
+     * rows the filter holds, opens the join again over all master rows. The rows of each master row come out together
+     * and in master order, so the last rows of the join over a suffix of the master rows are its last rows over all of
+     * them once there are as many as the LIMIT selects.
+     */
     public LimitRecordCursorFactory(
             RecordCursorFactory base,
             Function loFunction,
             @Nullable Function hiFunction,
-            int argPos
+            int argPos,
+            @Nullable MasterSuffixLimitFunction masterSuffixLimit
     ) {
         super(base.getMetadata());
         this.base = base;
-        this.cursor = new LimitRecordCursor(loFunction, hiFunction, argPos);
+        this.cursor = new LimitRecordCursor(base, loFunction, hiFunction, argPos, masterSuffixLimit);
     }
 
     @Override
@@ -94,19 +105,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             return true;
         }
         return base.isNonDeterministic();
-    }
-
-    @Override
-    public boolean isStableWithinExecution() {
-        final Function leftFunc = cursor.leftFunction;
-        if (leftFunc != null && !leftFunc.isStableWithinExecution()) {
-            return false;
-        }
-        final Function rightFunc = cursor.rightFunction;
-        if (rightFunc != null && !rightFunc.isStableWithinExecution()) {
-            return false;
-        }
-        return base.isStableWithinExecution();
     }
 
     @Override
@@ -175,28 +173,47 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor.leftFunction);
+        failure = Misc.freeBestEffort(failure, cursor.rightFunction);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
-    private static class LimitRecordCursor implements RecordCursor {
+    /**
+     * Applies a LIMIT over a base cursor; a negative LIMIT counts the base rows first, then skips to the last ones.
+     */
+    public static class LimitRecordCursor implements RecordCursor {
         private final int argPos;
+        private final RecordCursorFactory baseFactory;
         private final RecordCursor.Counter counter = new Counter();
         private final Function leftFunction;
+        private final MasterSuffixLimitFunction masterSuffixLimit;
         private final Function rightFunction;
         private RecordCursor base;
         private long baseRowsToSkip;
         private long baseRowsToTake;
         private long baseSize;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private SqlExecutionContext executionContext;
         private long hi;
+        // The base sits at the first row the LIMIT returns, where toTop() left it.
+        private boolean isBaseAtFirstRow;
         private long lo;
         private long remaining;
         private long size;
 
-        public LimitRecordCursor(Function leftFunction, Function rightFunction, int argPos) {
+        public LimitRecordCursor(
+                RecordCursorFactory baseFactory,
+                Function leftFunction,
+                Function rightFunction,
+                int argPos,
+                MasterSuffixLimitFunction masterSuffixLimit
+        ) {
+            this.baseFactory = baseFactory;
             this.leftFunction = leftFunction;
             this.rightFunction = rightFunction;
             this.argPos = argPos;
+            this.masterSuffixLimit = masterSuffixLimit;
         }
 
         @Override
@@ -208,6 +225,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 counter.set(remaining);
                 // No further reads after the skip -- max=0 lets the base
                 // skip the landing-frame decode altogether.
+                isBaseAtFirstRow = false;
                 base.skipRows(counter, 0);
                 sizeCounter.add(remaining - counter.get());
                 counter.clear();
@@ -242,6 +260,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (remaining <= 0) {
                 return false;
             }
+            isBaseAtFirstRow = false;
             if (base.hasNext()) {
                 remaining--;
                 return true;
@@ -292,6 +311,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             rowsToSkip -= excessCount;
             skipCounter.dec(excessCount);
             final long baseMax = Math.min(maxRowsAfterSkip, remaining - rowsToSkip);
+            isBaseAtFirstRow = false;
             base.skipRows(skipCounter, baseMax);
             long counterAfterSkip = skipCounter.get();
             if (counterAfterSkip > 0) {
@@ -311,28 +331,39 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             ensureBoundsResolved();
-            base.toTop();
-            counter.set(baseRowsToSkip);
-            // Unconditional call: even with baseRowsToSkip == 0, this pushes
-            // baseRowsToTake as the post-skip cap so the base can clamp
-            // decoding of the first frames.
-            base.skipRows(counter, baseRowsToTake);
+            if (!isBaseAtFirstRow) {
+                base.toTop();
+                counter.set(baseRowsToSkip);
+                // Unconditional call: even with baseRowsToSkip == 0, this pushes
+                // baseRowsToTake as the post-skip cap so the base can clamp
+                // decoding of the first frames.
+                base.skipRows(counter, baseRowsToTake);
+                counter.clear();
+                isBaseAtFirstRow = true;
+            }
             remaining = baseRowsToTake;
-            counter.clear();
         }
 
         private boolean areBoundsResolved() {
             return baseRowsToTake != -1;
         }
 
+        private void calculateBaseSize() {
+            isBaseAtFirstRow = false;
+            base.toTop();
+            base.calculateSize(circuitBreaker, counter);
+            baseSize = counter.get();
+            counter.clear();
+        }
+
         private void ensureBoundsResolved() {
             if (!areBoundsResolved()) {
                 // If baseSize was cheap to get, bounds would already have been sorted out in of().
                 // Now it's time to use the heavy-handed approach to getting baseSize.
-                base.toTop();
-                base.calculateSize(circuitBreaker, counter);
-                baseSize = counter.get();
-                counter.clear();
+                calculateBaseSize();
+                if (masterSuffixLimit != null) {
+                    readMasterSuffix();
+                }
                 // If both LIMIT args were non-negative, we would have resolved the bounds without
                 // needing to know baseSize. Since we're here, one of the args must be negative.
                 resolveBoundsFromNegativeArgs();
@@ -349,6 +380,27 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         private boolean isBaseSizeKnown() {
             return baseSize >= 0;
+        }
+
+        private void readAllMasterRows() {
+            masterSuffixLimit.setReadingAllRows();
+            try {
+                base = Misc.free(base);
+                base = baseFactory.getCursor(executionContext);
+            } catch (SqlException e) {
+                throw CairoException.nonCritical().position(e.getPosition()).put(e.getFlyweightMessage());
+            } finally {
+                masterSuffixLimit.clearReadingAllRows();
+            }
+        }
+
+        private void readMasterSuffix() {
+            while (baseSize < -lo && masterSuffixLimit.hasMoreRows()) {
+                if (!masterSuffixLimit.readMoreRows()) {
+                    readAllMasterRows();
+                }
+                calculateBaseSize();
+            }
         }
 
         private void resolveBoundsCheap() {
@@ -403,8 +455,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+        public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
             this.base = base;
+            this.executionContext = executionContext;
             this.circuitBreaker = executionContext.getCircuitBreaker();
 
             leftFunction.init(base, executionContext);
@@ -438,8 +491,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             baseRowsToSkip = -1;
             baseRowsToTake = -1;
             remaining = -1;
+            isBaseAtFirstRow = false;
             counter.clear();
-            resolveBoundsCheap();
+            // A negative LIMIT over a master suffix resolves its bounds once the join runs.
+            if (masterSuffixLimit == null || lo >= 0) {
+                resolveBoundsCheap();
+            }
+            if (lo >= 0 && hi > lo) {
+                base.expectLimitedIteration();
+            }
         }
     }
 }

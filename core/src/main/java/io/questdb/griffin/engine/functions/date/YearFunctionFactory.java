@@ -33,17 +33,34 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class YearFunctionFactory implements FunctionFactory {
+public class YearFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
 
     @Override
     public String getSignature() {
         return "year(N)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return 0;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) {
+        return YearFunction.invert(io, ColumnType.getTimestampDriver(ColumnType.getTimestampType(call.argumentAt(0).getDataType())));
     }
 
     @Override
@@ -91,31 +108,10 @@ public class YearFunctionFactory implements FunctionFactory {
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            // The grade must be bound-independent (the runtime path probes with an open
-            // interval), so an out-of-range year maps to an empty or unbounded interval, never NONE.
-            long lo = io.getLo();
-            long hi = io.getHi();
-            if (lo != Numbers.LONG_NULL) {
-                final long start = yearStart(lo);
-                if (start == YEAR_ABOVE_RANGE) {
-                    io.of(Long.MAX_VALUE, Numbers.LONG_NULL);
-                    return EXACT;
-                }
-                lo = start == YEAR_BELOW_RANGE ? Numbers.LONG_NULL : start;
-            }
-            if (hi != Long.MAX_VALUE) {
-                final long nextStart = yearStart(hi + 1);
-                if (nextStart == YEAR_BELOW_RANGE) {
-                    io.of(Long.MAX_VALUE, Numbers.LONG_NULL);
-                    return EXACT;
-                }
-                hi = nextStart == YEAR_ABOVE_RANGE ? Long.MAX_VALUE : nextStart - 1;
-            }
-            io.of(lo, hi);
-            return EXACT;
+            return invert(io, driver);
         }
 
-        private long yearStart(long year) {
+        private static long yearStart(long year, TimestampDriver driver) {
             if (year > YEAR_MAX) {
                 return YEAR_ABOVE_RANGE;
             }
@@ -128,6 +124,31 @@ public class YearFunctionFactory implements FunctionFactory {
                 return year < 1970 ? YEAR_BELOW_RANGE : YEAR_ABOVE_RANGE;
             }
             return start;
+        }
+
+        static int invert(Interval io, TimestampDriver driver) {
+            // The grade must be bound-independent (the runtime path probes with an open
+            // interval), so an out-of-range year maps to an empty or unbounded interval, never NONE.
+            long lo = io.getLo();
+            long hi = io.getHi();
+            if (lo != Numbers.LONG_NULL) {
+                final long start = yearStart(lo, driver);
+                if (start == YEAR_ABOVE_RANGE) {
+                    io.of(Long.MAX_VALUE, Numbers.LONG_NULL);
+                    return EXACT;
+                }
+                lo = start == YEAR_BELOW_RANGE ? Numbers.LONG_NULL : start;
+            }
+            if (hi != Long.MAX_VALUE) {
+                final long nextStart = yearStart(hi + 1, driver);
+                if (nextStart == YEAR_BELOW_RANGE) {
+                    io.of(Long.MAX_VALUE, Numbers.LONG_NULL);
+                    return EXACT;
+                }
+                hi = nextStart == YEAR_ABOVE_RANGE ? Long.MAX_VALUE : nextStart - 1;
+            }
+            io.of(lo, hi);
+            return EXACT;
         }
     }
 }

@@ -28,10 +28,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
@@ -91,7 +88,7 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillNullRecordCursorReleasesMemoryOnCloseFirstObservation() throws Exception { //prev / value
-        testSampleByCursorReleasesMemoryOnClose("FILL(null)", SampleByFillNullRecordCursorFactory.class, "FIRST OBSERVATION");
+        testSampleByCursorReleasesMemoryOnClose("FILL(null)", SampleByFillRecordCursorFactory.class, "FIRST OBSERVATION");
     }
 
     @Test
@@ -101,7 +98,7 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillPrevRecordCursorReleasesMemoryOnFirstObservation() throws Exception {
-        testSampleByCursorReleasesMemoryOnClose("FILL(prev)", SampleByFillPrevRecordCursorFactory.class, "FIRST OBSERVATION");
+        testSampleByCursorReleasesMemoryOnClose("FILL(prev)", SampleByFillRecordCursorFactory.class, "FIRST OBSERVATION");
     }
 
     @Test
@@ -111,7 +108,7 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillValueRecordCursorReleasesMemoryOnCloseFirstObservtion() throws Exception { //prev / value
-        testSampleByCursorReleasesMemoryOnClose("FILL(10)", SampleByFillValueRecordCursorFactory.class, "FIRST OBSERVATION");
+        testSampleByCursorReleasesMemoryOnClose("FILL(10)", SampleByFillRecordCursorFactory.class, "FIRST OBSERVATION");
     }
 
     private void testSampleByCursorReleasesMemoryOnClose(String fill, Class<?> expectedFactoryClass, String alignment) throws Exception {
@@ -123,11 +120,8 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
                     " from long_sequence(10000)) timestamp(ts)");
 
             try (RecordCursorFactory factory = select("select sym1, sum(d) from tab SAMPLE BY 1d " + fill + " ALIGN TO " + alignment)) {
-                // Walk the base-factory chain so the CALENDAR FILL tests can
-                // assert SampleByFillRecordCursorFactory (which lives below an
-                // outer SelectedRecordCursorFactory wrap on the fast path)
-                // while the FIRST OBSERVATION tests still match their
-                // top-level legacy factory on the first step of the chain.
+                // Walk the base-factory chain: SampleByFillRecordCursorFactory
+                // lives below an outer SelectedRecordCursorFactory wrap.
                 RecordCursorFactory cur = factory.getBaseFactory();
                 boolean isExpectedClassFound = false;
                 while (cur != null) {

@@ -40,9 +40,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -79,7 +79,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             RecordSink masterSink,
             RecordSink slaveSink,
             int columnSplit,
-            JoinContext joinContext
+            Plannable joinContext
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         Map joinKeyMap = null;
@@ -104,8 +104,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                     NullRecordFactory.getInstance(slaveFactory.getMetadata())
             );
         } catch (Throwable th) {
-            Misc.free(joinKeyMap);
-            close();
+            Misc.free(joinKeyMap, th);
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -147,9 +147,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Splice Join");
-        if (joinContext != null && !joinContext.isEmpty()) {
-            sink.optAttr("condition", joinContext);
-        }
+        sink.optAttr("condition", joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

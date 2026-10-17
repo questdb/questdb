@@ -43,6 +43,11 @@ import io.questdb.std.Transient;
 public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return "first_not_null(Ξ)";
     }

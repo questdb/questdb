@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
@@ -35,6 +34,7 @@ import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.WeekTimestampMicrosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -236,6 +236,14 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long ceilFrom(long timestamp, int timestampType) {
+        if (ColumnType.isTimestampNano(timestampType) && timestamp != Numbers.LONG_NULL) {
+            return -Math.floorDiv(-timestamp, Micros.MICRO_NANOS);
+        }
+        return timestampType == ColumnType.DATE ? fromDate(timestamp) : timestamp;
+    }
+
+    @Override
     public long ceilYYYY(long timestamp) {
         return Micros.ceilYYYY(timestamp);
     }
@@ -255,6 +263,14 @@ public class MicrosTimestampDriver implements TimestampDriver {
             interval.of(lo, hi);
         }
         return interval;
+    }
+
+    @Override
+    public long floorFrom(long timestamp, int timestampType) {
+        if (ColumnType.isTimestampNano(timestampType) && timestamp != Numbers.LONG_NULL) {
+            return Math.floorDiv(timestamp, Micros.MICRO_NANOS);
+        }
+        return timestampType == ColumnType.DATE ? fromDate(timestamp) : timestamp;
     }
 
     @Override
@@ -460,7 +476,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public int getGKKHourInt() {
-        return SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+        return VectorAggregateFunction.GKK_MICRO_HOUR_INT;
     }
 
     @Override

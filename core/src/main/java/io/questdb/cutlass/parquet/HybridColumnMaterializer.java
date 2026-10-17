@@ -144,6 +144,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
     private int outputColumnCount;
+    private VirtualRecordCursorFactory virtualFactory;
 
     /**
      * Builds column data by reading rows from a RecordCursor (cursor-based path, no page frame backing).
@@ -274,6 +275,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         computedSourceTypes.clear();
         functions = null;
         functionRecord = null;
+        virtualFactory = null;
         adjustedMetadata.clear();
         computedCount = 0;
         outputColumnCount = 0;
@@ -401,6 +403,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             SqlExecutionContext ctx
     ) throws SqlException {
         PriorityMetadata priorityMetadata = vf.getPriorityMetadata();
+        this.virtualFactory = vf;
         this.functions = vf.getFunctions();
         RecordMetadata outputMeta = vf.getMetadata();
         RecordMetadata baseMeta = vf.getBaseFactory().getMetadata();
@@ -529,6 +532,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         resetBuffers();
         for (long row = 0; row < frameRowCount; row++) {
             pageFrameRecord.setRowIndex(row);
+            virtualFactory.clearMemos();
             for (int k = 0; k < computedCount; k++) {
                 int bufIdx = computedBufferIdx.getQuick(computedColumnIndices.getQuick(k));
                 MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);

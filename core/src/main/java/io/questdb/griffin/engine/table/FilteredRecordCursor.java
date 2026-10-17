@@ -49,6 +49,11 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void expectLimitedIteration() {
+        base.expectLimitedIteration();
+    }
+
+    @Override
     public Record getRecord() {
         return record;
     }

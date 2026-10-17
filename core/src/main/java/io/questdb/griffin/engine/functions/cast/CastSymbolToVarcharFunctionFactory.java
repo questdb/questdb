@@ -25,17 +25,22 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
 public class CastSymbolToVarcharFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.VARCHAR;
+    }
 
     @Override
     public String getSignature() {
@@ -52,7 +57,7 @@ public class CastSymbolToVarcharFunctionFactory implements FunctionFactory {
     ) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
-            return new VarcharConstant(Chars.toString(func.getSymbol(null)));
+            return VarcharConstant.fromValue(func.getVarcharA(null));
         }
         return new Func(args.getQuick(0));
     }

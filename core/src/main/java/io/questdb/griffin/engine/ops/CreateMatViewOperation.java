@@ -28,10 +28,11 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.std.IntList;
+import io.questdb.std.Transient;
 
 public interface CreateMatViewOperation extends TableStructure, Operation {
 
@@ -84,7 +85,11 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
-    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, FunctionFactoryCache functionFactoryCache, IQueryModel queryModel) throws SqlException;
+    /**
+     * Validates the bound query of the view and records its columns, named at {@code positions}, its sampling
+     * interval and the symbol capacities it takes from the base table, without retaining either input.
+     */
+    void validateAndUpdateMetadataFromPlan(SqlExecutionContext sqlExecutionContext, @Transient LogicalPlan root, @Transient IntList positions) throws SqlException;
 
     void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata, int scanDirection) throws SqlException;
 }

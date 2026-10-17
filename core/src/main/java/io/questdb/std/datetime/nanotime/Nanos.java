@@ -362,7 +362,8 @@ public final class Nanos {
         }
         final long monthsDiff = getMonthsBetween(nanos, offset);
         final long monthsToAdd = monthsDiff - (monthsDiff % stride);
-        return addMonths(offset, (int) monthsToAdd);
+        final long next = addMonths(offset, (int) (monthsToAdd + stride));
+        return next <= nanos ? next : addMonths(offset, (int) monthsToAdd);
     }
 
     public static long floorMM(long nanos, int stride) {
@@ -523,7 +524,8 @@ public final class Nanos {
         }
         final long yearsDiff = getYearsBetween(nanos, offset);
         final long yearsToAdd = yearsDiff - (yearsDiff % stride);
-        return addYears(offset, (int) yearsToAdd);
+        final long next = addYears(offset, (int) (yearsToAdd + stride));
+        return next <= nanos ? next : addYears(offset, (int) yearsToAdd);
     }
 
     public static int getCentury(long nanos) {

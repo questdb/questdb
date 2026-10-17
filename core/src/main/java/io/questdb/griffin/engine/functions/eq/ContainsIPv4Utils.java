@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -49,6 +50,7 @@ public class ContainsIPv4Utils {
         if (strFunc.isConstant()) {
             final CharSequence constValue = strFunc.getStrA(null);
             if (constValue == null) {
+                Misc.free(ipv4Func);
                 return BooleanConstant.FALSE;
             }
 
@@ -70,6 +72,7 @@ public class ContainsIPv4Utils {
         if (varcharFunc.isConstant()) {
             final CharSequence constValue = varcharFunc.getStrA(null);
             if (constValue == null) {
+                Misc.free(ipv4Func);
                 return BooleanConstant.FALSE;
             }
 

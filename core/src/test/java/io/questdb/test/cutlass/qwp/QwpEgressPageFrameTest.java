@@ -52,8 +52,7 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
     /**
      * Force the SQL compiler to emit small page frames so every test exercises
      * multi-frame iteration without needing millions of rows. With max=128 and
-     * min=64, the effective frame size resolves to 128 (see
-     * {@code SqlCodeGenerator.generateTableQuery}); a 500-row partition yields
+     * min=64, the effective frame size resolves to 128; a 500-row partition yields
      * ~4 frames, and a 2 000-row partition yields ~16.
      */
     private static final String[] SMALL_PAGE_FRAME_ENV = new String[]{

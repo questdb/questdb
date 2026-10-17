@@ -83,7 +83,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -675,9 +674,9 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
             boolean isSlaveWrapped
     ) throws Exception {
         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            final RecordCursorFactory join = findFactory(factory, expectedFactory, query);
-            final CloseCountingFactory master = wrapChildFactory(join, "masterFactory");
-            final CloseCountingFactory slave = isSlaveWrapped ? wrapChildFactory(join, "slaveFactory") : null;
+            final AbstractJoinRecordCursorFactory join = (AbstractJoinRecordCursorFactory) findFactory(factory, expectedFactory, query);
+            final CloseCountingFactory master = (CloseCountingFactory) join.wrapMasterFactory(CloseCountingFactory::new);
+            final CloseCountingFactory slave = isSlaveWrapped ? (CloseCountingFactory) join.wrapSlaveFactory(CloseCountingFactory::new) : null;
             boolean isCacheBreachSeen = false;
             long limit = 1;
             RecordCursor cursor = null;
@@ -885,16 +884,6 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         final int valueHi = Chars.indexOf(message, valueLo, message.length(), ',');
         Assert.assertTrue("unterminated " + name + " attribute in: " + message, valueHi > valueLo);
         return Numbers.parseLong(message, valueLo, valueHi);
-    }
-
-    // AbstractJoinRecordCursorFactory has no setter for its child factories, so the test replaces
-    // the field. A renamed field fails the lookup, not the assertions.
-    private static CloseCountingFactory wrapChildFactory(RecordCursorFactory join, String fieldName) throws Exception {
-        final Field field = AbstractJoinRecordCursorFactory.class.getDeclaredField(fieldName);
-        field.setAccessible(true);
-        final CloseCountingFactory wrapper = new CloseCountingFactory((RecordCursorFactory) field.get(join));
-        field.set(join, wrapper);
-        return wrapper;
     }
 
     /**

@@ -39,6 +39,11 @@ public class TimestampSequenceNanoFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = NAME + "(NL)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

@@ -53,6 +53,7 @@ import org.jetbrains.annotations.Nullable;
  * <pre>
  * [VirtualRecordCursorFactory]           output projection
  * WindowRecordCursorFactory
+ *   [SelectedRecordCursorFactory]        input rename (identity cross index, over an input projection)
  *   [VirtualRecordCursorFactory]         input projection
  *     [SelectedRecordCursorFactory]      input mapping
  *       [filter factory]                 residual WHERE
@@ -165,6 +166,13 @@ public final class LiveViewCompiledPlan {
         }
 
         node = windowFactory.getBaseFactory();
+        // The generator renames the window's input to the SELECT aliases with a
+        // row-transparent mapping; over a projection it sits above it, and the
+        // projection's cursor already yields the same record.
+        if (node instanceof SelectedRecordCursorFactory s && s.getBaseFactory() instanceof VirtualRecordCursorFactory
+                && isIdentity(s.getColumnCrossIndex(), s.getBaseFactory().getMetadata().getColumnCount())) {
+            node = s.getBaseFactory();
+        }
         VirtualRecordCursorFactory inputProjection = null;
         if (node instanceof VirtualRecordCursorFactory v) {
             inputProjection = v;
@@ -360,6 +368,18 @@ public final class LiveViewCompiledPlan {
             return "a join over a window function";
         }
         return "this query shape";
+    }
+
+    private static boolean isIdentity(IntList crossIndex, int baseColumnCount) {
+        if (crossIndex.size() != baseColumnCount) {
+            return false;
+        }
+        for (int i = 0; i < baseColumnCount; i++) {
+            if (crossIndex.getQuick(i) != i) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static ProjectingRecordCursor projectingCursor(VirtualRecordCursorFactory projection) {

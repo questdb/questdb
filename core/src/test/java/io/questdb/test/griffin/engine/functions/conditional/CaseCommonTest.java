@@ -28,6 +28,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.conditional.CaseCommon;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -47,6 +50,15 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
                 configuration,
                 new FunctionFactoryCacheBuilder().scan(LOG).build()
         ));
+    }
+
+    @Test
+    public void testCastToTimestamp() throws Exception {
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            assertCastToTimestamp(new CharConstant('1'), timestampType, 1);
+            assertCastToTimestamp(new ByteConstant((byte) 2), timestampType, 2);
+            assertCastToTimestamp(new ShortConstant((short) 3), timestampType, 3);
+        }
     }
 
     @Test
@@ -153,6 +165,12 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
         for (short t : to) {
             ignored.add(t);
         }
+    }
+
+    private static void assertCastToTimestamp(Function value, int timestampType, long expected) throws SqlException {
+        final Function cast = CaseCommon.getCastFunction(value, 0, timestampType, configuration, null);
+        Assert.assertEquals(timestampType, cast.getType());
+        Assert.assertEquals(expected, cast.getTimestamp(null));
     }
 
     private static Map<Short, Set<Short>> buildIgnoredTypeMap() {

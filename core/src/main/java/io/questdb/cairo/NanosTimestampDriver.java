@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
@@ -35,6 +34,7 @@ import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.WeekTimestampNanosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -46,6 +46,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.datetime.nanotime.NanosFormatFactory;
 import io.questdb.std.datetime.nanotime.NanosFormatUtils;
@@ -90,6 +91,8 @@ public class NanosTimestampDriver implements TimestampDriver {
             return 0;
         }
     };
+    private static final long MAX_DESIGNATED_TIMESTAMP_MICROS = CommonUtils.MAX_TIMESTAMP / Nanos.MICRO_NANOS;
+    private static final long MAX_NANOS_DATE = Long.MAX_VALUE / Nanos.MILLI_NANOS;
     private static final String MAX_NANO_TIMESTAMP_STR = "2261-12-31 23:59:59.999999999";
     private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorDD, NanosFormatUtils.DAY_FORMAT);
     private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorHH, NanosFormatUtils.HOUR_FORMAT);
@@ -106,6 +109,16 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     public static long floor(CharSequence value) throws NumericException {
         return INSTANCE.parseFloorLiteral(value);
+    }
+
+    public static long fromMicrosForDesignatedTimestamp(long micros) {
+        if (Long.compareUnsigned(micros, MAX_DESIGNATED_TIMESTAMP_MICROS) > 0) {
+            if (micros == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
+            throw designatedTimestampOutOfBounds();
+        }
+        return micros * Nanos.MICRO_NANOS;
     }
 
     public static long parseDayTime(CharSequence seq, int lim, int pos, long ts, int dayRange, int dayDigits) throws NumericException {
@@ -235,6 +248,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long ceilFrom(long timestamp, int timestampType) {
+        return timestampType == ColumnType.DATE ? fromDate(timestamp) : from(timestamp, timestampType);
+    }
+
+    @Override
     public long ceilYYYY(long timestamp) {
         return Nanos.ceilYYYY(timestamp);
     }
@@ -254,6 +272,11 @@ public class NanosTimestampDriver implements TimestampDriver {
             interval.of(lo, hi);
         }
         return interval;
+    }
+
+    @Override
+    public long floorFrom(long timestamp, int timestampType) {
+        return timestampType == ColumnType.DATE ? fromDate(timestamp) : from(timestamp, timestampType);
     }
 
     @Override
@@ -315,7 +338,16 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromDate(long date) {
-        return date == Numbers.LONG_NULL ? Numbers.LONG_NULL : date * Nanos.MILLI_NANOS;
+        if (date >= -MAX_NANOS_DATE && date <= MAX_NANOS_DATE) {
+            return date * Nanos.MILLI_NANOS;
+        }
+        if (date == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        final long micros = date * Micros.MILLI_MICROS;
+        throw micros / Micros.MILLI_MICROS == date
+                ? ImplicitCastException.inconvertibleValue(micros, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO)
+                : ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_NANO);
     }
 
     @Override
@@ -351,6 +383,22 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public long fromSeconds(long seconds) {
         return seconds * Nanos.SECOND_NANOS;
+    }
+
+    @Override
+    public long fromStr(CharSequence value, int tupleIndex, int fromType, int toType) {
+        try {
+            return parseFloorLiteral(value);
+        } catch (NumericException e) {
+            try {
+                final long micros = MicrosTimestampDriver.INSTANCE.parseFloorLiteral(value);
+                if (micros < 0 || micros > MAX_DESIGNATED_TIMESTAMP_MICROS) {
+                    throw designatedTimestampOutOfBounds();
+                }
+            } catch (NumericException ignore) {
+            }
+            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, fromType, toType);
+        }
     }
 
     @Override
@@ -458,7 +506,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public int getGKKHourInt() {
-        return SqlCodeGenerator.GKK_NANO_HOUR_INT;
+        return VectorAggregateFunction.GKK_NANO_HOUR_INT;
     }
 
     @Override
@@ -816,7 +864,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType) {
         if (ColumnType.isTimestampMicro(srcTimestampType)) {
-            return CommonUtils::microsToNanos;
+            return NanosTimestampDriver::fromMicrosForDesignatedTimestamp;
         }
         return null;
     }
@@ -918,8 +966,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                 }
                                 nano *= CommonUtils.tenPow(nanoLim - p);
                                 // micros
-                                ts = Nanos.yearNanos(year, l)
-                                        + Nanos.monthOfYearNanos(month, l)
+                                ts = Nanos.monthOfYearNanos(month, l)
                                         + (day - 1) * Nanos.DAY_NANOS
                                         + hour * Nanos.HOUR_NANOS
                                         + min * Nanos.MINUTE_NANOS
@@ -928,8 +975,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                         + checkTimezoneTail(str, p, hi);
                             } else {
                                 // seconds
-                                ts = Nanos.yearNanos(year, l)
-                                        + Nanos.monthOfYearNanos(month, l)
+                                ts = Nanos.monthOfYearNanos(month, l)
                                         + (day - 1) * Nanos.DAY_NANOS
                                         + hour * Nanos.HOUR_NANOS
                                         + min * Nanos.MINUTE_NANOS
@@ -938,8 +984,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                             }
                         } else {
                             // minute
-                            ts = Nanos.yearNanos(year, l)
-                                    + Nanos.monthOfYearNanos(month, l)
+                            ts = Nanos.monthOfYearNanos(month, l)
                                     + (day - 1) * Nanos.DAY_NANOS
                                     + hour * Nanos.HOUR_NANOS
                                     + min * Nanos.MINUTE_NANOS;
@@ -947,27 +992,25 @@ public class NanosTimestampDriver implements TimestampDriver {
                         }
                     } else {
                         // year + month + day + hour
-                        ts = Nanos.yearNanos(year, l)
-                                + Nanos.monthOfYearNanos(month, l)
+                        ts = Nanos.monthOfYearNanos(month, l)
                                 + (day - 1) * Nanos.DAY_NANOS
                                 + hour * Nanos.HOUR_NANOS;
 
                     }
                 } else {
                     // year + month + day
-                    ts = Nanos.yearNanos(year, l)
-                            + Nanos.monthOfYearNanos(month, l)
+                    ts = Nanos.monthOfYearNanos(month, l)
                             + (day - 1) * Nanos.DAY_NANOS;
                 }
             } else {
                 // year + month
-                ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(month, l));
+                ts = Nanos.monthOfYearNanos(month, l);
             }
         } else {
             // year
-            ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l));
+            ts = 0;
         }
-        return ts;
+        return addYearNanos(year, l, ts);
     }
 
     @Override
@@ -1021,8 +1064,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                 nano *= CommonUtils.tenPow(nanoLim - p);
 
                                 // nanos
-                                ts = Nanos.yearNanos(year, l)
-                                        + Nanos.monthOfYearNanos(month, l)
+                                ts = Nanos.monthOfYearNanos(month, l)
                                         + (day - 1) * Nanos.DAY_NANOS
                                         + hour * Nanos.HOUR_NANOS
                                         + min * Nanos.MINUTE_NANOS
@@ -1031,8 +1073,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                         + checkTimezoneTail(str, p, hi);
                             } else {
                                 // seconds
-                                ts = Nanos.yearNanos(year, l)
-                                        + Nanos.monthOfYearNanos(month, l)
+                                ts = Nanos.monthOfYearNanos(month, l)
                                         + (day - 1) * Nanos.DAY_NANOS
                                         + hour * Nanos.HOUR_NANOS
                                         + min * Nanos.MINUTE_NANOS
@@ -1041,8 +1082,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                             }
                         } else {
                             // minute
-                            ts = Nanos.yearNanos(year, l)
-                                    + Nanos.monthOfYearNanos(month, l)
+                            ts = Nanos.monthOfYearNanos(month, l)
                                     + (day - 1) * Nanos.DAY_NANOS
                                     + hour * Nanos.HOUR_NANOS
                                     + min * Nanos.MINUTE_NANOS;
@@ -1050,27 +1090,25 @@ public class NanosTimestampDriver implements TimestampDriver {
                         }
                     } else {
                         // year + month + day + hour
-                        ts = Nanos.yearNanos(year, l)
-                                + Nanos.monthOfYearNanos(month, l)
+                        ts = Nanos.monthOfYearNanos(month, l)
                                 + (day - 1) * Nanos.DAY_NANOS
                                 + hour * Nanos.HOUR_NANOS;
 
                     }
                 } else {
                     // year + month + day
-                    ts = Nanos.yearNanos(year, l)
-                            + Nanos.monthOfYearNanos(month, l)
+                    ts = Nanos.monthOfYearNanos(month, l)
                             + (day - 1) * Nanos.DAY_NANOS;
                 }
             } else {
                 // year + month
-                ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(month, l));
+                ts = Nanos.monthOfYearNanos(month, l);
             }
         } else {
             // year
-            ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l));
+            ts = 0;
         }
-        return ts;
+        return addYearNanos(year, l, ts);
     }
 
     public void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException {
@@ -1262,8 +1300,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
         // Calculate Monday of the week
         boolean leap = CommonUtils.isLeapYear(year);
-        long ts = Nanos.yearNanos(year, leap)
-                + CommonUtils.getIsoYearDayOffset(year) * Nanos.DAY_NANOS
+        long ts = CommonUtils.getIsoYearDayOffset(year) * Nanos.DAY_NANOS
                 + (week - 1) * Nanos.WEEK_NANOS;
 
         // Check for day-of-week (-D)
@@ -1324,7 +1361,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                 }
             }
         }
-        return ts;
+        return addYearNanos(year, leap, ts);
     }
 
     /**
@@ -1342,8 +1379,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
         // Calculate Monday of the week
         boolean leap = CommonUtils.isLeapYear(year);
-        long ts = Nanos.yearNanos(year, leap)
-                + CommonUtils.getIsoYearDayOffset(year) * Nanos.DAY_NANOS
+        long ts = CommonUtils.getIsoYearDayOffset(year) * Nanos.DAY_NANOS
                 + (week - 1) * Nanos.WEEK_NANOS;
 
         // Check for day-of-week (-D)
@@ -1404,7 +1440,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                 }
             }
         }
-        return ts;
+        return addYearNanos(year, leap, ts);
     }
 
     /**
@@ -1654,6 +1690,27 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
     }
 
+    private static long addYearNanos(int year, boolean isLeap, long nanos) throws NumericException {
+        if (year > 1677 && year < 2262) {
+            return Nanos.yearNanos(year, isLeap) + nanos;
+        }
+        if (year < 1677 || year > 2262) {
+            throw NumericException.instance();
+        }
+        final long yearNanos;
+        if (year == 1677) {
+            yearNanos = Nanos.yearNanos(1678, false);
+            nanos -= 365 * Nanos.DAY_NANOS;
+        } else {
+            yearNanos = Nanos.yearNanos(year, isLeap);
+        }
+        if (nanos < 0 && yearNanos <= Long.MIN_VALUE - nanos
+                || nanos > 0 && yearNanos > Long.MAX_VALUE - nanos) {
+            throw NumericException.instance();
+        }
+        return yearNanos + nanos;
+    }
+
     private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
         if (lim == p) {
             return 0;
@@ -1716,6 +1773,10 @@ public class NanosTimestampDriver implements TimestampDriver {
         throw NumericException.instance();
     }
 
+    private static CairoException designatedTimestampOutOfBounds() {
+        return CairoException.nonCritical().put("designated timestamp_ns before 1970-01-01 and beyond ").put(MAX_NANO_TIMESTAMP_STR).put(" is not allowed");
+    }
+
     private static long partitionCeilDD(long nanos) {
         // Designated timestamp can't be negative.
         return Nanos.ceilDD(Math.max(nanos, 0));
@@ -1771,7 +1832,7 @@ public class NanosTimestampDriver implements TimestampDriver {
             throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
         }
         if (timestamp < TableWriter.TIMESTAMP_EPOCH || timestamp > CommonUtils.MAX_TIMESTAMP) {
-            throw CairoException.nonCritical().put("designated timestamp_ns before 1970-01-01 and beyond ").put(MAX_NANO_TIMESTAMP_STR).put(" is not allowed");
+            throw designatedTimestampOutOfBounds();
         }
     }
 

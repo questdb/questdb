@@ -83,15 +83,20 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
         this.configuration = configuration;
         this.rowCursorFactory = rowCursorFactory;
-        this.cursor = new PageFrameRecordCursorImpl(
-                configuration,
-                metadata,
-                rowCursorFactory,
-                rowCursorFactory.isEntity(),
-                filter
-        );
-        this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
+        try {
+            this.cursor = new PageFrameRecordCursorImpl(
+                    configuration,
+                    metadata,
+                    rowCursorFactory,
+                    rowCursorFactory.isEntity(),
+                    filter
+            );
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
+        this.followsOrderByAdvice = followsOrderByAdvice;
         this.framingSupported = framingSupported;
         this.supportsRandomAccess = supportsRandomAccess;
         this.singleRowFactory = singleRowFactory;
@@ -116,24 +121,6 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             return true;
         }
         return partitionFrameCursorFactory.isNonDeterministic();
-    }
-
-    // Compose the weaker within-execution property from every value source. The row-cursor factory
-    // is the single authority on its own selecting values (index key(s) plus any inner filter): a
-    // plain entity scan reports stable, index cursors report stable only when their key/filter
-    // functions are (fixed literals and bind variables are, rnd_* is not). Unknown shapes keep the
-    // fail-safe default (unstable). This lets a provably-stable indexed symbol lookup used as a
-    // scalar sub-query timestamp bound prune to an interval scan instead of a full outer scan.
-    @Override
-    public boolean isStableWithinExecution() {
-        if (!rowCursorFactory.isStableWithinExecution()) {
-            return false;
-        }
-        final Function filter = this.filter;
-        if (filter != null && !filter.isStableWithinExecution()) {
-            return false;
-        }
-        return partitionFrameCursorFactory.isStableWithinExecution();
     }
 
     @Override
@@ -437,10 +424,15 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
     @Override
     public boolean supportsTimeFrameCursor() {
-        // Time frames are supported only for full table scan cursors, i.e. "x" queries.
+        // Time frames are supported only for full table scan cursors, i.e. "x" queries, that designate
+        // the table's own timestamp, or any timestamp of a table that has none: the frames follow the
+        // table's partitions, and a table without a designated timestamp has only one.
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        final int tableTimestampIndex = partitionFrameCursorFactory.getMetadata().getTimestampIndex();
         return framingSupported && supportsRandomAccess
                 && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex()
-                && getMetadata().getTimestampIndex() != -1
+                && timestampIndex != -1
+                && (tableTimestampIndex == -1 || columnIndexes.getQuick(timestampIndex) == tableTimestampIndex)
                 && partitionFrameCursorFactory.getOrder() == ORDER_ASC
                 && filter == null;
     }

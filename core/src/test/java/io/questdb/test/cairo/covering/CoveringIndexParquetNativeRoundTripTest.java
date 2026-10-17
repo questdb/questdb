@@ -312,7 +312,7 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
 
             // Multi-key (IN-list) covering scan, plus a row-by-row
             // covered-vs-uncovered cursor comparison. Both sides must keep the
-            // sym predicate: with no WHERE, intrinsicModel.keyColumn is null, no
+            // sym predicate: with no WHERE, SymbolKeyExtractor extracts no key, no
             // CoveringIndexRecordCursorFactory is ever constructed, the
             // no_covering hint is inert and the two sides compile to the same
             // plain page-frame scan.

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -33,13 +34,18 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtIPv4StrFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {
@@ -76,7 +82,7 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
         return false;
     }
 
-    private static class ConstStrFunc extends NegatableBooleanFunction implements UnaryFunction {
+    private static class ConstStrFunc extends ComparisonFunction implements UnaryFunction {
         private final Function arg;
         private final int constIPv4;
 
@@ -92,11 +98,11 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThanIPv4(arg.getIPv4(rec), constIPv4, negated);
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(arg);
             if (negated) {
                 sink.val(">=");
@@ -105,9 +111,13 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
             }
             sink.valIPv4(constIPv4);
         }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThanIPv4(arg.getIPv4(rec), constIPv4, negated);
+        }
     }
 
-    private static class RuntimeConstStrFunc extends NegatableBooleanFunction implements BinaryFunction {
+    private static class RuntimeConstStrFunc extends ComparisonFunction implements BinaryFunction {
         private final Function ipv4Func;
         private final Function strFunc;
         private int constIPv4;
@@ -119,7 +129,7 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThanIPv4(ipv4Func.getIPv4(rec), constIPv4, negated);
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -139,7 +149,7 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(ipv4Func);
             if (negated) {
                 sink.val(">=");
@@ -147,6 +157,10 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(strFunc);
+        }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThanIPv4(ipv4Func.getIPv4(rec), constIPv4, negated);
         }
     }
 }

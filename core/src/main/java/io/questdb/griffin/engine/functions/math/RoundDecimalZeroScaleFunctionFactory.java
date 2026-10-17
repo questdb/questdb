@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
@@ -36,12 +37,17 @@ import java.math.RoundingMode;
 
 public class RoundDecimalZeroScaleFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.decimalRoundedToZeroScale(argTypes.getQuick(0), RoundingMode.HALF_UP);
+    }
+
+    @Override
     public String getSignature() {
         return "round(Ξ)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return RoundDecimalFunctionFactory.newInstance(args.getQuick(0), IntConstant.ZERO, RoundingMode.HALF_UP);
+        return RoundDecimalFunctionFactory.newInstance(position, args.getQuick(0), IntConstant.ZERO, RoundingMode.HALF_UP);
     }
 }

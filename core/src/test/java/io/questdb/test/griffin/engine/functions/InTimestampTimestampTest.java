@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.ObjList;
@@ -166,6 +167,35 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalMustBeOnlyListElement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 0::timestamp ts, 0::timestamp_ns tn FROM long_sequence(1))");
+            String sql = "SELECT ('2020-01-01T00:00:00.000000000Z'::timestamp_ns) in (null::varchar, "
+                    + "interval('2020-01-01T00:00:00.000000Z'::timestamp, '2020-01-02T00:00:00.000000Z'::timestamp), "
+                    + "1.5::decimal(4,1)) FROM t";
+            assertQuery(sql).fails(sql.indexOf("interval("), "cannot compare TIMESTAMP with type INTERVAL");
+
+            assertQuery("SELECT tn IN (interval(0, 1), null) FROM t")
+                    .fails(14, "cannot compare TIMESTAMP with type INTERVAL");
+            assertQuery("SELECT tn IN (ts, interval(0, 1)) FROM t")
+                    .fails(18, "cannot compare TIMESTAMP with type INTERVAL");
+            bindVariableService.setTimestamp(0, 0);
+            assertQuery("SELECT tn IN ($1, interval(0, 1)) FROM t")
+                    .fails(18, "cannot compare TIMESTAMP with type INTERVAL");
+
+            assertQuery("SELECT ts IN interval(0, 1) micro, tn IN interval(0, 1) nano FROM t")
+                    .expectSize()
+                    .returns("micro\tnano\ntrue\ttrue\n");
+            assertQuery("SELECT tn IN (null, null::varchar, ts, $1) matched, tn IN null::interval empty FROM t")
+                    .expectSize()
+                    .returns("matched\tempty\ntrue\tfalse\n");
+            assertQuery("SELECT null::timestamp IN (null, null::timestamp, null::date) matched")
+                    .expectSize()
+                    .returns("matched\ntrue\n");
+        });
+    }
+
+    @Test
     public void testListOfTimestamps() throws Exception {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
@@ -184,7 +214,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
         assertQuery("test where ts in ('1970-01-01T00:00:0.070000Z', 'abc')")
-                .fails(18, "Invalid date [str=1970-01-01T00:00:0.070000Z]");
+                .fails(48, "Invalid date");
     }
 
     @Test
@@ -206,6 +236,273 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 micro	nano	outside
                 true	true	false
                 """);
+    }
+
+    @Test
+    public void testPrunedDatePointListKeepsVariableTextSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (id INT, dt DATE, s STRING, v VARCHAR)");
+            execute("""
+                    INSERT INTO test VALUES
+                        (1, '2024-01-01T00:00:00.000Z', '2024-01-01', '2024-01-01'),
+                        (2, '2024-01-01T00:00:00.001Z', '2024-01-01', '2024-01-01'),
+                        (3, '2024-01-02T00:00:00.000Z', '2024-01-01', '2024-01-01'),
+                        (4, NULL, NULL, NULL)
+                    """);
+            for (int type = 0; type < 2; type++) {
+                final String column = type == 0 ? "s" : "v";
+                for (int constantType = 0; constantType < 3; constantType++) {
+                    final String suffix = switch (constantType) {
+                        case 0 -> "::TIMESTAMP";
+                        case 1 -> "::TIMESTAMP_NS";
+                        default -> "";
+                    };
+                    final String impossible = "'2024-01-01T00:00:00.000500'" + suffix;
+                    for (int order = 0; order < 3; order++) {
+                        final String list = switch (order) {
+                            case 0 -> column + ", " + impossible;
+                            case 1 -> impossible + ", " + column;
+                            default -> impossible + ", " + column + ", " + impossible;
+                        };
+                        assertQuery("SELECT id, dt IN (" + list + ") AS matched, dt NOT IN (" + list + ") AS not_matched FROM test ORDER BY id")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        id\tmatched\tnot_matched
+                                        1\ttrue\tfalse
+                                        2\tfalse\ttrue
+                                        3\tfalse\ttrue
+                                        4\ttrue\tfalse
+                                        """);
+                        assertQuery("SELECT id FROM test WHERE dt IN (" + list + ") ORDER BY id")
+                                .noLeakCheck()
+                                .returns("id\n1\n4\n");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPrunedPointListKeepsBindVariableSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (id INT, ts TIMESTAMP)");
+            execute("""
+                    INSERT INTO test VALUES
+                        (1, '2024-01-01T00:00:00'),
+                        (2, '2024-01-01T12:00:00'),
+                        (3, '2024-01-02T00:00:00'),
+                        (4, NULL)
+                    """);
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            final String firstDay = """
+                    id\tmatched\tnot_matched
+                    1\ttrue\tfalse
+                    2\tfalse\ttrue
+                    3\tfalse\ttrue
+                    4\tfalse\ttrue
+                    """;
+            final String nullValue = """
+                    id\tmatched\tnot_matched
+                    1\tfalse\ttrue
+                    2\tfalse\ttrue
+                    3\tfalse\ttrue
+                    4\ttrue\tfalse
+                    """;
+            cases.add(BindVarTuple.ok("string day", firstDay, service -> service.setStr(0, "2024-01-01")));
+            cases.add(BindVarTuple.ok("varchar day", firstDay, service -> service.setVarchar(0, new Utf8String("2024-01-01"))));
+            cases.add(BindVarTuple.ok("null string", nullValue, service -> service.setStr(0, null)));
+            cases.add(BindVarTuple.ok("null varchar", nullValue, service -> service.setVarchar(0, null)));
+            cases.add(BindVarTuple.ok("second day", """
+                            id\tmatched\tnot_matched
+                            1\tfalse\ttrue
+                            2\tfalse\ttrue
+                            3\ttrue\tfalse
+                            4\tfalse\ttrue
+                            """,
+                    service -> service.setStr(0, "2024-01-02")));
+            for (int type = 0; type < 2; type++) {
+                final String parameter = type == 0 ? "$1" : "$1::VARCHAR";
+                for (int constantType = 0; constantType < 3; constantType++) {
+                    final String suffix = switch (constantType) {
+                        case 0 -> "::TIMESTAMP_NS";
+                        case 1 -> "::VARCHAR";
+                        default -> "";
+                    };
+                    final String list = parameter + ", '2024-01-01T00:00:00.000000001'" + suffix;
+                    assertQuery("SELECT id, ts IN (" + list + ") AS matched, ts NOT IN (" + list + ") AS not_matched FROM test ORDER BY id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .assertBinds(cases);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPrunedPointListKeepsConstantTextSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (id INT, ts TIMESTAMP)");
+            execute("""
+                    INSERT INTO test VALUES
+                        (1, '2024-01-01T00:00:00'),
+                        (2, '2024-01-01T12:00:00'),
+                        (3, '2024-01-02T00:00:00'),
+                        (4, NULL)
+                    """);
+            execute("CREATE TABLE designated AS (SELECT * FROM test WHERE ts IS NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            final ObjList<String> values = new ObjList<>(
+                    "'2024-01-01'",
+                    "'2024-01-01'::VARCHAR",
+                    "concat('2024-01-', '01')",
+                    "concat('2024-01-', '01')::VARCHAR",
+                    "NULL::STRING",
+                    "NULL::VARCHAR",
+                    "'2024-01-01;1d'",
+                    "'2024-01-01;1d'::VARCHAR",
+                    "concat('2024-01-', '02')",
+                    "concat('2024-01-', '02')::VARCHAR"
+            );
+            for (int value = 0; value < values.size(); value++) {
+                final boolean isNull = value == 4 || value == 5;
+                final boolean isInterval = value == 6 || value == 7;
+                final boolean isSecondDay = value >= 8;
+                final String expected = "id\tmatched\tnot_matched\n"
+                        + "1\t" + !(isNull || isSecondDay) + '\t' + (isNull || isSecondDay) + '\n'
+                        + "2\t" + isInterval + '\t' + !isInterval + '\n'
+                        + "3\t" + isSecondDay + '\t' + !isSecondDay + '\n'
+                        + "4\t" + isNull + '\t' + !isNull + '\n';
+                for (int order = 0; order < 2; order++) {
+                    final String impossible = "'2024-01-01T00:00:00.000000001'";
+                    final String list = order == 0 ? values.getQuick(value) + ", " + impossible : impossible + ", " + values.getQuick(value);
+                    assertQuery("SELECT id, ts IN (" + list + ") AS matched, ts NOT IN (" + list + ") AS not_matched FROM test ORDER BY id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(expected);
+                    assertQuery("SELECT id FROM test WHERE ts IN (" + list + ") ORDER BY id")
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .returns(isNull ? "id\n4\n" : isInterval ? "id\n1\n2\n" : isSecondDay ? "id\n3\n" : "id\n1\n");
+                    assertQuery("SELECT id FROM designated WHERE ts IN (" + list + ") ORDER BY id")
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .returns(isNull ? "id\n" : isInterval ? "id\n1\n2\n" : isSecondDay ? "id\n3\n" : "id\n1\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPrunedPointListKeepsVariableTextSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (id INT, ts TIMESTAMP, s STRING, v VARCHAR)");
+            execute("""
+                    INSERT INTO test VALUES
+                        (1, '2024-01-01T00:00:00', '2024-01-01', '2024-01-01'),
+                        (2, '2024-01-01T12:00:00', '2024-01-01', '2024-01-01'),
+                        (3, '2024-01-02T00:00:00', '2024-01-01', '2024-01-01'),
+                        (4, NULL, NULL, NULL)
+                    """);
+            final int oldJitMode = sqlExecutionContext.getJitMode();
+            final boolean isParallelFilterEnabled = sqlExecutionContext.isParallelFilterEnabled();
+            try {
+                for (int mode = 0; mode < 3; mode++) {
+                    sqlExecutionContext.setParallelFilterEnabled(mode > 0);
+                    sqlExecutionContext.setJitMode(mode == 2 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                    for (int type = 0; type < 2; type++) {
+                        final String column = type == 0 ? "s" : "v";
+                        for (int constantType = 0; constantType < 3; constantType++) {
+                            final String suffix = switch (constantType) {
+                                case 0 -> "::TIMESTAMP_NS";
+                                case 1 -> "::VARCHAR";
+                                default -> "";
+                            };
+                            final String impossible = "'2024-01-01T00:00:00.000000001'" + suffix;
+                            for (int order = 0; order < 3; order++) {
+                                final String list = switch (order) {
+                                    case 0 -> column + ", " + impossible;
+                                    case 1 -> impossible + ", " + column;
+                                    default -> impossible + ", " + column + ", " + impossible + ", " + impossible;
+                                };
+                                assertQuery("SELECT id, ts IN (" + list + ") AS matched, ts NOT IN (" + list + ") AS not_matched FROM test ORDER BY id")
+                                        .noLeakCheck()
+                                        .expectSize()
+                                        .returns("""
+                                                id\tmatched\tnot_matched
+                                                1\ttrue\tfalse
+                                                2\tfalse\ttrue
+                                                3\tfalse\ttrue
+                                                4\ttrue\tfalse
+                                                """);
+                                assertQuery("SELECT id FROM test WHERE ts IN (" + list + ") ORDER BY id")
+                                        .noLeakCheck()
+                                        .returns("id\n1\n4\n");
+                                assertQuery("SELECT id FROM test WHERE ts NOT IN (" + list + ") ORDER BY id")
+                                        .noLeakCheck()
+                                        .returns("id\n2\n3\n");
+                            }
+                        }
+                        assertQuery("SELECT id FROM test WHERE ts IN (" + column + ") ORDER BY id")
+                                .noLeakCheck()
+                                .returns("id\n1\n2\n");
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(oldJitMode);
+                sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
+            }
+        });
+    }
+
+    @Test
+    public void testStatefulTextElementEvaluatedOncePerRow() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    x
+                    1
+                    2
+                    3
+                    4
+                    """;
+            assertQuery("SELECT x FROM long_sequence(4) WHERE (x - 1)::timestamp IN (timestamp_sequence(0, 1)::varchar, 100::timestamp)")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT x FROM long_sequence(4) WHERE (x - 1)::timestamp IN (timestamp_sequence(0, 1)::string, 100::timestamp)")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testTypedNullTextListElements() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (id INT, dt DATE, ts TIMESTAMP, tn TIMESTAMP_NS)");
+            execute("INSERT INTO test VALUES (1, NULL, NULL, NULL), (2, 0, 0, 0), (3, 1, 1, 1)");
+            final ObjList<String> columns = new ObjList<>("dt", "ts", "tn");
+            final ObjList<String> types = new ObjList<>("STRING", "VARCHAR", "SYMBOL");
+            for (int column = 0; column < columns.size(); column++) {
+                for (int type = 0; type < types.size(); type++) {
+                    for (int order = 0; order < 2; order++) {
+                        final String nullValue = "NULL::" + types.getQuick(type);
+                        final String list = order == 0 ? nullValue + ", 0" : "0, " + nullValue;
+                        final String value = columns.getQuick(column);
+                        assertQuery("SELECT id, " + value + " IN (" + list + ") matched, "
+                                + value + " NOT IN (" + list + ") not_matched FROM test ORDER BY id")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        id\tmatched\tnot_matched
+                                        1\ttrue\tfalse
+                                        2\ttrue\tfalse
+                                        3\tfalse\ttrue
+                                        """);
+                        final String invalidList = order == 0 ? nullValue + ", NULL::INTERVAL" : "NULL::INTERVAL, " + nullValue;
+                        final String sql = "SELECT " + value + " IN (" + invalidList + ") FROM test";
+                        assertQuery(sql).fails(sql.indexOf("::INTERVAL"), "cannot compare TIMESTAMP with type INTERVAL");
+                    }
+                }
+            }
+        });
     }
 
     @Test

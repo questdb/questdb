@@ -45,6 +45,11 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_position";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[]D)";
     }
@@ -79,8 +84,9 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         if (array.isNull() || array.isEmpty()) {
             return Numbers.INT_NULL;
         }
-        for (int i = 0, dimLen = array.getDimLen(0); i < dimLen; i++) {
-            if (Numbers.isNull(array.getDouble(i))) {
+        final int stride = array.getStride(0);
+        for (int i = 0, index = 0, dimLen = array.getDimLen(0); i < dimLen; i++, index += stride) {
+            if (Numbers.isNull(array.getDouble(index))) {
                 return i;
             }
         }
@@ -143,7 +149,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
-            if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+            if (ColumnType.decodeWeakArrayDimensionality(arrayArg.getType()) > 1) {
                 throw SqlException.position(arrayArgPos).put("array is not one-dimensional");
             }
         }
@@ -188,7 +194,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+            if (ColumnType.decodeWeakArrayDimensionality(arrayArg.getType()) > 1) {
                 throw SqlException.position(arrayArgPos).put("array is not one-dimensional");
             }
         }
@@ -214,13 +220,14 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             if (arr.isNull()) {
                 return Numbers.INT_NULL;
             }
-            return linearSearchNaN(arr) + 1;
+            final int index = linearSearchNaN(arr);
+            return Numbers.INT_NULL == index ? Numbers.INT_NULL : index + 1;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+            if (ColumnType.decodeWeakArrayDimensionality(arrayArg.getType()) > 1) {
                 throw SqlException.position(arrayArgPos).put("array is not one-dimensional");
             }
         }

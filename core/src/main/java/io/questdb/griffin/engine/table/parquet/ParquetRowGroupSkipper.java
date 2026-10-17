@@ -24,7 +24,9 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.DirectLongList;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Filter-pushdown contract for row group pruning. Implementations decide
@@ -52,10 +54,24 @@ public interface ParquetRowGroupSkipper {
      * list.
      *
      * @param rowGroupIndex zero-based row group index
-     * @param filters       encoded filter descriptors produced by
-     *                      {@link io.questdb.griffin.engine.table.ParquetRowGroupFilter#prepareFilterList}
+     * @param filters       encoded filter descriptors, {@link ParquetRowGroupFilter#LONGS_PER_FILTER} longs each
      * @param filterBufEnd  exclusive end address of the filter values buffer,
      *                      used for native bounds checking
      */
-    boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd);
+    @TestOnly
+    default boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
+        assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
+        return canSkipRowGroup(rowGroupIndex, filters.getAddress(), (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER), filterBufEnd);
+    }
+
+    /**
+     * Same as {@link #canSkipRowGroup(int, DirectLongList, long)} over the {@code filterCount} descriptors at
+     * {@code filtersAddr}.
+     */
+    boolean canSkipRowGroup(int rowGroupIndex, long filtersAddr, int filterCount, long filterBufEnd);
+
+    /**
+     * Returns {@code true} when the statistics prove the column chunk holds no NULL.
+     */
+    boolean hasNoNulls(int rowGroupIndex, int columnIndex);
 }

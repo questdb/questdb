@@ -25,18 +25,24 @@
 package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtIntFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
     @Override
     public String getSignature() {
         return "<(II)";
@@ -44,6 +50,11 @@ public class LtIntFunctionFactory implements FunctionFactory {
 
     @Override
     public boolean isBoolean() {
+        return true;
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
         return true;
     }
 
@@ -58,7 +69,7 @@ public class LtIntFunctionFactory implements FunctionFactory {
         return new LtIntFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class LtIntFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class LtIntFunction extends ComparisonFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -69,11 +80,7 @@ public class LtIntFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThan(
-                    left.getInt(rec),
-                    right.getInt(rec),
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -87,7 +94,7 @@ public class LtIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
                 sink.val(">=");
@@ -95,6 +102,14 @@ public class LtIntFunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(right);
+        }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThan(
+                    left.getInt(rec),
+                    right.getInt(rec),
+                    negated
+            );
         }
     }
 }

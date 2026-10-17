@@ -51,8 +51,26 @@ public class ArgSwappingFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        swapArgTypes(argTypes);
+        final int type = delegate.getResultType(argTypes);
+        swapArgTypes(argTypes);
+        return type;
+    }
+
+    @Override
     public String getSignature() {
         return signature;
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, @Transient ObjList<Function> args, @Transient IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        swapArgs(args, argPositions);
+        try {
+            return delegate.isConstructionDeferrable(position, args, argPositions, configuration);
+        } finally {
+            swapArgs(args, argPositions);
+        }
     }
 
     @Override
@@ -63,17 +81,27 @@ public class ArgSwappingFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function tmpArg = args.getQuick(0);
-        args.setQuick(0, args.getQuick(1));
-        args.setQuick(1, tmpArg);
-        int tmpPosition = argPositions.getQuick(0);
-        argPositions.setQuick(0, argPositions.getQuick(1));
-        argPositions.setQuick(1, tmpPosition);
+        swapArgs(args, argPositions);
         return delegate.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
     }
 
     @Override
     public boolean supportImplicitCastCharToStr() {
         return delegate.supportImplicitCastCharToStr();
+    }
+
+    private static void swapArgs(ObjList<Function> args, IntList argPositions) {
+        Function tmpArg = args.getQuick(0);
+        args.setQuick(0, args.getQuick(1));
+        args.setQuick(1, tmpArg);
+        int tmpPosition = argPositions.getQuick(0);
+        argPositions.setQuick(0, argPositions.getQuick(1));
+        argPositions.setQuick(1, tmpPosition);
+    }
+
+    private static void swapArgTypes(IntList argTypes) {
+        final int first = argTypes.getQuick(0);
+        argTypes.setQuick(0, argTypes.getQuick(1));
+        argTypes.setQuick(1, first);
     }
 }

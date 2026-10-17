@@ -71,7 +71,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
-import static io.questdb.griffin.engine.join.AsyncWindowJoinAtom.findFunctionWithSameArg;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.*;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory.findPrevailingForMasterRow;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.addSaturating;
@@ -159,7 +158,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             int slaveSymbolIndex,
             int masterSymbolIndex,
             @Nullable Function joinFilter,
-            boolean vectorized
+            @Nullable IntList argumentColumnIndex
     ) {
         super(metadata);
         try {
@@ -184,25 +183,18 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             final int columnSplit = masterFactory.getMetadata().getColumnCount();
             var masterMetadata = masterFactory.getMetadata();
             var slaveMetadata = slaveFactory.getMetadata();
-            this.vectorized = vectorized;
+            this.vectorized = argumentColumnIndex != null;
 
             final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            if (vectorized) {
+            if (argumentColumnIndex != null) {
                 var groupByCount = groupByFunctions.size();
-                var groupByFunctionToColumnIndex = new IntList(groupByCount);
                 ObjList<Function> groupByFunctionArgs = new ObjList<>(groupByCount);
                 IntList groupByFunctionTypes = new IntList(groupByCount);
                 for (int i = 0; i < groupByCount; i++) {
-                    var func = groupByFunctions.getQuick(i);
-                    var funcArg = func.getComputeBatchArg();
-                    var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
-                    int index = findFunctionWithSameArg(groupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
-                    if (index == -1) {
-                        groupByFunctionArgs.add(funcArg);
-                        groupByFunctionTypes.add(funcArgType);
-                        groupByFunctionToColumnIndex.add(groupByFunctionArgs.size() - 1);
-                    } else {
-                        groupByFunctionToColumnIndex.add(index);
+                    if (argumentColumnIndex.getQuick(i) == groupByFunctionArgs.size()) {
+                        var func = groupByFunctions.getQuick(i);
+                        groupByFunctionArgs.add(func.getComputeBatchArg());
+                        groupByFunctionTypes.add(ColumnType.tagOf(func.getComputeBatchArgType()));
                     }
                 }
 
@@ -220,7 +212,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                         2 + groupByFunctionArgs.size(),
                         groupByFunctionArgs,
                         groupByFunctionTypes,
-                        groupByFunctionToColumnIndex
+                        argumentColumnIndex
                 );
             } else {
                 if (includePrevailing) {
@@ -272,7 +264,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.slaveSymbolIndex = slaveSymbolIndex;
             this.masterSymbolIndex = masterSymbolIndex;
         } catch (Throwable th) {
-            releaseAdoptedStateOnConstructorFailure();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -482,13 +474,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
      * Nulling the three fields before {@code close()} keeps the release of the adopted handles -
      * the join filter, the group-by functions, the cursor and the map value - in one place.
      */
-    private void releaseAdoptedStateOnConstructorFailure() {
-        masterFactory = null;
-        slaveFactory = null;
-        joinMetadata = null;
-        close();
-    }
-
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
         protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
         // Stores metadata about storage of slave underlying records

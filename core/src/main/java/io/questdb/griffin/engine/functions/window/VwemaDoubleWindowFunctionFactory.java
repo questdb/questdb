@@ -92,6 +92,11 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
     static final ArrayColumnTypes VWEMA_COLUMN_TYPES_LV;
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }
@@ -120,7 +125,6 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-        int timestampIndex = windowContext.getTimestampIndex();
         int timestampType = windowContext.getTimestampType();
         TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
 
@@ -186,7 +190,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                         partitionBySink,
                         valueArg,
                         volumeArg,
-                        timestampIndex,
+                        windowContext.getTimestampIndex(),
                         tau,
                         kind,
                         paramValue,
@@ -215,7 +219,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                 return new VwemaTimeWeightedOverUnboundedRowsFrameFunction(
                         valueArg,
                         volumeArg,
-                        timestampIndex,
+                        windowContext.getTimestampIndex(),
                         tau,
                         kind,
                         paramValue

@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Single-threaded object pool based on ObjList. The goal is to optimise intermediate allocation of objects.
@@ -44,21 +45,44 @@ public class ObjectPool<T extends Mutable> implements Mutable {
     private static final Log LOG = LogFactory.getLog(ObjectPool.class);
     private final ObjectFactory<T> factory;
     private final int initialSize;
+    private final int maxRetainedSize;
     private ObjList<T> list;
     private int pos = 0;
     private int size;
 
     public ObjectPool(@NotNull ObjectFactory<T> factory, int size) {
+        this(factory, size, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Creates a pool whose retained footprint does not depend on its peak use: {@link #clear()},
+     * {@link #rewind(int)} and {@link #release(Mutable)} clear the objects they release, so a kept object holds no
+     * reference into the work that released it and {@link #next()} hands it out without clearing it again, and
+     * {@link #clear()} drops every object past the first {@code maxRetainedSize}.
+     *
+     * @param maxRetainedSize the most objects the pool keeps once {@link #clear()} releases them, never fewer than
+     *                        {@code size}
+     */
+    public ObjectPool(@NotNull ObjectFactory<T> factory, int size, int maxRetainedSize) {
         this.list = new ObjList<>(size);
         this.factory = factory;
         this.size = size;
         this.initialSize = size;
+        this.maxRetainedSize = Math.max(size, maxRetainedSize);
         fill();
     }
 
     @Override
     public void clear() {
-        pos = 0;
+        rewind(0);
+        if (size > maxRetainedSize) {
+            trim();
+        }
+    }
+
+    @TestOnly
+    public int getCapacity() {
+        return size;
     }
 
     public int getPos() {
@@ -71,7 +95,9 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         }
 
         T o = list.getQuick(pos++);
-        o.clear();
+        if (maxRetainedSize == Integer.MAX_VALUE) {
+            o.clear();
+        }
         return o;
     }
 
@@ -110,6 +136,9 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         T objectToSwap = list.getQuick(pos);
         list.setQuick(pos, o);
         list.setQuick(objectPos, objectToSwap);
+        if (maxRetainedSize < Integer.MAX_VALUE) {
+            o.clear();
+        }
     }
 
     public void resetCapacity() {
@@ -117,6 +146,22 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         this.size = initialSize;
         fill();
         pos = 0;
+    }
+
+    /**
+     * Returns every object handed out since {@link #getPos()} returned {@code mark}, so a nested user of the pool
+     * frees only what it took.
+     *
+     * @param mark a position {@link #getPos()} returned, not above the current position
+     */
+    public void rewind(int mark) {
+        assert mark >= 0 && mark <= pos : "rewind past the current position";
+        if (maxRetainedSize < Integer.MAX_VALUE) {
+            for (int i = mark; i < pos; i++) {
+                list.getQuick(i).clear();
+            }
+        }
+        pos = mark;
     }
 
     private void expand() {
@@ -127,7 +172,16 @@ public class ObjectPool<T extends Mutable> implements Mutable {
 
     private void fill() {
         for (int i = 0; i < size; i++) {
-            list.add(factory.newInstance());
+            final T o = factory.newInstance();
+            if (maxRetainedSize < Integer.MAX_VALUE) {
+                o.clear();
+            }
+            list.add(o);
         }
+    }
+
+    private void trim() {
+        list.remove(maxRetainedSize, size - 1);
+        size = maxRetainedSize;
     }
 }

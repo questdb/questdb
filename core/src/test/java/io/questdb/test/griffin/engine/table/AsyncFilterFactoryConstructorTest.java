@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntHashSet;
@@ -50,9 +49,9 @@ import org.junit.Test;
  * Pins the ownership contract of the async filter factory constructors. A throw part-way through one
  * of them never returns the factory, so {@code _close()} never runs and everything the constructor
  * allocated up to that point - the cursors' native records, the JIT bind variable memory, and the
- * per-worker filters it was handed - is unreachable unless the constructor itself releases it.
- * SqlCodeGenerator frees only what it passed in (the compiled filters, the filter, the bind variable
- * functions and the base factory), which is what these tests do after the expected throw.
+ * per-worker filters it was handed - is unreachable unless the constructor itself releases it. The
+ * constructors also consume everything else they are handed (the base factory, the filter, the compiled
+ * filters and the bind variable functions), so these tests free nothing after the expected throw.
  * <p>
  * Each test injects the failure through a configuration getter that is read at exactly one point of
  * the construction, walking the fault down the three ownership hand-offs: before the atom exists
@@ -105,8 +104,6 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
             final CairoConfiguration configuration =
                     new FaultInjectingConfiguration(engine.getConfiguration(), faultPoint.faultMethod, faultPoint);
             final RecordCursorFactory base = select("SELECT * FROM x");
-            // Owned by the caller, exactly as in SqlCodeGenerator: the constructor must not close any
-            // of these, on either the success or the failure path.
             final NativeFilter filter = new NativeFilter();
             final CompiledFilter compiledFilter = new CompiledFilter();
             final CompiledCountOnlyFilter compiledCountOnlyFilter = new CompiledCountOnlyFilter();
@@ -124,13 +121,7 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
             }
 
             Assert.assertEquals("the per-worker filter must be closed exactly once", 1, perWorkerFilter.closeCount);
-            Assert.assertEquals("the filter belongs to the caller and must be left open", 0, filter.closeCount);
-
-            Misc.free(filter);
-            Misc.free(compiledFilter);
-            Misc.free(compiledCountOnlyFilter);
-            Misc.freeObjList(bindVarFunctions);
-            Misc.free(base);
+            Assert.assertEquals("the filter must be closed exactly once", 1, filter.closeCount);
         });
     }
 
@@ -170,7 +161,6 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
             ObjList<Function> bindVarFunctions,
             ObjList<Function> perWorkerFilters
     ) {
-        final ExpressionNode filterExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "true", 0, 0);
         final PageFrameReduceTaskFactory reduceTaskFactory =
                 () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
         if (isJit) {
@@ -186,7 +176,6 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
                     new IntHashSet(),
                     reduceTaskFactory,
                     perWorkerFilters,
-                    filterExpr,
                     null,
                     0,
                     1,
@@ -207,7 +196,6 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
                 new IntHashSet(),
                 reduceTaskFactory,
                 perWorkerFilters,
-                filterExpr,
                 null,
                 0,
                 1,

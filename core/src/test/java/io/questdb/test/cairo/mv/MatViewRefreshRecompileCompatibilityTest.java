@@ -61,11 +61,11 @@ import java.util.Collection;
  * These tests exercise exactly the refresh job's compile step, so a guard that over-rejects fails
  * here even when CREATE was accepted on the node that ran it.
  * <p>
- * The lateral-join cases pin the stored-definition contract of the lateral rewrite guards
- * (negative-LIMIT rejection and the narrowed scalar-count compensation): every lateral shape that
- * CREATE accepts must keep recompiling under the refresh context, and the shapes the guard rejects
- * must be rejected visibly at CREATE with a stable message, because a stored definition that stops
- * compiling after an upgrade is a deterministic view outage.
+ * The lateral-join cases pin the stored-definition contract of the lateral rewrite (per-outer-row
+ * LIMITs, negative ones included, and the scalar-count compensation): every lateral shape that
+ * CREATE accepts must keep recompiling under the refresh context, and the LIMIT shapes the rewrite
+ * rejects must be rejected visibly at CREATE with a stable message, because a stored definition
+ * that stops compiling after an upgrade is a deterministic view outage.
  * <p>
  * The external-source case pins the other half of that contract for a break this PR does intend:
  * a definition over {@code read_parquet()} persisted by an older binary must fail <em>closed</em>
@@ -74,7 +74,6 @@ import java.util.Collection;
  */
 @RunWith(Parameterized.class)
 public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest {
-    private static final String NEGATIVE_LIMIT_ERROR = "negative LIMIT is not supported in a correlated lateral sub-query";
     private final boolean parallel;
 
     public MatViewRefreshRecompileCompatibilityTest(boolean parallel) {
@@ -87,75 +86,24 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
-    public void testCreateRejectsNegativeLimitInCrossLateral() throws Exception {
-        assertCreateLateralRejected(
-                "SELECT base.ts, sum(l.x) AS s FROM base "
-                        + "CROSS JOIN LATERAL (SELECT dim.n x FROM dim WHERE dim.k = base.k LIMIT -1) l "
-                        + "SAMPLE BY 1h",
-                "-1",
-                NEGATIVE_LIMIT_ERROR
-        );
-    }
-
-    @Test
-    public void testCreateRejectsNegativeLimitInInnerLateral() throws Exception {
-        assertCreateLateralRejected(
-                "SELECT base.ts, sum(l.x) AS s FROM base "
-                        + "JOIN LATERAL (SELECT dim.n x FROM dim WHERE dim.k = base.k LIMIT -1) l ON true "
-                        + "SAMPLE BY 1h",
-                "-1",
-                NEGATIVE_LIMIT_ERROR
-        );
-    }
-
-    @Test
-    public void testCreateRejectsNegativeLimitInLeftLateral() throws Exception {
-        // The upgrade-visible break for this shape: a definition like this persisted by an older
-        // binary stops compiling, so reads fail and the next refresh persists invalid=true.
-        // Rejecting it at CREATE (with the same message the refresh would surface) is the visible
-        // half of that contract.
-        assertCreateLateralRejected(
-                "SELECT base.ts, sum(l.x) AS s FROM base "
-                        + "LEFT JOIN LATERAL (SELECT dim.n x FROM dim WHERE dim.k = base.k LIMIT -1) l ON true "
-                        + "SAMPLE BY 1h",
-                "-1",
-                NEGATIVE_LIMIT_ERROR
-        );
-    }
-
-    @Test
-    public void testCreateRejectsNegativeLimitOverScalarCount() throws Exception {
-        // The scalar-count walk reports the provable negative with the specific message, ahead of
-        // the generic scalar-count guard.
+    public void testCreateRejectsNegativeLimitWithNonConstantUpperBound() throws Exception {
         assertCreateLateralRejected(
                 "SELECT base.ts, sum(l.c) AS s FROM base "
-                        + "LEFT JOIN LATERAL (SELECT count() c FROM dim WHERE dim.k = base.k LIMIT -1) l ON true "
-                        + "SAMPLE BY 1h",
-                "-1",
-                NEGATIVE_LIMIT_ERROR
-        );
-    }
-
-    @Test
-    public void testCreateRejectsNegativeLimitRangeHi() throws Exception {
-        // LIMIT lo,hi with a negative hi is rejected just like a negative lo.
-        assertCreateLateralRejected(
-                "SELECT base.ts, sum(l.x) AS s FROM base "
-                        + "LEFT JOIN LATERAL (SELECT dim.n x FROM dim WHERE dim.k = base.k LIMIT 1,-1) l ON true "
-                        + "SAMPLE BY 1h",
-                "-1",
-                NEGATIVE_LIMIT_ERROR
-        );
-    }
-
-    @Test
-    public void testCreateRejectsOuterColumnLimitOverScalarCount() throws Exception {
-        assertCreateLateralRejected(
-                "SELECT base.ts, sum(l.c) AS s FROM base "
-                        + "LEFT JOIN LATERAL (SELECT count() c FROM dim WHERE dim.k = base.k LIMIT base.n) l ON true "
+                        + "LEFT JOIN LATERAL (SELECT count() c FROM dim WHERE dim.k = base.k LIMIT -1, base.n) l ON true "
                         + "SAMPLE BY 1h",
                 "base.n",
-                "LIMIT referencing an outer column is not supported over a scalar count"
+                "negative LIMIT with a non-constant upper bound is not supported in a correlated lateral sub-query"
+        );
+    }
+
+    @Test
+    public void testCreateRejectsNegativePositiveLimit() throws Exception {
+        assertCreateLateralRejected(
+                "SELECT base.ts, sum(l.x) AS s FROM base "
+                        + "LEFT JOIN LATERAL (SELECT dim.n x FROM dim WHERE dim.k = base.k LIMIT -1, 2) l ON true "
+                        + "SAMPLE BY 1h",
+                "-1",
+                "LIMIT <negative>, <positive> is not allowed"
         );
     }
 
@@ -288,6 +236,38 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testRefreshFailsClosedForPersistedNonDeterministicTableFunctionArgument() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-02T00:00:00Z', 1.0)");
+            drainWalQueue();
+
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS ("
+                    + "SELECT base.ts, max(g.generate_series) AS observed FROM base "
+                    + "CROSS JOIN generate_series('2024-01-01'::TIMESTAMP, '2024-01-01'::TIMESTAMP, 1) g SAMPLE BY 1h"
+                    + ") PARTITION BY DAY");
+            drainWalQueue();
+
+            final String legacySql = "SELECT base.ts, max(g.generate_series) AS observed FROM base "
+                    + "CROSS JOIN generate_series(now(), now(), 1) g SAMPLE BY 1h";
+            installPersistedViewSql("mv", legacySql);
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_name\tview_status\tinvalidation_reason\n"
+                            + "mv\tinvalid\t[" + legacySql.lastIndexOf("now()")
+                            + "]: non-deterministic function cannot be used in materialized view: now\n");
+            assertQuery("mv").noLeakCheck().timestamp("ts").expectSize().returns("ts\tobserved\n");
+        });
+    }
+
+    @Test
     public void testRefreshPreservesPersistedCatalogueFunction() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
@@ -335,6 +315,15 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testRefreshRecompileSucceedsForCrossLateralNegativeLimitRowBody() throws Exception {
+        assertLateralRefreshRecompiles(
+                "SELECT base.ts, sum(l.x) AS s FROM base "
+                        + "CROSS JOIN LATERAL (SELECT dim.n x FROM dim WHERE dim.k = base.k LIMIT -1) l "
+                        + "SAMPLE BY 1h"
+        );
+    }
+
+    @Test
     public void testRefreshRecompileSucceedsForCrossLateralRowBody() throws Exception {
         assertLateralRefreshRecompiles(
                 "SELECT base.ts, sum(l.x) AS s FROM base "
@@ -353,6 +342,15 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
         assertLateralRefreshRecompiles(
                 "SELECT base.ts, sum(l.x) AS s FROM base "
                         + "JOIN LATERAL (SELECT dim.n x FROM dim WHERE dim.k = base.k ORDER BY dim.dts LIMIT 1) l ON true "
+                        + "SAMPLE BY 1h"
+        );
+    }
+
+    @Test
+    public void testRefreshRecompileSucceedsForInnerLateralNegativeLimitRowBody() throws Exception {
+        assertLateralRefreshRecompiles(
+                "SELECT base.ts, sum(l.x) AS s FROM base "
+                        + "JOIN LATERAL (SELECT dim.n x FROM dim WHERE dim.k = base.k LIMIT -1) l ON true "
                         + "SAMPLE BY 1h"
         );
     }
@@ -429,6 +427,24 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testRefreshRecompileSucceedsForLateralCountNegativeLimitBody() throws Exception {
+        assertLateralRefreshRecompiles(
+                "SELECT base.ts, sum(l.c) AS s FROM base "
+                        + "LEFT JOIN LATERAL (SELECT count() c FROM dim WHERE dim.k = base.k LIMIT -1) l ON true "
+                        + "SAMPLE BY 1h"
+        );
+    }
+
+    @Test
+    public void testRefreshRecompileSucceedsForLateralCountOuterColumnLimitBody() throws Exception {
+        assertLateralRefreshRecompiles(
+                "SELECT base.ts, sum(l.c) AS s FROM base "
+                        + "LEFT JOIN LATERAL (SELECT count() c FROM dim WHERE dim.k = base.k LIMIT base.n) l ON true "
+                        + "SAMPLE BY 1h"
+        );
+    }
+
+    @Test
     public void testRefreshRecompileSucceedsForLateralCountPlusOneBody() throws Exception {
         assertLateralRefreshRecompiles(
                 "SELECT base.ts, sum(l.c) AS s FROM base "
@@ -450,8 +466,26 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testRefreshRecompileSucceedsForLateralNegativeLimitRowBody() throws Exception {
+        assertLateralRefreshRecompiles(
+                "SELECT base.ts, sum(l.x) AS s FROM base "
+                        + "LEFT JOIN LATERAL (SELECT dim.n x FROM dim WHERE dim.k = base.k LIMIT -1) l ON true "
+                        + "SAMPLE BY 1h"
+        );
+    }
+
+    @Test
+    public void testRefreshRecompileSucceedsForLateralNegativeRangeLimitRowBody() throws Exception {
+        assertLateralRefreshRecompiles(
+                "SELECT base.ts, sum(l.x) AS s FROM base "
+                        + "LEFT JOIN LATERAL (SELECT dim.n x FROM dim WHERE dim.k = base.k ORDER BY dim.dts LIMIT 1,-1) l ON true "
+                        + "SAMPLE BY 1h"
+        );
+    }
+
+    @Test
     public void testRefreshRecompileSucceedsForLateralPositiveLimitRowBody() throws Exception {
-        // compensateLimit rewrites LIMIT into a per-outer-row row_number() filter; the rewritten
+        // LateralBinder.bindCorrelatedLimit rewrites LIMIT into a per-outer-row row_number() filter; the rewritten
         // shape must survive the refresh recompile.
         assertLateralRefreshRecompiles(
                 "SELECT base.ts, sum(l.x) AS s FROM base "

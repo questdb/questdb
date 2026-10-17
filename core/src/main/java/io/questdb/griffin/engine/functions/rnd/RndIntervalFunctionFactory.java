@@ -44,6 +44,11 @@ public class RndIntervalFunctionFactory implements FunctionFactory {
     private static final long MAX_RANGE = 199999000000000L; // ~6 years
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INTERVAL_TIMESTAMP_MICRO;
+    }
+
+    @Override
     public String getSignature() {
         return "rnd_interval()";
     }
@@ -112,6 +117,11 @@ public class RndIntervalFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
         }
 
         @Override

@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions.regex;
 
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -40,9 +42,14 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -65,6 +72,28 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
     public static final AtomicLong testSymbolKeyScans = new AtomicLong();
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
+    public boolean isSymbolKeySetProvider(ObjList<BoundExpression> args, boolean isSymbolTableStatic) {
+        if (!isSymbolTableStatic) {
+            return false;
+        }
+        final BoundExpression pattern = args.getQuick(1);
+        if (pattern instanceof ConstantExpression constant) {
+            return switch (ColumnType.tagOf(constant.getDataType())) {
+                case ColumnType.STRING, ColumnType.SYMBOL -> isKeySetPattern(constant.getStrValue());
+                case ColumnType.VARCHAR -> isKeySetPattern(constant.getVarcharValue());
+                case ColumnType.CHAR -> constant.getLongValue() != 0 && constant.getLongValue() != '%';
+                default -> false;
+            };
+        }
+        return (pattern.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == BoundExpression.RUNTIME_CONSTANT;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -76,74 +105,72 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         final Function pattern = args.getQuick(1);
 
         if (value.isSymbolTableStatic()) {
-            if (pattern.isConstant()) {
-                final CharSequence likeSeq = pattern.getStrA(null);
-                int len;
-                if (likeSeq != null && (len = likeSeq.length()) > 0) {
-                    if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
-                        final int anyCount = countChar(likeSeq, '%');
-                        if (anyCount == 1) {
-                            if (len == 1) {
-                                // LIKE '%' case
-                                final NegatableBooleanFunction notNullFunc = new EqSymStrFunctionFactory.NullCheckFunc(value);
-                                notNullFunc.setNegated();
-                                return notNullFunc;
-                            } else if (likeSeq.charAt(0) == '%') {
-                                // LIKE/ILIKE '%abc' case
-                                final String patternStr = likeSeq.subSequence(1, len).toString();
-                                if (isCaseInsensitive()) {
-                                    return new ConstIEndsWithStaticSymbolTableFunction(value, patternStr);
-                                } else {
-                                    return new ConstEndsWithStaticSymbolTableFunction(value, patternStr);
-                                }
-                            } else if (likeSeq.charAt(len - 1) == '%') {
-                                // LIKE/ILIKE 'abc%' case
-                                final String patternStr = likeSeq.subSequence(0, len - 1).toString();
-                                if (isCaseInsensitive()) {
-                                    return new ConstIStartsWithStaticSymbolTableFunction(value, patternStr);
-                                } else {
-                                    return new ConstStartsWithStaticSymbolTableFunction(value, patternStr);
-                                }
-                            }
-                        } else if (anyCount == 2) {
-                            if (len == 2) {
-                                // LIKE '%%' case
-                                final NegatableBooleanFunction notNullFunc = new EqSymStrFunctionFactory.NullCheckFunc(value);
-                                notNullFunc.setNegated();
-                                return notNullFunc;
-                            } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
-                                // LIKE/ILIKE '%abc%' case
-                                final String patternStr = likeSeq.subSequence(1, len - 1).toString();
-                                if (isCaseInsensitive()) {
-                                    return new ConstIContainsStaticSymbolTableFunction(value, patternStr);
-                                } else {
-                                    return new ConstContainsStaticSymbolTableFunction(value, patternStr);
-                                }
-                            }
-                        }
-                    }
-
-                    String p = escapeSpecialChars(likeSeq, null);
-                    assert p != null;
-                    int flags = Pattern.DOTALL;
-                    if (isCaseInsensitive()) {
-                        flags |= Pattern.CASE_INSENSITIVE;
-                        p = p.toLowerCase();
-                    }
-                    return new ConstLikeStaticSymbolTableFunction(
-                            value,
-                            Pattern.compile(p, flags).matcher("")
-                    );
-                }
+            if (!isMatchingPattern(pattern, argPositions)) {
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return BooleanConstant.FALSE;
             }
 
-            if (pattern.isRuntimeConstant()) {
-                // bind variable
-                return new BindLikeStaticSymbolTableFunction(value, pattern, isCaseInsensitive());
+            if (pattern.isConstant()) {
+                final CharSequence likeSeq = pattern.getStrA(null);
+                final int len = likeSeq.length();
+                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                    final int anyCount = countChar(likeSeq, '%');
+                    if (anyCount == 1) {
+                        if (len == 1) {
+                            // LIKE '%' case
+                            final NegatableBooleanFunction notNullFunc = new EqSymStrFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
+                        } else if (likeSeq.charAt(0) == '%') {
+                            // LIKE/ILIKE '%abc' case
+                            final String patternStr = likeSeq.subSequence(1, len).toString();
+                            if (isCaseInsensitive()) {
+                                return new ConstIEndsWithStaticSymbolTableFunction(value, patternStr);
+                            } else {
+                                return new ConstEndsWithStaticSymbolTableFunction(value, patternStr);
+                            }
+                        } else if (likeSeq.charAt(len - 1) == '%') {
+                            // LIKE/ILIKE 'abc%' case
+                            final String patternStr = likeSeq.subSequence(0, len - 1).toString();
+                            if (isCaseInsensitive()) {
+                                return new ConstIStartsWithStaticSymbolTableFunction(value, patternStr);
+                            } else {
+                                return new ConstStartsWithStaticSymbolTableFunction(value, patternStr);
+                            }
+                        }
+                    } else if (anyCount == 2) {
+                        if (len == 2) {
+                            // LIKE '%%' case
+                            final NegatableBooleanFunction notNullFunc = new EqSymStrFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
+                        } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
+                            // LIKE/ILIKE '%abc%' case
+                            final String patternStr = likeSeq.subSequence(1, len - 1).toString();
+                            if (isCaseInsensitive()) {
+                                return new ConstIContainsStaticSymbolTableFunction(value, patternStr);
+                            } else {
+                                return new ConstContainsStaticSymbolTableFunction(value, patternStr);
+                            }
+                        }
+                    }
+                }
+
+                String p = escapeSpecialChars(likeSeq, null);
+                assert p != null;
+                int flags = Pattern.DOTALL;
+                if (isCaseInsensitive()) {
+                    flags |= Pattern.CASE_INSENSITIVE;
+                    p = p.toLowerCase();
+                }
+                return new ConstLikeStaticSymbolTableFunction(
+                        value,
+                        Pattern.compile(p, flags).matcher("")
+                );
             }
 
-            throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
+            // bind variable
+            return new BindLikeStaticSymbolTableFunction(value, pattern, isCaseInsensitive());
         }
 
         return super.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
@@ -163,6 +190,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                 }
             }
         }
+    }
+
+    private static boolean isKeySetPattern(CharSequence pattern) {
+        return pattern != null && !pattern.isEmpty() && !Chars.equals(pattern, '%') && !Chars.equals(pattern, "%%");
+    }
+
+    private static boolean isKeySetPattern(Utf8Sequence pattern) {
+        return pattern != null && pattern.size() > 0 && !Utf8s.equalsAscii("%", pattern) && !Utf8s.equalsAscii("%%", pattern);
     }
 
     protected abstract boolean isCaseInsensitive();

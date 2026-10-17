@@ -24,16 +24,28 @@
 
 package io.questdb.test.griffin.engine.functions.rnd;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndBinCCCFunctionFactory;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.LongList;
+import io.questdb.std.Rnd;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testBadMinimum() {
         assertFailure(8, "minimum has to be grater than 0", 0L, 10L, 2);
+    }
+
+    @Test
+    public void testDefaultLengthReadDoesNotGeneratePayload() throws Exception {
+        assertLengthReadDoesNotGeneratePayload("rnd_bin()");
     }
 
     @Test
@@ -69,6 +81,11 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testFixedLengthReadDoesNotGeneratePayload() throws Exception {
+        assertLengthReadDoesNotGeneratePayload("rnd_bin(65_536, 65_536, 2)");
+    }
+
+    @Test
     public void testInvalidRange() {
         assertFailure(0, "invalid range", 150L, 140L, 3);
     }
@@ -95,6 +112,18 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testVarLengthIsEvaluatedOncePerRowWhenOrdered() throws Exception {
+        // rnd_bin reads the unseeded context random, so a second cursor pass yields different values
+        assertQuery("SELECT x, to_char(rnd_bin(3, 8, 0)) b FROM long_sequence(3) ORDER BY x DESC")
+                .returnsOnce("""
+                        x\tb
+                        3\t00000000 59 88 c4 91 3b 72
+                        2\t00000000 17 fa d8 cc 14
+                        1\t00000000 41 1d 15
+                        """);
+    }
+
+    @Test
     public void testVarLengthNoNulls() throws Exception {
         assertQuery("x\n" +
                         "00000000 41 1d 15\n" +
@@ -110,6 +139,11 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
                 "select to_char(rnd_bin(3,8,0)) x from long_sequence(10)");
     }
 
+    @Test
+    public void testVarLengthReadDoesNotGeneratePayload() throws Exception {
+        assertLengthReadDoesNotGeneratePayload("rnd_bin(1, 65_536, 2)");
+    }
+
     @Override
     protected void addExtraFunctions() {
         functions.add(new NegIntFunctionFactory());
@@ -118,5 +152,44 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new RndBinCCCFunctionFactory();
+    }
+
+    private void assertLengthReadDoesNotGeneratePayload(String expression) throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd() {
+                @Override
+                public byte nextByte() {
+                    throw new AssertionError("length read generated binary payload");
+                }
+            };
+            sqlExecutionContext.setRandom(rnd);
+            try {
+                final LongList expected = new LongList();
+                try (
+                        RecordCursorFactory factory = select("SELECT " + expression + " FROM long_sequence(100)");
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        final BinarySequence sequence = record.getBin(0);
+                        expected.add(sequence == null ? -1 : sequence.length());
+                    }
+                }
+                rnd.reset();
+                try (
+                        RecordCursorFactory factory = select("SELECT length(" + expression + ") FROM long_sequence(100)");
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    final Record record = cursor.getRecord();
+                    for (int i = 0; i < expected.size(); i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(expected.getQuick(i), record.getLong(0));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
     }
 }

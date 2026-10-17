@@ -56,11 +56,6 @@ public class ByteColumn extends ByteFunction implements ColumnFunction {
         return columnIndex;
     }
 
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {

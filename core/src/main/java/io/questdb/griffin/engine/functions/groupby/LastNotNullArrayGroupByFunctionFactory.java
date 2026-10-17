@@ -33,6 +33,11 @@ import io.questdb.std.ObjList;
 
 public class LastNotNullArrayGroupByFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return "last_not_null(D[])";
     }

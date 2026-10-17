@@ -34,10 +34,13 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
     private static final Log LOG = LogFactory.getLog(CharacterStore.class);
     private final ObjectPool<NameAssemblerCharSequence> csPool;
+    private final int initialCapacity;
+    private final int maxRetainedCapacity;
     private int capacity;
     private char[] chars;
     private NameAssemblerCharSequence next = null;
@@ -45,9 +48,24 @@ public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
     private int size = 0;
 
     public CharacterStore(int capacity, int poolCapacity) {
+        this(capacity, poolCapacity, Integer.MAX_VALUE, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Creates a store that keeps at most {@code maxRetainedPoolCapacity} sequences once {@link #clear()} releases
+     * them, as a {@link ObjectPool} with a retention ceiling does, and that {@link #clear()} returns to
+     * {@code capacity} characters.
+     */
+    public CharacterStore(int capacity, int poolCapacity, int maxRetainedPoolCapacity) {
+        this(capacity, poolCapacity, maxRetainedPoolCapacity, capacity);
+    }
+
+    private CharacterStore(int capacity, int poolCapacity, int maxRetainedPoolCapacity, int maxRetainedCapacity) {
+        this.initialCapacity = capacity;
+        this.maxRetainedCapacity = maxRetainedCapacity;
         this.capacity = capacity;
         this.chars = new char[Numbers.ceilPow2(capacity)];
-        csPool = new ObjectPool<>(NameAssemblerCharSequence::new, poolCapacity);
+        csPool = new ObjectPool<>(NameAssemblerCharSequence::new, poolCapacity, maxRetainedPoolCapacity);
     }
 
     @Override
@@ -55,6 +73,20 @@ public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
         csPool.clear();
         size = 0;
         next = null;
+        if (capacity > maxRetainedCapacity) {
+            capacity = initialCapacity;
+            chars = new char[Numbers.ceilPow2(initialCapacity)];
+        }
+    }
+
+    @TestOnly
+    public int getCapacity() {
+        return capacity;
+    }
+
+    @TestOnly
+    public int getPoolCapacity() {
+        return csPool.getCapacity();
     }
 
     @Override

@@ -71,6 +71,7 @@ io.questdb.griffin.engine.functions.eq.EqTimestampCursorFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqDoubleCursorFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIntCursorFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLongCursorFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqStrCursorFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory
@@ -110,6 +111,8 @@ io.questdb.griffin.engine.functions.lt.LtIntCursorFunctionFactory
 io.questdb.griffin.engine.functions.lt.GtIntCursorFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtLongCursorFunctionFactory
 io.questdb.griffin.engine.functions.lt.GtLongCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtStrCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.GtStrCursorFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtTimestampCursorFunctionFactory
 io.questdb.griffin.engine.functions.lt.GtTimestampCursorFunctionFactory

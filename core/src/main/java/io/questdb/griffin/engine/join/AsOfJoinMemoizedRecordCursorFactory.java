@@ -41,9 +41,9 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -99,7 +99,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             int columnSplit,
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping symbolJoinKeyMapping,
-            JoinContext joinContext,
+            Plannable joinContext,
             long toleranceInterval,
             boolean driveByCaching
     ) {
@@ -120,7 +120,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     slaveFactory.getMetadata().getTimestampType()
             );
         } catch (Throwable t) {
-            close();
+            Misc.free(this, t);
             throw t;
         }
     }

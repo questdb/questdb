@@ -47,6 +47,11 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LAG_NAME + "(NV)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

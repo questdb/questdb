@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -180,6 +182,33 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                             from long_sequence(1000)) timestamp (ts)""")
                 .expectSize()
                 .returns("sym\tmaxp\n", expected);
+    }
+
+    @Test
+    public void testIntervalSearchOrderByTimestampDescAndColumnLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::DOUBLE v, (x / 3 * 1_000_000)::TIMESTAMP ts FROM long_sequence(9)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT ts, v FROM t WHERE ts IN '1970-01-01' ORDER BY ts DESC, v LIMIT 5")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: 5 partiallySorted: true
+                              keys: [ts desc, v]
+                                PageFrame
+                                    Row backward scan
+                                    Interval backward scan on: t
+                                      intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:03.000000Z\t9.0
+                            1970-01-01T00:00:02.000000Z\t6.0
+                            1970-01-01T00:00:02.000000Z\t7.0
+                            1970-01-01T00:00:02.000000Z\t8.0
+                            1970-01-01T00:00:01.000000Z\t3.0
+                            """);
+        });
     }
 
     @Test
@@ -771,6 +800,91 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleSymbolSearchOrderByTimestampAndColumnNegativeLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedTable();
+            assertQuery("SELECT ts, id FROM t WHERE s = 'S1' ORDER BY ts, id LIMIT -4")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [ts, id]
+                                    SelectedRecord
+                                        Encode sort light lo: 4 partiallySorted: true
+                                          keys: [ts desc, id desc]
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index backward scan on: s deferred: true
+                                                  filter: s='S1'
+                                                Frame backward scan on: t
+                            """)
+                    .returns("""
+                            ts\tid
+                            2024-01-01T02:40:00.000000Z\t17
+                            2024-01-01T03:00:00.000000Z\t19
+                            2024-01-01T03:20:00.000000Z\t21
+                            2024-01-01T03:40:00.000000Z\t23
+                            """);
+        });
+    }
+
+    @Test
+    public void testSingleSymbolSearchOrderByTimestampDescAndColumnLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedTable();
+            assertQuery("SELECT ts, id FROM t WHERE s = 'S1' ORDER BY ts DESC, id LIMIT 4")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light lo: 4 partiallySorted: true
+                                  keys: [ts desc, id]
+                                    SelectedRecord
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index backward scan on: s deferred: true
+                                              filter: s='S1'
+                                            Frame backward scan on: t
+                            """)
+                    .returns("""
+                            ts\tid
+                            2024-01-01T03:40:00.000000Z\t23
+                            2024-01-01T03:20:00.000000Z\t21
+                            2024-01-01T03:00:00.000000Z\t19
+                            2024-01-01T02:40:00.000000Z\t17
+                            """);
+            assertQuery("SELECT * FROM (SELECT ts t2, id, v FROM t WHERE s = 'S1' AND ts BETWEEN '2024-01-01T01:00:00' AND '2024-01-01T03:00:00') ORDER BY t2 DESC, v DESC LIMIT 2")
+                    .noLeakCheck()
+                    .timestampDesc("t2")
+                    .expectSize()
+                    .returns("""
+                            t2\tid\tv
+                            2024-01-01T03:00:00.000000Z\t19\t19.0
+                            2024-01-01T02:40:00.000000Z\t17\t17.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSingleSymbolSearchOrderByTimestampDescAndComputedColumnLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p AS (SELECT x id, 'a'::SYMBOL s, timestamp_sequence(0, 1_000_000L) ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE p ALTER COLUMN s ADD INDEX");
+            assertQuery("SELECT id + 3 val, ts FROM p WHERE s = 'a' ORDER BY ts DESC, id DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns("""
+                            val\tts
+                            53\t1970-01-01T00:00:49.000000Z
+                            52\t1970-01-01T00:00:48.000000Z
+                            51\t1970-01-01T00:00:47.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testSkipDesignatedTimestampFromMultipleOrderBy() throws Exception {
         assertQuery("select * from x order by a, t")
                 .ddl("create table x as (" +
@@ -792,6 +906,127 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         1548800833\t1970-01-01T00:00:00.002000Z
                         1868723706\t1970-01-01T00:00:00.008000Z
                         """);
+    }
+
+    @Test
+    public void testSortedSymbolIndexAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTable("k", "DAY");
+            sqlExecutionContext.changePageFrameSizes(1, 4);
+            assertQuery("SELECT s, id FROM k WHERE ts IN '2024-01-01' ORDER BY s")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                SelectedRecord
+                                    SortedSymbolIndex
+                                        Index forward scan on: s
+                                          symbolOrder: asc
+                                        Interval forward scan on: k
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	id
+                            S0	3
+                            S0	6
+                            S0	9
+                            S0	12
+                            S0	15
+                            S0	18
+                            S0	21
+                            S0	24
+                            S1	1
+                            S1	4
+                            S1	7
+                            S1	10
+                            S1	13
+                            S1	16
+                            S1	19
+                            S1	22
+                            S2	2
+                            S2	5
+                            S2	8
+                            S2	11
+                            S2	14
+                            S2	17
+                            S2	20
+                            S2	23
+                            """);
+            assertQuery("SELECT s, id FROM k WHERE ts IN '2024-01-01' ORDER BY s DESC, ts DESC LIMIT 6, 10")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                Limit left: 6 right: 10 skip-rows-max: 6 take-rows-max: 4
+                                    SortedSymbolIndex
+                                        Index backward scan on: s
+                                          symbolOrder: desc
+                                        Interval backward scan on: k
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	id
+                            S2	5
+                            S2	2
+                            S1	22
+                            S1	19
+                            """);
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexSkipsCountedPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 'a'::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(1_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT ('a' || (x % 3))::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(1_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE c AS (SELECT x::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE c ADD COLUMN sym SYMBOL INDEX");
+            execute("INSERT INTO c SELECT (500 + x)::TIMESTAMP, 'b' FROM long_sequence(500)");
+            sqlExecutionContext.changePageFrameSizes(100, 100);
+            String query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym, ts LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000998Z	a
+                            1970-01-01T00:00:00.000999Z	a
+                            1970-01-01T00:00:00.001000Z	a
+                            """);
+            assertWalksFewRows(query);
+            query = "SELECT ts, sym FROM m WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym, ts LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000992Z	a2
+                            1970-01-01T00:00:00.000995Z	a2
+                            1970-01-01T00:00:00.000998Z	a2
+                            """);
+            assertWalksFewRows(query);
+            query = "SELECT ts, sym FROM m WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym DESC, ts DESC LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000009Z	a0
+                            1970-01-01T00:00:00.000006Z	a0
+                            1970-01-01T00:00:00.000003Z	a0
+                            """);
+            assertWalksFewRows(query);
+            query = "SELECT ts, sym FROM c WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym, ts LIMIT 498, 503";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000499Z\t
+                            1970-01-01T00:00:00.000500Z\t
+                            1970-01-01T00:00:00.000501Z	b
+                            1970-01-01T00:00:00.000502Z	b
+                            1970-01-01T00:00:00.000503Z	b
+                            """);
+            assertWalksFewRows(query);
+        });
     }
 
     @Test
@@ -1335,6 +1570,161 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolSearchOrderByKeyAcrossIntervals() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTable("k", "DAY");
+            assertQuery("SELECT s, id FROM k WHERE s = 'S1' AND (ts IN '2024-01-01T00:00:01;4s' OR ts IN '2024-01-01T00:00:13;4s') ORDER BY s, ts DESC")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index backward scan on: s deferred: true
+                                      filter: s='S1'
+                                    Interval backward scan on: k
+                                      intervals: [("2024-01-01T00:00:01.000000Z","2024-01-01T00:00:04.999999Z"),("2024-01-01T00:00:13.000000Z","2024-01-01T00:00:16.999999Z")]
+                            """)
+                    .returns("""
+                            s	id
+                            S1	16
+                            S1	4
+                            """);
+            assertQuery("SELECT s, id FROM k WHERE s IN ('S0', 'S1') AND (ts IN '2024-01-01T00:00:01;4s' OR ts IN '2024-01-01T00:00:13;4s') ORDER BY s")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                SelectedRecord
+                                    FilterOnValues symbolOrder: asc
+                                        Cursor-order scan
+                                            Index forward scan on: s deferred: true
+                                              filter: s='S0'
+                                            Index forward scan on: s deferred: true
+                                              filter: s='S1'
+                                        Interval forward scan on: k
+                                          intervals: [("2024-01-01T00:00:01.000000Z","2024-01-01T00:00:04.999999Z"),("2024-01-01T00:00:13.000000Z","2024-01-01T00:00:16.999999Z")]
+                            """)
+                    .returns("""
+                            s	id
+                            S0	3
+                            S0	15
+                            S1	4
+                            S1	16
+                            """);
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTable("n", "NONE");
+            sqlExecutionContext.changePageFrameSizes(1, 4);
+            assertQuery("SELECT s, id FROM n WHERE s IN ('S0', 'S1') ORDER BY s")
+                    .noLeakCheck()
+                    .withPlan("""
+                            FilterOnValues symbolOrder: asc
+                                Cursor-order scan
+                                    Index forward scan on: s deferred: true
+                                      filter: s='S0'
+                                    Index forward scan on: s deferred: true
+                                      filter: s='S1'
+                                Frame forward scan on: n
+                            """)
+                    .returns("""
+                            s	id
+                            S0	3
+                            S0	6
+                            S0	9
+                            S0	12
+                            S0	15
+                            S0	18
+                            S0	21
+                            S0	24
+                            S1	1
+                            S1	4
+                            S1	7
+                            S1	10
+                            S1	13
+                            S1	16
+                            S1	19
+                            S1	22
+                            """);
+            assertQuery("SELECT s, id FROM n WHERE s IN ('S0', 'S1') ORDER BY s DESC LIMIT 10")
+                    .noLeakCheck()
+                    .returns("""
+                            s	id
+                            S1	1
+                            S1	4
+                            S1	7
+                            S1	10
+                            S1	13
+                            S1	16
+                            S1	19
+                            S1	22
+                            S0	3
+                            S0	6
+                            """);
+            assertQuery("SELECT s, id FROM n WHERE s IN ('S0', 'S1') ORDER BY s, ts DESC")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                FilterOnValues symbolOrder: asc
+                                    Cursor-order scan
+                                        Index backward scan on: s deferred: true
+                                          filter: s='S0'
+                                        Index backward scan on: s deferred: true
+                                          filter: s='S1'
+                                    Frame backward scan on: n
+                            """)
+                    .returns("""
+                            s	id
+                            S0	24
+                            S0	21
+                            S0	18
+                            S0	15
+                            S0	12
+                            S0	9
+                            S0	6
+                            S0	3
+                            S1	22
+                            S1	19
+                            S1	16
+                            S1	13
+                            S1	10
+                            S1	7
+                            S1	4
+                            S1	1
+                            """);
+            assertQuery("SELECT s, id FROM n WHERE s NOT IN ('S2') ORDER BY s LIMIT 3")
+                    .noLeakCheck()
+                    .returns("""
+                            s	id
+                            S0	3
+                            S0	6
+                            S0	9
+                            """);
+            assertQuery("SELECT s, id FROM n WHERE s = 'S1' ORDER BY s, ts DESC")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index backward scan on: s deferred: true
+                                      filter: s='S1'
+                                    Frame backward scan on: n
+                            """)
+                    .returns("""
+                            s	id
+                            S1	22
+                            S1	19
+                            S1	16
+                            S1	13
+                            S1	10
+                            S1	7
+                            S1	4
+                            S1	1
+                            """);
+        });
+    }
+
+    @Test
     public void testTimestampLessThan() throws Exception {
         final String expected = """
                 k\tprice\tts
@@ -1516,5 +1906,24 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                                 timestamp_sequence(172800000000, 360000000) ts\s
                             from long_sequence(10)) timestamp (ts)""")
                 .returns("sym\tspread\n", expected);
+    }
+
+    private static void createIndexedTable() throws Exception {
+        execute("CREATE TABLE t AS (SELECT x id, ('S' || (x % 2))::SYMBOL s, x * 1.0 v, timestamp_sequence('2024-01-01', 600_000_000) ts FROM long_sequence(24)), INDEX(s) TIMESTAMP(ts) PARTITION BY HOUR");
+    }
+
+    private static void createKeyTable(String name, String partitionBy) throws Exception {
+        execute("CREATE TABLE " + name + " AS (SELECT x id, ('S' || (x % 3))::SYMBOL s, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(24)), INDEX(s) TIMESTAMP(ts) PARTITION BY " + partitionBy);
+    }
+
+    private void assertWalksFewRows(String query) throws Exception {
+        PageFrameRecordCursorImpl.testWalkedRows.set(0);
+        PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+        try {
+            printSql(query, new StringSink());
+        } finally {
+            PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+        }
+        Assert.assertTrue("rows walked: " + PageFrameRecordCursorImpl.testWalkedRows.get(), PageFrameRecordCursorImpl.testWalkedRows.get() < 100);
     }
 }

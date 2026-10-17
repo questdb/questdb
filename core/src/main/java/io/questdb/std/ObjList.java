@@ -34,6 +34,7 @@ import java.util.Comparator;
 
 public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     private static final int DEFAULT_ARRAY_SIZE = 16;
+    private static final Object[] EMPTY_ARRAY = new Object[0];
     private T[] buffer;
     private int pos = 0;
 
@@ -59,7 +60,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
 
     @SuppressWarnings("unchecked")
     public ObjList(int capacity) {
-        this.buffer = (T[]) new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
+        this.buffer = (T[]) (capacity == 0 ? EMPTY_ARRAY : new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)]);
     }
 
     public void add(T value) {

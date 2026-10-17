@@ -58,9 +58,17 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
     private CharSequence next = null;
 
     public GenericLexer(int poolCapacity) {
-        csPool = new ObjectPool<>(FloatingSequence::new, poolCapacity);
-        csPairPool = new ObjectPool<>(FloatingSequencePair::new, poolCapacity);
-        csTriplePool = new ObjectPool<>(FloatingSequenceTriple::new, poolCapacity);
+        this(poolCapacity, poolCapacity);
+    }
+
+    /**
+     * Creates a lexer whose sequence pools start at {@code initialPoolCapacity}, grow with the tokens a text needs and
+     * keep at most {@code maxRetainedPoolCapacity} sequences each once the lexer is reset.
+     */
+    public GenericLexer(int initialPoolCapacity, int maxRetainedPoolCapacity) {
+        csPool = new ObjectPool<>(FloatingSequence::new, initialPoolCapacity, maxRetainedPoolCapacity);
+        csPairPool = new ObjectPool<>(FloatingSequencePair::new, initialPoolCapacity, maxRetainedPoolCapacity);
+        csTriplePool = new ObjectPool<>(FloatingSequenceTriple::new, initialPoolCapacity, maxRetainedPoolCapacity);
         for (int i = 0, n = WHITESPACE.size(); i < n; i++) {
             defineSymbol(Chars.toString(WHITESPACE.get(i)));
         }
@@ -134,9 +142,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
     @Override
     public void clear() {
         of(null, 0, 0);
-
-        stashedNumbers.clear();
-        stashedStrings.clear();
     }
 
     public final void defineSymbol(String token) {
@@ -155,6 +160,11 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
 
     public CharSequence getContent() {
         return content;
+    }
+
+    @TestOnly
+    public int getPoolCapacity() {
+        return csPool.getCapacity();
     }
 
     public int getPosition() {
@@ -346,6 +356,8 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
         this.unparsed.clear();
         this.unparsedPosition.clear();
         this.last = null;
+        this.stashedNumbers.clear();
+        this.stashedStrings.clear();
     }
 
     public CharSequence peek() {
@@ -353,10 +365,21 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
     }
 
     public void restart() {
+        restartAt(_start);
+    }
+
+    /**
+     * Restarts the lexer at {@code position}, the start of the statement that {@link #restart()} returns to.
+     */
+    public void restartAt(int position) {
+        if (position < 0 || position > _len) {
+            throw new IndexOutOfBoundsException();
+        }
         this.csPool.clear();
         this.csPairPool.clear();
         this.csTriplePool.clear();
-        this._pos = this._start;
+        this._start = position;
+        this._pos = position;
         this.next = null;
         this.unparsed.clear();
         this.unparsedPosition.clear();

@@ -69,7 +69,8 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            char samplingIntervalUnit
     ) {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         Map map = null;
@@ -99,7 +100,8 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
                     sampleFromFunc,
                     sampleFromFuncPos,
                     sampleToFunc,
-                    sampleToFuncPos
+                    sampleToFuncPos,
+                    samplingIntervalUnit
             );
         } catch (Throwable th) {
             Misc.free(map, th);

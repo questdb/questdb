@@ -53,8 +53,23 @@ public class InDoubleFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "in(DV)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        if (constantElementCount(args, argPositions) == args.size() - 1) {
+            for (int i = 1, n = args.size(); i < n; i++) {
+                parseValue(argPositions, args.getQuick(i), i);
+            }
+        }
+        return true;
     }
 
     @Override
@@ -65,9 +80,36 @@ public class InDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        int constCount = 0;
-        int runtimeConstCount = 0;
         final int argCount = args.size() - 1;
+        final int constCount = constantElementCount(args, argPositions);
+        if (constCount == argCount) {
+            // bind variable will not be constant
+            DoubleList values = new DoubleList(args.size() - 1);
+            parseToDouble(args, argPositions, values);
+            return new InDoubleConstFunction(args.getQuick(0), values);
+        }
+
+        int runtimeConstCount = 0;
+        for (int i = 1, n = args.size(); i < n; i++) {
+            if (args.getQuick(i).isRuntimeConstant()) {
+                runtimeConstCount++;
+            }
+        }
+        if (runtimeConstCount == argCount || runtimeConstCount + constCount == argCount) {
+            final IntList positions = new IntList();
+            positions.addAll(argPositions);
+            return new InDoubleRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions);
+        }
+
+        // have to copy, args is mutable
+        return new InDoubleVarFunction(new ObjList<>(args));
+    }
+
+    /**
+     * The number of constant IN-list elements; raises the error for an element that does not compare with DOUBLE.
+     */
+    private static int constantElementCount(ObjList<Function> args, IntList argPositions) throws SqlException {
+        int constCount = 0;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -91,27 +133,8 @@ public class InDoubleFunctionFactory implements FunctionFactory {
             if (func.isConstant()) {
                 constCount++;
             }
-
-            if (func.isRuntimeConstant()) {
-                runtimeConstCount++;
-            }
         }
-
-        if (constCount == argCount) {
-            // bind variable will not be constant
-            DoubleList values = new DoubleList(args.size() - 1);
-            parseToDouble(args, argPositions, values);
-            return new InDoubleConstFunction(args.getQuick(0), values);
-        }
-
-        if (runtimeConstCount == argCount || runtimeConstCount + constCount == argCount) {
-            final IntList positions = new IntList();
-            positions.addAll(argPositions);
-            return new InDoubleRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions);
-        }
-
-        // have to copy, args is mutable
-        return new InDoubleVarFunction(new ObjList<>(args));
+        return constCount;
     }
 
     private static void parseToDouble(

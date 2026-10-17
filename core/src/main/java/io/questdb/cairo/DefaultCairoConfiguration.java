@@ -1781,11 +1781,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSqlDistinctGroupByRewriteEnabled() {
-        return true;
-    }
-
-    @Override
     public boolean isSqlJitDebugEnabled() {
         return false;
     }

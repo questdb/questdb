@@ -24,9 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -314,15 +312,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     @Override
-    public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
-        assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
-        return canSkipRowGroup0(
-                getOrCreateNativeReaderPtr(),
-                rowGroupIndex,
-                filters.getAddress(),
-                (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER),
-                filterBufEnd
-        );
+    public boolean canSkipRowGroup(int rowGroupIndex, long filtersAddr, int filterCount, long filterBufEnd) {
+        return canSkipRowGroup0(getOrCreateNativeReaderPtr(), rowGroupIndex, filtersAddr, filterCount, filterBufEnd);
     }
 
     public void clear() {
@@ -656,6 +647,11 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             }
         }
         return true;
+    }
+
+    @Override
+    public boolean hasNoNulls(int rowGroupIndex, int columnIndex) {
+        return hasChunkNullCount(rowGroupIndex, columnIndex) && getChunkNullCount(rowGroupIndex, columnIndex) == 0;
     }
 
     public boolean isOpen() {

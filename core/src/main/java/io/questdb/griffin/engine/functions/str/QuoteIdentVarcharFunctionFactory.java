@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -45,6 +46,11 @@ import org.jetbrains.annotations.Nullable;
 // Returns the given varchar suitably quoted to be used as an identifier in an SQL statement string.
 // Quotes are added only if necessary (i.e., if the varchar contains non-identifier characters or would be case-folded)
 public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.VARCHAR;
+    }
 
     @Override
     public String getSignature() {

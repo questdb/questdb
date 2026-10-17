@@ -88,6 +88,53 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testFetchNextSingleCharacterTokens() throws SqlException {
+        final GenericLexer lexer = new GenericLexer(64);
+        for (String symbol : new String[]{"(", ")", ",", "+", "-", "*", "/", "/*", "/*+", "*/", "--"}) {
+            lexer.defineSymbol(symbol);
+        }
+        for (boolean isIncludeHints : new boolean[]{false, true}) {
+            lexer.of(" \t\r\n ( x + 1 ) , * / - \f \u2003 '' \"\" \"x\" ");
+            for (String expected : new String[]{"(", "x", "+", "1", ")", ",", "*", "/", "-", "\f", "\u2003", "''", "\"\"", "\"x\""}) {
+                TestUtils.assertEquals(expected, SqlUtil.fetchNext(lexer, isIncludeHints));
+                lexer.unparseLast();
+                TestUtils.assertEquals(expected, SqlUtil.fetchNext(lexer, isIncludeHints));
+            }
+            Assert.assertNull(SqlUtil.fetchNext(lexer, isIncludeHints));
+        }
+    }
+
+    @Test
+    public void testFetchNextSingleCharacterTokensInComments() throws SqlException {
+        final GenericLexer lexer = new GenericLexer(64);
+        for (String symbol : new String[]{"(", ")", ",", "+", "*", "/*", "/*+", "*/", "--"}) {
+            lexer.defineSymbol(symbol);
+        }
+        for (boolean isIncludeHints : new boolean[]{false, true}) {
+            lexer.of("(/* ) , /*+ x */ + */x-- ) , *\r\n)");
+            TestUtils.assertEquals("(", SqlUtil.fetchNext(lexer, isIncludeHints));
+            TestUtils.assertEquals("x", SqlUtil.fetchNext(lexer, isIncludeHints));
+            TestUtils.assertEquals(")", SqlUtil.fetchNext(lexer, isIncludeHints));
+            Assert.assertNull(SqlUtil.fetchNext(lexer, isIncludeHints));
+        }
+    }
+
+    @Test
+    public void testFetchNextUnclosedQuotePosition() throws SqlException {
+        final GenericLexer lexer = new GenericLexer(64);
+        for (boolean isIncludeHints : new boolean[]{false, true}) {
+            lexer.of(" \t \"");
+            try {
+                SqlUtil.fetchNext(lexer, isIncludeHints);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(3, e.getPosition());
+                TestUtils.assertEquals("unclosed quotation mark", e.getFlyweightMessage());
+            }
+        }
+    }
+
+    @Test
     public void testBrokenSingleQuotedToken1() {
         GenericLexer ts = new GenericLexer(64);
         ts.of("#1234'");
@@ -470,6 +517,18 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testOfDropsStash() {
+        GenericLexer lexer = new GenericLexer(64);
+        lexer.of("orange blue");
+        lexer.next();
+        lexer.unparseLast();
+        lexer.stash();
+        Assert.assertEquals(6, lexer.getStashSize());
+        lexer.of("green");
+        Assert.assertEquals(0, lexer.getStashSize());
+    }
+
+    @Test
     public void testPeek1() {
         GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol(",");
@@ -503,6 +562,38 @@ public class GenericLexerTest {
             }
         }
         Assert.assertNull(ts.peek());
+    }
+
+    @Test
+    public void testPoolsGrowOnDemandAndTrimToCeiling() {
+        final GenericLexer lex = new GenericLexer(4, 16);
+        Assert.assertEquals(4, lex.getPoolCapacity());
+
+        lex.of("abc");
+        while (lex.hasNext()) {
+            GenericLexer.immutableOf(lex.next());
+        }
+        Assert.assertEquals(4, lex.getPoolCapacity());
+
+        final StringSink sink = new StringSink();
+        for (int i = 0; i < 40; i++) {
+            sink.put("t").put(i).put(' ');
+        }
+        final String text = sink.toString();
+        lex.of(text);
+        final CharSequence first = GenericLexer.immutableOf(lex.next());
+        while (lex.hasNext()) {
+            GenericLexer.immutableOf(lex.next());
+        }
+        TestUtils.assertEquals("t0", first);
+        Assert.assertTrue(lex.getPoolCapacity() > 16);
+
+        lex.of("a b c");
+        Assert.assertEquals(16, lex.getPoolCapacity());
+        while (lex.hasNext()) {
+            GenericLexer.immutableOf(lex.next());
+        }
+        Assert.assertEquals(16, lex.getPoolCapacity());
     }
 
     @Test

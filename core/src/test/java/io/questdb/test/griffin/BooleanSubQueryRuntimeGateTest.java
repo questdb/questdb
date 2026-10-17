@@ -261,7 +261,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBigTable();
             RecordCursorFactory base = select("select * from big");
-            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null)) {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false))) {
                 Assert.assertTrue("base must support page frames", base.supportsPageFrameCursor());
                 Assert.assertTrue("gate must keep the base page-frame capability", gate.supportsPageFrameCursor());
                 try (PageFrameCursor cursor = gate.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
@@ -288,7 +288,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
-            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null)) {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false))) {
                 try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
                     Assert.assertFalse("false predicate must yield no rows", cursor.hasNext());
                 }
@@ -410,12 +410,11 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
 
     @Test
     public void testJoinConstWholeSubQueryGates() throws Exception {
-        // A join whose whole constant WHERE is a runtime constant (boolean sub-query) is routed to
-        // the last join model's postJoinWhereClause by SqlOptimiser.mergeConstIntoPostJoinWhereClause.
-        // generateJoins now compiles that post-join filter once and, because the whole filter is a
+        // A join whose whole constant WHERE is a runtime constant (boolean sub-query) becomes a
+        // post-join filter. JoinFactoryGenerator compiles that filter once and, because the whole filter is a
         // runtime constant, gates the join output behind RuntimeConstGateRecordCursorFactory instead
         // of applying a serial/async per-row filter: false returns empty without scanning the join,
-        // true delegates to it. This is the join analogue of the single-table generateFilter0 gate.
+        // true delegates to it. This is the join analogue of the single-table FilterFactoryGenerator gate.
         assertMemoryLeak(() -> {
             createJoinTables();
             createTables();
@@ -611,7 +610,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBigTable();
             RecordCursorFactory base = select("select * from big");
-            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true), null)) {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true))) {
                 Assert.assertTrue("base must support page frames", base.supportsPageFrameCursor());
                 Assert.assertTrue("gate must keep the base page-frame capability", gate.supportsPageFrameCursor());
                 try (PageFrameCursor cursor = gate.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
@@ -674,7 +673,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
-            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true), null)) {
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(true))) {
                 int rows = 0;
                 try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
                     while (cursor.hasNext()) {

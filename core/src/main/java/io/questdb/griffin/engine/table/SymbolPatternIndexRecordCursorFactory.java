@@ -31,10 +31,10 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -65,7 +65,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
     private final int[] cursorFactoriesIdx = new int[]{0};
     private final IntList effectiveKeys;
     private final int indexDirection;
-    private final boolean isHeapCursorUsed;
+    private final boolean isTableOrder;
     private PageFrameRecordCursorImpl indexCursor;
     private ObjList<SymbolFunctionRowCursorFactory> perKeyFactories = new ObjList<>();
     private RowCursorFactory rowCursorFactory;
@@ -76,8 +76,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @NotNull IntList effectiveKeys,
-            int orderByMnemonic,
-            boolean isOrderByTimestamp,
+            @NotNull ScanPlan.IndexOrder indexOrder,
             int indexDirection,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
@@ -86,23 +85,19 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         this.columnIndex = columnIndex;
         this.effectiveKeys = effectiveKeys;
         this.indexDirection = indexDirection;
-        // Same policy as FilterOnValuesRecordCursorFactory: the sequential cursor drains one symbol key
-        // at a time and so emits rows out of designated-timestamp order. It is safe only when the model
-        // declares its row order invariant, which is also what lets the factory advertise its scan
-        // direction honestly to ASOF/LT/SPLICE joins and to SAMPLE BY.
-        if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !isOrderByTimestamp) {
-            isHeapCursorUsed = false;
-            rowCursorFactory = new SequentialRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
-        } else {
-            isHeapCursorUsed = true;
-            rowCursorFactory = new HeapRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
-        }
+        rowCursorFactory = switch (indexOrder) {
+            case TABLE -> new HeapRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
+            case TABLE_PER_FRAME -> new BitSetRowCursorFactory(perKeyFactories, cursorFactoriesIdx, null);
+            case KEY_PER_FRAME -> new SequentialRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
+            case NONE, KEY, TIMESTAMP -> throw new UnsupportedOperationException();
+        };
+        isTableOrder = indexOrder.isTableOrder();
         indexCursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, null);
     }
 
     @Override
     public int getScanDirection() {
-        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && isHeapCursorUsed) {
+        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && isTableOrder) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;

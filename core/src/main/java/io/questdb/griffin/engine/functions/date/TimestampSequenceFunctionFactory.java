@@ -45,6 +45,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = NAME + "(NL)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

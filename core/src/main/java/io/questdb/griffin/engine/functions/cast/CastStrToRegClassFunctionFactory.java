@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -42,6 +43,11 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_NAMESPACE_OID;
 public class CastStrToRegClassFunctionFactory implements FunctionFactory {
     private static final CharSequenceObjHashMap<Function> funcMap = new CharSequenceObjHashMap<>();
     private static final CharSequenceIntHashMap valueMap = new CharSequenceIntHashMap(4, 0.6, Numbers.INT_NULL);
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
 
     @Override
     public String getSignature() {

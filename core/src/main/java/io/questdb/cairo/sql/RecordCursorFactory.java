@@ -26,7 +26,6 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -34,7 +33,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -73,26 +71,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     int SCAN_DIRECTION_BACKWARD = 2;
     int SCAN_DIRECTION_FORWARD = 1;
     int SCAN_DIRECTION_OTHER = 0;
-
-    /**
-     * Returns true if this factory may be peeled by the parallel top-K gate, so the
-     * page-frame leaf below it can be wrapped by {@code AsyncTopKRecordCursorFactory}
-     * and this factory rebuilt over that top-K.
-     * <p>
-     * Implementations that return {@code true} must also override
-     * {@link #translateOrderByColumnToBase(int)} to map ORDER BY indices into the
-     * base metadata, and {@link #rewrapOverTopK(RecordCursorFactory, RecordMetadata)}
-     * to reconstruct the wrapper over the new top-K factory. The default returns
-     * {@code false}, which keeps non-projecting factories and projecting factories
-     * that cannot safely splice a top-K below themselves (e.g.
-     * {@code ExtraNullColumnCursorFactory}, whose null-column splice has no base
-     * counterpart) on the generic Sort light path.
-     *
-     * @return true if the factory participates in parallel top-K peeling
-     */
-    default boolean canPeelForTopK() {
-        return false;
-    }
 
     /**
      * Changes the page frame sizes for this factory.
@@ -171,24 +149,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    // to be used in combination with compiled filter
-    @Nullable
-    default ObjList<Function> getBindVarFunctions() {
-        return null;
-    }
-
-    // to be used in combination with compiled filter
-    @Nullable
-    default MemoryCARW getBindVarMemory() {
-        return null;
-    }
-
     default IntList getColumnCrossIndex() {
-        return null;
-    }
-
-    @Nullable
-    default CompiledFilter getCompiledFilter() {
         return null;
     }
 
@@ -251,18 +212,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns the original filter expression that can be stolen by parent factories.
-     * When {@link #supportsFilterStealing()} returns true, this method should return
-     * the original expression of the stolen filter.
-     *
-     * @return the original filter expression that can be stolen, or null if
-     * filter stealing is not supported
-     */
-    default ExpressionNode getStealFilterExpr() {
-        return null;
-    }
-
-    /**
      * If factory operates on table directly returns table's token, null otherwise.
      * When this method returns a table token, it also means that the factory doesn't
      * remap column names via aliases.
@@ -285,12 +234,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Closes everything but base factory and filter.
-     */
-    default void halfClose() {
-    }
-
-    /**
      * Returns true if this factory handles {@code limit(M, N)} clause.
      * If true, then a separate limit cursor factory is not needed (and could actually cause problem
      * by re-applying limit logic).
@@ -310,7 +253,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * determinism-dependent optimizations; it can never cause wrong results.
      * <p>
      * Compile-time consumers (for example scalar-subquery timestamp bounds in
-     * {@code WhereClauseParser}) use this to avoid pruning optimizations that would re-open the
+     * {@code IntervalExtractor}) use this to avoid pruning optimizations that would re-open the
      * cursor and observe a different value (for example {@code rnd_*} or {@code systimestamp()}).
      * Returning {@code false} for a factory whose value is genuinely unstable across opens leads
      * to silently dropped rows, which is why unknown shapes must report {@code true}.
@@ -333,25 +276,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default boolean isProjection() {
         return false;
-    }
-
-    /**
-     * Returns true if this factory is guaranteed to produce the same result for every cursor
-     * open within a single query execution (same {@code SqlExecutionContext}). This is a weaker
-     * property than {@code !isNonDeterministic()}: a factory projecting {@code now()} or a bind
-     * variable is non-deterministic across executions, yet stable within one, because those
-     * functions re-initialize to the same execution-scoped snapshot on every open.
-     * <p>
-     * Fail-safe like {@link #isNonDeterministic()}: the default claims stability only for
-     * provably deterministic factories, so unknown shapes never enable stability-dependent
-     * optimizations (for example scalar-subquery timestamp pruning in {@code WhereClauseParser}).
-     * Overriding factories must prove that every value source they evaluate is itself stable
-     * within the execution.
-     *
-     * @return true if every cursor open within one execution yields the same result
-     */
-    default boolean isStableWithinExecution() {
-        return !isNonDeterministic();
     }
 
     /**
@@ -429,34 +353,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void revertFromSampleByIndexPageFrameCursorFactory() {
     }
 
-    /**
-     * Re-wraps a freshly-built top-K factory so this factory's output shape is preserved.
-     * Default is a pass-through — factories that do not project simply return the top-K.
-     * Projection wrappers override to re-create themselves over the new base.
-     * <p>
-     * Ownership: after this call the caller must not close the original wrapper; its
-     * state has either transferred to the returned factory or been dropped on the floor,
-     * matching the AsOf/LatestBy peel precedent.
-     *
-     * @param topK            newly-built top-K factory over the page-frame leaf
-     * @param orderedMetadata projected output metadata for the re-wrapped factory
-     * @return re-wrapped factory, or {@code topK} unchanged for non-projecting factories
-     */
-    default RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {
-        return topK;
-    }
-
     default void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
-    }
-
-    /**
-     * Returns true if the factory stands for nothing more but a filter, so that
-     * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
-     *
-     * @return true if filter stealing is supported
-     */
-    default boolean supportsFilterStealing() {
-        return false;
     }
 
     /**
@@ -531,22 +428,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     default void toSink(@NotNull CharSink<?> sink) {
         throw new UnsupportedOperationException("Unsupported for: " + getClass());
-    }
-
-    /**
-     * Translates an ORDER BY column index expressed in this factory's output metadata
-     * to the corresponding column index in the base (page-frame) metadata.
-     * <p>
-     * Returns the input unchanged for factories that do not re-arrange or hide base
-     * columns. Returns a negative value if the projected column cannot be resolved
-     * to a base column (for example, a computed {@code VirtualRecord} column); the
-     * caller must fall back to the generic sort path in that case.
-     *
-     * @param projectedIndex column index in this factory's output metadata
-     * @return column index in the base metadata, or a negative value if unresolvable
-     */
-    default int translateOrderByColumnToBase(int projectedIndex) {
-        return projectedIndex;
     }
 
     /**

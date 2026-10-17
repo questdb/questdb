@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -42,6 +43,11 @@ public class BarFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "bar(DDDI)";
     // ▏▎▍▌▋▊▉█ - fractional blocks in increasing fill order
     private static final char[] BAR_CHARS = {'▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'};
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.VARCHAR;
+    }
 
     @Override
     public String getSignature() {

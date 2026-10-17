@@ -79,6 +79,7 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
 
     @Override
     public void close() {
+        UnaryFunction.super.close();
         Misc.freeObjListAndClear(sinks);
     }
 
@@ -169,7 +170,20 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
     }
 
     @Override
+    public void recomputeFirst(MapValue mapValue, Record record, long rowId) {
+        final int index = mapValue.getInt(valueIndex);
+        if (index < 0) {
+            computeFirst(mapValue, record, rowId);
+            return;
+        }
+        sinks.getQuick(index).clear();
+        mapValue.putBool(valueIndex + 1, true);
+        computeNext(mapValue, record, rowId);
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
+        mapValue.putInt(valueIndex, -1);
         mapValue.putBool(valueIndex + 1, true);
     }
 

@@ -40,6 +40,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class IntIntervalFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INTERVAL_RAW;
+    }
+
+    @Override
     public String getSignature() {
         return ":(II)";
     }

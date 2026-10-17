@@ -58,7 +58,12 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.filter = filter;
-        this.cursor = new NestedLoopRightRecordCursor(columnSplit, filter, nullRecord);
+        try {
+            this.cursor = new NestedLoopRightRecordCursor(columnSplit, filter, nullRecord);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override
@@ -197,6 +202,7 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
             filter.init(this, executionContext);
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isSlaveHasNextPending = true;
+            isMatch = false;
             circuitBreaker = executionContext.getCircuitBreaker();
         }
     }

@@ -407,7 +407,10 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     break;
                 case ColumnType.TIMESTAMP:
                     TimestampDriver driver = ColumnType.getTimestampDriver(toType);
-                    dstFixMem.putLong(driver.from(masterRecord.getTimestamp(i), ColumnType.getTimestampType(metadata.getColumnType(i))));
+                    final int fromType = metadata.getColumnType(i);
+                    dstFixMem.putLong(fromType == ColumnType.DATE
+                            ? driver.fromDate(masterRecord.getDate(i))
+                            : driver.from(masterRecord.getTimestamp(i), ColumnType.getTimestampType(fromType)));
                     break;
                 case ColumnType.DATE:
                     dstFixMem.putLong(masterRecord.getDate(i));

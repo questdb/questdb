@@ -51,6 +51,23 @@ import io.questdb.std.Transient;
 public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        int resultNDims = ColumnType.decodeWeakArrayDimensionality(argTypes.getQuick(0));
+        if (resultNDims == -1) {
+            return ColumnType.UNDEFINED;
+        }
+        for (int i = 1, n = argTypes.size(); i < n; i++) {
+            if (isIndexArg(argTypes.getQuick(i))) {
+                resultNDims--;
+            }
+        }
+        if (resultNDims < 0) {
+            return ColumnType.UNDEFINED;
+        }
+        return resultNDims == 0 ? ColumnType.DOUBLE : ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
+    }
+
+    @Override
     public String getSignature() {
         return "[](D[]LV)";
     }

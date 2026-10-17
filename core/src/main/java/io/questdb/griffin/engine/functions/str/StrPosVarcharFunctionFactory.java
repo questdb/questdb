@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,12 +37,18 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 public class StrPosVarcharFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
 
     @Override
     public String getSignature() {
@@ -59,6 +67,7 @@ public class StrPosVarcharFunctionFactory implements FunctionFactory {
         if (substrFunc.isConstant()) {
             Utf8Sequence substr = substrFunc.getVarcharA(null);
             if (substr == null) {
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return IntConstant.NULL;
             }
             return new ConstFunc(args.getQuick(0), substr);

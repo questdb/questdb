@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -43,18 +44,36 @@ import io.questdb.std.datetime.millitime.DateFormatFactory;
 
 public class ToDateFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DATE;
+    }
+
+    @Override
     public String getSignature() {
         return "to_date(Ss)";
     }
 
     @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        DateFormatFactory.INSTANCE.get(pattern(args.getQuick(1), argPositions));
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Function arg = args.getQuick(0);
-        final CharSequence pattern = args.getQuick(1).getStrA(null);
+        final CharSequence pattern = pattern(args.getQuick(1), argPositions);
+        return new ToDateFunction(args.getQuick(0), DateFormatFactory.INSTANCE.get(pattern), configuration.getDefaultDateLocale(), pattern);
+    }
+
+    /**
+     * The pattern a constant pattern argument spells; raises the error for a NULL pattern.
+     */
+    private static CharSequence pattern(Function patternFunc, IntList argPositions) throws SqlException {
+        final CharSequence pattern = patternFunc.getStrA(null);
         if (pattern == null) {
             throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
-        return new ToDateFunction(arg, DateFormatFactory.INSTANCE.get(pattern), configuration.getDefaultDateLocale(), pattern);
+        return pattern;
     }
 
     private static final class ToDateFunction extends DateFunction implements UnaryFunction {

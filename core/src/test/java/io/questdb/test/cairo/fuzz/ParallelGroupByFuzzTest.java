@@ -4824,6 +4824,59 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeConstantArgumentsReachWorkerGroupByFunctions() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        execute(
+                                compiler,
+                                "CREATE TABLE t (ts TIMESTAMP, k INT, s STRING, sym SYMBOL, x DOUBLE, y DOUBLE, j VARCHAR) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        execute(
+                                compiler,
+                                """
+                                        INSERT INTO t VALUES
+                                        ('2024-01-01T00:00:00', 1, 'a', 'a', 1.0, 1.0, '{"a":1,"b":2}'),
+                                        ('2024-01-01T00:00:01', 2, 'b', 'b', 2.5, 2.5, '{"a":3,"b":4}'),
+                                        ('2024-01-01T00:00:03', 3, 'c', 'c', 5.0, 5.0, '{"a":5,"b":2}')
+                                        """,
+                                sqlExecutionContext
+                        );
+                        final String falseSubquery = "NOT (SELECT max(k) > 2 FROM t)";
+                        assertQueriesAndPlans(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT s ~ CASE WHEN " + falseSubquery + " THEN 'a' ELSE 'b' END m, count() FROM t ORDER BY m",
+                                "m\tcount\nfalse\t2\ntrue\t1\n",
+                                "Async Group By",
+                                "SELECT regexp_replace(s, CASE WHEN " + falseSubquery + " THEN 'a' ELSE 'b' END, 'z') m, count() FROM t ORDER BY m",
+                                "m\tcount\na\t1\nc\t1\nz\t1\n",
+                                "Async Group By",
+                                "SELECT within_box(x, y, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 2.0 END, 0.0, 10.0, 10.0) m, count() FROM t ORDER BY m",
+                                "m\tcount\nfalse\t1\ntrue\t2\n",
+                                "Async Group By",
+                                "SELECT sym, sum(CASE WHEN geo_distance_meters(x, y, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0) < 200_000 THEN 1 ELSE 0 END) n FROM t ORDER BY sym",
+                                "sym\tn\na\t1\nb\t0\nc\t0\n",
+                                "Async Group By",
+                                "SELECT sym, sum(json_extract(j, CASE WHEN " + falseSubquery + " THEN '.a' ELSE '.b' END)::int) n FROM t ORDER BY sym",
+                                "sym\tn\na\t2\nb\t4\nc\t2\n",
+                                "Async Group By",
+                                "SELECT sym, count() FROM t WHERE s ~ CASE WHEN " + falseSubquery + " THEN 'a' ELSE 'b' END ORDER BY sym",
+                                "sym\tcount\nb\t1\n",
+                                "Async"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testStringKeyGroupByEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));

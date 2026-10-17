@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
@@ -35,6 +36,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 
 public class CurrentDataIdFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.UUID;
+    }
+
     @Override
     public String getSignature() {
         return "current_data_id()";

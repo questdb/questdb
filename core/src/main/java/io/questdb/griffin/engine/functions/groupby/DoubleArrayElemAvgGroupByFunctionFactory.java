@@ -48,6 +48,11 @@ import org.jetbrains.annotations.NotNull;
 public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return "array_elem_avg(D[])";
     }

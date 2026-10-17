@@ -35,6 +35,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -158,6 +159,29 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPtr() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB);
+                    DirectUtf8Sink directSink = new DirectUtf8Sink(16)
+            ) {
+                StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
+                holder.setAllocator(allocator);
+                holder.clearAndSet(new Utf8String("żółć-żółć"));
+                TestUtils.assertEquals("żółć-żółć", new DirectUtf8String().of(holder.ptr(), holder.ptr() + holder.size()));
+
+                directSink.put("barbaz");
+                TestDirectUtf8String stableDirectString = new TestDirectUtf8String(true);
+                stableDirectString.of(directSink.lo(), directSink.hi());
+                holder.clearAndSet(stableDirectString);
+                Assert.assertEquals(directSink.lo(), holder.ptr());
+
+                Assert.assertEquals(-1, holder.of(0).ptr());
+            }
+        });
+    }
+
+    @Test
     public void testPutSplitString() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -212,8 +236,8 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
         }
 
         int size = holder.size();
-        if (ptr == 0) {
-            Assert.assertEquals("null pointer, but non-zero size [size=" + size + "]", 0, size);
+        if (ptr == -1) {
+            Assert.assertEquals("no pointer, but non-zero size [size=" + size + "]", 0, size);
             return;
         }
         Assert.fail("Invalid pointer received [ptr=" + ptr + ", size=" + size + "]");

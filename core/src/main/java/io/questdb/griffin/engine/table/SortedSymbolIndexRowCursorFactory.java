@@ -26,12 +26,13 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
@@ -43,7 +44,7 @@ import io.questdb.std.CarrierLocal;
 
 import java.util.Comparator;
 
-public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
+public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFactory {
     private final static CarrierLocal<SortHelper> TL_SORT_HELPER = new CarrierLocal<>(SortHelper::new);
     private final int columnIndex;
     private final boolean columnOrderDirectionAsc;
@@ -64,8 +65,30 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        cursor.of(pageFrame);
+        return getCursor(pageFrame, pageFrameMemory, 0, symbolKeyLimit);
+    }
+
+    @Override
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, int keyLo, int keyHi) {
+        cursor.of(pageFrame, keyLo, keyHi);
         return cursor;
+    }
+
+    @Override
+    public int getKeyCount() {
+        return symbolKeyLimit;
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi) {
+        if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
+            return -1;
+        }
+        long count = 0;
+        for (int i = keyLo; i < keyHi; i++) {
+            count += reader.countMatchesInRange(symbolKeys.getQuick(i), rowLo, rowHi, BitmapIndexUtils.UNBOUNDED_BLOCK_HOPS);
+        }
+        return count;
     }
 
     @Override
@@ -160,6 +183,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     private class ListBasedSymbolIndexRowCursor implements RowCursor {
         private RowCursor current;
         private int index;
+        private int indexHi;
         private PageFrame pageFrame;
 
         @Override
@@ -178,7 +202,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         }
 
         private boolean fetchNext() {
-            while (index < symbolKeyLimit) {
+            while (index < indexHi) {
                 Misc.free(current);
                 current = pageFrame
                         .getIndexReader(columnIndex, indexDirection)
@@ -195,9 +219,10 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
             return false;
         }
 
-        private void of(PageFrame pageFrame) {
+        private void of(PageFrame pageFrame, int indexLo, int indexHi) {
             this.pageFrame = pageFrame;
-            this.index = 0;
+            this.index = indexLo;
+            this.indexHi = indexHi;
             Misc.free(current);
             this.current = EmptyRowCursor.INSTANCE;
         }

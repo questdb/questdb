@@ -465,6 +465,14 @@ public class JsonExtractFunction implements Function {
     }
 
     @Override
+    public void offerStateTo(Function that) {
+        if (that instanceof JsonExtractFunction other) {
+            json.offerStateTo(other.json);
+            path.offerStateTo(other.path);
+        }
+    }
+
+    @Override
     public boolean shouldMemoize() {
         return true;
     }

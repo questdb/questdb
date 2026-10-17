@@ -50,6 +50,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
     private static final String SIGNATURE = FirstValueWindowFunctionFactoryHelper.NAME + "(N)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

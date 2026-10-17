@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -80,23 +79,15 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
      * - Long 2: column_type
      *
      * @param rowGroupIndex the row group index to check
-     * @param filters       filter descriptors: [encoded(col_idx, count, op), ptr, column_type] per filter
+     * @param filtersAddr   filter descriptors: [encoded(col_idx, count, op), ptr, column_type] per filter
+     * @param filterCount   the number of filter descriptors
      * @param filterBufEnd  exclusive end address of the filter values buffer, used for native bounds checking
      * @return true if the row group can be safely skipped
      */
     @Override
-    public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
+    public boolean canSkipRowGroup(int rowGroupIndex, long filtersAddr, int filterCount, long filterBufEnd) {
         assert ptr != 0;
-        assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
-        return canSkipRowGroup(
-                ptr,
-                rowGroupIndex,
-                fileAddr,
-                fileSize,
-                filters.getAddress(),
-                (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER),
-                filterBufEnd
-        );
+        return canSkipRowGroup(ptr, rowGroupIndex, fileAddr, fileSize, filtersAddr, filterCount, filterBufEnd);
     }
 
     @Override
@@ -226,6 +217,14 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
     public long getFileSize() {
         assert fileSize > 0 || fileAddr == 0;
         return fileSize;
+    }
+
+    /**
+     * The footer statistics stay on the native side, so no chunk is proven NULL-free here.
+     */
+    @Override
+    public boolean hasNoNulls(int rowGroupIndex, int columnIndex) {
+        return false;
     }
 
     public Metadata metadata() {

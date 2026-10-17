@@ -119,12 +119,13 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         // Adopted before anything below can throw, so a failed construction frees the groups
         // through this factory's own close() rather than leaving them to the compiler's catch.
         this.windowMapGroups = windowMapGroups;
+        this.base = base;
+        this.orderedFunctions = orderedFunctions;
+        this.unorderedFunctions = unorderedFunctions;
         try {
-            this.base = base;
             this.windowSymbolFunctions = windowSymbolFunctions;
             this.orderedGroupCount = sortKeys.size();
             assert orderedGroupCount == orderedFunctions.size();
-            this.orderedFunctions = orderedFunctions;
             narrowChain = new RecordArray(
                     narrowChainTypes,
                     null,
@@ -225,12 +226,11 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             this.forwardUnorderedFunctions = forwardTmp;
             this.backwardUnorderedFunctions = backwardTmp;
 
-            this.unorderedFunctions = unorderedFunctions;
         } catch (Throwable th) {
-            Misc.free(narrowChain);
-            Misc.freeObjList(sortBuffers);
-            Misc.free(baseRowIds);
-            close();
+            Misc.free(narrowChain, th);
+            Misc.freeObjList(sortBuffers, th);
+            Misc.free(baseRowIds, th);
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -300,7 +300,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
      * non-null (verified by the caller). Idempotent.
      */
     public void enableRowSelecting(WindowFunction selectingFunction) {
-        // The caller (SqlCodeGenerator.tryFuseKeepFlagFilter) has already resolved and validated the
+        // The caller (WindowFactoryGenerator.tryFuseKeepFlagFilter) has already resolved and validated the
         // sole row-selecting keep-flag function via getSingleRowSelectingFunction(); take it directly
         // rather than recomputing behind an assert (a no-op under -da, which would leave a null
         // selectingFunction and NPE at cursor time). Guard defensively: a null here means the caller's
@@ -443,7 +443,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             return;
         }
         isClosed = true;
-        final ObjList<WindowFunction> allFunctions = this.allFunctions;
         this.allFunctions = null;
         final RecordCursorFactory base = this.base;
         this.base = null;
@@ -455,7 +454,10 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         // projection over chain columns, so freeing it touches nothing a function owns - but
         // ordering it first keeps that independence obvious rather than incidental.
         failure = Misc.freeBestEffort(failure, windowMapGroups);
-        failure = Misc.freeObjListBestEffort(failure, allFunctions);
+        for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
+            failure = Misc.freeObjListBestEffort(failure, orderedFunctions.getQuick(i));
+        }
+        failure = Misc.freeObjListBestEffort(failure, unorderedFunctions);
         CairoException.rethrowCleanupFailure(failure);
     }
 

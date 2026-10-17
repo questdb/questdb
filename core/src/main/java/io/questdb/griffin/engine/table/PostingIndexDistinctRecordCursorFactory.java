@@ -63,7 +63,12 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         this.metadata = metadata;
         this.dfcFactory = dfcFactory;
         this.columnIndexes = columnIndexes;
-        this.cursor = new DistinctCursor(readerColumnIndex, queryColumnPosition);
+        try {
+            this.cursor = new DistinctCursor(readerColumnIndex, queryColumnPosition);
+        } catch (Throwable th) {
+            Misc.free(dfcFactory, th);
+            throw th;
+        }
     }
 
     @Override

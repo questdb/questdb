@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.bin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -42,6 +43,11 @@ import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class Base64DecodeFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BINARY;
+    }
+
     @Override
     public String getSignature() {
         return "from_base64(S)";

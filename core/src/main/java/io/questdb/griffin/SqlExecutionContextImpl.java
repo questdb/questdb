@@ -98,6 +98,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
+    private boolean isMatViewCompile;
     private boolean isMetadataProbe;
     private int jitMode;
     private boolean liveViewCompile;
@@ -196,7 +197,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             boolean ordered,
             int orderByDirection,
             int orderByPos,
-            boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
             char rowsLoUnit,
@@ -452,6 +452,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isMatViewCompile() {
+        return isMatViewCompile;
+    }
+
+    @Override
     public boolean isMetadataProbe() {
         return isMetadataProbe;
     }
@@ -649,6 +654,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public void setLiveViewCompile(boolean value) {
         this.liveViewCompile = value;
         this.windowContext.setLiveView(value);
+    }
+
+    @Override
+    public void setMatViewCompile(boolean value) {
+        this.isMatViewCompile = value;
     }
 
     @Override
@@ -854,6 +864,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // but a reused per-connection context must never inherit a stale live-view flag.
         // setLiveViewCompile also clears the mirrored windowContext flag.
         setLiveViewCompile(false);
+        isMatViewCompile = false;
         this.tableFunctionView = null;
         isMetadataProbe = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error

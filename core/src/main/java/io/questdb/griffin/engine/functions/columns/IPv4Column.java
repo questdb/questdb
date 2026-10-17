@@ -59,11 +59,6 @@ public class IPv4Column extends IPv4Function implements ColumnFunction {
         return rec.getIPv4(columnIndex);
     }
 
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {

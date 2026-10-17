@@ -32,6 +32,7 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.cairo.vm.MemoryCMRDetachedImpl;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -64,7 +65,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
-public class TableReader implements Closeable, SymbolTableSource {
+public class TableReader implements Closeable, SymbolTableSource, TableAccessInfo {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = PARTITIONS_SLOT_OFFSET_SIZE + 1;
@@ -356,8 +357,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnCount;
     }
 
+    @Override
+    public int getColumnIndex(CharSequence columnName) {
+        return metadata.getColumnIndexQuiet(columnName);
+    }
+
     public long getColumnTop(int base, int columnIndex) {
         return columnTops.getQuick(base / 2 + columnIndex);
+    }
+
+    @Override
+    public int getColumnType(int columnIndex) {
+        return metadata.getColumnType(columnIndex);
     }
 
     public ColumnVersionReader getColumnVersionReader() {
@@ -366,6 +377,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public CairoConfiguration getConfiguration() {
         return configuration;
+    }
+
+    @Override
+    public IntList getCoveringColumnIndices(int columnIndex) {
+        return metadata.getColumnMetadata(columnIndex).getCoveringColumnIndices();
     }
 
     public long getDataVersion() {
@@ -435,6 +451,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         final int indexIndex = direction == IndexReader.DIR_BACKWARD ? index : index + 1;
         return indexes.getQuick(indexIndex);
+    }
+
+    @Override
+    public byte getIndexType(int columnIndex) {
+        return metadata.getColumnIndexType(columnIndex);
     }
 
     public long getMaxTimestamp() {
@@ -575,6 +596,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.getPartitionTimestampByIndex(partitionIndex);
     }
 
+    @Override
     public int getPartitionedBy() {
         return metadata.getPartitionBy();
     }
@@ -586,6 +608,16 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getSeqTxn() {
         return txFile.getSeqTxn();
+    }
+
+    @Override
+    public int getSymbolCapacity(int columnIndex) {
+        return getSymbolMapReader(columnIndex).getSymbolCapacity();
+    }
+
+    @Override
+    public int getSymbolCount(int columnIndex) {
+        return getSymbolMapReader(columnIndex).getSymbolCount();
     }
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
@@ -619,6 +651,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public TxnScoreboard getTxnScoreboard() {
         return txnScoreboard;
+    }
+
+    @Override
+    public int getWriterIndex(int columnIndex) {
+        return metadata.getWriterIndex(columnIndex);
     }
 
     public void goActive() {
@@ -697,6 +734,19 @@ public class TableReader implements Closeable, SymbolTableSource {
         scanProfile = ReaderScanProfile.DEFAULT;
     }
 
+    @Override
+    public boolean hasParquetConvertedColumns() {
+        if (!hasParquetPartitions) {
+            return false;
+        }
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getWriterIndex(i) != metadata.getOriginalWriterIndex(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean hasParquetPartitions() {
         return hasParquetPartitions;
     }
@@ -716,6 +766,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     @TestOnly
     public boolean isParquetMetaReaderOpen() {
         return parquetMetaReader.isOpen();
+    }
+
+    @Override
+    public boolean isSymbolTableStatic(int columnIndex) {
+        return metadata.isSymbolTableStatic(columnIndex);
     }
 
     @Override
@@ -744,6 +799,20 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean reload() {
+        final boolean isTracked = partitionOverwriteControl != null && isActive();
+        if (isTracked) {
+            partitionOverwriteControl.releasePartitions(this);
+        }
+        try {
+            return reload0();
+        } finally {
+            if (isTracked && isActive()) {
+                partitionOverwriteControl.acquirePartitions(this);
+            }
+        }
+    }
+
+    private boolean reload0() {
         if (acquireTxn()) {
             return false;
         }

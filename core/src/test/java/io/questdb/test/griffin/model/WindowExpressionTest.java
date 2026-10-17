@@ -41,10 +41,8 @@ public class WindowExpressionTest {
         final ExpressionNode raw = window.getPendingSubsample();
         window.of("renamed", window.getAst());
         Assert.assertSame(raw, window.getPendingSubsample());
-        Assert.assertTrue(window.isSubsampleProjectionPending());
         window.clear();
         Assert.assertNull(window.getPendingSubsample());
-        Assert.assertFalse(window.isSubsampleProjectionPending());
         Assert.assertFalse(window.hasSubsampleSourceTimestamp());
         Assert.assertFalse(window.isSubsampleKeepFlag());
         Assert.assertEquals(0, window.getSubsamplePosition());
@@ -57,7 +55,6 @@ public class WindowExpressionTest {
     @Test
     public void testPendingSubsampleDeepClone() throws Exception {
         final WindowExpression source = pending();
-        source.setSubsampleProjectionPending(false);
         final ExpressionNode target = source.getPendingSubsample().args.getQuick(1);
         target.reassociateConstants(false);
         final WindowExpression clone = source.deepClone(windows, nodes);
@@ -66,7 +63,6 @@ public class WindowExpressionTest {
         Assert.assertSame(source, source.getAst().windowExpression);
         Assert.assertFalse(clone.isIncludeIntoWildcard());
         Assert.assertTrue(clone.isSubsampleKeepFlag());
-        Assert.assertFalse(clone.isSubsampleProjectionPending());
         Assert.assertTrue(clone.hasSubsampleSourceTimestamp());
         Assert.assertEquals(17, clone.getSubsamplePosition());
         Assert.assertNotSame(source.getPendingSubsample(), clone.getPendingSubsample());
@@ -102,13 +98,11 @@ public class WindowExpressionTest {
         final WindowExpression ordinary = windows.next();
         ordinary.copySpecFrom(source, nodes);
         Assert.assertNull(ordinary.getPendingSubsample());
-        Assert.assertFalse(ordinary.isSubsampleProjectionPending());
         Assert.assertFalse(ordinary.isSubsampleKeepFlag());
         final WindowExpression other = pending();
         final ExpressionNode ownRecipe = other.getPendingSubsample();
         other.copySpecFrom(source, nodes);
         Assert.assertSame(ownRecipe, other.getPendingSubsample());
-        Assert.assertTrue(other.isSubsampleProjectionPending());
         Assert.assertNotSame(source.getOrderBy().getQuick(0), other.getOrderBy().getQuick(0));
         Assert.assertNotSame(source.getPartitionBy().getQuick(0), other.getPartitionBy().getQuick(0));
     }

@@ -37,8 +37,10 @@ import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.arr.VarcharArrayParser;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InvalidColumnException;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
@@ -47,10 +49,13 @@ import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
@@ -61,6 +66,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -72,12 +78,11 @@ import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.ArrayDeque;
 
 import static io.questdb.std.GenericLexer.unquote;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -86,95 +91,20 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT
 
 public class SqlUtil {
     static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
+    private static final FiberLocal<AliasBaseSink> ALIAS_BASE_SINK = new FiberLocal<>(AliasBaseSink::new);
     private static final DateFormat[] IMPLICIT_CAST_FORMATS;
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
     private static final FiberLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<Long256ConstantFactory> LONG256_FACTORY = new FiberLocal<>(Long256ConstantFactory::new);
-
-    public static boolean containsWithin(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
-        stack.clear();
-        if (node != null) {
-            stack.push(node);
-        }
-        try {
-            while (!stack.isEmpty()) {
-                ExpressionNode next = stack.pop();
-                if (next.token != null && SqlKeywords.isWithinKeyword(next.token)) {
-                    return true;
-                }
-                if (next.lhs != null) {
-                    stack.push(next.lhs);
-                }
-                if (next.rhs != null) {
-                    stack.push(next.rhs);
-                }
-                for (int i = 0, n = next.args.size(); i < n; i++) {
-                    stack.push(next.args.getQuick(i));
-                }
-            }
-            return false;
-        } finally {
-            stack.clear();
-        }
-    }
-
-    public static ExpressionNode getEqualsOrColumn(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
-        if (node == null || node.paramCount != 2 || node.token == null || !SqlKeywords.isOrKeyword(node.token)) {
-            return null;
-        }
-        ExpressionNode column = null;
-        stack.clear();
-        stack.push(node);
-        try {
-            while (!stack.isEmpty()) {
-                ExpressionNode leaf = stack.pop();
-                if (leaf.paramCount == 2 && SqlKeywords.isOrKeyword(leaf.token)) {
-                    stack.push(leaf.lhs);
-                    stack.push(leaf.rhs);
-                    continue;
-                }
-                ExpressionNode key = getEqualsKey(leaf);
-                if (key == null || (column != null && !Chars.equalsIgnoreCase(column.token, key.token))) {
-                    return null;
-                }
-                column = key;
-            }
-            return column;
-        } finally {
-            stack.clear();
-        }
-    }
-
-    public static void rewriteEqualsOrToIn(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
-        assert node.args.size() == 0;
-        ExpressionNode column = null;
-        stack.clear();
-        stack.push(node);
-        try {
-            while (!stack.isEmpty()) {
-                ExpressionNode leaf = stack.pop();
-                if (leaf.paramCount == 2 && SqlKeywords.isOrKeyword(leaf.token)) {
-                    stack.push(leaf.lhs);
-                    stack.push(leaf.rhs);
-                    continue;
-                }
-                column = getEqualsKey(leaf);
-                assert column != null;
-                node.args.add(column == leaf.lhs ? leaf.rhs : leaf.lhs);
-            }
-        } finally {
-            stack.clear();
-        }
-        node.args.add(column);
-        node.paramCount = node.args.size();
-        node.type = ExpressionNode.FUNCTION;
-        node.token = "in";
-        node.lhs = null;
-        node.rhs = null;
-    }
+    private static final int NOT_OP_AND = 2;
+    private static final int NOT_OP_EQUAL = 4;
+    private static final int NOT_OP_NOT = 1;
+    private static final int NOT_OP_NOT_EQ = 5;
+    private static final int NOT_OP_OR = 3;
+    private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
 
     public static void addSelectStar(
-            IQueryModel model,
+            QueryModel model,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
@@ -212,11 +142,11 @@ public class SqlUtil {
     }
 
     public static void collectAllTableAndViewNames(
-            @NotNull IQueryModel model,
+            @NotNull QueryModel model,
             @NotNull ObjList<CharSequence> outTableNames,
             boolean viewsOnly
     ) {
-        IQueryModel m = model;
+        QueryModel m = model;
         do {
             if (!viewsOnly) {
                 final ExpressionNode tableNameExpr = m.getTableNameExpr();
@@ -230,16 +160,16 @@ public class SqlUtil {
                 outTableNames.add(unquote(viewNameExpr.token));
             }
 
-            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final IQueryModel joinModel = joinModels.getQuick(i);
+                final QueryModel joinModel = joinModels.getQuick(i);
                 if (joinModel == m) {
                     continue;
                 }
                 collectAllTableAndViewNames(joinModel, outTableNames, viewsOnly);
             }
 
-            final IQueryModel unionModel = m.getUnionModel();
+            final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
                 collectAllTableAndViewNames(unionModel, outTableNames, viewsOnly);
             }
@@ -249,11 +179,11 @@ public class SqlUtil {
     }
 
     public static void collectAllTableNames(
-            @NotNull IQueryModel model,
+            @NotNull QueryModel model,
             @NotNull LowerCaseCharSequenceHashSet outTableNames,
             @Nullable IntList outTableNamePositions
     ) {
-        IQueryModel m = model;
+        QueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
             if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
@@ -262,16 +192,16 @@ public class SqlUtil {
                 }
             }
 
-            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final IQueryModel joinModel = joinModels.getQuick(i);
+                final QueryModel joinModel = joinModels.getQuick(i);
                 if (joinModel == m) {
                     continue;
                 }
                 collectAllTableNames(joinModel, outTableNames, outTableNamePositions);
             }
 
-            final IQueryModel unionModel = m.getUnionModel();
+            final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
                 collectAllTableNames(unionModel, outTableNames, outTableNamePositions);
             }
@@ -282,10 +212,10 @@ public class SqlUtil {
 
     public static void collectTableAndColumnReferences(
             @NotNull CairoEngine engine,
-            @NotNull IQueryModel model,
+            @NotNull QueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
-        IQueryModel m = model;
+        QueryModel m = model;
         do {
             // Process columns in SELECT clause
             final ObjList<QueryColumn> columns = m.getColumns();
@@ -348,9 +278,9 @@ public class SqlUtil {
             }
 
             // Process join models
-            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final IQueryModel joinModel = joinModels.getQuick(i);
+                final QueryModel joinModel = joinModels.getQuick(i);
                 if (joinModel != m) {
                     collectColumnReferencesFromJoinColumns(engine, joinModel.getJoinColumns(), m, depMap);
                     collectTableAndColumnReferences(engine, joinModel, depMap);
@@ -358,7 +288,7 @@ public class SqlUtil {
             }
 
             // Process union models
-            final IQueryModel unionModel = m.getUnionModel();
+            final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
                 collectTableAndColumnReferences(engine, unionModel, depMap);
             }
@@ -539,6 +469,21 @@ public class SqlUtil {
     }
 
     /**
+     * Creates a unique column alias for a non-literal expression, rendering only the part of
+     * its text that the alias depends on.
+     */
+    public static CharSequence createExprColumnAlias(
+            CharacterStore store,
+            ExpressionNode ast,
+            AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
+            LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
+            int maxLength
+    ) {
+        final CharSequence base = ALIAS_BASE_SINK.get().render(store, ast, maxLength);
+        return createExprColumnAlias(store, base, aliasToColumnMap, nextAliasSequenceMap, maxLength, true);
+    }
+
+    /**
      * Creates a unique column alias for expressions with O(1) amortized complexity by tracking
      * the next sequence number for each base alias in the provided map.
      */
@@ -620,7 +565,7 @@ public class SqlUtil {
         if (quote) {
             keyEntry.put('"');
         }
-        keyEntry.put(base, start, baseLen);
+        keyEntry.put(base, start, Math.min(baseLen, start + maxLength + 1));
         final CharSequence seqKey = keyEntry.toImmutable();
 
         final int truncatedLen = Math.min(baseLen - start + (quote ? 2 : 0), maxLength - (quote ? 1 : 0));
@@ -908,6 +853,19 @@ public class SqlUtil {
                 continue;
             }
 
+            if (cs.length() == 1) {
+                if (blockCount == 0) {
+                    final char c = cs.charAt(0);
+                    if (c == '"') {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
+                    }
+                    if (!GenericLexer.WHITESPACE_CH.contains(c)) {
+                        return cs;
+                    }
+                }
+                continue;
+            }
+
             if (Chars.equals("--", cs)) {
                 lineComment = true;
                 continue;
@@ -928,11 +886,7 @@ public class SqlUtil {
                 continue;
             }
 
-            if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
-                // unclosed quote check
-                if (cs.length() == 1 && cs.charAt(0) == '"') {
-                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
-                }
+            if (blockCount == 0) {
                 return cs;
             }
         }
@@ -1029,9 +983,9 @@ public class SqlUtil {
     }
 
     public static RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
-        final IQueryModel queryModel = model.getQueryModel();
+        final QueryModel queryModel = model.getQueryModel();
         assert queryModel != null;
-        return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
+        return compiler.generateSelectWithRetries(queryModel, executionContext, false);
     }
 
     /**
@@ -1090,17 +1044,6 @@ public class SqlUtil {
             return ast.args.getQuick(ast.paramCount - 1);
         }
         return ast.lhs;
-    }
-
-    /**
-     * Extracts the timestamp column expression from a timestamp_floor or
-     * timestamp_floor_utc function call, handling 2/3/5-param overloads.
-     */
-    public static ExpressionNode getTimestampFloorTimestampArg(ExpressionNode ast) {
-        if (ast.paramCount == 3 || ast.paramCount == 5) {
-            return ast.args.getQuick(ast.paramCount - 2);
-        }
-        return ast.rhs;
     }
 
     public static byte implicitCastAsByte(long value, int fromType) {
@@ -1386,7 +1329,6 @@ public class SqlUtil {
             return (float) value;
         }
     }
-
 
     @SuppressWarnings("unused")
     // used by the row copier
@@ -1689,11 +1631,21 @@ public class SqlUtil {
         }
     }
 
-    public static boolean isNotPlainSelectModel(IQueryModel model) {
+    /**
+     * True when the factory, or a factory under it along the base chain, reads long_sequence().
+     */
+    public static boolean isLongSequence(RecordCursorFactory factory) {
+        while (factory != null && !factory.getClass().getSimpleName().contains("LongSequence")) {
+            factory = factory.getBaseFactory();
+        }
+        return factory != null;
+    }
+
+    public static boolean isNotPlainSelectModel(QueryModel model) {
         return model.getTableName() != null
                 || model.getGroupBy().size() > 0
                 || model.getJoinModels().size() > 1
-                || model.getLatestByType() != IQueryModel.LATEST_BY_NONE
+                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
                 || model.getUnionModel() != null;
     }
 
@@ -1702,24 +1654,6 @@ public class SqlUtil {
             if (!functions.getQuick(i).supportsParallelism()) {
                 return false;
             }
-        }
-        return true;
-    }
-
-    /**
-     * Returns true if the model stands for a SELECT ... FROM tab; or a SELECT ... FROM tab WHERE ...; query.
-     * We're aiming for potential page frame support with this check.
-     */
-    public static boolean isPlainSelect(IQueryModel model) {
-        while (model != null) {
-            if (model.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE
-                    || model.getGroupBy().size() > 0
-                    || model.getJoinModels().size() > 1
-                    || model.getLatestByType() != IQueryModel.LATEST_BY_NONE
-                    || model.getUnionModel() != null) {
-                return false;
-            }
-            model = model.getNestedModel();
         }
         return true;
     }
@@ -1754,8 +1688,62 @@ public class SqlUtil {
                 || Chars.equalsIgnoreCase(TimestampFloorFromOffsetUtcFunctionFactory.NAME, ast.token));
     }
 
+    public static boolean isZeroOnEmptyAggregate(ExpressionNode node) {
+        return node != null
+                && node.type == ExpressionNode.FUNCTION
+                && (Chars.equalsIgnoreCase(node.token, "count")
+                || Chars.equalsIgnoreCase(node.token, "count_distinct")
+                || Chars.equalsIgnoreCase(node.token, "approx_count_distinct"));
+    }
+
     public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
         return pool.next().of(exprNodeType, token, 0, position);
+    }
+
+    public static void normalizeWindowFrame(WindowExpression ac, FunctionParser functionParser, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
+        long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
+
+        switch (ac.getRowsLoKind()) {
+            case WindowExpression.PRECEDING:
+                rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
+                break;
+            case WindowExpression.FOLLOWING:
+                break;
+            default:
+                // CURRENT ROW
+                rowsLo = 0;
+                break;
+        }
+
+        switch (ac.getRowsHiKind()) {
+            case WindowExpression.PRECEDING:
+                if (ac.getFramingMode() == WindowExpression.FRAMING_RANGE) {
+                    // A finite Long.MAX_VALUE PRECEDING must not become UNBOUNDED.
+                    rowsHi = ac.getRowsHiExpr() != null ? -rowsHi : Long.MIN_VALUE;
+                } else {
+                    // Preserve the ROWS sentinel; finite over-int buffers need separate validation.
+                    rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
+                }
+                break;
+            case WindowExpression.FOLLOWING:
+                break;
+            default:
+                // CURRENT ROW
+                rowsHi = 0;
+                break;
+        }
+
+        ac.setRowsLo(rowsLo);
+        ac.setRowsHi(rowsHi);
+    }
+
+    /**
+     * Normalizes an owned predicate before overload resolution and join/interval analysis. NOT stays above an
+     * ordering comparison: a NULL operand makes both the comparison and its complement false.
+     */
+    public static ExpressionNode optimiseBooleanNot(ExpressionNode node, ObjectPool<ExpressionNode> pool) {
+        return optimiseBooleanNot(node, false, pool);
     }
 
     public static int parseArrayDimensionality(GenericLexer lexer, int columnType, int typeTagPosition) throws SqlException {
@@ -1958,6 +1946,239 @@ public class SqlUtil {
         return TableUtils.packParquetConfig(encoding, packedCompression, packedLevel, bloomFilter);
     }
 
+    public static boolean printPivotValue(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
+        final int columnType = metadata.getColumnType(0);
+        sink.clear();
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.STRING:
+            case ColumnType.ARRAY_STRING: {
+                final CharSequence val = record.getStrA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.SYMBOL: {
+                final CharSequence val = record.getSymA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.VARCHAR: {
+                final var val = record.getVarcharA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.INT: {
+                final int val = record.getInt(0);
+                if (val == Numbers.INT_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.LONG: {
+                final long val = record.getLong(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.SHORT: {
+                // short and byte doesn't have null
+                final short val = record.getShort(0);
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.BYTE: {
+                final byte val = record.getByte(0);
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.DOUBLE: {
+                final double val = record.getDouble(0);
+                if (!Numbers.isFinite(val)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.FLOAT: {
+                final float val = record.getFloat(0);
+                if (!Numbers.isFinite(val)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.DATE: {
+                final long val = record.getDate(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.putISODateMillis(val);
+                return false;
+            }
+            case ColumnType.TIMESTAMP: {
+                final long val = record.getTimestamp(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.putISODate(ColumnType.getTimestampDriver(columnType), val);
+                return false;
+            }
+            case ColumnType.CHAR: {
+                final char val = record.getChar(0);
+                if (val == 0) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.BOOLEAN: {
+                sink.put(record.getBool(0));
+                return false;
+            }
+            case ColumnType.NULL: {
+                sink.put("NULL");
+                return true;
+            }
+            case ColumnType.GEOBYTE: {
+                final byte val = record.getGeoByte(0);
+                if (val == GeoHashes.BYTE_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.GEOSHORT: {
+                final short val = record.getGeoShort(0);
+                if (val == GeoHashes.SHORT_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.GEOINT: {
+                final int val = record.getGeoInt(0);
+                if (val == GeoHashes.INT_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.GEOLONG: {
+                final long val = record.getGeoLong(0);
+                if (val == GeoHashes.NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.LONG128:
+                // fall through
+            case ColumnType.UUID: {
+                final long hi = record.getLong128Hi(0);
+                final long lo = record.getLong128Lo(0);
+                if (Uuid.isNull(lo, hi)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Uuid uuid = new Uuid(lo, hi);
+                uuid.toSink(sink);
+                return false;
+            }
+            case ColumnType.IPv4: {
+                final int val = record.getIPv4(0);
+                if (val == Numbers.IPv4_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Numbers.intToIPv4Sink(sink, val);
+                return false;
+            }
+            case ColumnType.DECIMAL8: {
+                final byte val = record.getDecimal8(0);
+                if (val == Decimals.DECIMAL8_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL16: {
+                final short val = record.getDecimal16(0);
+                if (val == Decimals.DECIMAL16_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL32: {
+                final int val = record.getDecimal32(0);
+                if (val == Decimals.DECIMAL32_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL64: {
+                final long val = record.getDecimal64(0);
+                if (val == Decimals.DECIMAL64_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL128: {
+                final var decimal = Misc.getThreadLocalDecimal128();
+                record.getDecimal128(0, decimal);
+                if (decimal.isNull()) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(decimal, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL256: {
+                final var decimal = Misc.getThreadLocalDecimal256();
+                record.getDecimal256(0, decimal);
+                if (decimal.isNull()) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(decimal, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            default:
+                throw SqlException.$(position, "unsupported PIVOT FOR column type: ").put(ColumnType.nameOf(columnType));
+        }
+    }
+
     /**
      * Inverse of {@link #toColumnName(CharSequence)}: takes a clean, unquoted display name and
      * returns the compiler-internal alias, wrapping it in protective double quotes only when the
@@ -2041,6 +2262,20 @@ public class SqlUtil {
 
     // tableName and columnName have to be string objects,
     // they will be used in the view definition
+    public static void validateSampleByTimezone(
+            ExpressionNode expression,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (expression != null) {
+            try (Function function = functionParser.parseFunction(expression, EmptyRecordMetadata.INSTANCE, executionContext)) {
+                if (!function.isConstant() && !function.isRuntimeConstant()) {
+                    throw SqlException.$(expression.position, "timezone must be a constant expression of STRING or CHAR type");
+                }
+            }
+        }
+    }
+
     private static void addDependency(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap, String tableName, String columnName) {
         LowerCaseCharSequenceHashSet columns = depMap.get(tableName);
         if (columns == null) {
@@ -2053,7 +2288,7 @@ public class SqlUtil {
     private static void collectColumnReferencesFromExpression(
             @NotNull CairoEngine engine,
             @NotNull ExpressionNode expr,
-            @NotNull IQueryModel model,
+            @NotNull QueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
         // A sub-query embedded in an expression (e.g. WHERE col IN (SELECT ... FROM t),
@@ -2079,7 +2314,7 @@ public class SqlUtil {
                         addDependency(depMap, tableName, columnName);
                     }
                 } else {
-                    final IQueryModel nestedModel = model.getNestedModel();
+                    final QueryModel nestedModel = model.getNestedModel();
                     final CharSequence tableName = nestedModel != null ? nestedModel.getTableName() : model.getTableName();
                     if (tableName != null && engine.getTableTokenIfExists(tableName) != null) {
                         addDependency(depMap, tableName.toString(), expr.token.toString());
@@ -2105,7 +2340,7 @@ public class SqlUtil {
     private static void collectColumnReferencesFromJoinColumns(
             @NotNull CairoEngine engine,
             @NotNull ObjList<ExpressionNode> joinColumns,
-            @NotNull IQueryModel model,
+            @NotNull QueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
         for (int i = 0, n = joinColumns.size(); i < n; i++) {
@@ -2138,17 +2373,34 @@ public class SqlUtil {
         }
     }
 
-    private static ExpressionNode getEqualsKey(ExpressionNode node) {
-        if (node.paramCount != 2 || !Chars.equals(node.token, "=") || node.lhs == null || node.rhs == null) {
-            return null;
+    private static long evalNonNegativeLongConstantOrDie(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (expr != null) {
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                Misc.free(func);
+                throw SqlException.$(expr.position, "constant expression expected");
+            }
+
+            try {
+                long value;
+                if (!(func instanceof CharConstant)) {
+                    value = func.getLong(null);
+                } else {
+                    long tmp = (byte) (func.getChar(null) - '0');
+                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
+                }
+
+                if (value < 0) {
+                    throw SqlException.$(expr.position, "non-negative integer expression expected");
+                }
+                return value;
+            } catch (UnsupportedOperationException | ImplicitCastException e) {
+                throw SqlException.$(expr.position, "integer expression expected");
+            } finally {
+                Misc.free(func);
+            }
         }
-        ExpressionNode key = node.lhs.type == ExpressionNode.LITERAL ? node.lhs : node.rhs;
-        ExpressionNode value = key == node.lhs ? node.rhs : node.lhs;
-        if (key.type != ExpressionNode.LITERAL || value.type != ExpressionNode.CONSTANT
-                || !(SqlKeywords.isNullKeyword(value.token) || Chars.isQuoted(value.token))) {
-            return null;
-        }
-        return key;
+        return Long.MAX_VALUE;
     }
 
     private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {
@@ -2198,6 +2450,72 @@ public class SqlUtil {
         return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
     }
 
+    private static ExpressionNode negate(ExpressionNode node, ObjectPool<ExpressionNode> pool) {
+        final ExpressionNode n = pool.next();
+        n.token = "not";
+        n.paramCount = 1;
+        n.rhs = node;
+        n.type = ExpressionNode.OPERATION;
+        return n;
+    }
+
+    private static ExpressionNode optimiseBooleanNot(ExpressionNode node, boolean reverse, ObjectPool<ExpressionNode> pool) {
+        if (node.token != null && node.type != ExpressionNode.LITERAL) {
+            switch (notOps.get(node.token)) {
+                case NOT_OP_NOT:
+                    if (reverse) {
+                        return optimiseBooleanNot(node.rhs, false, pool);
+                    } else {
+                        switch (node.rhs.type) {
+                            case ExpressionNode.LITERAL:
+                            case ExpressionNode.CONSTANT:
+                                break;
+                            default:
+                                return optimiseBooleanNot(node.rhs, true, pool);
+                        }
+                    }
+                    break;
+                case NOT_OP_AND:
+                    if (reverse) {
+                        node.token = "or";
+                    }
+                    node.lhs = optimiseBooleanNot(node.lhs, reverse, pool);
+                    node.rhs = optimiseBooleanNot(node.rhs, reverse, pool);
+                    break;
+                case NOT_OP_OR:
+                    if (reverse) {
+                        node.token = "and";
+                    }
+                    node.lhs = optimiseBooleanNot(node.lhs, reverse, pool);
+                    node.rhs = optimiseBooleanNot(node.rhs, reverse, pool);
+                    break;
+                case NOT_OP_EQUAL:
+                    if (reverse) {
+                        node.token = "!=";
+                    }
+                    break;
+                case NOT_OP_NOT_EQ:
+                    if (reverse) {
+                        node.token = "=";
+                    } else {
+                        node.token = "!=";
+                    }
+                    break;
+                default:
+                    if (reverse) {
+                        return negate(node, pool);
+                    }
+                    break;
+            }
+        } else if (reverse) {
+            // tokenless node (e.g. a sub-query used directly as a boolean predicate) or a column:
+            // like any other non-negatable expression it must be wrapped in NOT,
+            // otherwise the negation would be silently discarded
+            return negate(node, pool);
+        }
+        return node;
+    }
+
     /**
      * Parses the value against every implicit-cast format, in order. Signals a failed
      * parse with the flyweight {@link NumericException} rather than an
@@ -2235,6 +2553,105 @@ public class SqlUtil {
         return nextExpr(pool, ExpressionNode.LITERAL, token, position);
     }
 
+    /**
+     * Renders an expression as the base of a non-literal generated column alias without storing the whole rendering.
+     * For a base longer than {@code maxLength}, {@link #createExprColumnAlias} reads only its first
+     * {@code maxLength + 2} characters, its last two characters, and whether it has a dot outside double quotes, or
+     * inside them. The sink stores the first {@code maxLength + 2} characters, replaces the middle with at most five
+     * characters that keep those facts, and stores the last two characters, so the alias matches the one the whole
+     * rendering yields.
+     */
+    private static class AliasBaseSink implements Utf16Sink {
+        private CharacterStoreEntry entry;
+        private boolean hasDotInQuotes;
+        private boolean hasDotOutsideQuotes;
+        private int headLimit;
+        private boolean isInQuotesAfterHead;
+        private boolean isInQuotesBeforeTail;
+        private int length;
+        private char tail0;
+        private char tail1;
+
+        @Override
+        public Utf16Sink put(char c) {
+            if (length < headLimit) {
+                entry.put(c);
+                if (c == '"') {
+                    isInQuotesAfterHead = !isInQuotesAfterHead;
+                    isInQuotesBeforeTail = isInQuotesAfterHead;
+                }
+            } else {
+                if (length >= headLimit + 2) {
+                    skip(tail0);
+                }
+                tail0 = tail1;
+                tail1 = c;
+            }
+            length++;
+            return this;
+        }
+
+        /**
+         * Writes the bounded base of {@code ast} to a new entry of {@code store} and returns it.
+         */
+        CharSequence render(CharacterStore store, ExpressionNode ast, int maxLength) {
+            entry = store.newEntry();
+            headLimit = maxLength + 2;
+            length = 0;
+            hasDotInQuotes = false;
+            hasDotOutsideQuotes = false;
+            isInQuotesAfterHead = false;
+            isInQuotesBeforeTail = false;
+            ast.toSink(this);
+
+            boolean isInQuotes = isInQuotesAfterHead;
+            if (hasDotOutsideQuotes) {
+                if (isInQuotes) {
+                    entry.put('"');
+                    isInQuotes = false;
+                }
+                entry.put('.');
+            }
+            if (hasDotInQuotes) {
+                if (!isInQuotes) {
+                    entry.put('"');
+                    isInQuotes = true;
+                }
+                entry.put('.');
+            }
+            if (isInQuotes != isInQuotesBeforeTail) {
+                entry.put('"');
+            }
+            final int tailLength = length - headLimit;
+            if (tailLength > 1) {
+                entry.put(tail0);
+            }
+            if (tailLength > 0) {
+                entry.put(tail1);
+            }
+            final CharSequence base = entry.toImmutable();
+            entry = null;
+            return base;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            return entry.ryuScratch();
+        }
+
+        private void skip(char c) {
+            if (c == '"') {
+                isInQuotesBeforeTail = !isInQuotesBeforeTail;
+            } else if (c == '.') {
+                if (isInQuotesBeforeTail) {
+                    hasDotInQuotes = true;
+                } else {
+                    hasDotOutsideQuotes = true;
+                }
+            }
+        }
+    }
+
     private static class Long256ConstantFactory implements Long256Acceptor {
         private Long256Constant long256;
 
@@ -2252,6 +2669,13 @@ public class SqlUtil {
     }
 
     static {
+        notOps.put("not", NOT_OP_NOT);
+        notOps.put("and", NOT_OP_AND);
+        notOps.put("or", NOT_OP_OR);
+        notOps.put("=", NOT_OP_EQUAL);
+        notOps.put("!=", NOT_OP_NOT_EQ);
+        notOps.put("<>", NOT_OP_NOT_EQ);
+
         // note: it's safe to take any registry (new or old) because we don't use precedence here
         OperatorRegistry registry = OperatorExpression.getRegistry();
         for (int i = 0, n = registry.operators.size(); i < n; i++) {

@@ -51,12 +51,17 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
         assert base.recordCursorSupportsRandomAccess()
                 : "SortKeyMaterializingRecordCursorFactory requires a base factory that supports random access";
         this.base = base;
-        this.cursor = new SortKeyMaterializingRecordCursor(
-                metadata.getColumnCount(),
-                materializedColIndices,
-                materializedColTypes,
-                configuration.getSqlSortKeyMaxBytes()
-        );
+        try {
+            this.cursor = new SortKeyMaterializingRecordCursor(
+                    metadata.getColumnCount(),
+                    materializedColIndices,
+                    materializedColTypes,
+                    configuration.getSqlSortKeyMaxBytes()
+            );
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
     }
 
     @Override

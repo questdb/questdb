@@ -51,9 +51,10 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.ViewAuditModel;
 import io.questdb.griffin.model.WindowExpression;
+import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -61,6 +62,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -101,9 +103,9 @@ public class ViewAuditTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         // Enterprise reads a plan's audits off the model the plan is generated from, in its
         // override of generateSelectOneShot(), and it installs that compiler through the engine.
-        // So every compiler the engine pools is one, the one PIVOT borrows to run its
-        // FOR ... IN (SELECT ...) sub-query included. This installs a compiler that looks at the
-        // same model in the same place.
+        // So every compiler the engine pools is one, and the plan of a PIVOT's
+        // FOR ... IN (SELECT ...) sub-query passes through the same override. This installs a
+        // compiler that looks at the same model in the same place.
         AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
             @Override
             public SqlCompilerFactory getSqlCompilerFactory() {
@@ -775,7 +777,7 @@ public class ViewAuditTest extends AbstractCairoTest {
             assertCompileTimePlansRecordAuditsOf("EXPLAIN " + pivot, "v_audited");
             assertCompileTimePlansRecordAuditsOf("UPDATE dest SET aapl = 1 FROM (" + pivot + ") p WHERE dest.symbol = p.symbol", "v_audited");
             assertCompileTimePlansRecordAuditsOf("UPDATE dest SET aapl = 1 WHERE aapl < (SELECT count() FROM (" + pivot + "))", "v_audited");
-            // CREATE TABLE AS SELECT optimises its query when it runs: the sub-query's plan
+            // CREATE TABLE AS SELECT compiles its query when it runs: the sub-query's plan
             // first, then the plan that feeds the new table.
             assertExecutedPlansRecordAuditsOf("CREATE TABLE copy AS (" + pivot + ")", "v_audited", "v_audited");
             // A view compiles its body when it is created, and the sub-query runs then.
@@ -788,8 +790,8 @@ public class ViewAuditTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createPivotTablesAndAuditedView();
             // Enterprise refuses a plan whose audit it cannot build, after the plan generated: it
-            // frees the plan and throws. For the sub-query's plan that happens inside the
-            // optimiser, which has to come out of it clean, with the borrowed compiler returned.
+            // frees the plan and throws. For the sub-query's plan that happens while the statement
+            // binds, which has to come out of it clean.
             final String sql = "SELECT * FROM long_sequence(2) PIVOT (count() FOR x IN (SELECT DISTINCT price::LONG FROM v_audited))";
             isAuditedPlanRefused = true;
             try {
@@ -881,7 +883,7 @@ public class ViewAuditTest extends AbstractCairoTest {
             assertRecordsAuditsOf("WITH c AS (SELECT DISTINCT symbol FROM v_audited) SELECT * FROM c", "v_audited");
             assertRecordsAuditsOf("WITH c AS (SELECT DISTINCT symbol FROM v_audited) SELECT * FROM pub", "v_audited");
             // The reads an audited view shadows inside a definition stay shadowed for the
-            // statement, however the optimiser folds the definition's model into its plan.
+            // statement, however binding and the optimiser fold the definition into its plan.
             createAuditedView("v_cover", "SELECT DISTINCT symbol FROM v_audited");
             assertRecordsAuditsOf("WITH c AS (SELECT symbol FROM v_cover) SELECT * FROM c", "v_cover");
             assertRecordsAuditsOf("WITH c AS (SELECT symbol FROM v_cover) SELECT symbol FROM c WHERE symbol = 'AAPL'", "v_cover");
@@ -1082,8 +1084,8 @@ public class ViewAuditTest extends AbstractCairoTest {
     public void testReadsLeaveAWindowValuedAuditedParameterAsDeclared() throws Exception {
         assertMemoryLeak(() -> {
             // An audited parameter may hold a window function, and the record keeps the
-            // declaration's own value rather than a copy. Each read of the parameter names and
-            // optimises a copy of the window, so the recorded one comes through as declared. The
+            // declaration's own value rather than a copy. Each read of the parameter names a
+            // copy of the window, so the recorded one comes through as declared. The
             // reads used to share the declared window, which left it under a read's alias.
             execute("""
                     CREATE VIEW v_win AS (
@@ -1561,7 +1563,7 @@ public class ViewAuditTest extends AbstractCairoTest {
     private static void assertRecordsAuditsOf(String sql, String... viewNames) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final ExecutionModel model = compiler.generateExecutionModel(sql, sqlExecutionContext);
-            final IQueryModel queryModel = readModelOf(model);
+            final QueryModel queryModel = readModelOf(model);
             assertNotNull("no query model for [" + sql + "]", queryModel);
             final ObjList<ViewAuditModel> audits = queryModel.getViewAudits();
             final ObjList<String> actual = new ObjList<>();
@@ -1662,7 +1664,7 @@ public class ViewAuditTest extends AbstractCairoTest {
                     param.put(", ");
                 }
                 orderBy.getQuick(i).toSink(param);
-                if (window.getOrderByDirection().getQuick(i) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                if (window.getOrderByDirection().getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                     param.put(" DESC");
                 }
             }
@@ -1755,8 +1757,8 @@ public class ViewAuditTest extends AbstractCairoTest {
      * the model Enterprise takes the audits from. An UPDATE compiles its nested model: the top one
      * only carries the SET expressions.
      */
-    private static IQueryModel readModelOf(ExecutionModel model) {
-        final IQueryModel queryModel = model.getQueryModel();
+    private static QueryModel readModelOf(ExecutionModel model) {
+        final QueryModel queryModel = model.getQueryModel();
         return model.getModelType() == ExecutionModel.UPDATE ? queryModel.getNestedModel() : queryModel;
     }
 
@@ -1883,12 +1885,13 @@ public class ViewAuditTest extends AbstractCairoTest {
 
         @Override
         protected RecordCursorFactory generateSelectOneShot(
-                IQueryModel selectQueryModel,
+                QueryModel selectQueryModel,
+                @Nullable Subquery subquery,
                 SqlExecutionContext executionContext,
                 boolean generateProgressLogger
         ) throws SqlException {
             // Enterprise generates the plan first too, and wraps only a plan that generated.
-            final RecordCursorFactory factory = super.generateSelectOneShot(selectQueryModel, executionContext, generateProgressLogger);
+            final RecordCursorFactory factory = super.generateSelectOneShot(selectQueryModel, subquery, executionContext, generateProgressLogger);
             final ObjList<ViewAuditModel> audits = selectQueryModel.getViewAudits();
             if (isAuditedPlanRefused && audits.size() > 0) {
                 Misc.free(factory);

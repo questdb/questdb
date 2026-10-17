@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.*;
+import io.questdb.std.IntList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -47,6 +48,11 @@ import org.jetbrains.annotations.Nullable;
  * compared to the symbol.
  */
 public class EqSymLongFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
     @Override
     public String getSignature() {
         return "=(KL)";

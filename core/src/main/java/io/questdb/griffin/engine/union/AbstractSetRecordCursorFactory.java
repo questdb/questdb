@@ -68,11 +68,6 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         return factoryA.isNonDeterministic() || factoryB.isNonDeterministic();
     }
 
-    @Override
-    public boolean isStableWithinExecution() {
-        return factoryA.isStableWithinExecution() && factoryB.isStableWithinExecution();
-    }
-
     // A set operation reads externally if either input does. getBaseFactory() cannot express this
     // because it returns a single child, so the two-child propagation is explicit here.
     @Override

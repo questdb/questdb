@@ -1685,11 +1685,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isCairoSqlLegacyUnionColumnPropagation() {
-        return getDelegate().isCairoSqlLegacyUnionColumnPropagation();
-    }
-
-    @Override
     public boolean isCheckpointRecoveryEnabled() {
         return getDelegate().isCheckpointRecoveryEnabled();
     }
@@ -1802,11 +1797,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isReadOnlyInstance() {
         return getDelegate().isReadOnlyInstance();
-    }
-
-    @Override
-    public boolean isSqlDistinctGroupByRewriteEnabled() {
-        return getDelegate().isSqlDistinctGroupByRewriteEnabled();
     }
 
     @Override

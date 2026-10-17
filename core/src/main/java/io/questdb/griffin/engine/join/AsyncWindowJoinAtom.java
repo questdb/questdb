@@ -171,7 +171,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
             @Nullable Function ownerMasterFilter,
             @Nullable ObjList<Function> perWorkerMasterFilters,
             @Nullable IntHashSet filterUsedColumnIndexes,
-            boolean vectorized,
+            @Nullable IntList argumentColumnIndex,
             long masterTsScale,
             long slaveTsScale,
             int workerCount
@@ -204,7 +204,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
             this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
-            this.vectorized = vectorized && ownerWindowLoFunc == null && ownerWindowHiFunc == null;
+            this.vectorized = argumentColumnIndex != null && ownerWindowLoFunc == null && ownerWindowHiFunc == null;
 
             // Checked here, not at the top of the constructor: the generator hands ownership of every
             // filter and window function over before it calls this, so nothing else holds a reference
@@ -289,7 +289,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
                 perWorkerGroupByValues.extendAndSet(i, FlyweightMapValueFactory.createMapValue(valueTypes, GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP));
             }
 
-            if (vectorized) {
+            if (argumentColumnIndex != null) {
                 final int groupByFunctionSize = ownerGroupByFunctions.size();
 
                 if (perWorkerGroupByFunctions != null) {
@@ -303,33 +303,23 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
                     this.perWorkerGroupByFunctionArgs = null;
                 }
 
-                this.groupByFunctionToColumnIndex = new IntList(groupByFunctionSize);
+                this.groupByFunctionToColumnIndex = argumentColumnIndex;
                 this.ownerGroupByFunctionArgs = new ObjList<>(groupByFunctionSize);
                 this.groupByFunctionTypes = new IntList(groupByFunctionSize);
-                // Args, types and column slots are all keyed by deduplicated column index. The
-                // per-worker args lists must stay column-indexed too: only grow on a new column
-                // (index < 0). Appending on a deduped function would make them function-indexed and
+                // Args, types and column slots are all keyed by column index. The per-worker args
+                // lists must stay column-indexed too: only grow on the first function of a column.
+                // Appending on a function that shares a column would make them function-indexed and
                 // longer than the owner list, overrunning the types/slots on the worker reduce path.
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
-                    final var func = ownerGroupByFunctions.getQuick(i);
-                    final var funcArg = func.getComputeBatchArg();
-                    final var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
-                    final int index = findFunctionWithSameArg(ownerGroupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
-                    if (index < 0) {
-                        groupByFunctionTypes.add(funcArgType);
-                        ownerGroupByFunctionArgs.add(funcArg);
-                        groupByFunctionToColumnIndex.add(groupByFunctionTypes.size() - 1);
-                        // don't forget about per-worker lists
+                    if (argumentColumnIndex.getQuick(i) == ownerGroupByFunctionArgs.size()) {
+                        final var func = ownerGroupByFunctions.getQuick(i);
+                        groupByFunctionTypes.add(ColumnType.tagOf(func.getComputeBatchArgType()));
+                        ownerGroupByFunctionArgs.add(func.getComputeBatchArg());
                         if (perWorkerGroupByFunctions != null) {
                             for (int j = 0; j < slotCount; j++) {
-                                final ObjList<GroupByFunction> workerGroupByFunctions = perWorkerGroupByFunctions.getQuick(j);
-                                final var workerFunc = workerGroupByFunctions.getQuick(i);
-                                final var workerFuncArg = workerFunc.getComputeBatchArg();
-                                perWorkerGroupByFunctionArgs.getQuick(j).add(workerFuncArg);
+                                perWorkerGroupByFunctionArgs.getQuick(j).add(perWorkerGroupByFunctions.getQuick(j).getQuick(i).getComputeBatchArg());
                             }
                         }
-                    } else {
-                        groupByFunctionToColumnIndex.add(index);
                     }
                 }
 
@@ -905,22 +895,5 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
      * owns no keyed state, hence the empty body.
      */
     protected void closeKeyedState() {
-    }
-
-    static int findFunctionWithSameArg(ObjList<Function> functions, IntList functionTypes, Function target, int targetType) {
-        if (target == null) {
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                if (functions.getQuick(i) == null) {
-                    return i;
-                }
-            }
-        } else {
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                if (functionTypes.getQuick(i) == targetType && target.isEquivalentTo(functions.getQuick(i))) {
-                    return i;
-                }
-            }
-        }
-        return -1;
     }
 }

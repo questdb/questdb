@@ -27,5 +27,14 @@ package io.questdb.griffin;
 import io.questdb.griffin.model.ExpressionNode;
 
 public interface ExpressionParserListener {
+
+    /**
+     * Reports whether the expression may be a bare list of values, such as the join columns of
+     * {@code JOIN ... ON (a, b)}.
+     */
+    default boolean isValueListAllowed() {
+        return false;
+    }
+
     void onNode(ExpressionNode node) throws SqlException;
 }
