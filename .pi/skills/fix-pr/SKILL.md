@@ -13,16 +13,21 @@ to fix, or a finding from a review.
 
 1. Understand the item. Validate a bug or finding; pin down the behavior of a
    feature. State the problem or goal and the user impact in one line each.
+   An item whose symptoms have more than one root cause is split, one item
+   per cause.
 2. Skip it if it is false, already done, or its impact is negligible. Ask the
-   user when a feature's behavior is ambiguous.
+   user when a feature's behavior is ambiguous, or when sound fixes differ in
+   what users notice, before planning either. The user's decisions, given up
+   front or as answers, bind every item and its check.
 3. Design the best root-cause change - argued correct for every input it
    reaches, alternatives weighed; no regressions, slowdowns, races or
    reinvented code - and the test plan that proves it, dimension by
-   dimension, per CLAUDE.md "Testing". When no change can be argued correct,
-   the item is blocked, not guessed at. An independent agent tries to break
-   both before any code changes. Only a flaw in the design sends the
-   plan back; the tests it finds missing join the plan, and other bugs it
-   finds become separate items or are reported.
+   dimension, per CLAUDE.md "Testing". A query with wrong results is fixed to
+   return the right ones, never rejected instead. When no change can be
+   argued correct, the item is blocked, not guessed at. An independent agent
+   tries to break both before any code changes. Only a flaw in the design
+   sends the plan back; the tests it finds missing join the plan, and other
+   bugs it finds become separate items or are reported.
 4. Write the failing tests first and build the change as designed; a design
    that turns out wrong goes back to step 3. Run the item's tests with
    coverage (`ci/diff_coverage.py`), read the lines, branches and conditions
@@ -60,6 +65,9 @@ for them.
 
 - `--include-adjacent`: fix Adjacent review findings instead of filing them;
   file one that ends blocked.
+- `--decisions=<file>`: design decisions every item follows, such as "make
+  outer-to-inner column substitution type-safe". The answers to the
+  analysis's questions join them.
 - `--no-issues`: list Adjacent items instead of filing them.
 - `--review-level=N`: `review-pr` level of each backstop review; default `3`,
   the level of the review before approval.
@@ -113,6 +121,8 @@ follow it with the helper's arguments.
    continue. Commits never include them. If this session doesn't think at
    max (`$PI_REASONING_LEVEL`), say so and ask too.
 3. Create a state directory outside the repo: `mktemp -d /tmp/fix-pr.XXXXXX`.
+   Write the user's design decisions, from the request and `--decisions`, to
+   `<state>/decisions.md`, or create it empty.
 4. Parse the items. Each entry of a list of features or bugs is one item. From
    a `review-pr` report, queue Critical and Moderate findings and Adjacent
    ones this PR introduced (their Origin, or compare with the PR base), list
@@ -134,8 +144,11 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
    - `SKIP`: record the reason and go to the next item.
    - `BLOCK`: no change within the item can be argued correct. Mark the item
      blocked with the REASON and go to the next item.
-   - `ASK`: show the QUESTIONS, wait for the user's answers, and run the
-     analysis again with them.
+   - `ASK`: show the QUESTIONS, wait for the user's answers, add them to
+     `<state>/decisions.md`, and run the analysis again with them.
+   - `SPLIT`: replace the item with its ITEMS lines, at the front of the
+     queue in their order, with the IDs <ID>a, <ID>b, ...; each names
+     `<state>/<ID>/analysis.md` as context.
    - `OTHER` lines: a `PR` bug becomes a new item at the end of the queue,
      unless it names an item of this run, which it reopens (step 6); a
      `PRE-EXISTING` one goes to the issue list. Skip a bug already queued or
@@ -270,9 +283,15 @@ Unless `--no-issues`, file each one:
 - `java-questdb-client/` is a separate repo: commit inside it first, as
   CLAUDE.md says.
 - Don't call a failure pre-existing or flaky without proof.
-- If a helper fails to launch or crashes, retry once; then stop and report.
-  The review helper is the exception: after it fails twice, the main
-  session runs the review itself ("Keep the main session small").
+- If a helper fails to launch, retry once; then stop and report. If it
+  times out or ends without its reply lines and the repository is
+  unchanged, launch a fresh one once - for the analysis, as a continuation
+  of what the first one wrote. Don't resume the old session: it has to
+  rebuild its whole context in one turn. If the fresh one fails too, mark
+  the item blocked with what it left and go to the next item; if two items
+  in a row end this way, stop and report. The review helper is the
+  exception: after it fails twice, the main session runs the review itself
+  ("Keep the main session small").
 
 ## Final summary
 
@@ -310,11 +329,17 @@ Fill in the `<placeholders>`; keep tasks this short.
 Analyze one item in <repo>. Follow CLAUDE.md, including "Testing".
 Don't change existing files or commit. For probes, create new files; when
 done, copy those that reproduce the problem to <state>/<ID>/probes/ for the
-build, and delete them from the repo.
+build, and delete them from the repo. Probes run the code as it is, at HEAD
+or the PR base. Don't build or run changed copies of production code: a
+design is argued here and tried by the build, after the check.
+Write <state>/<ID>/analysis.md as you go, adding each step's result as you
+reach it, so that a timeout loses nothing.
 
 Item <ID> (<feature | bug | review finding | bug found in this run>): <verbatim item>
 PR base: <sha>. Items of this run so far: <one line per item: ID, commits,
 summary; or none>.
+The user's design decisions are in <state>/decisions.md; follow them. A hint
+in the item that came from a helper, not the user, is not a decision.
 [Revision only: your previous proposal is in <state>/<ID>/analysis.md, with
 test-plan amendments in <state>/<ID>/amendments.md if that file exists. Its
 design was sent back: <REDESIGN lines, the build's STOPPED reason, or the bug
@@ -323,7 +348,9 @@ breaks, correct it, and derive the design again from there; a change that
 only answers the example is not a revision. Or show with file:line why an
 objection is wrong. Fold these test-plan gaps and the amendments into the
 new plan where they still apply: <ADD lines, or none>.]
-[Answers from the user: <answers>]
+[Answers from the user: <answers>. Continue from your analysis.md.]
+[Continuation only: an earlier helper ran out of time on this item. Continue
+from what it wrote in <state>/<ID>/; don't repeat its probes.]
 
 1. Understand the item.
    - Bug or finding: check it against the current code; run something if
@@ -335,19 +362,33 @@ new plan where they still apply: <ADD lines, or none>.]
 2. Problem or goal: one plain line.
 3. Impact on users: one line - who, how badly, how often.
 4. Decide: BUILD a feature, FIX a bug or finding, SKIP (false, already done,
-   or negligible impact), ASK when the feature needs a decision, or BLOCK
-   when no change within the item can be argued correct (step 6). A finding
-   that a test is missing or ineffective for behavior this PR adds or changes
-   is a FIX. A bug found in this run that the PR base already has is a SKIP;
-   report it on OTHER as PRE-EXISTING (step 9).
+   or negligible impact), ASK when a decision belongs to the user and
+   decisions.md doesn't settle it, BLOCK when no change within the item can
+   be argued correct (step 6), or SPLIT when the item has more than one root
+   cause (step 5). The user decides a feature's behavior, and any choice
+   between sound changes that users would notice differently, in behavior or
+   speed, or that differ in how much work beyond the item they take. Ask as
+   soon as you meet such a choice, before writing a test plan, with each
+   option's cost and the one you'd pick. A finding that a test is missing or
+   ineffective for behavior this PR adds or changes is a FIX. A bug found in
+   this run that the PR base already has is a SKIP; report it on OTHER as
+   PRE-EXISTING (step 9).
 5. For FIX: find the root cause - the first place the code goes wrong, not
    where the symptom shows - and the assumption that fails there. Use
    `git log` and `git blame` to learn why the code is written that way; the
    change must keep whatever that protects. No guard, catch or special case at
-   the symptom unless that layer owns the check.
+   the symptom unless that layer owns the check. If the item's symptoms come
+   from more than one root cause, decide SPLIT: name one sub-item per root
+   cause, in the order to fix them, and stop there.
 6. For BUILD and FIX: find the best change, not the first one that works.
    Weigh the real alternatives, such as another layer, and choose the one that:
    - is correct for every input it reaches, by the argument below;
+   - returns the right result for every query PostgreSQL or DuckDB answer,
+     allowing for QuestDB's documented differences such as NULL = NULL: the
+     right rows, never a new error. Rejecting such a query is not a fix for
+     its wrong results, even when the item suggests it or the code already
+     rejects similar queries; such a rejection is no precedent. If no change
+     can return the right rows, decide BLOCK;
    - closes every path to the item's problem, not just the one the item
      names; the same kind of bug in other code is a separate bug (step 9);
    - keeps every user of the changed code working: list the callers,
@@ -359,18 +400,21 @@ new plan where they still apply: <ADD lines, or none>.]
    - reuses what exists: search for a helper, an established pattern or an
      earlier fix of the same kind of bug, and build on it.
    Between equally good changes, choose the smaller.
-   Argue the change correct before you prototype it; a few sentences do for
-   a small change. State what the changed code must guarantee for the result
-   to be right, and show that every input the change newly lets through, and
-   every path it adds or skips, keeps each guarantee. A guard protects all
-   the code after it, not only the case it was written for: before relaxing
-   one, find what each later step assumes about the inputs it kept out.
+   Argue the change correct; a few sentences do for a small change. State
+   what the changed code must guarantee for the result to be right, and show
+   that every input the change newly lets through, and every path it adds or
+   skips, keeps each guarantee. A guard protects all the code after it, not
+   only the case it was written for: before relaxing one, find what each
+   later step assumes about the inputs it kept out.
    Before adding an early return, list what the code it skips ensured.
    Where the change can't tell which way an input goes, as with an unknown
-   type, it takes the safe side. Probes and prototypes test the argument;
-   they don't replace it, and a variant chosen because it fails fewer probes
-   has no argument. If no change within the item can be argued correct,
-   decide BLOCK and say what a sound fix would take.
+   type, it takes the safe side. Don't pick between variants by trying them:
+   probes show how the current code behaves, and the design follows from the
+   argument. If no change within the item can be argued correct, decide
+   BLOCK and say what a sound fix would take. Before you reply, attack the
+   design as the check will: an input it newly lets through, a path it
+   skips, a test it would fail, a query it rejects, a decision it breaks.
+   Fix what you find; each flaw the check finds instead costs a revision.
 7. For BUILD and FIX: write the test plan. Go through the 14 dimensions of
    CLAUDE.md "What exhaustive means". For each that applies, list the tests:
    name, input -> expected result, and where the expected result comes from
@@ -403,15 +447,15 @@ new plan where they still apply: <ADD lines, or none>.]
    a bug is security-sensitive and [crash] when hostile input can crash or
    hang the server through it.
 
-Write <state>/<ID>/analysis.md, starting with the verbatim item; include the
-argument that the change is correct, the alternatives you rejected and why,
-and the test plan as a table: dimension, applies, tests or reason. Reply with
-only these lines:
-DECISION: BUILD | FIX | SKIP | ASK | BLOCK
+analysis.md starts with the verbatim item and holds the argument that the
+change is correct, the alternatives you rejected and why, and the test plan
+as a table: dimension, applies, tests or reason. Reply with only these
+lines:
+DECISION: BUILD | FIX | SKIP | ASK | BLOCK | SPLIT
 PROBLEM: <one line>
 IMPACT: <one line>
 EFFECT: <the PR body bullet; the JMH benchmark to report, if any> | none
-CHANGE: <one line, naming the files> | REASON: <one line, for SKIP or BLOCK> | QUESTIONS: <for ASK, one line each>
+CHANGE: <one line, naming the files> | REASON: <one line, for SKIP or BLOCK> | QUESTIONS: <for ASK, one line each> | ITEMS: <for SPLIT, one line per sub-item: its root cause and the tests or symptoms it covers>
 WHY: <one line: why this change beats the alternatives>
 TESTS: <one line: the dimensions covered and the ones not applicable>
 OTHER: none | one line per bug: PR, PR <item ID> or PRE-EXISTING [security] [crash], file:line, problem, issue body path (PRE-EXISTING only)
@@ -426,8 +470,9 @@ didn't write them. Don't edit anything.
 Read <state>/<ID>/analysis.md: the item, the proposed change and the
 argument that it is correct, the rejected alternatives, what else uses the
 code it changes, and the test plan. Items of this run so far: <one line per
-item: ID, commits, summary; or none>. Then read the code and try to break
-the proposal:
+item: ID, commits, summary; or none>. The user's design decisions are in
+<state>/decisions.md: don't object to a choice they make. Then read the
+code and try to break the proposal:
 - Does the argument hold? Find an input the change newly lets through, or
   a path it adds or skips, that breaks a guarantee the result depends on,
   whether or not the argument names it.
@@ -442,6 +487,9 @@ the proposal:
   after close?
 - Does it reimplement something the codebase already has?
 - Is a rejected or overlooked alternative better?
+- Does it reject a query that PostgreSQL or DuckDB answer, instead of
+  returning its right rows? An existing rejection of similar queries is no
+  precedent.
 - Does it change more than the item needs, such as fixing a separate
   pre-existing bug the item can do without?
 Then hold the test plan to CLAUDE.md "Testing":
@@ -461,8 +509,9 @@ or its tests. Label each problem:
 - REDESIGN: built as planned, the change would be wrong for this item: it
   breaks what works today, leaves the item's problem reachable, patches the
   symptom, adds avoidable hot-path cost or a race, reimplements existing
-  code, changes more than the item needs, or is clearly worse than an
-  alternative. Show how.
+  code, changes more than the item needs, rejects a query PostgreSQL or
+  DuckDB answer instead of returning its rows, breaks a user's decision in
+  decisions.md, or is clearly worse than an alternative. Show how.
 - ADD: a gap in the test plan that the planned change would pass: a missing
   test, a dimension skipped for a wrong reason, or an expected result
   without an independent source. Name the dimension, the case, input ->
