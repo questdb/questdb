@@ -90,6 +90,13 @@ public class SqlUtil {
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
     private static final FiberLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<Long256ConstantFactory> LONG256_FACTORY = new FiberLocal<>(Long256ConstantFactory::new);
+    // Representations of 2^31 and 2^63 used as exclusive upper bounds for INT and LONG casts.
+    // Converting Integer.MAX_VALUE (2147483647) to float rounds up to 2^31 (2147483648.0f),
+    // and Long.MAX_VALUE (9223372036854775807L) to float/double rounds up to 2^63.
+    // Using '<' prevents out-of-range floats/doubles from erroneously clamping to MAX_VALUE.
+    private static final float INT_MAX_EXCLUSIVE_FLOAT = 2147483648.0f;
+    private static final float LONG_MAX_EXCLUSIVE_FLOAT = 9223372036854775808.0f;
+    private static final double LONG_MAX_EXCLUSIVE_DOUBLE = 9223372036854775808.0;
 
     public static boolean containsWithin(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
         stack.clear();
@@ -1206,10 +1213,13 @@ public class SqlUtil {
         return implicitCastAsInt((long) value, ColumnType.LONG);
     }
 
+    // Double representation of 2^63 (exclusive upper bound for LONG).
+    // Long.MAX_VALUE (9223372036854775807L) converted to double rounds up to 2^63 (9223372036854775808.0).
+    // Using '<' against 2^63 ensures boundary values just above LONG range fail with inconvertibleValue.
     @SuppressWarnings("unused")
     // used by the row copier
     public static long implicitCastDoubleAsLong(double value) {
-        if (value > Long.MIN_VALUE && value <= Long.MAX_VALUE) {
+        if (value > Long.MIN_VALUE && value < LONG_MAX_EXCLUSIVE_DOUBLE) {
             return (long) value;
         }
 
@@ -1253,10 +1263,13 @@ public class SqlUtil {
         return value;
     }
 
+    // Float representation of 2^31 (exclusive upper bound for INT).
+    // Integer.MAX_VALUE (2147483647) converted to float rounds up to 2^31 (2147483648.0f).
+    // Using '<' against 2^31 ensures boundary values just above INT range fail with inconvertibleValue.
     @SuppressWarnings("unused")
     // used by the row copier
     public static int implicitCastFloatAsInt(float value) {
-        if (value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
+        if (value > Integer.MIN_VALUE && value < INT_MAX_EXCLUSIVE_FLOAT) {
             return (int) value;
         }
 
@@ -1267,10 +1280,13 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.INT);
     }
 
+    // Float representation of 2^63 (exclusive upper bound for LONG).
+    // Long.MAX_VALUE (9223372036854775807L) converted to float rounds up to 2^63 (9223372036854775808.0f).
+    // Using '<' against 2^63 ensures boundary values just above LONG range fail with inconvertibleValue.
     @SuppressWarnings("unused")
     // used by the row copier
     public static long implicitCastFloatAsLong(float value) {
-        if (value > Long.MIN_VALUE && value <= Long.MAX_VALUE) {
+        if (value > Long.MIN_VALUE && value < LONG_MAX_EXCLUSIVE_FLOAT) {
             return (long) value;
         }
 
