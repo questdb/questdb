@@ -82,9 +82,20 @@ public class WalTxnDetails implements QuietCloseable {
     private final LongList transactionMeta = new LongList();
     private final WalEventReader walEventReader;
     WalTxnDetailsSlice txnSlice = new WalTxnDetailsSlice();
+    // Row count of one WAL apply block when cairo.wal.apply.block.size is set, 0 otherwise.
+    // The look-ahead loads at least this many rows - past the deadline only from the txns visible
+    // when the read started - and sizes lookaheadTxnCount to this many rows.
+    private long blockLookaheadRows;
     private long currentSymbolIndexesStartOffset = 0;
     private long currentSymbolStringMemStartOffset = 0;
     private long invalidSymbolDiffSeqTxn = Long.MAX_VALUE;
+    // Whether the last calculateInsertTransactionBlock() call stopped at the row limit, i.e. more
+    // transactions were loaded and a bigger limit would have made the block bigger.
+    private boolean isLastBlockCutByRowLimit;
+    // How many txns to load in the first batch of a look-ahead read, and how few loaded txns left over
+    // make the apply job read more. Starts from cairo.wal.apply.look.ahead.txn.count; with
+    // cairo.wal.apply.block.size set, every read re-sizes it to one block's worth of txns.
+    private int lookaheadTxnCount;
     private long startSeqTxn = 0;
     // Stores all symbol metadata for the stored transactions.
     // The format is 4 int header / SYMBOL_MAP_RECORD_HEADER_INTS
@@ -110,6 +121,7 @@ public class WalTxnDetails implements QuietCloseable {
         this.config = configuration;
         this.clock = configuration.getMicrosecondClock();
         this.maxLookaheadRows = maxLookaheadRows;
+        this.lookaheadTxnCount = configuration.getWalApplyLookAheadTransactionCount();
     }
 
     public static byte dedupModeOf(long walTxnTypeAndFlags) {
@@ -266,10 +278,31 @@ public class WalTxnDetails implements QuietCloseable {
      * @return the number of transactions to apply in one go, e.g. the block size
      */
     public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount, long inOrderMinTimestamp) {
+        return calculateInsertTransactionBlock(seqTxn, pressureControl, maxBlockRecordCount, inOrderMinTimestamp, null);
+    }
+
+    /**
+     * Same as {@link #calculateInsertTransactionBlock(long, TableWriterPressureControl, long, long)}, and also ends the
+     * block before the first transaction that {@code budget} rejects.
+     */
+    public int calculateInsertTransactionBlock(
+            long seqTxn,
+            TableWriterPressureControl pressureControl,
+            long maxBlockRecordCount,
+            long inOrderMinTimestamp,
+            @Nullable WalBlockBudget budget
+    ) {
         int blockSize = 1;
+        isLastBlockCutByRowLimit = false;
         long lastSeqTxn = getLastSeqTxn();
         long totalRowCount = getSegmentRowHi(seqTxn) - getSegmentRowLo(seqTxn);
+        // Pressure control can cap the block below the configured row limit. A block that cap ends is not cut
+        // by the row limit, so it must not report one: TableWriter grows the limit after such blocks.
+        final long rowLimit = maxBlockRecordCount;
         maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBlockRowCount() - 1);
+        if (budget != null) {
+            budget.begin(getMinTimestamp(seqTxn), getMaxTimestamp(seqTxn), totalRowCount);
+        }
 
         long lastWalSegment = getWalSegment(seqTxn);
         boolean allInOrder = getMinTimestamp(seqTxn) >= inOrderMinTimestamp && getTxnInOrder(seqTxn);
@@ -298,6 +331,11 @@ public class WalTxnDetails implements QuietCloseable {
 
                 if (totalRowCount > maxBlockRecordCount) {
                     // Block is too big, commit what we have so far
+                    isLastBlockCutByRowLimit = totalRowCount > rowLimit;
+                    break;
+                }
+                if (budget != null && !budget.tryAdd(getMinTimestamp(nextTxn), getMaxTimestamp(nextTxn), getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn))) {
+                    // The block with this transaction would not fit its memory budget
                     break;
                 }
                 if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT) {
@@ -325,8 +363,19 @@ public class WalTxnDetails implements QuietCloseable {
             }
         }
 
-        // to force switch to 1 by 1 txn commit, uncomment the following line
-        // return 1;
+        // A test that wants a later transaction to MERGE into what an earlier one already put on disk
+        // has to stop the two being folded into one commit, which would sort them together into a
+        // partition that commit creates. Unlimited unless debug.wal.apply.max.txn.block.size says
+        // otherwise; the row count has to shrink with the block or pressure control mis-sizes the next.
+        final int maxBlockSize = config.getDebugWalApplyMaxTxnBlockSize();
+        if (blockSize > maxBlockSize) {
+            long trimmedRowCount = 0;
+            for (long txn = seqTxn, n = seqTxn + maxBlockSize; txn < n; txn++) {
+                trimmedRowCount += getSegmentRowHi(txn) - getSegmentRowLo(txn);
+            }
+            blockSize = maxBlockSize;
+            totalRowCount = trimmedRowCount;
+        }
         pressureControl.updateInflightTxnBlockLength(blockSize, totalRowCount);
         return blockSize;
     }
@@ -366,6 +415,10 @@ public class WalTxnDetails implements QuietCloseable {
 
     public long getLastSeqTxn() {
         return startSeqTxn + transactionMeta.size() / TXN_METADATA_LONGS_SIZE - 1;
+    }
+
+    public int getLookaheadTxnCount() {
+        return lookaheadTxnCount;
     }
 
     public long getMatViewPeriodHi(long seqTxn) {
@@ -437,6 +490,10 @@ public class WalTxnDetails implements QuietCloseable {
 
     public long getWalTxnTypeAndFlags(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE));
+    }
+
+    public boolean isLastBlockCutByRowLimit() {
+        return isLastBlockCutByRowLimit;
     }
 
     public boolean isLastSegmentUsage(long seqTxn) {
@@ -563,7 +620,10 @@ public class WalTxnDetails implements QuietCloseable {
             totalRowsLoadedToApply = 0;
         }
 
-        int maxLookaheadTxn = config.getWalApplyLookAheadTransactionCount();
+        // The cursor auto-extends on hasNext(), so loading "until there is a block" could chase a WAL
+        // that keeps growing by a few rows. Only the transactions visible now may be loaded past the deadline.
+        final long visibleMaxTxn = transactionLogCursor.getMaxTxn();
+        int maxLookaheadTxn = lookaheadTxnCount;
         int txnLoadCount = maxLookaheadTxn;
         long rowsToLoad;
 
@@ -576,18 +636,21 @@ public class WalTxnDetails implements QuietCloseable {
             totalRowsLoadedToApply += rowsLoaded;
             loadFromSeqTxn = getLastSeqTxn() + 1;
 
-            rowsToLoad = maxLookaheadRows - totalRowsLoadedToApply;
+            rowsToLoad = Math.max(maxLookaheadRows, blockLookaheadRows) - totalRowsLoadedToApply;
             if (totalRowsLoadedToApply > 0 && rowsToLoad > 0) {
-                // Estimate how many transactions to load to reach maxLookaheadRows
+                // Estimate how many transactions to load to reach the look-ahead row target
                 long loadedTxn = transactionMeta.size() / TXN_METADATA_LONGS_SIZE;
-                txnLoadCount = (int) Math.max(
-                        rowsToLoad * loadedTxn / totalRowsLoadedToApply,
-                        maxLookaheadTxn
+                // Clamped: many zero-row txns (ALTER, SQL) per loaded row can push the estimate past int range,
+                // and a wrapped negative count would load nothing while the loop keeps going past the deadline
+                txnLoadCount = (int) Math.min(
+                        Integer.MAX_VALUE,
+                        Math.max(rowsToLoad * loadedTxn / totalRowsLoadedToApply, maxLookaheadTxn)
                 );
             }
         } while (rowsToLoad > 0
                 && getLastSeqTxn() < transactionLogCursor.getMaxTxn()
-                && clock.getTicks() < deadlineMicros);
+                && (clock.getTicks() < deadlineMicros
+                || (totalRowsLoadedToApply < blockLookaheadRows && getLastSeqTxn() < visibleMaxTxn)));
 
         long lastSeqTxn = getLastSeqTxn();
         if (invalidSymbolDiffSeqTxn <= lastSeqTxn) {
@@ -601,6 +664,8 @@ public class WalTxnDetails implements QuietCloseable {
             totalRowsLoadedToApply -= trimmedRows;
             transactionMeta.setPos((int) ((invalidSymbolDiffSeqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE));
         }
+
+        updateLookaheadTxnCount();
 
         if (transactionMeta.size() == initialSize) {
             // No transactions loaded, no need to do anything
@@ -634,6 +699,14 @@ public class WalTxnDetails implements QuietCloseable {
                 transactionMeta.set(i + COMMIT_TO_TIMESTAMP_OFFSET, Long.MIN_VALUE);
             }
         }
+    }
+
+    /**
+     * Sets the row count of one WAL apply block, see {@code cairo.wal.apply.block.size}. The look-ahead
+     * then loads at least this many rows and sizes its txn count to them. 0 disables both.
+     */
+    public void setBlockLookaheadRows(long blockLookaheadRows) {
+        this.blockLookaheadRows = blockLookaheadRows;
     }
 
     public void setIncrementRowsCommitted(long rowsCommitted) {
@@ -908,6 +981,20 @@ public class WalTxnDetails implements QuietCloseable {
                 .put(", walId=").put(getWalId(invalidSymbolDiffSeqTxn))
                 .put(", segmentId=").put(getSegmentId(invalidSymbolDiffSeqTxn))
                 .put(']');
+    }
+
+    /**
+     * With {@code cairo.wal.apply.block.size} set, sizes the look-ahead txn count to one block: block rows
+     * (block size / record size) over the average rows per txn of the loaded, not yet applied txns, rounded
+     * up. Keeps the previous count when nothing with rows is loaded.
+     */
+    private void updateLookaheadTxnCount() {
+        final long loadedTxnCount = transactionMeta.size() / TXN_METADATA_LONGS_SIZE;
+        if (blockLookaheadRows > 0 && loadedTxnCount > 0 && totalRowsLoadedToApply > 0) {
+            final double txnsPerBlock = Math.ceil((double) blockLookaheadRows * loadedTxnCount / totalRowsLoadedToApply);
+            // At least 1: the ceiling of a positive ratio
+            lookaheadTxnCount = (int) Math.min(txnsPerBlock, Integer.MAX_VALUE);
+        }
     }
 
     private class SymbolMapDiffCursorImpl implements SymbolMapDiffCursor {

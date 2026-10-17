@@ -89,6 +89,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         includePrevailing = rnd.nextBoolean();
         leftConvertParquet = rnd.nextBoolean();
         rightConvertParquet = rnd.nextBoolean();
+        enableCompositePartitionRandomisation(rnd);
     }
 
     @Test
@@ -2856,6 +2857,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n")
                     .timestamp("ts")
+                    // price is NULL before the ADD COLUMN top and >= 400 after it, so the master
+                    // filter matches no row: there is no frame to reduce and so nothing that could
+                    // consult the circuit breaker.
+                    .noCircuitBreakerCheck()
                     .returns(sink);
 
             if (!includePrevailing) {
@@ -2908,6 +2913,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n")
                     .timestamp("ts")
+                    // Same zero-row master filter as above.
+                    .noCircuitBreakerCheck()
                     .returns(sink);
         });
     }
@@ -6395,6 +6402,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: prices\n")
                     .timestamp("ts")
                     .noRandomAccess()
+                    // Same zero-row master filter as the two assertions above.
+                    .noCircuitBreakerCheck()
                     .returns(sink);
         });
     }
@@ -6940,7 +6949,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, "true");
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
                         // Create fx_trades-like table
@@ -6996,9 +7005,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             TestUtils.drainCursor(cursor);
                         }
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -7151,7 +7158,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 2_000_000_000L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         // v is LONG256, whose first/last are thread-unsafe, so the planner builds
@@ -7256,9 +7263,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 }
                             }
                         }
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }

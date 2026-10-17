@@ -338,9 +338,9 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void dropTempTable(CopyExportContext.ExportTaskEntry entry, TableToken tableToken) {
+        protected void dropTempTable(CopyExportContext.ExportTaskEntry entry, CharSequence tempTableName, TableToken tableToken) {
             dropCount++;
-            super.dropTempTable(entry, tableToken);
+            super.dropTempTable(entry, tempTableName, tableToken);
         }
     }
 
