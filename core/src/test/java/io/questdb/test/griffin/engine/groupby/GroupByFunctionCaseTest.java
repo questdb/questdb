@@ -215,7 +215,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                                       keys: [candle_st,venue]
                                       keyFunctions: [timestamp_floor_utc('1h',trade_timestamp)]
                                       values: [count(*),sum(qty*price),sum(qty)]
-                                      filter: (instrument_key ~ ETH.USD.S..*? [state-shared] and venue in [CBS,FUS,LMX,BTS])
+                                      filter: (instrument_key ~ ETH.USD.S..*? [case-sensitive] [state-shared] and venue in [CBS,FUS,LMX,BTS])
                                         PageFrame
                                             Row forward scan
                                             Interval forward scan on: spot_trades
