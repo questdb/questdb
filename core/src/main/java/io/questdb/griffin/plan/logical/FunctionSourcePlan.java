@@ -40,6 +40,8 @@ public final class FunctionSourcePlan extends LogicalPlan {
     private boolean isPageFrameSupported;
     private boolean isProjectable;
     private boolean isRandomAccess;
+    private String nonDeterministicCallName;
+    private int nonDeterministicCallPosition = -1;
     private CharSequence recordName;
     private PhysicalProperties.ScanDirection scanDirection = PhysicalProperties.ScanDirection.UNKNOWN;
 
@@ -54,6 +56,8 @@ public final class FunctionSourcePlan extends LogicalPlan {
         isPageFrameSupported = false;
         isProjectable = false;
         isRandomAccess = false;
+        nonDeterministicCallName = null;
+        nonDeterministicCallPosition = -1;
         recordName = null;
         scanDirection = PhysicalProperties.ScanDirection.UNKNOWN;
     }
@@ -66,6 +70,21 @@ public final class FunctionSourcePlan extends LogicalPlan {
         isPageFrameSupported = source.isPageFrameSupported;
         isRandomAccess = source.isRandomAccess;
         scanDirection = source.scanDirection;
+    }
+
+    /**
+     * The name of the first non-deterministic function the call of the source created as its argument for a context
+     * that refuses them, or null.
+     */
+    public String getNonDeterministicCallName() {
+        return nonDeterministicCallName;
+    }
+
+    /**
+     * The position of the function {@link #getNonDeterministicCallName()} names, or -1.
+     */
+    public int getNonDeterministicCallPosition() {
+        return nonDeterministicCallPosition;
     }
 
     /**
@@ -158,6 +177,11 @@ public final class FunctionSourcePlan extends LogicalPlan {
 
     public void setExternalDataSource(boolean hasExternalDataSource) {
         this.hasExternalDataSource = hasExternalDataSource;
+    }
+
+    public void setNonDeterministicCall(String name, int position) {
+        nonDeterministicCallName = name;
+        nonDeterministicCallPosition = position;
     }
 
     /**

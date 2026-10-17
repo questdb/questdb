@@ -3786,14 +3786,13 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testRndDoubleArrayReleasesSubqueryArguments() throws Exception {
-        assertMemoryLeak(() -> assertQuery("""
+        assertQuery("""
                 SELECT dim_length(rnd_double_array(1, CASE WHEN NOT (SELECT max(x) > 2 FROM long_sequence(3)) THEN 1 ELSE 2 END, 0, 2), 1) len
                 FROM long_sequence(1)
                 """)
-                .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("len\n2\n"));
+                .returns("len\n2\n");
     }
 
     @Test

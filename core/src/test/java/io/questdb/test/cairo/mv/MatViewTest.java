@@ -3061,6 +3061,52 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNonDeterministicTableFunctionArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonDeterministicFunctionBase();
+            final String viewSql = "SELECT * FROM generate_series(now(), now(), 1)";
+            execute("CREATE VIEW gv AS (" + viewSql + ")");
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN generate_series(now(), now(), 1) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(t.x) m FROM t CROSS JOIN generate_series(now(), now(), 1) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN generate_series(now_ns(), now_ns(), 1) g SAMPLE BY 1h",
+                    "now_ns()",
+                    "now_ns"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, sum(g.x) s FROM t CROSS JOIN long_sequence(now()::LONG % 2 + 1) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN (SELECT generate_series FROM generate_series(now(), now(), 1)) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT ts, max(x) m FROM t WHERE x < (SELECT count() FROM generate_series(now(), now(), 1)) SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertQuery("CREATE MATERIALIZED VIEW mv AS (SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN gv g SAMPLE BY 1h) PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails("CREATE MATERIALIZED VIEW mv AS (".length() + viewSql.lastIndexOf("now()"), "non-deterministic function cannot be used in materialized view: now");
+
+            execute("CREATE MATERIALIZED VIEW mv_pruned AS (SELECT t.ts, max(t.x) m FROM t CROSS JOIN (SELECT now() n FROM long_sequence(1)) g SAMPLE BY 1d) PARTITION BY DAY");
+            drainQueues();
+            assertNonDeterministicFunctionPrunedRows("mv_pruned");
+        });
+    }
+
+    @Test
     public void testDedupKeysNoRowsRangeReplace() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -8512,6 +8558,28 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNotKeyed1dOffsetInsideDstWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"Europe/Berlin", "02:30", "2026-03-27T12:00:00.000000Z"},
+                    {"Europe/Berlin", "02:30", "2026-10-23T12:00:00.000000Z"},
+                    {"Europe/Berlin", "02:00", "2026-10-23T12:00:00.000000Z"},
+                    {"America/New_York", "01:30", "2026-10-30T18:00:00.000000Z"},
+                    {"America/New_York", "02:30", "2026-03-06T18:00:00.000000Z"},
+                    {"Australia/Sydney", "02:30", "2026-04-03T06:00:00.000000Z"},
+                    {"Australia/Sydney", "02:30", "2026-10-02T06:00:00.000000Z"}
+            };
+            for (String[] c : cases) {
+                final String viewQuery = "select k, count() c from x SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE '" + c[0] + "' WITH OFFSET '" + c[1] + "'";
+                assertMatViewMatchesSampleBy(viewQuery, c[2], 1_800_000_000L, 200, 5);
+                execute("DROP MATERIALIZED VIEW x_view");
+                execute("DROP TABLE x");
+                execute("DROP TABLE tmp");
+            }
+        });
+    }
+
+    @Test
     public void testSampleByNotKeyed1MNegativeOffsetBerlin() throws Exception {
         assertMemoryLeak(() -> {
             final String viewQuery = "select k, count() c from x SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-01:00'";
@@ -10408,6 +10476,13 @@ public class MatViewTest extends AbstractCairoTest {
                         2024-01-01T00:00:00.000000Z\t5
                         2024-01-02T00:00:00.000000Z\t3
                         """));
+    }
+
+    private void assertNonDeterministicTableFunctionArgument(String select, String offender, String offenderName) throws Exception {
+        final String prefix = "CREATE MATERIALIZED VIEW mv AS (";
+        assertQuery(prefix + select + ") PARTITION BY DAY")
+                .noLeakCheck()
+                .fails(prefix.length() + select.lastIndexOf(offender), "non-deterministic function cannot be used in materialized view: " + offenderName);
     }
 
     private String copySql(int from, int count) {

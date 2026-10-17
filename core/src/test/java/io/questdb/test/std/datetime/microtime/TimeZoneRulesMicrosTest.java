@@ -39,6 +39,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.zone.ZoneOffsetTransition;
+import java.time.zone.ZoneRules;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -48,6 +50,26 @@ import java.util.Set;
 
 public class TimeZoneRulesMicrosTest {
     private static final Log LOG = LogFactory.getLog(TimeZoneRulesMicrosTest.class);
+
+    private static void assertFirstInstant(String zone, ZoneRules zoneRules, TimeZoneRulesMicros rules, long local) {
+        final LocalDateTime ldt = LocalDateTime.ofEpochSecond(Math.floorDiv(local, Micros.SECOND_MICROS), (int) Math.floorMod(local, Micros.SECOND_MICROS) * 1000, ZoneOffset.UTC);
+        final List<ZoneOffset> offsets = zoneRules.getValidOffsets(ldt);
+        final long expected = offsets.isEmpty()
+                ? zoneRules.getTransition(ldt).getInstant().getEpochSecond() * Micros.SECOND_MICROS
+                : local - Math.max(offsets.get(0).getTotalSeconds(), offsets.get(offsets.size() - 1).getTotalSeconds()) * Micros.SECOND_MICROS;
+        Assert.assertEquals(zone + " " + ldt, expected, rules.getFirstInstantAtOrAfter(local));
+    }
+
+    private static void assertHighWater(String zone, ZoneRules zoneRules, TimeZoneRulesMicros rules, long utc) {
+        final Instant instant = Instant.ofEpochSecond(Math.floorDiv(utc, Micros.SECOND_MICROS), Math.floorMod(utc, Micros.SECOND_MICROS) * 1000);
+        long expected = utc + zoneRules.getOffset(instant).getTotalSeconds() * Micros.SECOND_MICROS;
+        final ZoneOffsetTransition previous = zoneRules.previousTransition(instant.plusNanos(1));
+        if (previous != null && previous.isOverlap()) {
+            final long localBefore = previous.getDateTimeBefore().toEpochSecond(ZoneOffset.UTC) * Micros.SECOND_MICROS;
+            expected = Math.max(expected, localBefore - 1);
+        }
+        Assert.assertEquals(zone + " " + instant, expected, rules.getWallClockHighWater(utc));
+    }
 
     @Test
     public void testCompatibility() {
@@ -122,6 +144,36 @@ public class TimeZoneRulesMicrosTest {
         Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-10-26T01:01:00.000Z")));
         Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-10-26T02:01:00.000Z")));
         Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-10-26T03:01:00.000Z")));
+    }
+
+    @Test
+    public void testFirstInstantAndWallClockHighWaterAroundTransitions() {
+        final String[] zones = {
+                "Europe/Berlin", "America/New_York", "Australia/Sydney", "Australia/Lord_Howe", "Europe/Dublin",
+                "America/Havana", "Pacific/Apia", "America/Sao_Paulo", "Asia/Tehran", "UTC"
+        };
+        final long minute = Micros.MINUTE_MICROS;
+        for (String id : zones) {
+            final ZoneRules zoneRules = ZoneId.of(id).getRules();
+            final TimeZoneRulesMicros rules = new TimeZoneRulesMicros(zoneRules);
+            ZoneOffsetTransition tr = zoneRules.nextTransition(Instant.parse("1970-01-01T00:00:00Z"));
+            while (tr != null && tr.getInstant().isBefore(Instant.parse("2045-01-01T00:00:00Z"))) {
+                final long transition = tr.getInstant().getEpochSecond() * Micros.SECOND_MICROS;
+                final long localBefore = tr.getDateTimeBefore().toEpochSecond(ZoneOffset.UTC) * Micros.SECOND_MICROS;
+                final long localAfter = tr.getDateTimeAfter().toEpochSecond(ZoneOffset.UTC) * Micros.SECOND_MICROS;
+                for (long d = -26 * 60; d <= 26 * 60; d += 7) {
+                    assertHighWater(id, zoneRules, rules, transition + d * minute);
+                    assertFirstInstant(id, zoneRules, rules, localBefore + d * minute);
+                }
+                for (long edge : new long[]{transition - 1, transition, transition + 1, transition + localBefore - localAfter - 1, transition + localBefore - localAfter}) {
+                    assertHighWater(id, zoneRules, rules, edge);
+                }
+                for (long edge : new long[]{localBefore - 1, localBefore, localBefore + 1, localAfter - 1, localAfter, localAfter + 1}) {
+                    assertFirstInstant(id, zoneRules, rules, edge);
+                }
+                tr = zoneRules.nextTransition(tr.getInstant());
+            }
+        }
     }
 
     @Test

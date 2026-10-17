@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
@@ -32,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.Numbers;
 
 /**
@@ -234,7 +236,13 @@ public final class ScalarSubQueryUtils {
                 final float value = record.getFloat(0);
                 yield Float.isNaN(value) ? Numbers.LONG_NULL : (long) value;
             }
-            default -> readLongValue(record, ColumnType.tagOf(columnType));
+            case ColumnType.CHAR -> {
+                final char value = record.getChar(0);
+                yield value == 0 ? Numbers.LONG_NULL : SqlUtil.implicitCastCharAsType(value, driver.getTimestampType());
+            }
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> readLongValue(record, ColumnType.tagOf(columnType));
+            case ColumnType.NULL -> Numbers.LONG_NULL;
+            default -> throw CairoException.critical(0).put("unsupported scalar sub-query bound type: ").put(ColumnType.nameOf(columnType));
         };
     }
 }

@@ -30,44 +30,23 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Wraps a calendar-based {@link TimestampSampler} (day, week, month, year) so its
- * bucket grid follows local-time rules of a given {@link TimeZoneRules}. Each
- * UTC timestamp is converted to local time via {@link CommonUtils#getFloorUtcTzOffset},
- * the wrapped sampler advances or floors in local space, and the result is
- * converted back via {@link CommonUtils#offsetFlooredUtcResult}. Because both
- * helpers are the ones {@code timestamp_floor_utc} uses, the sampler's grid
- * matches the GROUP BY bucket keys produced by the inner aggregation, so the
- * fast-path fill cursor's grid-drift guard never trips on DST transitions
- * (Europe/Berlin "1d" spans 23 h on spring-forward and 25 h on fall-back).
- * <p>
- * The wrapped sampler is invoked exclusively in local time; this class never
- * mutates its state directly. Sub-day strides do not need this wrapping
- * because {@link CommonUtils#getFloorUtcTzOffset} returns the standard
- * (non-DST) offset for them and the standing fast-path FROM/TO wrap already
- * pre-shifts the anchor via {@code to_utc(FROM, tz)}, leaving bucket widths
- * uniform in UTC.
+ * Wraps a calendar-based {@link TimestampSampler} (day, week, month, year) so that it steps over
+ * the bucket grid {@code timestamp_floor_utc} floors to under a time zone: the wrapped sampler
+ * works on local grid lines, and {@link CommonUtils#floorUtcToLocal} and
+ * {@link CommonUtils#floorLocalToUtc} convert between UTC and that grid.
  * <p>
  * Anchor methods follow three input conventions:
  * <ul>
- *     <li>{@link #setStart(long)} takes a UTC instant; the wrap converts to
- *     local before forwarding. Used when the caller holds a GROUP BY bucket
- *     label (already on the local grid in UTC space).</li>
- *     <li>{@link #setOffset(long)} takes a local-time offset; forwarded as-is
- *     to the wrapped sampler.</li>
- *     <li>{@link #setLocalAnchor(long)} takes a value already in local-grid
- *     space (e.g. {@code from + offset} as treated by
- *     {@code timestamp_floor_utc}); forwarded directly without conversion.</li>
+ *     <li>{@link #setStart(long)} takes a UTC instant and anchors at its local reading.</li>
+ *     <li>{@link #setOffset(long)} takes a local-time offset, forwarded as-is.</li>
+ *     <li>{@link #setLocalAnchor(long)} takes a local grid line, e.g. {@code from + offset} as
+ *     {@code timestamp_floor_utc} treats it, forwarded as-is.</li>
  * </ul>
  */
 public class TimezoneFloorTimestampSampler implements TimestampSampler {
     private final TimestampSampler localSampler;
     private final char unit;
     private TimeZoneRules tzRules;
-    // nextTimestamp() looks the zone up once per transition: the offset holds from
-    // zoneOffsetLo up to the transition at zoneOffsetHi.
-    private long zoneOffset;
-    private long zoneOffsetHi = Long.MIN_VALUE;
-    private long zoneOffsetLo = Long.MAX_VALUE;
 
     public TimezoneFloorTimestampSampler(TimestampSampler localSampler, TimeZoneRules tzRules, char unit) {
         this.localSampler = localSampler;
@@ -92,48 +71,23 @@ public class TimezoneFloorTimestampSampler implements TimestampSampler {
 
     @Override
     public long localAnchorAsUtc(long localAnchor) {
-        // Convert a local-grid value to its UTC representation, mirroring
-        // CommonUtils.offsetFlooredUtcResult's super-day branch:
-        // resultTzOff = tzRules.getOffset(local - tzOff(local-as-utc)). The
-        // first lookup approximates the UTC instant of the anchor; the second
-        // resolves the actual offset at that UTC. For super-day units this
-        // matches what timestamp_floor_utc emits when the floor lands at
-        // localAnchor.
-        final long approxTzOff = CommonUtils.getFloorUtcTzOffset(tzRules, localAnchor, unit);
-        final long resultTzOff = tzRules.getOffset(localAnchor - approxTzOff);
-        return localAnchor - resultTzOff;
+        return CommonUtils.floorLocalToUtc(tzRules, localAnchor, unit);
     }
 
     @Override
     public long nextTimestamp(long utcTimestamp) {
-        // The floor changes its bucket only where local time reaches the next grid line or at a DST
-        // transition. A transition can keep the bucket, or even return to an earlier one, so walk those
-        // instants until one floors past the given bucket.
-        long instant = utcTimestamp;
+        // Lines in one spring-forward gap share their start, so step over the empty buckets.
+        long line = localSampler.round(CommonUtils.floorUtcToLocal(tzRules, utcTimestamp, unit));
         while (true) {
-            if (instant < zoneOffsetLo || instant >= zoneOffsetHi) {
-                zoneOffset = CommonUtils.getFloorUtcTzOffset(tzRules, instant, unit);
-                zoneOffsetLo = instant;
-                zoneOffsetHi = tzRules.getNextDST(instant);
-            }
-            final long localNext = localSampler.nextTimestamp(localSampler.round(instant + zoneOffset));
-            if (localNext == Long.MAX_VALUE) {
+            final long nextLine = localSampler.nextTimestamp(line);
+            if (nextLine == Long.MAX_VALUE || nextLine <= line) {
                 return Long.MAX_VALUE;
             }
-            final long crossing = localNext - zoneOffset;
-            if (crossing <= instant) {
-                // A wrapped grid that does not advance (a month or year grid with a negative
-                // offset) stalls in the caller, which polls the circuit breaker, not here.
-                return crossing;
+            final long next = CommonUtils.floorLocalToUtc(tzRules, nextLine, unit);
+            if (next > utcTimestamp) {
+                return next;
             }
-            if (crossing < zoneOffsetHi) {
-                return crossing;
-            }
-            instant = zoneOffsetHi;
-            final long bucket = round(instant);
-            if (bucket > utcTimestamp) {
-                return bucket;
-            }
+            line = nextLine;
         }
     }
 
@@ -148,61 +102,45 @@ public class TimezoneFloorTimestampSampler implements TimestampSampler {
 
     @Override
     public long previousTimestamp(long utcTimestamp) {
-        final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, utcTimestamp, unit);
-        final long localPrev = localSampler.previousTimestamp(utcTimestamp + tzOff);
-        return CommonUtils.offsetFlooredUtcResult(localPrev, tzOff, 0, tzRules, unit);
+        long line = localSampler.round(CommonUtils.floorUtcToLocal(tzRules, utcTimestamp, unit));
+        while (true) {
+            final long previousLine = localSampler.previousTimestamp(line);
+            if (previousLine >= line) {
+                return Long.MIN_VALUE;
+            }
+            final long previous = CommonUtils.floorLocalToUtc(tzRules, previousLine, unit);
+            if (previous < utcTimestamp) {
+                return previous;
+            }
+            line = previousLine;
+        }
     }
 
     @Override
     public long round(long utcTimestamp) {
-        final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, utcTimestamp, unit);
-        final long localFloored = localSampler.round(utcTimestamp + tzOff);
-        return CommonUtils.offsetFlooredUtcResult(localFloored, tzOff, 0, tzRules, unit);
+        return CommonUtils.floorLocalToUtc(tzRules, localSampler.round(CommonUtils.floorUtcToLocal(tzRules, utcTimestamp, unit)), unit);
     }
 
     @Override
     public void setLocalAnchor(long localTimestamp) {
-        // Treat the input as already lying on the local-time grid (no
-        // UTC->local conversion). Used by callers that hold a value computed
-        // in the same space {@code timestamp_floor_utc} treats {@code from +
-        // offset}: a raw modulus seed for the local bucket grid, not a UTC
-        // instant.
         localSampler.setStart(localTimestamp);
     }
 
     @Override
     public void setOffset(long offset) {
-        // Forwarded as-is: the wrapped sampler operates entirely in local-time
-        // space (round/nextTimestamp/setStart all hand it values that have
-        // already had tzOff applied), so the offset reaches the local grid
-        // without further translation.
         localSampler.setOffset(offset);
     }
 
     @Override
     public void setStart(long utcTimestamp) {
-        // Input is a UTC instant. Convert to local before forwarding so the
-        // wrapped sampler's grid anchor sits at the local position of that
-        // UTC instant. Used by the no-offset fast path where the cursor hands
-        // in firstTs (a GROUP BY bucket label whose local conversion lands
-        // exactly on a bucket boundary). Callers that already hold a
-        // local-grid value should use {@link #setLocalAnchor(long)}.
-        final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, utcTimestamp, unit);
-        localSampler.setStart(utcTimestamp + tzOff);
+        localSampler.setStart(CommonUtils.floorUtcToLocal(tzRules, utcTimestamp, unit));
     }
 
     /**
-     * Rebinds the timezone rules used by the wrap. Callers must invoke this
-     * before any sampler operation (round/setStart/setOffset/nextTimestamp)
-     * because all of those consult {@code tzRules} for the per-instant local
-     * offset. The cursor calls this from {@code of()} when a runtime-constant
-     * (bind-variable) TIME ZONE may have changed across executions of the
-     * same compiled factory.
+     * Rebinds the time zone; a bind-variable TIME ZONE can change between executions of a cached factory.
      */
     public void setTzRules(@NotNull TimeZoneRules tzRules) {
         this.tzRules = tzRules;
-        zoneOffsetHi = Long.MIN_VALUE;
-        zoneOffsetLo = Long.MAX_VALUE;
     }
 
     @Override

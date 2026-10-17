@@ -980,7 +980,7 @@ final class TemporalJoinBinder {
                 ctx.addProjection(project, output, resolved, column.getAlias() != null ? column.getAlias() : output.getColumnName(resolved),
                         expression.position, true);
             } else {
-                final BoundExpression bound = ctx.functionBinder.bind(expression, output, masterAlias, aggregateSources, aggregateColumns, executionContext);
+                final BoundExpression bound = ctx.functionBinder.bindValue(expression, output, masterAlias, aggregateSources, aggregateColumns, executionContext);
                 ctx.addProjection(project, bound, null, column.getName(), true);
                 scope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
             }

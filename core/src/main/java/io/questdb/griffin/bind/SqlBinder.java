@@ -1318,8 +1318,8 @@ public final class SqlBinder implements Mutable {
             final BoundExpression bound = updateTargetType != ColumnType.UNDEFINED
                     ? ctx.functionBinder.bindUpdateAssignment(expression, scope, alias, updateTargetType, executionContext)
                     : bindScope.cursorNodes.size() > 0
-                      ? ctx.functionBinder.bind(expression, scope, alias, ColumnType.STRING, bindScope.cursorNodes, bindScope.cursorColumns, executionContext)
-                      : ctx.functionBinder.bind(expression, scope, alias, ColumnType.STRING, executionContext);
+                      ? ctx.functionBinder.bindValue(expression, scope, alias, bindScope.cursorNodes, bindScope.cursorColumns, executionContext)
+                      : ctx.functionBinder.bindValue(expression, scope, alias, executionContext);
             ctx.addProjection(project, bound, null, name, true);
             bindScope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
             exposeProjectionReference(referenceScope, project, column.getName(), output);

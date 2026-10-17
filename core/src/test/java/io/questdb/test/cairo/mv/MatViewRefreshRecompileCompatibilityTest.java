@@ -236,6 +236,38 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testRefreshFailsClosedForPersistedNonDeterministicTableFunctionArgument() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-02T00:00:00Z', 1.0)");
+            drainWalQueue();
+
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS ("
+                    + "SELECT base.ts, max(g.generate_series) AS observed FROM base "
+                    + "CROSS JOIN generate_series('2024-01-01'::TIMESTAMP, '2024-01-01'::TIMESTAMP, 1) g SAMPLE BY 1h"
+                    + ") PARTITION BY DAY");
+            drainWalQueue();
+
+            final String legacySql = "SELECT base.ts, max(g.generate_series) AS observed FROM base "
+                    + "CROSS JOIN generate_series(now(), now(), 1) g SAMPLE BY 1h";
+            installPersistedViewSql("mv", legacySql);
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_name\tview_status\tinvalidation_reason\n"
+                            + "mv\tinvalid\t[" + legacySql.lastIndexOf("now()")
+                            + "]: non-deterministic function cannot be used in materialized view: now\n");
+            assertQuery("mv").noLeakCheck().timestamp("ts").expectSize().returns("ts\tobserved\n");
+        });
+    }
+
+    @Test
     public void testRefreshPreservesPersistedCatalogueFunction() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));

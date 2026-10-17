@@ -164,12 +164,12 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     private final FunctionFactoryCache functionFactoryCache;
     private final ObjList<Class<? extends FunctionFactory>> implicitConversions = new ObjList<>();
     private final Long256Impl long256Sink = new Long256Impl();
+    private final ObjList<String> nonDeterministicCallNames = new ObjList<>();
+    private final IntList nonDeterministicCallPositions = new IntList();
     private boolean cursorFunctionInstantiated;
     private FunctionResolver equalityResolver;
     private int executionRequirementPosition = -1;
     private int nonDeterministicCallIndex = -1;
-    private String nonDeterministicCallName;
-    private int nonDeterministicCallPosition = -1;
     private FunctionFactoryDescriptor selectedOverload;
 
     public FunctionResolver(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
@@ -446,7 +446,9 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
      *                      or for the first non-deterministic function binding created before it
      */
     public void checkDeferred(SqlExecutionContext executionContext) throws SqlException {
-        executionRequirements.checkDeferred(nonDeterministicCallIndex, nonDeterministicCallPosition, nonDeterministicCallName, executionContext);
+        final boolean hasCall = nonDeterministicCallIndex > -1;
+        executionRequirements.checkDeferred(nonDeterministicCallIndex, hasCall ? nonDeterministicCallPositions.getQuick(0) : -1,
+                hasCall ? nonDeterministicCallNames.getQuick(0) : null, executionContext);
     }
 
     @Override
@@ -454,8 +456,8 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         executionRequirements.clear();
         executionRequirementPosition = -1;
         nonDeterministicCallIndex = -1;
-        nonDeterministicCallName = null;
-        nonDeterministicCallPosition = -1;
+        nonDeterministicCallNames.clear();
+        nonDeterministicCallPositions.clear();
         cursorFunctionInstantiated = false;
         selectedOverload = null;
         if (equalityResolver != null) {
@@ -580,6 +582,9 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                 } else if (argTypeTag == ColumnType.IPv4 && sigArgTypeTag == ColumnType.STRING) {
                     args.setQuick(k, new CastIPv4ToStrFunctionFactory.Func(arg));
                     implicitConversions.setQuick(k, CastIPv4ToStrFunctionFactory.class);
+                } else if (argTypeTag == ColumnType.IPv4 && sigArgTypeTag == ColumnType.VARCHAR) {
+                    args.setQuick(k, new CastIPv4ToVarcharFunctionFactory.Func(arg));
+                    implicitConversions.setQuick(k, CastIPv4ToVarcharFunctionFactory.class);
                 } else if (argTypeTag == ColumnType.INTERVAL && sigArgTypeTag == ColumnType.STRING) {
                     args.setQuick(k, new CastIntervalToStrFunctionFactory.Func(arg));
                     implicitConversions.setQuick(k, CastIntervalToStrFunctionFactory.class);
@@ -834,10 +839,12 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             throw ex;
         }
         assert declaredType == ColumnType.UNDEFINED || declaredType == function.getType() : "function type differs from the result type its factory declares";
-        if (nonDeterministicCallPosition < 0 && !executionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
-            nonDeterministicCallIndex = executionRequirements.getDeferredCount();
-            nonDeterministicCallName = Chars.toString(name);
-            nonDeterministicCallPosition = position;
+        if (!executionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
+            if (nonDeterministicCallIndex < 0) {
+                nonDeterministicCallIndex = executionRequirements.getDeferredCount();
+            }
+            nonDeterministicCallNames.add(Chars.toString(name));
+            nonDeterministicCallPositions.add(position);
         }
         executionRequirements.add(factory.getExecutionRequirements(), requirementPosition(position));
         if (args != null) {
@@ -958,17 +965,19 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     }
 
     /**
-     * The name of the first non-deterministic function created for a context that refuses them, or null.
+     * The number of non-deterministic functions created for a context that refuses them, in the order they were
+     * created.
      */
-    public String getNonDeterministicCallName() {
-        return nonDeterministicCallName;
+    public int getNonDeterministicCallCount() {
+        return nonDeterministicCallPositions.size();
     }
 
-    /**
-     * The position of the first non-deterministic function created for a context that refuses them, or -1.
-     */
-    public int getNonDeterministicCallPosition() {
-        return nonDeterministicCallPosition;
+    public String getNonDeterministicCallName(int index) {
+        return nonDeterministicCallNames.getQuick(index);
+    }
+
+    public int getNonDeterministicCallPosition(int index) {
+        return nonDeterministicCallPositions.getQuick(index);
     }
 
     /**

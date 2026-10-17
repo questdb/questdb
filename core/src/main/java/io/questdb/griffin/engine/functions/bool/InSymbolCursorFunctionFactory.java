@@ -80,6 +80,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 : ColumnType.NULL;
         if (ColumnType.isNull(zeroColumnType)) {
             if (valueFunction.isNullConstant()) {
+                Misc.freeObjList(args);
                 return BooleanConstant.TRUE;
             }
             final SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);

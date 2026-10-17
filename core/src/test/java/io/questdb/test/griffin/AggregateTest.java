@@ -298,21 +298,25 @@ public class AggregateTest extends AbstractCairoTest {
                     "    and ts < '2023-02-02' " +
                     "order by 1 asc";
 
+            if (enableParallelGroupBy) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlan("Encode sort light\n" +
+                                "  keys: [account_uuid]\n" +
+                                "    GroupBy vectorized: true workers: 1\n" +
+                                "      keys: [account_uuid]\n" +
+                                "      values: [sum(requests)]\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Interval forward scan on: records\n" +
+                                (ColumnType.isTimestampMicro(timestampType) ?
+                                        "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
+                                        : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n"));
+            }
+
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
-                    .withPlan("Encode sort light\n" +
-                            "  keys: [account_uuid]\n" +
-                            "    GroupBy vectorized: false\n" +
-                            "      keys: [account_uuid]\n" +
-                            "      values: [sum(requests)]\n" +
-                            "        SortedSymbolIndex\n" +
-                            "            Index forward scan on: account_uuid\n" +
-                            "              symbolOrder: asc\n" +
-                            "            Interval forward scan on: records\n" +
-                            (ColumnType.isTimestampMicro(timestampType) ?
-                                    "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
-                                    : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n"))
                     .returns("""
                             account_uuid\trequest_count
                             s0\t0

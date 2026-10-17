@@ -473,27 +473,6 @@ final class OrderPlanning implements OptimiserPass {
     }
 
     /**
-     * Re-expresses an order over the aggregate's grouping keys as an order over its input, or returns null when a key
-     * is not a grouping column.
-     */
-    private SortPlan keyOrder(AggregatePlan aggregate, SortPlan order) {
-        if (order == null) {
-            return null;
-        }
-        final SortPlan mapped = sorts.next().of(aggregate.getChild(), order.getPosition());
-        for (int i = 0, n = order.getColumnIds().size(); i < n; i++) {
-            final int index = aggregate.getOutput().getColumnIndexById(order.getColumnIds().getQuick(i));
-            if (index < 0 || index >= aggregate.getGroupingExpressions().size()
-                    || !(aggregate.getGroupingExpressions().getQuick(index) instanceof ColumnExpression column) || !column.isDirectReference()) {
-                return null;
-            }
-            mapped.getColumnIds().add(column.getColumnId());
-            mapped.getDirections().add(order.getDirections().getQuick(i));
-        }
-        return mapped;
-    }
-
-    /**
      * Re-expresses an order over the projection's output as an order over its input, or returns null when a key is
      * computed.
      */
@@ -552,7 +531,7 @@ final class OrderPlanning implements OptimiserPass {
             case DistinctPlan distinct -> requireNothing(distinct.getChild());
             case LimitPlan sortedLimit when LogicalPlans.hasSortUnderStableProjects(sortedLimit.getChild()) ->
                     requireSortedLimit(sortedLimit.getChild(), sortedLimit);
-            case AggregatePlan aggregate -> requireAggregate(aggregate, orderColumnId, direction, order);
+            case AggregatePlan aggregate -> requireAggregate(aggregate, orderColumnId, direction);
             case JoinPlan join -> requireJoin(join, orderColumnId, direction, order, limit, isRowOrderRequired);
             case WindowJoinPlan windowJoin -> requireWindowJoin(windowJoin);
             case SetOperationPlan operation when wasRandomAccessRequired ->
@@ -565,7 +544,11 @@ final class OrderPlanning implements OptimiserPass {
         isSingleGroupInput = wasSingleGroupInput;
     }
 
-    private void requireAggregate(AggregatePlan aggregate, int orderColumnId, SortDirection direction, SortPlan order) {
+    /**
+     * An aggregate never emits its groups in the order of its input, so it requests no order an access path may
+     * deliver.
+     */
+    private void requireAggregate(AggregatePlan aggregate, int orderColumnId, SortDirection direction) {
         if (aggregate.getChild() instanceof HorizonJoinPlan horizon) {
             requireNothing(horizon.getMaster());
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
@@ -581,17 +564,12 @@ final class OrderPlanning implements OptimiserPass {
             inputOrderColumnId = key.getColumnId();
         }
         final LogicalPlan input = LogicalPlans.skipRenames(aggregate.getChild());
-        SortPlan inputOrder = keyOrder(aggregate, order);
-        for (LogicalPlan plan = aggregate.getChild(); plan != input; plan = plan.inputAt(0)) {
-            final ProjectPlan rename = (ProjectPlan) plan;
-            if (inputOrderColumnId >= 0) {
-                inputOrderColumnId = LogicalPlans.projectedSourceColumnId(rename, inputOrderColumnId);
-            }
-            inputOrder = projectedOrder(rename, inputOrder);
+        for (LogicalPlan plan = aggregate.getChild(); plan != input && inputOrderColumnId >= 0; plan = plan.inputAt(0)) {
+            inputOrderColumnId = LogicalPlans.projectedSourceColumnId((ProjectPlan) plan, inputOrderColumnId);
         }
         isSingleGroupInput = aggregate.getGroupingExpressions().size() == 0;
         require(PlanToFactoryRules.aggregateBase(aggregate), inputOrderColumnId,
-                inputOrderColumnId < 0 ? null : direction, inputOrder, null, isInputRowOrderRequired);
+                inputOrderColumnId < 0 ? null : direction, null, null, isInputRowOrderRequired);
     }
 
     /**
@@ -692,7 +670,7 @@ final class OrderPlanning implements OptimiserPass {
             case FilterPlan filter -> {
                 inputOrderColumnId = orderColumnId;
                 inputDirection = direction;
-                inputOrder = order;
+                inputOrder = PlanToFactoryRules.isFusedFilter(filter) || filter.getPredicate() instanceof ConstantExpression ? order : null;
                 inputLimit = filter.getChild() instanceof ScanPlan && limit != null && !isPastFilterCapacity(limit) ? limit : null;
             }
             case ProjectPlan project -> {
@@ -706,8 +684,7 @@ final class OrderPlanning implements OptimiserPass {
                 if (PlanToFactoryRules.hasNativeFilterInput(project)) {
                     inputOrder = projectedOrder(project, order);
                     inputLimit = order == null || inputOrder != null ? limit : null;
-                } else if (project.getChild() instanceof AggregatePlan || project.getChild() instanceof WindowPlan
-                        || PlanToFactoryRules.hasOrderedJoinMasterInput(project)) {
+                } else if (project.getChild() instanceof WindowPlan || PlanToFactoryRules.hasOrderedJoinMasterInput(project)) {
                     inputOrder = projectedOrder(project, order);
                 }
                 if (order == null && LogicalPlans.skipProjects(project.getChild()) instanceof JoinPlan) {

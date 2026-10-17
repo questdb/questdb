@@ -101,7 +101,9 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         public LongSequenceCursorFactory(RecordMetadata metadata, Function countFunc) {
             super(metadata);
             this.countFunc = countFunc;
-            cursor.of(countFunc.getLong(null));
+            if (countFunc.isConstant()) {
+                cursor.of(countFunc.getLong(null));
+            }
         }
 
         @Override

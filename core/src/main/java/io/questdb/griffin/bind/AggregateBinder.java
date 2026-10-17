@@ -316,8 +316,8 @@ final class AggregateBinder implements Mutable {
             bound = ctx.planNodes.columns.next().of(input.getColumnId(index), input.getColumnType(index), expression.position);
         } else {
             bound = scope.cursorNodes.size() > 0
-                    ? ctx.functionBinder.bind(expression, bindingScope, sourceAlias(source), scope.cursorNodes, scope.cursorColumns, context)
-                    : ctx.functionBinder.bind(expression, bindingScope, sourceAlias(source), context);
+                    ? ctx.functionBinder.bindValue(expression, bindingScope, sourceAlias(source), scope.cursorNodes, scope.cursorColumns, context)
+                    : ctx.functionBinder.bindValue(expression, bindingScope, sourceAlias(source), context);
         }
         // Explicit constant keys retain keyed empty-input semantics. Implicit
         // SELECT constants never reach here and remain above the aggregate.
@@ -1656,7 +1656,7 @@ final class AggregateBinder implements Mutable {
         if (scope.substitutionNodes.size() == 1 && scope.substitutionNodes.getQuick(0) == expression) {
             return scope.substitutionColumns.getQuick(0);
         }
-        return ctx.functionBinder.bind(expression, aggregate.getOutput(), null, scope.substitutionNodes, scope.substitutionColumns, context);
+        return ctx.functionBinder.bindValue(expression, aggregate.getOutput(), null, scope.substitutionNodes, scope.substitutionColumns, context);
     }
 
     LogicalPlan bindAggregation(

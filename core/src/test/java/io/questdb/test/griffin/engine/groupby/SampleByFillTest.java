@@ -516,8 +516,8 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillDstFallBackOverSampleByCursor() throws Exception {
-        // Gap rows step from the previous bucket; the cursor's next row, re-rounded in the new UTC
-        // offset after the transition, ends the gap on its own bucket.
+        // A sub-query source buckets and fills on the grid of a table source: sub-day strides step
+        // uniformly in UTC from the zone's standard offset.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE fa (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -533,10 +533,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsum
-                            2024-10-26T19:00:00.000000Z\t1.0
-                            2024-10-26T22:00:00.000000Z\t5.0
-                            2024-10-27T01:00:00.000000Z\t5.0
-                            2024-10-27T04:00:00.000000Z\t5.0
+                            2024-10-26T20:00:00.000000Z\t1.0
+                            2024-10-26T23:00:00.000000Z\t5.0
+                            2024-10-27T02:00:00.000000Z\t5.0
                             2024-10-27T05:00:00.000000Z\t4.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM fa) SAMPLE BY 3h FILL(NONE) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
@@ -545,8 +544,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsum
-                            2024-10-26T19:00:00.000000Z\t1.0
-                            2024-10-26T22:00:00.000000Z\t5.0
+                            2024-10-26T20:00:00.000000Z\t1.0
+                            2024-10-26T23:00:00.000000Z\t5.0
                             2024-10-27T05:00:00.000000Z\t4.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM fa) SAMPLE BY 2h FILL(10) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'")
@@ -555,10 +554,10 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsum
-                            2024-10-26T20:30:00.000000Z\t1.0
-                            2024-10-26T22:30:00.000000Z\t10.0
-                            2024-10-27T00:30:00.000000Z\t5.0
-                            2024-10-27T02:30:00.000000Z\t10.0
+                            2024-10-26T19:30:00.000000Z\t1.0
+                            2024-10-26T21:30:00.000000Z\t10.0
+                            2024-10-26T23:30:00.000000Z\t2.0
+                            2024-10-27T01:30:00.000000Z\t3.0
                             2024-10-27T03:30:00.000000Z\t4.0
                             """);
             assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM fa) SAMPLE BY 2h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
@@ -567,16 +566,14 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsym\tsum
-                            2024-10-26T20:00:00.000000Z\tA\t1.0
-                            2024-10-26T20:00:00.000000Z\tB\tnull
-                            2024-10-26T22:00:00.000000Z\tA\t1.0
-                            2024-10-26T22:00:00.000000Z\tB\tnull
-                            2024-10-27T00:00:00.000000Z\tA\t2.0
-                            2024-10-27T00:00:00.000000Z\tB\t3.0
-                            2024-10-27T02:00:00.000000Z\tA\t2.0
-                            2024-10-27T02:00:00.000000Z\tB\t3.0
-                            2024-10-27T04:00:00.000000Z\tA\t2.0
-                            2024-10-27T04:00:00.000000Z\tB\t3.0
+                            2024-10-26T21:00:00.000000Z\tA\t1.0
+                            2024-10-26T21:00:00.000000Z\tB\tnull
+                            2024-10-26T23:00:00.000000Z\tA\t2.0
+                            2024-10-26T23:00:00.000000Z\tB\tnull
+                            2024-10-27T01:00:00.000000Z\tA\t2.0
+                            2024-10-27T01:00:00.000000Z\tB\t3.0
+                            2024-10-27T03:00:00.000000Z\tA\t2.0
+                            2024-10-27T03:00:00.000000Z\tB\t3.0
                             2024-10-27T05:00:00.000000Z\tA\t2.0
                             2024-10-27T05:00:00.000000Z\tB\t4.0
                             """);
@@ -586,14 +583,12 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsym\tsum
-                            2024-10-26T19:00:00.000000Z\tA\t1.0
-                            2024-10-26T19:00:00.000000Z\tB\tnull
-                            2024-10-26T22:00:00.000000Z\tA\t2.0
-                            2024-10-26T22:00:00.000000Z\tB\t3.0
-                            2024-10-27T01:00:00.000000Z\tA\tnull
-                            2024-10-27T01:00:00.000000Z\tB\tnull
-                            2024-10-27T04:00:00.000000Z\tA\tnull
-                            2024-10-27T04:00:00.000000Z\tB\tnull
+                            2024-10-26T20:00:00.000000Z\tA\t1.0
+                            2024-10-26T20:00:00.000000Z\tB\tnull
+                            2024-10-26T23:00:00.000000Z\tA\t2.0
+                            2024-10-26T23:00:00.000000Z\tB\t3.0
+                            2024-10-27T02:00:00.000000Z\tA\tnull
+                            2024-10-27T02:00:00.000000Z\tB\tnull
                             2024-10-27T05:00:00.000000Z\tA\tnull
                             2024-10-27T05:00:00.000000Z\tB\t4.0
                             """);
@@ -602,8 +597,8 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillDstSpringForwardOverSampleByCursor() throws Exception {
-        // Gap rows step from the previous bucket; the cursor's next row, re-rounded in the new UTC
-        // offset after the transition, ends the gap on its own bucket.
+        // A sub-query source buckets and fills on the grid of a table source: sub-day strides step
+        // uniformly in UTC from the zone's standard offset.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE sp (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -621,9 +616,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-30T23:00:00.000000Z\t1.0
                             2024-03-31T01:00:00.000000Z\t1.0
                             2024-03-31T03:00:00.000000Z\t1.0
-                            2024-03-31T04:00:00.000000Z\t2.0
-                            2024-03-31T06:00:00.000000Z\t2.0
-                            2024-03-31T08:00:00.000000Z\t3.0
+                            2024-03-31T05:00:00.000000Z\t2.0
+                            2024-03-31T07:00:00.000000Z\t3.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 2h FILL(NONE) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
                     .noLeakCheck()
@@ -632,8 +626,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .returns("""
                             ts\tsum
                             2024-03-30T23:00:00.000000Z\t1.0
-                            2024-03-31T04:00:00.000000Z\t2.0
-                            2024-03-31T08:00:00.000000Z\t3.0
+                            2024-03-31T05:00:00.000000Z\t2.0
+                            2024-03-31T07:00:00.000000Z\t3.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 2h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'")
                     .noLeakCheck()
@@ -643,9 +637,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             ts\tsum
                             2024-03-30T23:30:00.000000Z\t1.0
                             2024-03-31T01:30:00.000000Z\tnull
-                            2024-03-31T03:30:00.000000Z\tnull
-                            2024-03-31T04:30:00.000000Z\t2.0
-                            2024-03-31T06:30:00.000000Z\t3.0
+                            2024-03-31T03:30:00.000000Z\t2.0
+                            2024-03-31T05:30:00.000000Z\tnull
+                            2024-03-31T07:30:00.000000Z\t3.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 3h FILL(10) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
                     .noLeakCheck()
@@ -655,8 +649,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                             ts\tsum
                             2024-03-30T23:00:00.000000Z\t1.0
                             2024-03-31T02:00:00.000000Z\t10.0
-                            2024-03-31T04:00:00.000000Z\t2.0
-                            2024-03-31T07:00:00.000000Z\t3.0
+                            2024-03-31T05:00:00.000000Z\t2.0
+                            2024-03-31T08:00:00.000000Z\t3.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 2h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
                     .noLeakCheck()
@@ -682,12 +676,10 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-31T01:00:00.000000Z\tB\tnull
                             2024-03-31T03:00:00.000000Z\tA\t1.0
                             2024-03-31T03:00:00.000000Z\tB\tnull
-                            2024-03-31T04:00:00.000000Z\tA\t1.0
-                            2024-03-31T04:00:00.000000Z\tB\t2.0
-                            2024-03-31T06:00:00.000000Z\tA\t1.0
-                            2024-03-31T06:00:00.000000Z\tB\t2.0
-                            2024-03-31T08:00:00.000000Z\tA\t3.0
-                            2024-03-31T08:00:00.000000Z\tB\t2.0
+                            2024-03-31T05:00:00.000000Z\tA\t1.0
+                            2024-03-31T05:00:00.000000Z\tB\t2.0
+                            2024-03-31T07:00:00.000000Z\tA\t3.0
+                            2024-03-31T07:00:00.000000Z\tB\t2.0
                             """);
             assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 2h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'")
                     .noLeakCheck()
@@ -700,11 +692,11 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-31T01:30:00.000000Z\tA\tnull
                             2024-03-31T01:30:00.000000Z\tB\tnull
                             2024-03-31T03:30:00.000000Z\tA\tnull
-                            2024-03-31T03:30:00.000000Z\tB\tnull
-                            2024-03-31T04:30:00.000000Z\tA\tnull
-                            2024-03-31T04:30:00.000000Z\tB\t2.0
-                            2024-03-31T06:30:00.000000Z\tA\t3.0
-                            2024-03-31T06:30:00.000000Z\tB\tnull
+                            2024-03-31T03:30:00.000000Z\tB\t2.0
+                            2024-03-31T05:30:00.000000Z\tA\tnull
+                            2024-03-31T05:30:00.000000Z\tB\tnull
+                            2024-03-31T07:30:00.000000Z\tA\t3.0
+                            2024-03-31T07:30:00.000000Z\tB\tnull
                             """);
             assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 3h FILL(10) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
                     .noLeakCheck()
@@ -716,10 +708,10 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-30T23:00:00.000000Z\tB\t10.0
                             2024-03-31T02:00:00.000000Z\tA\t10.0
                             2024-03-31T02:00:00.000000Z\tB\t10.0
-                            2024-03-31T04:00:00.000000Z\tA\t10.0
-                            2024-03-31T04:00:00.000000Z\tB\t2.0
-                            2024-03-31T07:00:00.000000Z\tA\t3.0
-                            2024-03-31T07:00:00.000000Z\tB\t10.0
+                            2024-03-31T05:00:00.000000Z\tA\t10.0
+                            2024-03-31T05:00:00.000000Z\tB\t2.0
+                            2024-03-31T08:00:00.000000Z\tA\t3.0
+                            2024-03-31T08:00:00.000000Z\tB\t10.0
                             """);
             execute("CREATE TABLE ny (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -735,7 +727,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             ts\tsum
                             2024-03-10T05:00:00.000000Z\t1.0
                             2024-03-10T07:00:00.000000Z\t1.0
-                            2024-03-10T08:00:00.000000Z\t2.0
+                            2024-03-10T09:00:00.000000Z\t2.0
                             """);
             assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM ny) SAMPLE BY 2h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
                     .noLeakCheck()
@@ -747,8 +739,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-10T05:00:00.000000Z\tB\tnull
                             2024-03-10T07:00:00.000000Z\tA\tnull
                             2024-03-10T07:00:00.000000Z\tB\tnull
-                            2024-03-10T08:00:00.000000Z\tA\tnull
-                            2024-03-10T08:00:00.000000Z\tB\t2.0
+                            2024-03-10T09:00:00.000000Z\tA\tnull
+                            2024-03-10T09:00:00.000000Z\tB\t2.0
                             """);
             execute("CREATE TABLE sp2 (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -3873,4 +3865,5 @@ public class SampleByFillTest extends AbstractCairoTest {
                         4
                         """);
     }
+
 }

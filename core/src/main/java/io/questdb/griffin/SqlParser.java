@@ -8000,12 +8000,14 @@ public class SqlParser {
 
     private void rewritePgCast(ExpressionNode node) throws SqlException {
         if (node.type == ExpressionNode.OPERATION && isColonColon(node.token)) {
-            // In PG x::float casts x to "double precision" type
-            rewritePgCast0(node.rhs, "float", ColumnType.DOUBLE);
-            normalizeCastType(node.rhs);
+            if (node.rhs.type != ExpressionNode.FUNCTION || !isCastTarget(node.rhs.token)) {
+                // In PG x::float casts x to "double precision" type
+                rewritePgCast0(node.rhs, "float", ColumnType.DOUBLE);
+                normalizeCastType(node.rhs);
+                node.rhs.type = ExpressionNode.CONSTANT;
+            }
             node.token = "cast";
             node.type = ExpressionNode.FUNCTION;
-            node.rhs.type = ExpressionNode.CONSTANT;
         }
     }
 

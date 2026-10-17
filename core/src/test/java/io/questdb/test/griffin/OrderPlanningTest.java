@@ -30,6 +30,191 @@ import org.junit.Test;
 public class OrderPlanningTest extends AbstractCairoTest {
 
     @Test
+    public void testAggregateOrderedByKeyReadsPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            assertQuery("SELECT s, count(), sum(x) FROM t WHERE ts IN '2024-01-01' GROUP BY s ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [s]
+                                GroupBy vectorized: true workers: 1
+                                  keys: [s]
+                                  values: [count(*),sum(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	count	sum
+                            a	1	2
+                            b	2	4
+                            """);
+            assertQuery("SELECT s, avg(x), min(x), max(x) FROM t WHERE ts IN '2024-01-01' GROUP BY s ORDER BY s DESC LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: 1
+                              keys: [s desc]
+                                GroupBy vectorized: true workers: 1
+                                  keys: [s]
+                                  values: [avg(x),min(x),max(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	avg	min	max
+                            b	2.0	1	3
+                            """);
+            assertQuery("SELECT s, sum(x) FROM t WHERE ts IN '2024-01-01' ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [s]
+                                GroupBy vectorized: true workers: 1
+                                  keys: [s]
+                                  values: [sum(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	sum
+                            a	2
+                            b	4
+                            """);
+            assertQuery("SELECT DISTINCT s FROM t WHERE ts IN '2024-01-01' ORDER BY s DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [s desc]
+                                GroupBy vectorized: true workers: 1
+                                  keys: [s]
+                                  values: [count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s
+                            b
+                            a
+                            """);
+            assertQuery("SELECT s, first(x), last(x) FROM t WHERE ts IN '2024-01-01' GROUP BY s ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [s]
+                                Async Group By workers: 1
+                                  keys: [s]
+                                  values: [first(x),last(x)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	first	last
+                            a	2	2
+                            b	1	3
+                            """);
+            assertQuery("SELECT ts, s, count() FROM t WHERE ts IN '2024-01-01' SAMPLE BY 1d ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [s]
+                                Async Group By workers: 1
+                                  keys: [ts,s]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                  values: [count(*)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            ts	s	count
+                            2024-01-01T00:00:00.000000Z	a	1
+                            2024-01-01T00:00:00.000000Z	b	2
+                            """);
+            assertQuery("WITH q AS (SELECT s, count() c FROM t WHERE ts IN '2024-01-01' GROUP BY s) SELECT * FROM q ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [s]
+                                GroupBy vectorized: true workers: 1
+                                  keys: [s]
+                                  values: [count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	c
+                            a	1
+                            b	2
+                            """);
+            assertQuery("SELECT s, count() FROM t WHERE ts IN '2024-01-01' AND s IN ('a', 'b') GROUP BY s ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [s]
+                                GroupBy vectorized: false
+                                  keys: [s]
+                                  values: [count(*)]
+                                    FilterOnValues
+                                        Table-order scan
+                                            Index forward scan on: s deferred: true
+                                              filter: s='b'
+                                            Index forward scan on: s deferred: true
+                                              filter: s='a'
+                                        Interval forward scan on: t
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	count
+                            a	1
+                            b	2
+                            """);
+            execute("CREATE TABLE u AS (SELECT * FROM t), INDEX(s) TIMESTAMP(ts)");
+            assertQuery("SELECT s, count() FROM u WHERE ts IN '2024-01-01' GROUP BY s ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [s]
+                                GroupBy vectorized: true workers: 1
+                                  keys: [s]
+                                  values: [count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: u
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	count
+                            a	1
+                            b	2
+                            """);
+        });
+    }
+
+    @Test
     public void testAliasedKeyOrderThroughComputedProjectionReachesSymbolIndex() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -269,7 +454,7 @@ public class OrderPlanningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyOrderThroughAggregateOverRenamedInput() throws Exception {
+    public void testKeyOrderOverAggregateOfRenamedInput() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
             assertQuery("SELECT k, sum(v) FROM (SELECT s k, x v FROM t WHERE x < 4) ORDER BY k")
@@ -325,6 +510,29 @@ public class OrderPlanningTest extends AbstractCairoTest {
                             ts	x
                             2024-01-02T00:00:00.000000Z	4
                             2024-01-01T02:00:00.000000Z	3
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonFusedFilterOrderedByKeyReadsPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            assertQuery("SELECT * FROM (SELECT s, x, x * 2 xx FROM t WHERE ts IN '2024-01-01') WHERE xx > 2 ORDER BY s")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort light", "Filter filter: 2<xx", "PageFrame", "Interval forward scan on: t")
+                    .returns("""
+                            s	x	xx
+                            a	2	4
+                            b	3	6
+                            """);
+            assertQuery("SELECT * FROM (SELECT s, x, x * 2 xx FROM t WHERE ts IN '2024-01-01') WHERE xx > 2 ORDER BY s DESC LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Filter filter: 2<xx", "PageFrame", "Interval forward scan on: t")
+                    .returns("""
+                            s	x	xx
+                            b	3	6
                             """);
         });
     }

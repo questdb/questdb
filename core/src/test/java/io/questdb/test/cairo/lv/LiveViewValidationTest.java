@@ -757,6 +757,16 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectNonDeterministicFunctionInTableFunctionArg() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String frame = "count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base CROSS JOIN ";
+            assertLiveViewCreateRejected("SELECT ts, x, generate_series, " + frame + "generate_series(now(), now(), 1)", "now");
+            assertLiveViewCreateRejected("SELECT ts, x, " + frame + "generate_series(now_ns(), now_ns(), 1)", "now_ns");
+        });
+    }
+
+    @Test
     public void testRejectNonDeterministicFunctionInWhere() throws Exception {
         // WHERE is the worst case: a row admitted on one random draw cannot be
         // un-emitted, so the row set diverges permanently from any recompute.

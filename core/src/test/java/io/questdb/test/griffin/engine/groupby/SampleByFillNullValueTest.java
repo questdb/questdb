@@ -426,9 +426,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     @Test
     public void testFillNullDstBerlinFallBackDayStrideWithOffsetInOverlap() throws Exception {
         // OFFSET '02:00' puts the Oct 31 grid line in the DST overlap, which local
-        // 02:00 enters twice. timestamp_floor_utc keeps the instants of each pass in
-        // their own bucket: 00:00Z (02:00 CEST) holds one hour, and 01:00Z (02:00 CET)
-        // holds the rest of the day.
+        // 02:00 enters twice. The bucket starts at the first 02:00 (00:00Z, CEST) and
+        // lasts 25 hours.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -446,8 +445,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             s\tts
                             1.0\t2021-10-29T00:00:00.000000Z
                             null\t2021-10-30T00:00:00.000000Z
-                            null\t2021-10-31T00:00:00.000000Z
-                            2.0\t2021-10-31T01:00:00.000000Z
+                            2.0\t2021-10-31T00:00:00.000000Z
                             null\t2021-11-01T01:00:00.000000Z
                             3.0\t2021-11-02T01:00:00.000000Z
                             """);
@@ -742,11 +740,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     public void testFillNullDstNewYorkMonthStrideAcrossSpringForward() throws Exception {
         // NY + 1M + FROM='2024-03-01'. Buckets anchor at the first day of
         // each local month. Mar 1 local = 2024-03-01T05:00Z (EST). Apr 1
-        // local = 2024-04-01T04:00Z (EDT, after spring-forward). The
-        // resultTzOff re-derivation in the wrap's offsetFlooredUtcResult
-        // kicks in here: the floor result lands at Apr 1 local 00:00,
-        // tzRules at 2024-04-01T00:00Z says EDT so the back-conversion
-        // subtracts 4 h instead of 5 h.
+        // local = 2024-04-01T04:00Z (EDT, after spring-forward): the grid
+        // line converts back with the offset in effect at the line.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH");
             execute("INSERT INTO x VALUES " +

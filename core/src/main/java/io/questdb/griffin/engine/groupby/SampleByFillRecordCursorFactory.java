@@ -2090,7 +2090,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean nextBucket() {
             if (hasDataForCurrentBucket) {
                 hasDataForCurrentBucket = false;
-                currentBucketTimestamp = grid.nextBucket(currentBucketTimestamp, keyedSampleBySource.peekNextTimestamp());
+                currentBucketTimestamp = grid.nextBucket(currentBucketTimestamp);
             }
             if (!isInitialized) {
                 initialize();
@@ -2104,7 +2104,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         return true;
                     }
                     isEmittingFills = false;
-                    currentBucketTimestamp = grid.nextBucket(currentBucketTimestamp, source.peekNextTimestamp());
+                    currentBucketTimestamp = grid.nextBucket(currentBucketTimestamp);
                     continue;
                 }
                 final long dataTs = source.peekNextTimestamp();
@@ -2179,7 +2179,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (bucketTimestamp == pendingTs && bucketTimestamp < maxTimestamp) {
                 pendingTs = source.nextRowAndPeek();
                 updateGapLimit();
-                currentBucketTimestamp = grid.nextBucket(bucketTimestamp, pendingTs);
+                currentBucketTimestamp = grid.nextBucket(bucketTimestamp);
                 setSourceGapRow(false);
                 return true;
             }
@@ -2207,7 +2207,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private void setGapRow(long bucketTimestamp) {
-            currentBucketTimestamp = grid.nextBucket(bucketTimestamp, pendingTs);
+            currentBucketTimestamp = grid.nextBucket(bucketTimestamp);
             source.setGapTimestamp(bucketTimestamp);
             setSourceGapRow(true);
         }

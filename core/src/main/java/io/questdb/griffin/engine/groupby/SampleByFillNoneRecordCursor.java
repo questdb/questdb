@@ -284,24 +284,16 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
         final long next = timestampSampler.nextTimestamp(localEpoch);
         do {
-            long timestamp = getBaseRecordTimestamp();
+            final long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-
-                adjustDstInFlight(timestamp - tzOffset);
                 aggregateRow();
             } else {
-                // map value is conditional and only required when clock goes back
-                // we override base method for when this happens
-                // see: updateValueWhenClockMovesBack()
-                timestamp = adjustDst(timestamp, null, next);
-                if (timestamp != Long.MIN_VALUE) {
-                    nextSamplePeriod(timestamp);
-                    // reset map iterator
-                    map.getCursor();
-                    isMapBuildPending = true;
-                    return;
-                }
+                nextSamplePeriod(timestamp);
+                // reset map iterator
+                map.getCursor();
+                isMapBuildPending = true;
+                return;
             }
         } while (baseCursor.hasNext());
 
@@ -326,11 +318,9 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
         final long next = timestampSampler.nextTimestamp(localEpoch);
         do {
-            long timestamp = getBaseRecordTimestamp();
+            final long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-
-                adjustDstInFlight(timestamp - tzOffset);
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 MapValue value = key.findValue();
@@ -344,13 +334,10 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
                     groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                 }
             } else {
-                timestamp = adjustDst(timestamp, null, next);
-                if (timestamp != Long.MIN_VALUE) {
-                    moveToSamplePeriod(timestamp);
-                    map.getCursor();
-                    isMapBuildPending = true;
-                    return;
-                }
+                moveToSamplePeriod(timestamp);
+                map.getCursor();
+                isMapBuildPending = true;
+                return;
             }
         } while (baseCursor.hasNext());
 
@@ -368,11 +355,9 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
         final long next = timestampSampler.nextTimestamp(localEpoch);
         do {
-            long timestamp = getBaseRecordTimestamp();
+            final long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-
-                adjustDstInFlight(timestamp - tzOffset);
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 MapValue value = key.findValue();
@@ -386,13 +371,10 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
                     groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                 }
             } else {
-                timestamp = adjustDst(timestamp, null, next);
-                if (timestamp != Long.MIN_VALUE) {
-                    moveToSamplePeriod(timestamp);
-                    map.getCursor();
-                    isMapBuildPending = true;
-                    return;
-                }
+                moveToSamplePeriod(timestamp);
+                map.getCursor();
+                isMapBuildPending = true;
+                return;
             }
         } while (baseCursor.hasNext());
 
@@ -431,7 +413,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
                     return true;
                 }
                 isEmittingGapKeys = false;
-                fillBucket = fillGrid.nextBucket(fillBucket, peekNextTimestamp());
+                fillBucket = fillGrid.nextBucket(fillBucket);
                 continue;
             }
             final long dataTs = peekNextTimestamp();
@@ -462,7 +444,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 return true;
             }
             hasFillData = false;
-            fillBucket = fillGrid.nextBucket(fillBucket, peekNextTimestamp());
+            fillBucket = fillGrid.nextBucket(fillBucket);
         }
         return nextValueFillBucket();
     }
@@ -518,29 +500,5 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
         final long firstTs = peekNextTimestamp();
         fillBucket = firstTs != Numbers.LONG_NULL ? fillGrid.firstBucket(firstTs) : fillGrid.firstBucketWithoutRows();
         fillMaxTimestamp = fillGrid.getMaxTimestamp();
-    }
-
-    private void updateRetainedValue() {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
-        MapValue value = key.findValue();
-        if (value == null) {
-            value = createRetainedValue(key);
-        }
-        if (value.getLong(BUCKET_SLOT) != bucketSeq) {
-            value.putLong(BUCKET_SLOT, bucketSeq);
-            groupByFunctionsUpdater.updateRetained(value, baseRecord, rowId++);
-        } else {
-            groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
-        }
-    }
-
-    @Override
-    protected void updateValueWhenClockMovesBack(MapValue value) {
-        if (isRetainingKeys) {
-            updateRetainedValue();
-        } else {
-            aggregateRow();
-        }
     }
 }

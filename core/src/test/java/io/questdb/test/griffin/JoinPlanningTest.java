@@ -422,6 +422,123 @@ public class JoinPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDisconnectedLeadingCrossTrailsKeyedOuterJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_outer_a AS (SELECT x id FROM long_sequence(1000))");
+            execute("CREATE TABLE lp_outer_b AS (SELECT x id FROM long_sequence(10_000))");
+            execute("CREATE TABLE lp_outer_c AS (SELECT x id FROM long_sequence(2))");
+            execute("CREATE TABLE lp_outer_d AS (SELECT x id FROM long_sequence(1))");
+            final String keyed = """
+                    Hash Join Light
+                      condition: c.id=b.id
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: lp_outer_b
+                        Hash
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: lp_outer_c
+                    """;
+            final String scanA = """
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: lp_outer_a
+                    """;
+            final String scanD = """
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: lp_outer_d
+                    """;
+            final String join = "lp_outer_a a CROSS JOIN lp_outer_b b JOIN lp_outer_c c ON b.id = c.id ";
+            final String leftSql = "SELECT count() FROM " + join + "LEFT JOIN lp_outer_d d ON c.id = d.id";
+            assertQuery(leftSql).noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                    Count
+                        Cross Join
+                            Hash Left Outer Join Light
+                              condition: d.id=c.id
+                    """ + keyed.indent(12) + "            Hash\n" + scanD.indent(16) + scanA.indent(8)).returns("count\n2000\n");
+            assertQuery(leftSql).noLeakCheck().fullFatJoins().noRandomAccess().expectSize().returns("count\n2000\n");
+            assertQuery("SELECT count(), sum(a.id), sum(d.id) FROM " + join + "LEFT JOIN lp_outer_d d ON c.id > d.id")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                            GroupBy vectorized: false
+                              values: [count(*),sum(a.id),sum(d.id)]
+                                Cross Join
+                                    Nested Loop Left Join
+                                      filter: d.id<c.id
+                            """ + keyed.indent(12) + scanD.indent(12) + scanA.indent(8))
+                    .returns("count\tsum\tsum1\n2000\t1001000\t1000\n");
+            assertQuery("SELECT count(), sum(a.id), sum(c.id), sum(d.id) FROM " + join + "RIGHT JOIN lp_outer_d d ON c.id = d.id")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                            GroupBy vectorized: false
+                              values: [count(*),sum(a.id),sum(c.id),sum(d.id)]
+                                Hash Right Outer Join Light
+                                  condition: d.id=c.id
+                                    Hash Join Light
+                                      condition: c.id=b.id
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_outer_a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_outer_b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_outer_c
+                                    Hash
+                            """ + scanD.indent(12))
+                    .returns("count\tsum\tsum1\tsum2\n1000\t500500\t1000\t1000\n");
+        });
+    }
+
+    @Test
+    public void testDisconnectedLeadingCrossTrailsKeylessOuterJoinReadByLaterKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_keyless_a AS (SELECT x id FROM long_sequence(1000))");
+            execute("CREATE TABLE lp_keyless_b AS (SELECT x id FROM long_sequence(10_000))");
+            execute("CREATE TABLE lp_keyless_c AS (SELECT x id FROM long_sequence(2))");
+            execute("CREATE TABLE lp_keyless_d AS (SELECT x id FROM long_sequence(1))");
+            execute("CREATE TABLE lp_keyless_e AS (SELECT x id FROM long_sequence(3))");
+            final String join = "lp_keyless_a a CROSS JOIN lp_keyless_b b JOIN lp_keyless_c c ON b.id = c.id LEFT JOIN lp_keyless_d d ON true ";
+            final String sql = "SELECT count(), sum(a.id), sum(c.id), sum(e.id) FROM " + join + "JOIN lp_keyless_e e ON e.id = d.id";
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                    GroupBy vectorized: false
+                      values: [count(*),sum(a.id),sum(c.id),sum(e.id)]
+                        Cross Join
+                            Hash Join Light
+                              condition: e.id=d.id
+                                Nested Loop Left Join
+                                  filter: true
+                                    Hash Join Light
+                                      condition: c.id=b.id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_keyless_b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_keyless_c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_keyless_d
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_keyless_e
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: lp_keyless_a
+                    """).returns("count\tsum\tsum1\tsum2\n2000\t1001000\t3000\t2000\n");
+            assertQuery(sql).noLeakCheck().fullFatJoins().noRandomAccess().expectSize()
+                    .returns("count\tsum\tsum1\tsum2\n2000\t1001000\t3000\t2000\n");
+            assertQuery("SELECT count(), sum(a.id), sum(e.id) FROM " + join + "LEFT JOIN lp_keyless_d d2 ON true JOIN lp_keyless_e e ON e.id = d2.id")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tsum\tsum1\n2000\t1001000\t2000\n");
+        });
+    }
+
+    @Test
     public void testDisconnectedTimestampedLeadingCrossTrailsUnderOrderDependentReads() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_cross_a (id INT, ts TIMESTAMP) TIMESTAMP(ts)");

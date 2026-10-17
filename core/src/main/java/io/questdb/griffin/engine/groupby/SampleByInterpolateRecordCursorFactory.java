@@ -323,6 +323,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private final int timezoneNameFuncPos;
         private boolean areTimestampsInitialized;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private TimestampSampler gridSampler;
         private long hiSample = -1;
         private boolean isMapBuilt;
         private boolean isMapFilled;
@@ -333,7 +334,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private long prevSample = -1;
         private long rowId;
         private long timezoneOffset;
-        private TimeZoneRules timezoneRules;
+        private TimezoneFloorTimestampSampler zonedSampler;
 
         public SampleByInterpolateRecordCursor(
                 CairoConfiguration configuration,
@@ -502,7 +503,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // find gaps by checking each of the unique keys against every sample
             long sample;
             long prevSample;
-            for (sample = prevSample = loSample; sample < hiSample; prevSample = sample, sample = nextTimestamp(sample)) {
+            long beforePrevSample = loSample;
+            for (sample = prevSample = loSample; sample < hiSample; beforePrevSample = prevSample, prevSample = sample, sample = nextTimestamp(sample)) {
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
@@ -573,9 +575,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                 // it will become Y-value and X is at 'prevSample-1'
                                 // and calculate interpolated value all the way to 'hiSample'
 
-                                long x1 = previousTimestamp(prevSample);
+                                final long x1 = beforePrevSample;
 
-                                if (x1 < loSample) {
+                                if (prevSample == loSample) {
                                     // not enough data points
                                     // fill all data points from 'sample' down with null
                                     nullifyRange(sample, hiSample, mapRecord);
@@ -759,26 +761,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
 
         private long nextTimestamp(long timestamp) {
-            if (timezoneRules == null) {
-                final long nextLocal = sampler.nextTimestamp(timestamp + timezoneOffset);
-                if (nextLocal == Long.MAX_VALUE) {
-                    return Long.MAX_VALUE;
-                }
-                final long next = nextLocal - timezoneOffset;
-                return next > timestamp ? next : Long.MAX_VALUE;
+            final long nextLocal = gridSampler.nextTimestamp(timestamp + timezoneOffset);
+            if (nextLocal == Long.MAX_VALUE) {
+                return Long.MAX_VALUE;
             }
-            long local = roundToLocal(timestamp);
-            while (true) {
-                final long nextLocal = sampler.nextTimestamp(local);
-                if (nextLocal == Long.MAX_VALUE || nextLocal <= local) {
-                    return Long.MAX_VALUE;
-                }
-                local = nextLocal;
-                final long next = local - timezoneRules.getLocalOffset(local);
-                if (next > timestamp) {
-                    return next;
-                }
-            }
+            final long next = nextLocal - timezoneOffset;
+            return next > timestamp ? next : Long.MAX_VALUE;
         }
 
         private void nullifyRange(long lo, long hi, Record record) {
@@ -795,55 +783,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
         }
 
-        private long previousTimestamp(long timestamp) {
-            if (timezoneRules == null) {
-                return sampler.previousTimestamp(timestamp + timezoneOffset) - timezoneOffset;
-            }
-            long local = roundToLocal(timestamp);
-            while (true) {
-                final long previousLocal = sampler.previousTimestamp(local);
-                if (previousLocal >= local) {
-                    return Long.MIN_VALUE;
-                }
-                local = previousLocal;
-                final long previous = local - timezoneRules.getLocalOffset(local);
-                if (previous < timestamp) {
-                    return previous;
-                }
-            }
-        }
-
         private long round(long timestamp) {
-            if (timezoneRules == null) {
-                return sampler.round(timestamp + timezoneOffset) - timezoneOffset;
-            }
-            final long local = roundToLocal(timestamp);
-            return local - timezoneRules.getLocalOffset(local);
-        }
-
-        private long roundToLocal(long timestamp) {
-            long local = sampler.round(timestamp + timezoneRules.getOffset(timestamp));
-            long utc = local - timezoneRules.getLocalOffset(local);
-            while (utc > timestamp) {
-                final long previousLocal = sampler.previousTimestamp(local);
-                if (previousLocal >= local) {
-                    return local;
-                }
-                local = previousLocal;
-                utc = local - timezoneRules.getLocalOffset(local);
-            }
-            while (true) {
-                final long nextLocal = sampler.nextTimestamp(local);
-                if (nextLocal == Long.MAX_VALUE || nextLocal <= local) {
-                    return local;
-                }
-                final long nextUtc = nextLocal - timezoneRules.getLocalOffset(nextLocal);
-                if (nextUtc < utc || nextUtc > timestamp) {
-                    return local;
-                }
-                local = nextLocal;
-                utc = nextUtc;
-            }
+            return gridSampler.round(timestamp + timezoneOffset) - timezoneOffset;
         }
 
         protected void initTimestamps() {
@@ -863,24 +804,29 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             final long fixedOffset = timezone.getFixedOffset();
             final long offset = fixedOffset == Long.MIN_VALUE ? 0 : fixedOffset;
             long from = timestampDriver.from(sampleFromFunc.getTimestamp(null), sampleFromFuncType);
-            timezoneRules = rules;
+            gridSampler = sampler;
             timezoneOffset = tzOffset;
             if (from != Long.MIN_VALUE && CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
                 from = rules == null ? from - tzOffset : timestampDriver.toUTC(from, rules);
-                timezoneRules = null;
                 timezoneOffset = 0;
             } else if (rules != null && (CommonUtils.isSubDayUnit(samplingIntervalUnit) || rules.hasFixedOffset())) {
                 timezoneOffset = rules.getStandardOffset();
-                timezoneRules = null;
+            } else if (rules != null) {
+                if (zonedSampler == null) {
+                    zonedSampler = new TimezoneFloorTimestampSampler(sampler, rules, samplingIntervalUnit);
+                } else {
+                    zonedSampler.setTzRules(rules);
+                }
+                gridSampler = zonedSampler;
             }
 
             if (rules == null && tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
                 // this is the default path, we align time intervals to the first observation
-                sampler.setStart(timestamp);
+                gridSampler.setStart(timestamp);
             } else if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
-                sampler.setStart(from != Long.MIN_VALUE ? from : 0);
+                gridSampler.setLocalAnchor(from != Long.MIN_VALUE ? from : 0);
             } else {
-                sampler.setOffset(offset);
+                gridSampler.setOffset(offset);
             }
             prevSample = round(timestamp);
             loSample = prevSample; // the lowest timestamp value

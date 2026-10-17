@@ -95,7 +95,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
         views.add(executionContext.getTableFunctionView());
         slots.add(slot);
         try {
-            final Function function = parseSource(expression, executionContext);
+            final Function function = parseSource(plan, expression, executionContext);
             resources.own(slot, function);
             if (!(function instanceof CursorFunction)) {
                 throw SqlException.$(expression.position, "function must return CURSOR");
@@ -121,7 +121,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
         views.add(executionContext.getTableFunctionView());
         slots.add(slot);
         try {
-            final Function function = parseSource(expression, executionContext);
+            final Function function = parseSource(plan, expression, executionContext);
             resources.own(slot, function);
             if (!(function instanceof CursorFunction)) {
                 throw SqlException.$(expression.position, "function must return CURSOR");
@@ -207,6 +207,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
         copy.setProjectable(plan.isProjectable());
         copy.copyPhysicalProperties(plan);
         copy.setRecordName(plan.getRecordName());
+        copy.setNonDeterministicCall(plan.getNonDeterministicCallName(), plan.getNonDeterministicCallPosition());
         prepared.add(copy);
         expressions.add(expressions.getQuick(index));
         views.add(views.getQuick(index));
@@ -336,11 +337,16 @@ public final class TableFunctionSources implements Closeable, Mutable {
         describeSource(plan, factory);
     }
 
-    private Function parseSource(ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
-        final SqlExecutionRequirements requirements = parser.getFunctionResolver().getExecutionRequirements();
+    private Function parseSource(FunctionSourcePlan plan, ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
+        final FunctionResolver resolver = parser.getFunctionResolver();
+        final SqlExecutionRequirements requirements = resolver.getExecutionRequirements();
         final int deferredCount = requirements.getDeferredCount();
+        final int callCount = resolver.getNonDeterministicCallCount();
         final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
         requirements.markSources(deferredCount);
+        if (resolver.getNonDeterministicCallCount() > callCount) {
+            plan.setNonDeterministicCall(resolver.getNonDeterministicCallName(callCount), resolver.getNonDeterministicCallPosition(callCount));
+        }
         return function;
     }
 

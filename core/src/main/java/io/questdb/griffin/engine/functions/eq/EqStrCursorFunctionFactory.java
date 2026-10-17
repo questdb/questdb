@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.eq;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -45,6 +46,14 @@ public class EqStrCursorFunctionFactory extends AbstractStrCursorFunctionFactory
     @Override
     public String getSignature() {
         return "=(SC)";
+    }
+
+    @Override
+    protected boolean isIntegerText(int leftType, int cursorTag) {
+        return ColumnType.isSymbol(leftType) && switch (cursorTag) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> true;
+            default -> false;
+        };
     }
 
     @Override

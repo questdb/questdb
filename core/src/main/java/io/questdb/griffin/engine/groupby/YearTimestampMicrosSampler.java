@@ -32,6 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampMicrosSampler implements TimestampSampler {
     private final int stepYears;
+    private long anchor;
     private long dayMod;
     private int startDay;
     private int startMonth;
@@ -71,20 +72,27 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Micros.getYear(value - dayMod);
-        y = Micros.EPOCH_YEAR_0 + ((y - Micros.EPOCH_YEAR_0) / stepYears) * stepYears;
-        int month = startMonth > 0 ? startMonth : 1;
-        int day = startDay > 0 ? startDay : 1;
-        return Micros.toMicros(y, CommonUtils.isLeapYear(y), month, day) + dayMod;
+        final long years = Micros.getYear(value - dayMod) - Micros.getYear(anchor - dayMod);
+        final long steps = years - Math.floorMod(years, stepYears);
+        final long bucket = addYears(anchor, Math.toIntExact(steps));
+        if (bucket > value) {
+            return addYears(anchor, Math.toIntExact(steps - stepYears));
+        }
+        final long next = addYears(anchor, Math.toIntExact(steps + stepYears));
+        return next <= value ? next : bucket;
     }
 
     @Override
     public void setOffset(long timestamp) {
+        this.anchor = timestamp;
         this.dayMod = timestamp;
+        this.startDay = 0;
+        this.startMonth = 0;
     }
 
     @Override
     public void setStart(long timestamp) {
+        this.anchor = timestamp;
         final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
         this.startMonth = Micros.getMonthOfYear(timestamp, y, leap);

@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableAccessInfo;
+import io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -44,6 +45,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.SingleCharCharSequence;
@@ -92,7 +94,8 @@ public final class SymbolKeyExtractor implements Mutable {
                 default -> StrConstant.fromValue(textOf(constant, Misc.getThreadLocalSink()));
             };
         }
-        final Function function = instantiator.instantiate(value, input, metadata, executionContext);
+        final Function parameter = instantiator.instantiate(value, input, metadata, executionContext);
+        final Function function = isIntegerKey(ColumnType.tagOf(parameter.getType())) ? new CastLongToStrFunctionFactory.Func(parameter) : parameter;
         try {
             function.init(null, executionContext);
             return function;
@@ -100,6 +103,28 @@ public final class SymbolKeyExtractor implements Mutable {
             Misc.free(function, th);
             throw th;
         }
+    }
+
+    /**
+     * A constant that {@code =} compares with a SYMBOL by its text.
+     */
+    public static boolean isKeyConstant(BoundExpression value) {
+        return value instanceof ConstantExpression && isKeyValue(value);
+    }
+
+    /**
+     * A constant or bind variable that {@code =} compares with a SYMBOL by its text.
+     */
+    public static boolean isKeyValue(BoundExpression value) {
+        final int type = ColumnType.tagOf(value.getDataType());
+        if (value instanceof ConstantExpression) {
+            return switch (type) {
+                case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL, ColumnType.CHAR, ColumnType.NULL -> true;
+                default -> isIntegerKey(type);
+            };
+        }
+        return value instanceof BindVariableExpression parameter && parameter.isDirectReference()
+                && (type == ColumnType.STRING || type == ColumnType.VARCHAR || isIntegerKey(type));
     }
 
     @Override
@@ -171,6 +196,13 @@ public final class SymbolKeyExtractor implements Mutable {
         return "in".equals(call.getName()) && call.getArgumentCount() > 1;
     }
 
+    private static boolean isIntegerKey(int type) {
+        return switch (type) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> true;
+            default -> false;
+        };
+    }
+
     private static boolean isKeyOperand(BoundExpression expression) {
         return expression instanceof ColumnExpression column
                 && column.isDirectReference() && ColumnType.isSymbol(column.getDataType());
@@ -185,12 +217,11 @@ public final class SymbolKeyExtractor implements Mutable {
         };
     }
 
-    private static boolean isKeyValue(BoundExpression value) {
-        final int type = ColumnType.tagOf(value.getDataType());
-        return value instanceof ConstantExpression
-                && (type == ColumnType.STRING || type == ColumnType.VARCHAR || type == ColumnType.CHAR || type == ColumnType.NULL)
-                || value instanceof BindVariableExpression parameter && parameter.isDirectReference()
-                && (type == ColumnType.STRING || type == ColumnType.VARCHAR);
+    /**
+     * A key value the IN function accepts in its list: any key value but an integer bind variable.
+     */
+    private static boolean isListKeyValue(BoundExpression value) {
+        return isKeyValue(value) && !(isBind(value) && isIntegerKey(ColumnType.tagOf(value.getDataType())));
     }
 
     private static boolean isNot(FunctionExpression call) {
@@ -220,7 +251,7 @@ public final class SymbolKeyExtractor implements Mutable {
             return (ColumnExpression) call.argumentAt(0);
         }
         for (int i = 1, n = list.getArgumentCount(); i < n; i++) {
-            if (!isKeyValue(list.argumentAt(i))) {
+            if (!isListKeyValue(list.argumentAt(i))) {
                 return null;
             }
         }
@@ -228,13 +259,24 @@ public final class SymbolKeyExtractor implements Mutable {
     }
 
     /**
-     * The UTF-16 text of a STRING or VARCHAR constant; null for a NULL value or any other type. A non-ASCII VARCHAR
-     * decodes into {@code sink}.
+     * The UTF-16 text a STRING, VARCHAR, SYMBOL or integer constant matches a SYMBOL by, the decimal text of an
+     * integer as {@code =} formats it; null for a NULL value or any other type. A non-ASCII VARCHAR decodes, and an
+     * integer formats, into {@code sink}.
      */
     private static CharSequence textOf(BoundExpression value, StringSink sink) {
         final ConstantExpression constant = (ConstantExpression) value;
-        return switch (ColumnType.tagOf(constant.getDataType())) {
-            case ColumnType.STRING -> constant.getStrValue();
+        final int type = ColumnType.tagOf(constant.getDataType());
+        if (isIntegerKey(type)) {
+            final long key = type == ColumnType.INT ? Numbers.intToLong((int) constant.getLongValue()) : constant.getLongValue();
+            if (key == Numbers.LONG_NULL) {
+                return null;
+            }
+            sink.clear();
+            sink.put(key);
+            return sink;
+        }
+        return switch (type) {
+            case ColumnType.STRING, ColumnType.SYMBOL -> constant.getStrValue();
             case ColumnType.VARCHAR -> {
                 final Utf8Sequence text = constant.getVarcharValue();
                 if (text == null || text.isAscii()) {
@@ -485,7 +527,7 @@ public final class SymbolKeyExtractor implements Mutable {
     private boolean hasRejectedValue(FunctionExpression call, boolean isBindRejected) {
         for (int i = 1, n = call.getArgumentCount(); i < n; i++) {
             final BoundExpression value = call.argumentAt(i);
-            if (!isKeyValue(value) || isBindRejected && isBind(value)) {
+            if (!isListKeyValue(value) || isBindRejected && isBind(value)) {
                 return true;
             }
         }

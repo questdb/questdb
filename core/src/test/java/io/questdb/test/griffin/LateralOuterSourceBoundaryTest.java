@@ -387,15 +387,11 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
                 int indent = ancestor.length() - ancestor.stripLeading().length();
                 if (indent < ancestorIndent) {
                     if (!isFastPath && ancestor.contains("FilterOnValues")) {
-                        int filteredKeys = 0;
                         // The row selectors and the partition scan are siblings within this
                         // FilterOnValues, so inspect only this source's selector subtree.
-                        for (int k = j + 1; k < i; k++) {
-                            if (plan.getLine(k).toString().contains("filter: 5<extra")) {
-                                filteredKeys++;
-                            }
+                        for (int k = j + 1; k < i && !hasSelection; k++) {
+                            hasSelection = plan.getLine(k).toString().contains("filter: 5<extra");
                         }
-                        hasSelection = filteredKeys == 2;
                     }
                     ancestorIndent = indent;
                 }

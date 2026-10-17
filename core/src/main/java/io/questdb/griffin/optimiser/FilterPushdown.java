@@ -31,6 +31,7 @@ import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SymbolKeyExtractor;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -337,7 +338,7 @@ final class FilterPushdown implements OptimiserPass {
                 return false;
             }
             for (int i = 1, n = call.getArgumentCount(); i < n; i++) {
-                if (!LogicalPlans.isKeyLiteral(call.argumentAt(i))) {
+                if (!SymbolKeyExtractor.isKeyConstant(call.argumentAt(i))) {
                     return false;
                 }
             }

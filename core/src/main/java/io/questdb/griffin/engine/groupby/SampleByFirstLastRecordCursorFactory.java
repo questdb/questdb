@@ -116,7 +116,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            char samplingIntervalUnit
     ) throws SqlException {
         super(groupByMetadata);
         try {
@@ -156,7 +157,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleFromFunc,
                     sampleFromFuncPos,
                     sampleToFunc,
-                    sampleToFuncPos
+                    sampleToFuncPos,
+                    samplingIntervalUnit
             );
         } catch (Throwable th) {
             Misc.free(this, th);
@@ -384,7 +386,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 Function sampleFromFunc,
                 int sampleFromFuncPos,
                 Function sampleToFunc,
-                int sampleToFuncPos
+                int sampleToFuncPos,
+                char samplingIntervalUnit
         ) {
             super(
                     timestampSampler,
@@ -396,7 +399,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleFromFunc,
                     sampleFromFuncPos,
                     sampleToFunc,
-                    sampleToFuncPos
+                    sampleToFuncPos,
+                    samplingIntervalUnit
             );
             frameAddressCache = new PageFrameAddressCache();
             frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
@@ -411,16 +415,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         }
 
         public long getNextTimestamp() {
-            long lastTimestampLocUtc = localEpoch - tzOffset;
-            long nextLastTimestampLoc = timestampSampler.nextTimestamp(localEpoch);
-            if (nextLastTimestampLoc - tzOffset >= nextDstUtc) {
-                tzOffset = rules.getOffset(nextLastTimestampLoc - tzOffset);
-                nextDstUtc = rules.getNextDST(nextLastTimestampLoc - tzOffset);
-                while (nextLastTimestampLoc - tzOffset <= lastTimestampLocUtc) {
-                    nextLastTimestampLoc = timestampSampler.nextTimestamp(nextLastTimestampLoc);
-                }
-            }
-            localEpoch = nextLastTimestampLoc;
+            localEpoch = timestampSampler.nextTimestamp(localEpoch);
             return localEpoch - tzOffset;
         }
 
@@ -467,16 +462,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         public long startFrom(long timestamp) {
             // Skip initialization if timestamp is the same as last returned
             if (!initialized || timestamp != localEpoch - tzOffset) {
-                // null rules means the timezone does not have daylight time changes
-                if (rules != null) {
-                    tzOffset = rules.getOffset(timestamp);
-                    // we really need UTC timestamp to get offset correctly
-                    // this will converge to UTC timestamp
-                    tzOffset = rules.getOffset(timestamp + tzOffset);
-                    nextDstUtc = rules.getNextDST(timestamp + tzOffset);
-                }
                 if (fixedOffset != Long.MIN_VALUE) {
-                    localEpoch = timestampSampler.round(timestamp + tzOffset - fixedOffset) + fixedOffset;
+                    localEpoch = timestampSampler.round(timestamp + tzOffset);
                 } else {
                     localEpoch = timestamp + tzOffset;
                 }
@@ -780,6 +767,10 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             toTop();
             parseParams(this, sqlExecutionContext);
+            if (fixedOffset != Long.MIN_VALUE) {
+                sampleFromFunc.init(this, sqlExecutionContext);
+                anchorCalendarGrid();
+            }
             initialized = false;
         }
 

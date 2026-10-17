@@ -1830,7 +1830,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // anchor. Bucket key K covers raw data in [K, K + stride). The iterator
         // boundaries must include the user offset so they align with bucket keys.
         if (CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
-            long stdOff = CommonUtils.getFloorUtcTzOffset(tzRules, 0, samplingIntervalUnit);
+            long stdOff = tzRules.getStandardOffset();
             if (perCluster) {
                 return fixedOffsetIterator.of(
                         sampler,

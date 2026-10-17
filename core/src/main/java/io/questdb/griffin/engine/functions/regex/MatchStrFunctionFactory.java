@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -68,6 +69,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         if (pattern.isConstant()) {
             Matcher matcher = RegexUtils.createMatcher(pattern, patternPosition);
             if (matcher == null) {
+                Misc.freeObjList(args);
                 return BooleanConstant.FALSE;
             }
             return new MatchStrConstPatternFunction(value, matcher);

@@ -200,19 +200,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             ObjList<ColumnExpression> replacementColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        return bind(node, input, inputAlias, ColumnType.UNDEFINED, replacementNodes, replacementColumns, executionContext);
-    }
-
-    public BoundExpression bind(
-            ExpressionNode node,
-            OutputSchema input,
-            CharSequence inputAlias,
-            int preferredType,
-            ObjList<ExpressionNode> replacementNodes,
-            ObjList<ColumnExpression> replacementColumns,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        return bind(node, BindingRole.SCALAR, input, inputAlias, preferredType, replacementNodes, replacementColumns, null, executionContext);
+        return bind(node, BindingRole.SCALAR, input, inputAlias, ColumnType.UNDEFINED, replacementNodes, replacementColumns, null, executionContext);
     }
 
     /**
@@ -334,6 +322,34 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             SqlExecutionContext executionContext
     ) throws SqlException {
         return bind(node, BindingRole.UPDATE_ASSIGNMENT, input, inputAlias, targetType, null, null, null, executionContext);
+    }
+
+    /**
+     * Binds a root that a plan node outputs as a column: a projection, a grouping key or a value
+     * computed over aggregates. An untyped root parameter becomes STRING.
+     */
+    public BoundExpression bindValue(
+            ExpressionNode node,
+            OutputSchema input,
+            CharSequence inputAlias,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return bind(node, BindingRole.SCALAR, input, inputAlias, ColumnType.STRING, null, null, null, executionContext);
+    }
+
+    /**
+     * {@link #bindValue(ExpressionNode, OutputSchema, CharSequence, SqlExecutionContext)} with the subtree
+     * replacements of {@link #bind(ExpressionNode, OutputSchema, CharSequence, ObjList, ObjList, SqlExecutionContext)}.
+     */
+    public BoundExpression bindValue(
+            ExpressionNode node,
+            OutputSchema input,
+            CharSequence inputAlias,
+            ObjList<ExpressionNode> replacementNodes,
+            ObjList<ColumnExpression> replacementColumns,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return bind(node, BindingRole.SCALAR, input, inputAlias, ColumnType.STRING, replacementNodes, replacementColumns, null, executionContext);
     }
 
     /**

@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import java.util.regex.Matcher;
@@ -66,6 +67,7 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
         CharSequence regex = args.getQuick(1).getStrA(null);
 
         if (regex == null) {
+            Misc.freeObjList(args);
             return BooleanConstant.FALSE;
         }
 

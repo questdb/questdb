@@ -161,11 +161,13 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory, Mono
         return new OffsetTimestampFunction(timestampFunc, fixedOffset(tz, timestampType), timestampType);
     }
 
-    private static class ConstRulesFunc extends AbstractTimestampShiftFunction implements UnaryFunction, MonotonicTimestampFunction {
+    private static class ConstRulesFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
+        private final Function timestampFunc;
         private final TimeZoneRules tzRules;
 
         public ConstRulesFunc(Function timestampFunc, TimeZoneRules tzRules, int timestampType) {
-            super(timestampFunc, timestampType);
+            super(timestampType);
+            this.timestampFunc = timestampFunc;
             this.tzRules = tzRules;
         }
 
@@ -180,6 +182,15 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory, Mono
         }
 
         @Override
+        public long getTimestamp(Record rec) {
+            final long timestamp = timestampFunc.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
+            return timestamp + tzRules.getOffset(timestamp);
+        }
+
+        @Override
         public Function getTimestampArg() {
             return timestampFunc;
         }
@@ -188,18 +199,15 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory, Mono
         public int invertTimestampInterval(Interval io) {
             return MonotonicTimestampFunction.invertZoneOffsetShift(io, tzRules, timestampDriver, -1);
         }
-
-        @Override
-        protected long shift(Record rec, long timestamp) {
-            return timestamp + tzRules.getOffset(timestamp);
-        }
     }
 
-    private static class Func extends AbstractTimestampShiftFunction implements BinaryFunction {
+    private static class Func extends TimestampFunction implements BinaryFunction {
+        private final Function timestampFunc;
         private final Function timezoneFunc;
 
         public Func(Function timestampFunc, Function timezoneFunc, int timestampType) {
-            super(timestampFunc, timestampType);
+            super(timestampType);
+            this.timestampFunc = timestampFunc;
             this.timezoneFunc = timezoneFunc;
         }
 
@@ -219,7 +227,11 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory, Mono
         }
 
         @Override
-        protected long shift(Record rec, long timestampValue) {
+        public long getTimestamp(Record rec) {
+            final long timestampValue = timestampFunc.getTimestamp(rec);
+            if (timestampValue == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
                 return tz != null ? timestampDriver.toTimezone(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
@@ -229,14 +241,16 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory, Mono
         }
     }
 
-    private static class RuntimeConstFunc extends AbstractTimestampShiftFunction implements BinaryFunction {
+    private static class RuntimeConstFunc extends TimestampFunction implements BinaryFunction {
+        private final Function timestampFunc;
         private final Function timezoneFunc;
         private final int timezonePos;
         private long tzOffset;
         private TimeZoneRules tzRules;
 
         public RuntimeConstFunc(Function timestampFunc, Function timezoneFunc, int timezonePos, int timestampType) {
-            super(timestampFunc, timestampType);
+            super(timestampType);
+            this.timestampFunc = timestampFunc;
             this.timezoneFunc = timezoneFunc;
             this.timezonePos = timezonePos;
         }
@@ -254,6 +268,18 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory, Mono
         @Override
         public Function getRight() {
             return timezoneFunc;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long timestamp = timestampFunc.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
+            if (tzRules != null) {
+                return timestamp + tzRules.getOffset(timestamp);
+            }
+            return timestamp + tzOffset;
         }
 
         @Override
@@ -280,14 +306,6 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory, Mono
                 tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 tzRules = null;
             }
-        }
-
-        @Override
-        protected long shift(Record rec, long timestamp) {
-            if (tzRules != null) {
-                return timestamp + tzRules.getOffset(timestamp);
-            }
-            return timestamp + tzOffset;
         }
     }
 }

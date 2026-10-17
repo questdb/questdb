@@ -168,7 +168,7 @@ final class PivotBinder implements Mutable {
             bound = ctx.planNodes.columns.next().of(scope.getColumnId(index), scope.getColumnType(index), key.position);
         } else {
             index = -1;
-            bound = ctx.functionBinder.bind(key, scope, sourceAlias(input), executionContext);
+            bound = ctx.functionBinder.bindValue(key, scope, sourceAlias(input), executionContext);
         }
         bindScope.groupingNodes.add(key);
         grouped.getGroupingExpressions().add(bound);

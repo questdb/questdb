@@ -30,10 +30,10 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.std.datetime.microtime.Micros.toMicros;
 
 public class MonthTimestampMicrosSampler implements TimestampSampler {
     private final int stepMonths;
+    private long anchor;
     private long dayMod;
     private int startDay;
 
@@ -72,23 +72,26 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        final long local = value - dayMod;
-        int y = Micros.getYear(local);
-        final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Micros.getMonthOfYear(local, y, leap);
-        // target month
-        int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
-        int d = startDay > 0 ? startDay : 1;
-        return toMicros(y, leap, nextMonth, d) + dayMod;
+        final long months = monthIndex(value) - monthIndex(anchor);
+        final long steps = months - Math.floorMod(months, stepMonths);
+        final long bucket = addMonth(anchor, Math.toIntExact(steps));
+        if (bucket > value) {
+            return addMonth(anchor, Math.toIntExact(steps - stepMonths));
+        }
+        final long next = addMonth(anchor, Math.toIntExact(steps + stepMonths));
+        return next <= value ? next : bucket;
     }
 
     @Override
     public void setOffset(long timestamp) {
+        this.anchor = timestamp;
         this.dayMod = timestamp;
+        this.startDay = 0;
     }
 
     @Override
     public void setStart(long timestamp) {
+        this.anchor = timestamp;
         final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
         this.startDay = Micros.getDayOfMonth(timestamp, y, Micros.getMonthOfYear(timestamp, y, leap), leap);
@@ -136,5 +139,11 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
             }
         }
         return Micros.toMicros(_y, _m, _d) + dayMod;
+    }
+
+    private long monthIndex(long timestamp) {
+        final long local = timestamp - dayMod;
+        final int y = Micros.getYear(local);
+        return 12L * y + Micros.getMonthOfYear(local, y, CommonUtils.isLeapYear(y));
     }
 }

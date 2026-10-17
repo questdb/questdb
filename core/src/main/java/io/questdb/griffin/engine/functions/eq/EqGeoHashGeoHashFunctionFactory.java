@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import static io.questdb.cairo.GeoHashes.getGeoLong;
@@ -93,6 +94,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
                 return createConstCheckFunc(geohash2, hash1, type1p);
             }
 
+            Misc.freeObjList(args);
             return BooleanConstant.of(false);
         }
 
@@ -101,6 +103,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
             if (hash2 == GeoHashes.NULL || type1p == type2p) {
                 return createConstCheckFunc(geohash1, hash2, type1p);
             }
+            Misc.freeObjList(args);
             return BooleanConstant.of(false);
         }
 
@@ -108,6 +111,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
             return createBinaryFunc(geohash1, geohash2, type1p);
         }
 
+        Misc.freeObjList(args);
         return BooleanConstant.of(false);
     }
 

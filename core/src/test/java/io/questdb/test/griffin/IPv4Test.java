@@ -6524,6 +6524,26 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharFunctionsOverIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x, CASE WHEN x = 1 THEN '12.1.0.7'::IPv4 END ip, '1.0'::VARCHAR vc, '12.'::VARCHAR p FROM long_sequence(2)
+                    )""");
+            final String expected = """
+                    pos\tsp\tsw\tlb\tni\tlen\tleft\tup
+                    4\t0\ttrue\t8\t1.0\t8\t12.1\t12.1.0.7
+                    null\tnull\tfalse\t-1\t1.0\t-1\t\t
+                    """;
+            final String select = """
+                    SELECT position(ip, vc) pos, strpos(vc, ip) sp, starts_with(ip, p) sw, length_bytes(ip) lb, nullif(vc, ip) ni,
+                    length(ip) len, left(ip, 4) left, upper(ip) up FROM\s""";
+            assertQuery(select + "t ORDER BY x").noLeakCheck().expectSize().returns(expected);
+            assertQuery(select + "(SELECT * FROM t) ORDER BY x").noLeakCheck().expectSize().returns(expected);
+        });
+    }
+
+    @Test
     public void testWalIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (" +

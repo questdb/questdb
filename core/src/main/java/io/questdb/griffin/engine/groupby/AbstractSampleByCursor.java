@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.TimeZoneRules;
 
 import java.io.Closeable;
@@ -44,17 +45,17 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
     protected final Function sampleToFunc;
     protected final int sampleToFuncPos;
     protected final int sampleToFuncType;
+    protected final char samplingIntervalUnit;
     protected final TimestampDriver timestampDriver;
-    protected final TimestampSampler timestampSampler;
     protected final Function timezoneNameFunc;
     protected final int timezoneNameFuncPos;
+    private final TimestampSampler calendarSampler;
     private final SampleByTimezone timezone = new SampleByTimezone();
     protected long fixedOffset;
     protected long localEpoch;
-    protected long nextDstUtc;
-    protected long prevDst;
-    protected TimeZoneRules rules;
+    protected TimestampSampler timestampSampler;
     protected long tzOffset;
+    private TimezoneFloorTimestampSampler zonedSampler;
 
     public AbstractSampleByCursor(
             TimestampSampler timestampSampler,
@@ -66,9 +67,12 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            char samplingIntervalUnit
     ) {
+        this.calendarSampler = timestampSampler;
         this.timestampSampler = timestampSampler;
+        this.samplingIntervalUnit = samplingIntervalUnit;
         this.timezoneNameFunc = timezoneNameFunc;
         this.timezoneNameFuncPos = timezoneNameFuncPos;
         this.offsetFunc = offsetFunc;
@@ -89,12 +93,45 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
         // must leave them usable for the next execution of the cached factory.
     }
 
+    /**
+     * Anchors the calendar grid at FROM, or at OFFSET without FROM, and returns FROM, Long.MIN_VALUE without it.
+     */
+    protected long anchorCalendarGrid() {
+        if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
+            final long from = sampleFromFunc.getTimestamp(null);
+            timestampSampler.setLocalAnchor(from != Long.MIN_VALUE ? localFrom(from) : 0);
+            return from;
+        }
+        timestampSampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
+        return Long.MIN_VALUE;
+    }
+
+    // SampleByFactoryGenerator hands sub-day strides their FROM in UTC and longer strides in local time.
+    protected long localFrom(long from) {
+        final long timestamp = timestampDriver.from(from, sampleFromFuncType);
+        return CommonUtils.isSubDayUnit(samplingIntervalUnit) ? timestamp + tzOffset : timestamp;
+    }
+
+    /**
+     * Resolves TIME ZONE and OFFSET for an execution and picks the bucket grid timestamp_floor_utc floors to:
+     * a sub-day stride steps in the zone's standard offset, a longer stride on the zone's local calendar.
+     */
     protected void parseParams(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
         timezone.of(timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, timestampDriver, base, executionContext);
-        rules = timezone.getRules();
-        if (rules == null) {
-            tzOffset = timezone.getTzOffset();
-            nextDstUtc = Long.MAX_VALUE;
+        final TimeZoneRules rules = timezone.getRules();
+        timestampSampler = calendarSampler;
+        tzOffset = timezone.getTzOffset();
+        if (rules != null) {
+            if (CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
+                tzOffset = rules.getStandardOffset();
+            } else {
+                if (zonedSampler == null) {
+                    zonedSampler = new TimezoneFloorTimestampSampler(calendarSampler, rules, samplingIntervalUnit);
+                } else {
+                    zonedSampler.setTzRules(rules);
+                }
+                timestampSampler = zonedSampler;
+            }
         }
         fixedOffset = timezone.getFixedOffset();
     }

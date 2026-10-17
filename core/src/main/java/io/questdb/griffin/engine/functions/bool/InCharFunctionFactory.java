@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
@@ -66,6 +67,7 @@ public class InCharFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         int n = args.size();
         if (n == 1) {
+            Misc.freeObjList(args);
             return BooleanConstant.FALSE;
         }
 

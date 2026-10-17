@@ -74,6 +74,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.TimeZone;
 import java.util.concurrent.CyclicBarrier;
@@ -5893,8 +5894,8 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByDstFallBackRepeatedHourOverSampleByCursor() throws Exception {
-        // The repeated hour of a fall-back collapses into the bucket before it: every row of it, including the
-        // first row after the transition, aggregates once and in row order.
+        // The repeated hour of a fall-back splits across two UTC buckets, as on a table source: every row
+        // aggregates once and in row order.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE fa1 (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -5916,9 +5917,10 @@ public class SampleByTest extends AbstractCairoTest {
                             ts\tsym\tsum\tfirst\tlast\tcount
                             2024-10-26T21:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
                             2024-10-27T00:00:00.000000Z\tA\t2.0\t2.0\t2.0\t1
-                            2024-10-27T00:00:00.000000Z\tB\t18.0\t7.0\t8.0\t3
-                            2024-10-27T00:00:00.000000Z\tD\t5.0\t5.0\t5.0\t1
-                            2024-10-27T00:00:00.000000Z\tC\t6.0\t6.0\t6.0\t1
+                            2024-10-27T00:00:00.000000Z\tB\t7.0\t7.0\t7.0\t1
+                            2024-10-27T01:00:00.000000Z\tD\t5.0\t5.0\t5.0\t1
+                            2024-10-27T01:00:00.000000Z\tB\t11.0\t3.0\t8.0\t2
+                            2024-10-27T01:00:00.000000Z\tC\t6.0\t6.0\t6.0\t1
                             2024-10-27T05:00:00.000000Z\tB\t4.0\t4.0\t4.0\t1
                             """);
             assertQuery("SELECT ts, sum(v), first(v), last(v), count() FROM (SELECT * FROM fa1) SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
@@ -5928,7 +5930,8 @@ public class SampleByTest extends AbstractCairoTest {
                     .returns("""
                             ts\tsum\tfirst\tlast\tcount
                             2024-10-26T21:00:00.000000Z\t1.0\t1.0\t1.0\t1
-                            2024-10-27T00:00:00.000000Z\t31.0\t2.0\t8.0\t6
+                            2024-10-27T00:00:00.000000Z\t9.0\t2.0\t7.0\t2
+                            2024-10-27T01:00:00.000000Z\t22.0\t5.0\t8.0\t4
                             2024-10-27T05:00:00.000000Z\t4.0\t4.0\t4.0\t1
                             """);
             execute("CREATE TABLE fa2 (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -5947,7 +5950,8 @@ public class SampleByTest extends AbstractCairoTest {
                     .returns("""
                             ts\tsym\tsum\tfirst\tlast\tcount
                             2024-10-26T21:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
-                            2024-10-27T00:00:00.000000Z\tB\t18.0\t7.0\t8.0\t3
+                            2024-10-27T00:00:00.000000Z\tB\t7.0\t7.0\t7.0\t1
+                            2024-10-27T01:00:00.000000Z\tB\t11.0\t3.0\t8.0\t2
                             2024-10-27T05:00:00.000000Z\tB\t4.0\t4.0\t4.0\t1
                             """);
             assertQuery("SELECT ts, sum(v), first(v), last(v), count() FROM (SELECT * FROM fa2) SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
@@ -5957,7 +5961,8 @@ public class SampleByTest extends AbstractCairoTest {
                     .returns("""
                             ts\tsum\tfirst\tlast\tcount
                             2024-10-26T21:00:00.000000Z\t1.0\t1.0\t1.0\t1
-                            2024-10-27T00:00:00.000000Z\t18.0\t7.0\t8.0\t3
+                            2024-10-27T00:00:00.000000Z\t7.0\t7.0\t7.0\t1
+                            2024-10-27T01:00:00.000000Z\t11.0\t3.0\t8.0\t2
                             2024-10-27T05:00:00.000000Z\t4.0\t4.0\t4.0\t1
                             """);
             assertQuery("SELECT ts, sym, sum(v), first(v), last(v), count() FROM (SELECT * FROM fa2) SAMPLE BY 2h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
@@ -5966,16 +5971,14 @@ public class SampleByTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsym\tsum\tfirst\tlast\tcount
-                            2024-10-26T20:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
-                            2024-10-26T20:00:00.000000Z\tB\tnull\tnull\tnull\tnull
-                            2024-10-26T22:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
-                            2024-10-26T22:00:00.000000Z\tB\tnull\tnull\tnull\tnull
-                            2024-10-27T00:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
-                            2024-10-27T00:00:00.000000Z\tB\t18.0\t7.0\t8.0\t3
-                            2024-10-27T02:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
-                            2024-10-27T02:00:00.000000Z\tB\t18.0\t7.0\t8.0\t3
-                            2024-10-27T04:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
-                            2024-10-27T04:00:00.000000Z\tB\t18.0\t7.0\t8.0\t3
+                            2024-10-26T21:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-26T21:00:00.000000Z\tB\tnull\tnull\tnull\tnull
+                            2024-10-26T23:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-26T23:00:00.000000Z\tB\t7.0\t7.0\t7.0\t1
+                            2024-10-27T01:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-27T01:00:00.000000Z\tB\t11.0\t3.0\t8.0\t2
+                            2024-10-27T03:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-27T03:00:00.000000Z\tB\t11.0\t3.0\t8.0\t2
                             2024-10-27T05:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
                             2024-10-27T05:00:00.000000Z\tB\t4.0\t4.0\t4.0\t1
                             """);
@@ -6667,7 +6670,8 @@ public class SampleByTest extends AbstractCairoTest {
                     null,
                     0,
                     null,
-                    0
+                    0,
+                    'U'
             ).close();
             Assert.fail();
         } catch (SqlException e) {
@@ -6711,7 +6715,8 @@ public class SampleByTest extends AbstractCairoTest {
                     null,
                     0,
                     null,
-                    0
+                    0,
+                    'U'
             ).close();
             Assert.fail();
         } catch (IllegalArgumentException e) {
@@ -7664,6 +7669,358 @@ public class SampleByTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .fails(62, "to upper bound must be a constant expression convertible to a TIMESTAMP");
             }
+        });
+    }
+
+    @Test
+    public void testSampleByDstGridSameForEverySource() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dst (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String[] windows = {
+                    "2024-03-09T20:00", "2024-03-30T20:00", "2024-04-05T20:00",
+                    "2024-10-05T20:00", "2024-10-26T20:00", "2024-11-02T20:00"
+            };
+            for (String start : windows) {
+                execute("INSERT INTO dst SELECT CASE WHEN x % 3 = 0 THEN 'a' ELSE 'b' END, x, timestamp_sequence('"
+                        + start + "', 97 * 60_000_000L) FROM long_sequence(40)");
+            }
+            execute("CREATE VIEW dst_view AS (SELECT * FROM dst)");
+            final String trigger = """
+                    ts\tc\tsx
+                    2024-10-26T23:00:00.000000Z\t1\t1
+                    2024-10-27T00:00:00.000000Z\t1\t2
+                    2024-10-27T01:00:00.000000Z\t2\t7
+                    2024-10-27T02:00:00.000000Z\t1\t5
+                    """;
+            for (String fill : new String[]{"", " FILL(NULL)", " FILL(PREV)"}) {
+                assertQuery("SELECT ts, count() c, sum(x) sx FROM (SELECT timestamp_sequence('2024-10-26T23:54', 2_220_000_000L) ts, x FROM long_sequence(5)) TIMESTAMP(ts) SAMPLE BY 1h"
+                        + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(trigger);
+            }
+            for (String source : new String[]{"dst", "(SELECT * FROM dst LIMIT 1_000)"}) {
+                assertQuery("SELECT ts, count() c, sum(x) sx FROM " + source + " WHERE ts >= '2024-03-31' AND ts < '2024-04-02'"
+                        + " SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("""
+                                ts\tc\tsx
+                                2024-03-30T01:00:00.000000Z\t1\t4
+                                2024-03-31T01:00:00.000000Z\t14\t161
+                                2024-04-01T00:00:00.000000Z\t15\t390
+                                """);
+            }
+
+            final String[] zones = {"Europe/Berlin", "America/New_York", "Australia/Sydney", "Europe/London"};
+            final String[] strides = {"1h", "30m", "15m", "1d", "1d WITH OFFSET '02:00'"};
+            final String[] fills = {"", " FILL(NULL)", " FILL(PREV)", " FILL(0)"};
+            final String[] sources = {
+                    "(SELECT * FROM dst%s)",
+                    "(SELECT * FROM dst%s LIMIT 1_000)",
+                    "(SELECT * FROM dst_view%s)",
+                    "s"
+            };
+            for (String zone : zones) {
+                for (String window : windows) {
+                    final String range = " WHERE ts IN '" + window.substring(0, 10) + ";4d'";
+                    for (String stride : strides) {
+                        final int offsetAt = stride.indexOf(' ');
+                        final String sampleBy = " SAMPLE BY " + (offsetAt < 0 ? stride : stride.substring(0, offsetAt))
+                                + (stride.startsWith("30m") ? " FROM '" + window + "' TO '" + LocalDate.parse(window.substring(0, 10)).plusDays(3) + "'" : "");
+                        final String alignment = " ALIGN TO CALENDAR TIME ZONE '" + zone + "'" + (offsetAt < 0 ? "" : stride.substring(offsetAt));
+                        for (String fill : fills) {
+                            for (String keys : new String[]{"", "sym, "}) {
+                                final String projection = "SELECT ts, " + keys + "count() c, sum(x) sx FROM ";
+                                final String order = keys.isEmpty() ? "" : " ORDER BY ts, sym";
+                                final String tableSql = "SELECT * FROM (" + projection + "dst" + range + sampleBy + fill + alignment + ")" + order;
+                                printSql(tableSql);
+                                final String expected = sink.toString();
+                                if (keys.isEmpty() && fill.equals(" FILL(NULL)") && !sampleBy.contains(" FROM ")) {
+                                    printSql(tableSql.replace(" FILL(NULL)", " FILL(LINEAR)"));
+                                    Assert.assertEquals(tableSql, expected.replaceAll("\t[^\n]*", ""), sink.toString().replaceAll("\t[^\n]*", ""));
+                                }
+                                for (String source : sources) {
+                                    if (sampleBy.contains(" FROM ") && (source.contains("LIMIT") || source.contains("dst_view"))) {
+                                        continue;
+                                    }
+                                    final String with = source.equals("s") ? "WITH s AS (SELECT * FROM dst" + range + ") " : "";
+                                    assertQuery(with + "SELECT * FROM (" + projection + String.format(source, range) + sampleBy + fill + alignment + ")" + order)
+                                            .noLeakCheck()
+                                            .inferTimestamp()
+                                            .inferRandomAccess()
+                                            .sizeMayVary()
+                                            .returns(expected);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFirstLastIndexDstGridSameAsGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fl (s SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO fl SELECT CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END, x, timestamp_sequence('2024-03-30T20:00', 7 * 60_000_000L) FROM long_sequence(80)");
+            execute("INSERT INTO fl SELECT CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END, x + 100, timestamp_sequence('2024-10-26T20:00', 7 * 60_000_000L) FROM long_sequence(80)");
+            for (String zone : new String[]{"Europe/Berlin", "America/New_York", "Australia/Sydney"}) {
+                for (String stride : new String[]{"1h", "2h", "3h", "1d"}) {
+                    for (String from : new String[]{"2024-03-30T00:00:00", "2024-10-26T00:00:00"}) {
+                        final String tail = " ALIGN TO CALENDAR TIME ZONE '" + zone + "'";
+                        printSql("SELECT ts, min(v) f, max(v) l FROM fl WHERE s = 'a' SAMPLE BY " + stride + " FROM '" + from + "'" + tail);
+                        final String sql = "SELECT ts, first(v) f, last(v) l FROM fl WHERE s = 'a' SAMPLE BY " + stride
+                                + " FROM dateadd('d', 0, '" + from + "'::TIMESTAMP)" + tail;
+                        assertQuery(sql)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .inferRandomAccess()
+                                .sizeMayVary()
+                                .withPlanContaining("SampleByFirstLast")
+                                .returns(sink.toString());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByYearGridSameForEverySpelling() throws Exception {
+        assertMemoryLeak(() -> {
+            final StringBuilder values = new StringBuilder();
+            for (int year = 2019; year <= 2031; year++) {
+                final boolean isLeap = year % 4 == 0;
+                for (String date : new String[]{"01-01T00:30", "02-28T12:00", "02-29T12:00", "03-01T00:00", "03-01T12:00", "06-15T00:00", "12-31T23:30"}) {
+                    if (!isLeap && date.startsWith("02-29")) {
+                        continue;
+                    }
+                    values.append(values.length() == 0 ? "" : ", ").append("(").append(year).append(", '").append(year).append('-').append(date).append(":00.000000Z')");
+                }
+            }
+            final String[] strides = {"1y", "2y", "3y", "5y"};
+            final String[] froms = {"2020-02-29", "2021-02-28", "2021-03-01", "2020-12-31", "2021-01-01", "2021-06-15"};
+            for (String type : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+                execute("CREATE TABLE yr (v LONG, ts " + type + ") TIMESTAMP(ts) PARTITION BY YEAR");
+                execute("INSERT INTO yr VALUES " + values);
+                for (String stride : strides) {
+                    for (String fill : new String[]{"", " FILL(NULL)"}) {
+                        for (String from : froms) {
+                            printSql("SELECT ts, count() c, sum(v) s FROM yr SAMPLE BY " + stride + " FROM '" + from + "'" + fill);
+                            final String expected = sink.toString();
+                            for (String sql : new String[]{
+                                    "SELECT ts, count() c, sum(v) s FROM yr SAMPLE BY " + stride + " FROM dateadd('d', 0, '" + from + "'::TIMESTAMP)" + fill,
+                                    "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM yr WHERE v > 0) TIMESTAMP(ts) SAMPLE BY " + stride + " FROM '" + from + "'" + fill
+                            }) {
+                                assertQuery(sql).noLeakCheck().timestamp("ts").inferRandomAccess().sizeMayVary().returns(expected);
+                            }
+                        }
+                        for (String offset : new String[]{"-01:00", "02:00"}) {
+                            final String tail = " ALIGN TO CALENDAR WITH OFFSET '" + offset + "'";
+                            printSql("SELECT ts, count() c, sum(v) s FROM yr SAMPLE BY " + stride + fill + tail);
+                            assertQuery("SELECT ts, count() c, sum(v) s FROM (SELECT * FROM yr WHERE v > 0) TIMESTAMP(ts) SAMPLE BY " + stride + fill + tail)
+                                    .noLeakCheck().timestamp("ts").inferRandomAccess().sizeMayVary().returns(sink.toString());
+                        }
+                    }
+                }
+                assertQuery("SELECT ts, count() c FROM yr SAMPLE BY 1y FROM dateadd('d', 0, '2020-02-29'::TIMESTAMP) LIMIT 3")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("TIMESTAMP".equals(type) ? """
+                                ts\tc
+                                2020-02-29T00:00:00.000000Z\t6
+                                2021-02-28T00:00:00.000000Z\t6
+                                2022-02-28T00:00:00.000000Z\t6
+                                """ : """
+                                ts\tc
+                                2020-02-29T00:00:00.000000000Z\t6
+                                2021-02-28T00:00:00.000000000Z\t6
+                                2022-02-28T00:00:00.000000000Z\t6
+                                """);
+                execute("DROP TABLE yr");
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByMonthNegativeOffsetStartsBucketAtOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"1M", "", """
+                            ts\tc\ts
+                            2023-12-31T23:00:00.000000Z\t1\t1
+                            2024-01-31T23:00:00.000000Z\t3\t9
+                            2024-02-29T23:00:00.000000Z\t2\t11
+                            2024-03-31T23:00:00.000000Z\t2\t15
+                            """},
+                    {"3M", "", """
+                            ts\tc\ts
+                            2023-12-31T23:00:00.000000Z\t6\t21
+                            2024-03-31T23:00:00.000000Z\t2\t15
+                            """},
+                    {"1y", "", """
+                            ts\tc\ts
+                            2023-12-31T23:00:00.000000Z\t8\t36
+                            """},
+                    {"1M", " TIME ZONE 'Europe/Berlin'", """
+                            ts\tc\ts
+                            2024-01-31T22:00:00.000000Z\t3\t6
+                            2024-02-29T22:00:00.000000Z\t3\t15
+                            2024-03-31T21:00:00.000000Z\t1\t7
+                            2024-04-30T21:00:00.000000Z\t1\t8
+                            """}
+            };
+            for (String type : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+                execute("CREATE TABLE mo (v LONG, ts " + type + ") TIMESTAMP(ts) PARTITION BY MONTH");
+                execute("""
+                        INSERT INTO mo VALUES
+                            (1, '2024-01-31T22:30:00.000000Z'),
+                            (2, '2024-01-31T23:00:00.000000Z'),
+                            (3, '2024-02-15T00:00:00.000000Z'),
+                            (4, '2024-02-29T22:59:00.000000Z'),
+                            (5, '2024-02-29T23:00:00.000000Z'),
+                            (6, '2024-02-29T23:30:00.000000Z'),
+                            (7, '2024-03-31T23:00:00.000000Z'),
+                            (8, '2024-04-30T22:00:00.000000Z')
+                        """);
+                for (String[] c : cases) {
+                    final String expected = "TIMESTAMP_NS".equals(type) ? c[2].replace(".000000Z", ".000000000Z") : c[2];
+                    for (String source : new String[]{"mo", "(SELECT * FROM mo LIMIT 100)"}) {
+                        for (String fill : new String[]{"", " FILL(NULL)", " FILL(PREV)"}) {
+                            assertQuery("SELECT ts, count() c, sum(v) s FROM " + source + " SAMPLE BY " + c[0] + fill
+                                    + " ALIGN TO CALENDAR" + c[1] + " WITH OFFSET '-01:00'")
+                                    .noLeakCheck()
+                                    .timestamp("ts")
+                                    .inferRandomAccess()
+                                    .sizeMayVary()
+                                    .returns(expected);
+                        }
+                    }
+                }
+                execute("DROP TABLE mo");
+            }
+
+            execute("CREATE TABLE m31 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("""
+                    INSERT INTO m31 VALUES
+                        (1, '2024-01-31T12:00:00.000000Z'),
+                        (2, '2024-02-29T12:00:00.000000Z'),
+                        (3, '2024-03-15T00:00:00.000000Z'),
+                        (4, '2024-03-31T12:00:00.000000Z'),
+                        (5, '2024-06-30T12:00:00.000000Z')
+                    """);
+            for (String source : new String[]{"m31", "(SELECT * FROM m31 WHERE v > 0) TIMESTAMP(ts)"}) {
+                for (String from : new String[]{"'2024-01-31'", "dateadd('d', 0, '2024-01-31'::TIMESTAMP)"}) {
+                    assertQuery("SELECT ts, count() c, sum(v) s FROM " + source + " SAMPLE BY 1M FROM " + from)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .returns("""
+                                    ts\tc\ts
+                                    2024-01-31T00:00:00.000000Z\t1\t1
+                                    2024-02-29T00:00:00.000000Z\t2\t5
+                                    2024-03-31T00:00:00.000000Z\t1\t4
+                                    2024-06-30T00:00:00.000000Z\t1\t5
+                                    """);
+                }
+                for (String from : new String[]{"'2024-02-15'", "dateadd('d', 0, '2024-02-15'::TIMESTAMP)"}) {
+                    assertQuery("SELECT ts, count() c, sum(v) s FROM " + source + " SAMPLE BY 3M FROM " + from)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .returns("""
+                                    ts\tc\ts
+                                    2024-02-15T00:00:00.000000Z\t3\t9
+                                    2024-05-15T00:00:00.000000Z\t1\t5
+                                    """);
+                }
+                assertQuery("SELECT ts, count() c, sum(v) s FROM " + source + " SAMPLE BY 1M FROM '2024-01-31' FILL(NULL)")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("""
+                                ts\tc\ts
+                                2024-01-31T00:00:00.000000Z\t1\t1
+                                2024-02-29T00:00:00.000000Z\t2\t5
+                                2024-03-31T00:00:00.000000Z\t1\t4
+                                2024-04-30T00:00:00.000000Z\tnull\tnull
+                                2024-05-31T00:00:00.000000Z\tnull\tnull
+                                2024-06-30T00:00:00.000000Z\t1\t5
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFromToScalarSubQueryConvertsEveryAdmittedType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE events (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO events VALUES (0::TIMESTAMP), (2::TIMESTAMP), (4::TIMESTAMP), (6::TIMESTAMP), (8::TIMESTAMP)");
+            final String[][] cases = {
+                    {"", """
+                            ts\tc
+                            1970-01-01T00:00:00.000006Z\t1
+                            1970-01-01T00:00:00.000008Z\t1
+                            """, """
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:00.000002Z\t1
+                            1970-01-01T00:00:00.000004Z\t1
+                            """},
+                    {" FILL(NULL)", """
+                            ts\tc
+                            1970-01-01T00:00:00.000005Z\tnull
+                            1970-01-01T00:00:00.000006Z\t1
+                            1970-01-01T00:00:00.000007Z\tnull
+                            1970-01-01T00:00:00.000008Z\t1
+                            """, """
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\t1
+                            1970-01-01T00:00:00.000003Z\tnull
+                            1970-01-01T00:00:00.000004Z\t1
+                            """},
+                    {" FILL(LINEAR)", """
+                            ts\tc
+                            1970-01-01T00:00:00.000006Z\t1
+                            1970-01-01T00:00:00.000007Z\t1
+                            1970-01-01T00:00:00.000008Z\t1
+                            """, """
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\t1
+                            1970-01-01T00:00:00.000003Z\t1
+                            1970-01-01T00:00:00.000004Z\t1
+                            """}
+            };
+            for (String five : new String[]{"5", "5::BYTE", "5::SHORT", "5::INT", "5::LONG", "'5'::CHAR", "'5'::CHAR::INT", "'5'::VARCHAR"}) {
+                for (String[] c : cases) {
+                    assertScalarSubQueryBound("SELECT ts, count() c FROM events SAMPLE BY 1U FROM (SELECT " + five + ") TO 9" + c[0], c[1]);
+                    assertScalarSubQueryBound("SELECT ts, count() c FROM events SAMPLE BY 1U FROM 0 TO (SELECT " + five + ")" + c[0], c[2]);
+                }
+            }
+            for (String[] c : cases) {
+                assertScalarSubQueryBound("SELECT ts, count() c FROM events SAMPLE BY 1U FROM 5 TO 9" + c[0], c[1]);
+                assertScalarSubQueryBound("SELECT ts, count() c FROM events SAMPLE BY 1U FROM 0 TO 5" + c[0], c[2]);
+            }
+            assertQuery("SELECT ts, count() c FROM events SAMPLE BY 1U FROM (SELECT 'x'::CHAR) TO 9")
+                    .noLeakCheck()
+                    .fails(0, "inconvertible value: x [CHAR -> TIMESTAMP]");
+            assertQuery("SELECT ts, count() c FROM events SAMPLE BY 1U FROM (SELECT 5.0::DOUBLE) TO 9")
+                    .noLeakCheck()
+                    .fails(52, "from lower bound must be a constant expression convertible to a TIMESTAMP");
         });
     }
 
@@ -11126,36 +11483,36 @@ public class SampleByTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         b\tsum_t\tk
-                        \t54112.40405938657\t1970-01-03T00:00:00.000000Z
-                        VTJW\t11209.880434660998\t1970-01-03T00:00:00.000000Z
-                        RXGZ\t9939.438287132381\t1970-01-03T00:00:00.000000Z
-                        PEHN\t11042.882403279875\t1970-01-03T00:00:00.000000Z
-                        HYRX\t11080.174817969955\t1970-01-03T00:00:00.000000Z
-                        CPSW\t9310.397369439\t1970-01-03T00:00:00.000000Z
-                        \t53936.039113863764\t1970-04-03T00:00:00.000000Z
-                        HYRX\t10382.092656987053\t1970-04-03T00:00:00.000000Z
-                        CPSW\t11677.451781387846\t1970-04-03T00:00:00.000000Z
-                        RXGZ\t12082.97398092452\t1970-04-03T00:00:00.000000Z
-                        VTJW\t11574.354700279142\t1970-04-03T00:00:00.000000Z
-                        PEHN\t11225.427167029598\t1970-04-03T00:00:00.000000Z
-                        \t53719.38559836983\t1970-07-03T00:00:00.000000Z
-                        VTJW\t10645.216313875992\t1970-07-03T00:00:00.000000Z
-                        RXGZ\t12441.881371617534\t1970-07-03T00:00:00.000000Z
-                        HYRX\t10478.918039106036\t1970-07-03T00:00:00.000000Z
-                        CPSW\t11215.534064219255\t1970-07-03T00:00:00.000000Z
-                        PEHN\t12053.625707887684\t1970-07-03T00:00:00.000000Z
-                        \t54106.362147164444\t1970-10-03T00:00:00.000000Z
-                        HYRX\t11883.354138407445\t1970-10-03T00:00:00.000000Z
-                        RXGZ\t11608.715762809448\t1970-10-03T00:00:00.000000Z
-                        CPSW\t11623.362686708584\t1970-10-03T00:00:00.000000Z
-                        PEHN\t11258.550294609915\t1970-10-03T00:00:00.000000Z
-                        VTJW\t10865.136275604094\t1970-10-03T00:00:00.000000Z
-                        \t33152.56289929654\t1971-01-03T00:00:00.000000Z
-                        PEHN\t7219.25966062438\t1971-01-03T00:00:00.000000Z
-                        CPSW\t6038.83487182006\t1971-01-03T00:00:00.000000Z
-                        RXGZ\t5862.505042201944\t1971-01-03T00:00:00.000000Z
-                        VTJW\t6677.581919995402\t1971-01-03T00:00:00.000000Z
-                        HYRX\t5998.730211949621\t1971-01-03T00:00:00.000000Z
+                        \t55342.35808049189\t1970-01-03T00:00:00.000000Z
+                        VTJW\t11567.037431069954\t1970-01-03T00:00:00.000000Z
+                        RXGZ\t10201.524212064816\t1970-01-03T00:00:00.000000Z
+                        PEHN\t11202.70624166601\t1970-01-03T00:00:00.000000Z
+                        HYRX\t11272.942252172881\t1970-01-03T00:00:00.000000Z
+                        CPSW\t9549.728356483236\t1970-01-03T00:00:00.000000Z
+                        \t53480.15115633946\t1970-04-03T00:00:00.000000Z
+                        CPSW\t11636.209302114898\t1970-04-03T00:00:00.000000Z
+                        VTJW\t11390.234559637041\t1970-04-03T00:00:00.000000Z
+                        RXGZ\t12440.107683784532\t1970-04-03T00:00:00.000000Z
+                        PEHN\t11450.78558033701\t1970-04-03T00:00:00.000000Z
+                        HYRX\t10356.509551414398\t1970-04-03T00:00:00.000000Z
+                        \t54114.54355982458\t1970-07-03T00:00:00.000000Z
+                        PEHN\t11989.334543549547\t1970-07-03T00:00:00.000000Z
+                        HYRX\t10581.79116275676\t1970-07-03T00:00:00.000000Z
+                        VTJW\t10511.596334423533\t1970-07-03T00:00:00.000000Z
+                        CPSW\t11160.449030359112\t1970-07-03T00:00:00.000000Z
+                        RXGZ\t11949.011789400207\t1970-07-03T00:00:00.000000Z
+                        \t53746.717765655616\t1970-10-03T00:00:00.000000Z
+                        PEHN\t11547.526370144547\t1970-10-03T00:00:00.000000Z
+                        HYRX\t11615.62616490242\t1970-10-03T00:00:00.000000Z
+                        RXGZ\t11675.396635775045\t1970-10-03T00:00:00.000000Z
+                        VTJW\t10933.352039216545\t1970-10-03T00:00:00.000000Z
+                        CPSW\t11749.28339631865\t1970-10-03T00:00:00.000000Z
+                        HYRX\t5996.400733173654\t1971-01-03T00:00:00.000000Z
+                        PEHN\t6609.39249773434\t1971-01-03T00:00:00.000000Z
+                        \t32342.983255769585\t1971-01-03T00:00:00.000000Z
+                        VTJW\t6569.949280068554\t1971-01-03T00:00:00.000000Z
+                        CPSW\t5769.910688298849\t1971-01-03T00:00:00.000000Z
+                        RXGZ\t5669.474123661225\t1971-01-03T00:00:00.000000Z
                         """);
 
         assertQuery("select b, sum_t(a), k from x sample by 3M fill(linear) align to calendar")
@@ -18571,4 +18928,5 @@ public class SampleByTest extends AbstractCairoTest {
             remainingMmaps = mmapCount;
         }
     }
+
 }

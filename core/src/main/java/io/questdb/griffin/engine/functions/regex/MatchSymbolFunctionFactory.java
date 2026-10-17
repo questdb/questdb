@@ -42,6 +42,7 @@ import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
@@ -123,6 +124,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             if (pattern.isConstant()) {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPosition);
                 if (matcher == null) {
+                    Misc.freeObjList(args);
                     return BooleanConstant.FALSE;
                 }
                 return new MatchStaticSymbolTableConstPatternFunction(func, matcher);
@@ -133,6 +135,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             if (pattern.isConstant()) {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPosition);
                 if (matcher == null) {
+                    Misc.freeObjList(args);
                     return BooleanConstant.FALSE;
                 }
                 return new MatchStrFunctionFactory.MatchStrConstPatternFunction(func, matcher);

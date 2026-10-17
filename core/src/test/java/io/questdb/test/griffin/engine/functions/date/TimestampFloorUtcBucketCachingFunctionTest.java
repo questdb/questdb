@@ -481,9 +481,11 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
             boolean returnUtc
     ) {
         if (returnUtc) {
-            final long tzOff = CommonUtils.getFloorUtcTzOffset(rules, timestamp, unit);
-            final long floored = floor.floor(timestamp + tzOff, stride, effectiveOffset);
-            return CommonUtils.offsetFlooredUtcResult(floored, tzOff, 0, rules, unit);
+            final long local = CommonUtils.floorUtcToLocal(rules, timestamp, unit);
+            return CommonUtils.floorLocalToUtc(rules, floor.floor(local, stride, effectiveOffset), unit);
+        }
+        if (!CommonUtils.isSubDayUnit(unit)) {
+            return floor.floor(CommonUtils.floorUtcToLocal(rules, timestamp, unit), stride, effectiveOffset);
         }
         long floored = floor.floor(timestamp + rules.getOffset(timestamp), stride, effectiveOffset);
         final long gapDuration = rules.getDstGapOffset(floored);

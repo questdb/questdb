@@ -66,6 +66,7 @@ public class AllNotEqVarcharFunctionFactory implements FunctionFactory {
         FunctionExtension arrayFunction = args.getQuick(1).extendedOps();
         int arraySize = arrayFunction.getArrayLength();
         if (arraySize == 0) {
+            Misc.freeObjList(args);
             return BooleanConstant.TRUE;
         }
 

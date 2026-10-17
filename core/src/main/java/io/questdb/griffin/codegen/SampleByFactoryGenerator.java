@@ -536,7 +536,7 @@ final class SampleByFactoryGenerator {
                         firstLastIndexes, firstLastKinds, firstLastPositions, baseMetadata,
                         timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos,
                         timestampIndex, symbolFilter, searchPageSize, sampleFromFunc,
-                        sampleFromFuncPos, sampleToFunc, sampleToFuncPos
+                        sampleFromFuncPos, sampleToFunc, sampleToFuncPos, samplingIntervalUnit
                 );
             }
             if (algorithm == SampleByPlan.Algorithm.FILL_NONE) {

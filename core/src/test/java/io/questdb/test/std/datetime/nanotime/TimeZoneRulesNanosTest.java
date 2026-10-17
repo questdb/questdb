@@ -39,6 +39,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.zone.ZoneOffsetTransition;
+import java.time.zone.ZoneRules;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -48,6 +50,26 @@ import java.util.Set;
 
 public class TimeZoneRulesNanosTest {
     private static final Log LOG = LogFactory.getLog(TimeZoneRulesNanosTest.class);
+
+    private static void assertFirstInstant(String zone, ZoneRules zoneRules, TimeZoneRulesNanos rules, long local) {
+        final LocalDateTime ldt = LocalDateTime.ofEpochSecond(Math.floorDiv(local, Nanos.SECOND_NANOS), (int) Math.floorMod(local, Nanos.SECOND_NANOS), ZoneOffset.UTC);
+        final List<ZoneOffset> offsets = zoneRules.getValidOffsets(ldt);
+        final long expected = offsets.isEmpty()
+                ? zoneRules.getTransition(ldt).getInstant().getEpochSecond() * Nanos.SECOND_NANOS
+                : local - Math.max(offsets.get(0).getTotalSeconds(), offsets.get(offsets.size() - 1).getTotalSeconds()) * Nanos.SECOND_NANOS;
+        Assert.assertEquals(zone + " " + ldt, expected, rules.getFirstInstantAtOrAfter(local));
+    }
+
+    private static void assertHighWater(String zone, ZoneRules zoneRules, TimeZoneRulesNanos rules, long utc) {
+        final Instant instant = Instant.ofEpochSecond(Math.floorDiv(utc, Nanos.SECOND_NANOS), Math.floorMod(utc, Nanos.SECOND_NANOS));
+        long expected = utc + zoneRules.getOffset(instant).getTotalSeconds() * Nanos.SECOND_NANOS;
+        final ZoneOffsetTransition previous = zoneRules.previousTransition(instant.plusNanos(1));
+        if (previous != null && previous.isOverlap()) {
+            final long localBefore = previous.getDateTimeBefore().toEpochSecond(ZoneOffset.UTC) * Nanos.SECOND_NANOS;
+            expected = Math.max(expected, localBefore - 1);
+        }
+        Assert.assertEquals(zone + " " + instant, expected, rules.getWallClockHighWater(utc));
+    }
 
     @Test
     public void testCompatibility() {
@@ -90,6 +112,39 @@ public class TimeZoneRulesNanosTest {
                 }
             }
             nanos += Nanos.DAY_NANOS;
+        }
+    }
+
+    @Test
+    public void testFirstInstantAndWallClockHighWaterAroundTransitions() {
+        final String[] zones = {
+                "Europe/Berlin", "America/New_York", "Australia/Sydney", "Australia/Lord_Howe", "Europe/Dublin",
+                "America/Havana", "Pacific/Apia", "America/Sao_Paulo", "Asia/Tehran", "UTC"
+        };
+        final long minute = Nanos.MINUTE_NANOS;
+        final long[] fractions = {0, 1, 999, 1_000, 123_456_789, Nanos.SECOND_NANOS - 1};
+        for (String id : zones) {
+            final ZoneRules zoneRules = ZoneId.of(id).getRules();
+            final TimeZoneRulesNanos rules = new TimeZoneRulesNanos(zoneRules);
+            ZoneOffsetTransition tr = zoneRules.nextTransition(Instant.parse("1970-01-01T00:00:00Z"));
+            while (tr != null && tr.getInstant().isBefore(Instant.parse("2045-01-01T00:00:00Z"))) {
+                final long transition = tr.getInstant().getEpochSecond() * Nanos.SECOND_NANOS;
+                final long localBefore = tr.getDateTimeBefore().toEpochSecond(ZoneOffset.UTC) * Nanos.SECOND_NANOS;
+                final long localAfter = tr.getDateTimeAfter().toEpochSecond(ZoneOffset.UTC) * Nanos.SECOND_NANOS;
+                for (long d = -26 * 60; d <= 26 * 60; d += 7) {
+                    final long fraction = fractions[(int) Math.floorMod(d, fractions.length)];
+                    assertHighWater(id, zoneRules, rules, transition + d * minute + fraction);
+                    assertFirstInstant(id, zoneRules, rules, localBefore + d * minute + fraction);
+                }
+                final long repeatEnd = transition + localBefore - localAfter;
+                for (long edge : new long[]{transition - 1, transition, transition + 1, transition + 1_000, repeatEnd - 1_001, repeatEnd - 1_000, repeatEnd - 999, repeatEnd - 1, repeatEnd}) {
+                    assertHighWater(id, zoneRules, rules, edge);
+                }
+                for (long edge : new long[]{localBefore - 1, localBefore, localBefore + 1, localAfter - 1_001, localAfter - 1, localAfter, localAfter + 1}) {
+                    assertFirstInstant(id, zoneRules, rules, edge);
+                }
+                tr = zoneRules.nextTransition(tr.getInstant());
+            }
         }
     }
 

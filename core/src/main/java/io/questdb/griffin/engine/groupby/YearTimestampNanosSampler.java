@@ -33,6 +33,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampNanosSampler implements TimestampSampler {
     private final int stepYears;
+    private long anchor;
     private long dayMod;
     private int startDay;
     private int startMonth;
@@ -76,20 +77,27 @@ public class YearTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Nanos.getYear(value - dayMod);
-        y = Nanos.EPOCH_YEAR_0 + ((y - Nanos.EPOCH_YEAR_0) / stepYears) * stepYears;
-        int month = startMonth > 0 ? startMonth : 1;
-        int day = startDay > 0 ? startDay : 1;
-        return Nanos.toNanos(y, CommonUtils.isLeapYear(y), month, day) + dayMod;
+        final long years = Nanos.getYear(value - dayMod) - Nanos.getYear(anchor - dayMod);
+        final long steps = years - Math.floorMod(years, stepYears);
+        final long bucket = addYears(anchor, Math.toIntExact(steps));
+        if (bucket > value) {
+            return addYears(anchor, Math.toIntExact(steps - stepYears));
+        }
+        final long next = addYears(anchor, Math.toIntExact(steps + stepYears));
+        return next <= value ? next : bucket;
     }
 
     @Override
     public void setOffset(long timestamp) {
+        this.anchor = timestamp;
         this.dayMod = timestamp;
+        this.startDay = 0;
+        this.startMonth = 0;
     }
 
     @Override
     public void setStart(long timestamp) {
+        this.anchor = timestamp;
         final int y = Nanos.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
         this.startMonth = Nanos.getMonthOfYear(timestamp, y, leap);

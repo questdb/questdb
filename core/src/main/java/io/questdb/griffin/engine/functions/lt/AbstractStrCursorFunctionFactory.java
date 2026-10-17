@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -43,7 +44,7 @@ import io.questdb.std.str.Utf8s;
 /**
  * Shared cold-path implementation of the {@code string (= | < | >) (sub-query)} factories. A SYMBOL,
  * STRING, VARCHAR or CHAR left operand resolves to these factories; the factory validates that the scalar
- * sub-query selects one text or CHAR column and delegates the operator-specific function construction to the
+ * sub-query selects one text or CHAR column, or an integer column where {@link #isIntegerText} allows it, and delegates the operator-specific function construction to the
  * concrete factory. A bare NULL left operand prefers these factories in overload resolution, so it
  * delegates a non-text sub-query to the numeric factory of the same operator.
  */
@@ -74,6 +75,9 @@ public abstract class AbstractStrCursorFunctionFactory implements FunctionFactor
             case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL, ColumnType.CHAR, ColumnType.NULL ->
                     newFunc(factory, args.getQuick(0), args.getQuick(1), ColumnType.tagOf(cursorType), argPositions.getQuick(1));
             default -> {
+                if (isIntegerText(args.getQuick(0).getType(), ColumnType.tagOf(cursorType))) {
+                    yield newFunc(factory, args.getQuick(0), args.getQuick(1), ColumnType.tagOf(cursorType), argPositions.getQuick(1));
+                }
                 if (ColumnType.isNull(args.getQuick(0).getType())) {
                     yield nullOperandFactory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
                 }
@@ -83,6 +87,14 @@ public abstract class AbstractStrCursorFunctionFactory implements FunctionFactor
                         .put(ColumnType.nameOf(cursorType));
             }
         };
+    }
+
+    /**
+     * Whether the operator compares a left operand of this type with a sub-query of an integer type by the integer's
+     * decimal text, as {@code =} compares a SYMBOL with an integer.
+     */
+    protected boolean isIntegerText(int leftType, int cursorTag) {
+        return false;
     }
 
     protected abstract Function newFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int cursorTag, int rightPos);
@@ -124,6 +136,18 @@ public abstract class AbstractStrCursorFunctionFactory implements FunctionFactor
                 } else {
                     value = null;
                 }
+                return;
+            }
+            final long key = switch (cursorTag) {
+                case ColumnType.BYTE -> record.getByte(0);
+                case ColumnType.SHORT -> record.getShort(0);
+                case ColumnType.INT -> Numbers.intToLong(record.getInt(0));
+                case ColumnType.LONG -> record.getLong(0);
+                default -> Numbers.LONG_NULL;
+            };
+            if (key != Numbers.LONG_NULL) {
+                sink.put(key);
+                value = sink;
                 return;
             }
             final CharSequence cs = switch (cursorTag) {

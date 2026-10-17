@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -67,6 +68,7 @@ public final class InIPv4FunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final int n = args.size();
         if (n == 1) {
+            Misc.freeObjList(args);
             return BooleanConstant.FALSE;
         }
 

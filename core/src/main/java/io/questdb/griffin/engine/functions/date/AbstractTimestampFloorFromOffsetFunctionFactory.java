@@ -465,77 +465,21 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         return true;
     }
 
-    // Floors a UTC timestamp into local-time-aligned buckets.
-    //
-    // When returnUtc is true, converts the result back to UTC using the same timezone
-    // offset derived from the original UTC input. When false, returns the floored local
-    // time directly.
-    //
-    // The key insight for the UTC mode: we look up the timezone offset from the *original*
-    // UTC input, which is unambiguous. We then use that same offset to convert back to UTC
-    // at the end. This avoids the fall-back problem where two distinct UTC instants map to
-    // the same local time — since we always derive the offset from the unambiguous UTC
-    // input, each input produces a distinct UTC output even when local times collide.
-    //
-    // Spring-forward (DST gap) example — Europe/Berlin, Mar 28 2021:
-    //   Local clocks jump from 02:00 CET to 03:00 CEST. Local times 02:00–02:59 don't exist.
-    //   Input:  UTC 00:50 → offset +1h (CET) → local 01:50 → floor(1h) → local 01:00
-    //   Output: 01:00 - 1h = UTC 00:00. No gap issue here; 01:00 CET exists.
-    //
-    //   But if the floor lands in the gap:
-    //   Input:  UTC 01:10 → offset +2h (CEST) → local 03:10 → floor(30m) → local 03:00
-    //   Output: 03:00 - 2h = UTC 01:00. Fine — 03:00 CEST exists.
-    //
-    //   Trickier: what if a stride like 2h floors local 03:10 down to local 02:00?
-    //   Local 02:00 doesn't exist (it's in the gap). getDstGapOffset() returns the gap
-    //   duration (1h). We subtract it: 02:00 - 1h = 01:00, re-floor: floor(01:00, 2h) = 00:00.
-    //   Output: 00:00 - 2h (CEST offset from original UTC)... but wait, that's wrong.
-    //   This is the inherent limitation of using the original UTC offset for the back-conversion
-    //   when the floor crosses a DST boundary. In practice this only affects strides >= 1h
-    //   that straddle the exact transition point, which is rare and documented as a known edge case.
-    //
-    // Fall-back example — Europe/Berlin, Oct 31 2021:
-    //   Local clocks go from 03:00 CEST back to 02:00 CET. Local 02:00–02:59 occurs twice.
-    //   Input A: UTC 00:30 → offset +2h (CEST) → local 02:30 → floor(1h) → local 02:00
-    //   Output:  02:00 - 2h = UTC 00:00
-    //   Input B: UTC 01:30 → offset +1h (CET)  → local 02:30 → floor(1h) → local 02:00
-    //   Output:  02:00 - 1h = UTC 01:00
-    //   Same local floor result (02:00), but different UTC outputs (00:00 vs 01:00) because
-    //   the offset was derived from the distinct UTC inputs. This is the whole point of
-    //   the UTC mode — it preserves bucket distinctness across fall-back.
-    //
-    // When returnUtc is true, the result is always a valid UTC timestamp and DST
-    // gaps are irrelevant — we floor in local time and convert back to UTC using
-    // the same offset derived from the original UTC input.
-    //
-    // When returnUtc is false (local time return), the floored local time may land
-    // in a DST gap (non-existing time from a forward clock shift). In that case
-    // the timestamp is moved back by the gap duration and re-floored to produce a
-    // valid local time and avoid duplicate bucket keys.
-
+    // Floors a UTC timestamp on the local grid of a named time zone. The UTC result follows
+    // CommonUtils.floorUtcToLocal/floorLocalToUtc. The local result of a day-or-longer stride is
+    // the grid line of that bucket; a sub-day stride floors the wall-clock time and moves a line
+    // that falls in a spring-forward gap back to the previous line.
     private static long floorWithTz(long timestamp, TimeZoneRules tzRules, TimestampDriver.TimestampFloorWithOffsetMethod floorFunc, int stride, long effectiveOffset, boolean returnUtc, char unit) {
         if (returnUtc) {
-            // Use the shared conversion strategy from CommonUtils so that
-            // the mat view refresh iterator produces matching bucket boundaries.
-            final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit);
-            final long localTimestamp = timestamp + tzOff;
-            final long result = floorFunc.floor(localTimestamp, stride, effectiveOffset);
-            return CommonUtils.offsetFlooredUtcResult(result, tzOff, 0, tzRules, unit);
+            final long local = CommonUtils.floorUtcToLocal(tzRules, timestamp, unit);
+            return CommonUtils.floorLocalToUtc(tzRules, floorFunc.floor(local, stride, effectiveOffset), unit);
         }
-        final long tzOff = tzRules.getOffset(timestamp);
-        final long localTimestamp = timestamp + tzOff;
-        long result = floorFunc.floor(localTimestamp, stride, effectiveOffset);
-        // Move the timestamp to the bucket if it belongs to a DST gap, i.e. non-existing
-        // time interval that occur due to a forward clock shift.
-        // This is required to avoid duplicate timestamps returned by SAMPLE BY + DST time zone + offset
-        // queries that get rewritten to a parallel GROUP BY.
-        long gapDuration = tzRules.getDstGapOffset(result);
-        if (gapDuration != 0) {
-            // The floored local time landed in a DST gap (spring-forward). Back up by the gap
-            // duration to reach a real local time, then re-floor to find the correct bucket.
-            result = floorFunc.floor(result - gapDuration, stride, effectiveOffset);
+        if (!CommonUtils.isSubDayUnit(unit)) {
+            return floorFunc.floor(CommonUtils.floorUtcToLocal(tzRules, timestamp, unit), stride, effectiveOffset);
         }
-        return result;
+        final long result = floorFunc.floor(timestamp + tzRules.getOffset(timestamp), stride, effectiveOffset);
+        final long gapDuration = tzRules.getDstGapOffset(result);
+        return gapDuration != 0 ? floorFunc.floor(result - gapDuration, stride, effectiveOffset) : result;
     }
 
     private static boolean isFloorExactlyInvertible(

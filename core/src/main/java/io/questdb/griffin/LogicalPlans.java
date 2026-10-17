@@ -550,26 +550,14 @@ public final class LogicalPlans {
     }
 
     /**
-     * An equality between the direct reference to the column and a key literal, or an OR of them on the same column.
+     * An equality between the direct reference to the column and a key constant, see
+     * {@link SymbolKeyExtractor#isKeyConstant}, or an OR of them on the same column.
      */
     public static boolean isKeyEqualityOr(BoundExpression expression, int columnId) {
         if (expression instanceof FunctionExpression call && call.isOr()) {
             return isKeyEqualityOr(call.argumentAt(0), columnId) && isKeyEqualityOr(call.argumentAt(1), columnId);
         }
         return isKeyEquality(expression, columnId);
-    }
-
-    /**
-     * A NULL, character or string literal spelled in SQL.
-     */
-    public static boolean isKeyLiteral(BoundExpression expression) {
-        if (!(expression instanceof ConstantExpression constant) || !constant.isLiteral()) {
-            return false;
-        }
-        return switch (ColumnType.tagOf(expression.getDataType())) {
-            case ColumnType.NULL, ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
-            default -> false;
-        };
     }
 
     /**
@@ -1075,8 +1063,8 @@ public final class LogicalPlans {
      */
     private static boolean isKeyEquality(BoundExpression expression, int columnId) {
         return expression instanceof FunctionExpression call && "=".equals(call.getName()) && call.getArgumentCount() == 2
-                && (isKeyColumn(call.argumentAt(0), columnId) && isKeyLiteral(call.argumentAt(1))
-                || isKeyColumn(call.argumentAt(1), columnId) && isKeyLiteral(call.argumentAt(0)));
+                && (isKeyColumn(call.argumentAt(0), columnId) && SymbolKeyExtractor.isKeyConstant(call.argumentAt(1))
+                || isKeyColumn(call.argumentAt(1), columnId) && SymbolKeyExtractor.isKeyConstant(call.argumentAt(0)));
     }
 
     private static boolean isStable(BoundExpression expression) {

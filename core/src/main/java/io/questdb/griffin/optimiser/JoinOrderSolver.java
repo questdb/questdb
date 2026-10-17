@@ -140,6 +140,12 @@ final class JoinOrderSolver implements Mutable {
                     }
                 }
             }
+            for (int i = dependencies.size() - 1; i > 0; i--) {
+                final JoinKind type = joinTypes.getQuick(i);
+                if (type.isBarrier() && !type.isTemporal() && type != JoinKind.UNNEST && isAwaitedUnanchoredStep(i)) {
+                    addParent(precedingAnchor(i), i);
+                }
+            }
             reorder();
             validateOrder();
             final ObjList<JoinInput> inputs = join.getInputs();
@@ -197,6 +203,36 @@ final class JoinOrderSolver implements Mutable {
         return joinTypes.getQuick(source) == JoinKind.CROSS ? 10 : 5;
     }
 
+    private boolean dependsOn(int source, int target) {
+        pendingSources.clear();
+        markedIndexes.clear();
+        pendingSources.add(source);
+        final IntList constraints = graph.getOrderingConstraints();
+        while (pendingSources.size() > 0) {
+            final int last = pendingSources.size() - 1;
+            final int node = pendingSources.getQuick(last);
+            pendingSources.setPos(last);
+            if (node == target) {
+                return true;
+            }
+            if (markedIndexes.add(node)) {
+                final JoinDependency dependency = dependencies.getQuick(node);
+                if (dependency != null) {
+                    final IntHashSet parents = dependency.getParents();
+                    for (int i = 0, n = parents.size(); i < n; i++) {
+                        pendingSources.add(parents.get(i));
+                    }
+                }
+                for (int i = 0, n = constraints.size(); i < n; i += 2) {
+                    if (constraints.getQuick(i + 1) == node) {
+                        pendingSources.add(constraints.getQuick(i));
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean hasOrderingConstraint(int parent, int child) {
         final IntList constraints = graph.getOrderingConstraints();
         for (int i = 0, n = constraints.size(); i < n; i += 2) {
@@ -235,6 +271,25 @@ final class JoinOrderSolver implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * True when neither a key nor an ordering constraint orders the step after another input, while a key or an
+     * ordering constraint orders another input after it: such a step would otherwise lead the order without a master.
+     */
+    private boolean isAwaitedUnanchoredStep(int source) {
+        if (!isParentless(source)) {
+            return false;
+        }
+        boolean isAwaited = children.getQuick(source).size() > 0;
+        final IntList constraints = graph.getOrderingConstraints();
+        for (int i = 0, n = constraints.size(); i < n; i += 2) {
+            if (constraints.getQuick(i + 1) == source) {
+                return false;
+            }
+            isAwaited |= constraints.getQuick(i) == source;
+        }
+        return isAwaited;
     }
 
     private boolean isParentless(int source) {
@@ -292,13 +347,14 @@ final class JoinOrderSolver implements Mutable {
         this.graph = graph;
         this.dependencies = graph.getDependencies();
         isFirstInputFixed = isTimestampRequired && join.getOutput().getTimestampIndex() >= 0 || join.hasExplicitTimestamp()
-                || graph.getLateralDependencies().size() > 0 || graph.getOrderingConstraints().size() > 0;
+                || graph.getLateralDependencies().size() > 0;
         final ObjList<JoinInput> inputs = join.getInputs();
         for (int i = 0, n = inputs.size(); i < n; i++) {
             final JoinInput input = inputs.getQuick(i);
+            final JoinKind type = input.getJoinType();
             children.add(childrenPool.next());
-            joinTypes.add(input.getJoinType());
-            isFirstInputFixed = isFirstInputFixed || input.getJoinType().isBarrier() || input.isDependent()
+            joinTypes.add(type);
+            isFirstInputFixed = isFirstInputFixed || type.isTemporal() || type == JoinKind.UNNEST || input.isDependent()
                     || !LogicalPlans.isResultStable(input.getInput(), true);
         }
         for (int i = 0, n = graph.getResiduals().size(); !isFirstInputFixed && i < n; i++) {
@@ -363,6 +419,18 @@ final class JoinOrderSolver implements Mutable {
 
     private int position(int source) {
         return candidateOrder.indexOf(source, 0, candidateOrder.size());
+    }
+
+    /**
+     * The nearest input written before the step that does not wait for it, or the first input.
+     */
+    private int precedingAnchor(int source) {
+        for (int anchor = source - 1; anchor > 0; anchor--) {
+            if (!dependsOn(anchor, source)) {
+                return anchor;
+            }
+        }
+        return 0;
     }
 
     private void reorder() {

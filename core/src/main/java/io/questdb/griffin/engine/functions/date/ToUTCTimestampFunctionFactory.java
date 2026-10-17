@@ -139,11 +139,13 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
         return new OffsetTimestampFunction(timestampFunc, fixedOffset(tz, timestampType), timestampType);
     }
 
-    private static class ConstRulesFunc extends AbstractTimestampShiftFunction implements UnaryFunction, MonotonicTimestampFunction {
+    private static class ConstRulesFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
+        private final Function timestampFunc;
         private final TimeZoneRules tzRules;
 
         public ConstRulesFunc(Function timestampFunc, TimeZoneRules tzRules, int timestampType) {
-            super(timestampFunc, timestampType);
+            super(timestampType);
+            this.timestampFunc = timestampFunc;
             this.tzRules = tzRules;
         }
 
@@ -158,6 +160,16 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
         }
 
         @Override
+        public long getTimestamp(Record rec) {
+            final long timestamp = timestampFunc.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
+            final long offset = tzRules.getLocalOffset(timestamp);
+            return timestamp - offset;
+        }
+
+        @Override
         public Function getTimestampArg() {
             return timestampFunc;
         }
@@ -166,19 +178,15 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
         public int invertTimestampInterval(Interval io) {
             return MonotonicTimestampFunction.invertZoneOffsetShift(io, tzRules, timestampDriver, 1);
         }
-
-        @Override
-        protected long shift(Record rec, long timestamp) {
-            final long offset = tzRules.getLocalOffset(timestamp);
-            return timestamp - offset;
-        }
     }
 
-    private static class Func extends AbstractTimestampShiftFunction implements BinaryFunction {
+    private static class Func extends TimestampFunction implements BinaryFunction {
+        private final Function timestampFunc;
         private final Function timezoneFunc;
 
         public Func(Function timestampFunc, Function timezoneFunc, int timestampType) {
-            super(timestampFunc, timestampType);
+            super(timestampType);
+            this.timestampFunc = timestampFunc;
             this.timezoneFunc = timezoneFunc;
         }
 
@@ -198,7 +206,11 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
         }
 
         @Override
-        protected long shift(Record rec, long timestampValue) {
+        public long getTimestamp(Record rec) {
+            final long timestampValue = timestampFunc.getTimestamp(rec);
+            if (timestampValue == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
                 return tz != null ? timestampDriver.toUTC(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
@@ -208,14 +220,16 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
         }
     }
 
-    private static class RuntimeConstFunc extends AbstractTimestampShiftFunction implements BinaryFunction {
+    private static class RuntimeConstFunc extends TimestampFunction implements BinaryFunction {
+        private final Function timestampFunc;
         private final Function timezoneFunc;
         private final int timezonePos;
         private long tzOffset;
         private TimeZoneRules tzRules;
 
         public RuntimeConstFunc(Function timestampFunc, Function timezoneFunc, int timezonePos, int timestampType) {
-            super(timestampFunc, timestampType);
+            super(timestampType);
+            this.timestampFunc = timestampFunc;
             this.timezoneFunc = timezoneFunc;
             this.timezonePos = timezonePos;
         }
@@ -233,6 +247,19 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
         @Override
         public Function getRight() {
             return timezoneFunc;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long timestamp = timestampFunc.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
+            if (tzRules != null) {
+                final long offset = tzRules.getLocalOffset(timestamp);
+                return timestamp - offset;
+            }
+            return timestamp - tzOffset;
         }
 
         @Override
@@ -259,15 +286,6 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
                 tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 tzRules = null;
             }
-        }
-
-        @Override
-        protected long shift(Record rec, long timestamp) {
-            if (tzRules != null) {
-                final long offset = tzRules.getLocalOffset(timestamp);
-                return timestamp - offset;
-            }
-            return timestamp - tzOffset;
         }
     }
 }

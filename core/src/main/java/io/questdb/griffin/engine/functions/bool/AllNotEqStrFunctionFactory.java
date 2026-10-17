@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class AllNotEqStrFunctionFactory implements FunctionFactory {
@@ -62,6 +63,7 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
         FunctionExtension arrayFunction = args.getQuick(1).extendedOps();
         int arraySize = arrayFunction.getArrayLength();
         if (arraySize == 0) {
+            Misc.freeObjList(args);
             return BooleanConstant.TRUE;
         }
 

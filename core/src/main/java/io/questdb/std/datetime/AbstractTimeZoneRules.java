@@ -149,6 +149,29 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     @Override
+    public long getFirstInstantAtOrAfter(long localEpoch) {
+        if (standardOffset != Long.MIN_VALUE) {
+            return localEpoch - standardOffset;
+        }
+        if (ruleCount == 0 || localEpoch <= localCutoffTransition) {
+            return TimeZoneRules.firstInstantAtOrAfter(this, localEpoch);
+        }
+        final Transition[] transitions = getTransitions(getYear(localEpoch));
+        long offsetAfter = 0;
+        for (int i = 0, n = transitions.length; i < n; i++) {
+            final Transition tr = transitions[i];
+            if (localEpoch < tr.transition + tr.offsetBefore) {
+                return localEpoch - tr.offsetBefore;
+            }
+            if (localEpoch < tr.transition + tr.offsetAfter) {
+                return tr.transition;
+            }
+            offsetAfter = tr.offsetAfter;
+        }
+        return localEpoch - offsetAfter;
+    }
+
+    @Override
     public long getLocalOffset(long localEpoch, int year) {
         if (standardOffset != Long.MIN_VALUE) {
             return standardOffset;
@@ -224,8 +247,42 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     @Override
+    public long getWallClockHighWater(long utcEpoch) {
+        if (standardOffset != Long.MIN_VALUE) {
+            return utcEpoch + standardOffset;
+        }
+        if (ruleCount == 0 || utcEpoch <= cutoffTransition) {
+            return TimeZoneRules.wallClockHighWater(this, utcEpoch);
+        }
+        final int year = getYear(utcEpoch);
+        final Transition[] transitions = getTransitions(year);
+        Transition previous = null;
+        for (int i = 0, n = transitions.length; i < n; i++) {
+            final Transition tr = transitions[i];
+            if (utcEpoch < tr.transition) {
+                if (previous == null) {
+                    final Transition[] previousYear = getTransitions(year - 1);
+                    previous = previousYear[previousYear.length - 1];
+                    if (previous.transition <= cutoffTransition) {
+                        return TimeZoneRules.wallClockHighWater(this, utcEpoch);
+                    }
+                }
+                return highWater(utcEpoch, previous, tr.offsetBefore);
+            }
+            previous = tr;
+        }
+        return highWater(utcEpoch, previous, previous.offsetAfter);
+    }
+
+    @Override
     public boolean hasFixedOffset() {
         return standardOffset != Long.MIN_VALUE;
+    }
+
+    // A backward shift repeats [transition + offsetAfter, transition + offsetBefore) of local time.
+    private static long highWater(long utcEpoch, Transition previous, long offset) {
+        final long repeat = previous.offsetBefore - previous.offsetAfter;
+        return repeat > 0 && utcEpoch < previous.transition + repeat ? previous.transition + previous.offsetBefore - 1 : utcEpoch + offset;
     }
 
     private Transition[] computeTransitions(int year) {

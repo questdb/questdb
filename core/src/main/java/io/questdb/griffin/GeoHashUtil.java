@@ -85,7 +85,7 @@ public final class GeoHashUtil {
                 // geohash from binary constant
                 // minus leading '##', truncates tail bits if over 60
                 int bits = len - 2;
-                if (bits <= ColumnType.GEOLONG_MAX_BITS) {
+                if (bits > 0 && bits <= ColumnType.GEOLONG_MAX_BITS) {
                     return Constants.getGeoHashConstant(
                             GeoHashes.fromBitStringNl(tok, 2),
                             bits

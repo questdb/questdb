@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.PlanVisitor;
@@ -34,12 +35,13 @@ import io.questdb.griffin.plan.logical.TreeWalk;
 
 /**
  * Rejects, for a context that refuses non-deterministic functions, the non-deterministic calls an optimised plan keeps
- * and the sub-queries that read a data source outside the database. It searches the plan's inputs, its expressions and the
- * sub-queries those hold in the order generation creates their functions, a call's arguments last to first before
- * the call, so it reports the call generation would create first.
+ * and the sub-queries that read a data source outside the database. It searches the plan's inputs, the arguments of its
+ * table-function sources, its expressions and the sub-queries those hold in the order generation creates their
+ * functions, a call's arguments last to first before the call, so it reports the call generation would create first.
  */
 public final class NonDeterministicCalls implements PlanExpressionVisitor, PlanVisitor {
-    private FunctionExpression offender;
+    private CharSequence offenderName;
+    private int offenderPosition = -1;
 
     public void reject(LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.allowNonDeterministicFunctions()) {
@@ -47,11 +49,12 @@ public final class NonDeterministicCalls implements PlanExpressionVisitor, PlanV
         }
         try {
             plan.walkBottomUp(this);
-            if (offender != null) {
-                throw SqlException.nonDeterministicColumn(offender.getPosition(), offender.getName(), objectKind(executionContext));
+            if (offenderName != null) {
+                throw SqlException.nonDeterministicColumn(offenderPosition, offenderName, objectKind(executionContext));
             }
         } finally {
-            offender = null;
+            offenderName = null;
+            offenderPosition = -1;
         }
     }
 
@@ -61,9 +64,9 @@ public final class NonDeterministicCalls implements PlanExpressionVisitor, PlanV
      * precedence over the binding error.
      */
     public void rejectCreated(FunctionResolver resolver, SqlExecutionContext executionContext) throws SqlException {
-        final int position = resolver.getNonDeterministicCallPosition();
-        if (position > -1) {
-            throw SqlException.nonDeterministicColumn(position, resolver.getNonDeterministicCallName(), objectKind(executionContext));
+        if (resolver.getNonDeterministicCallCount() > 0) {
+            throw SqlException.nonDeterministicColumn(resolver.getNonDeterministicCallPosition(0), resolver.getNonDeterministicCallName(0),
+                    objectKind(executionContext));
         }
     }
 
@@ -78,8 +81,13 @@ public final class NonDeterministicCalls implements PlanExpressionVisitor, PlanV
 
     @Override
     public int visit(LogicalPlan plan) {
+        if (plan instanceof FunctionSourcePlan source && source.getNonDeterministicCallName() != null) {
+            offenderName = source.getNonDeterministicCallName();
+            offenderPosition = source.getNonDeterministicCallPosition();
+            return TreeWalk.STOP;
+        }
         plan.visitReads(this);
-        return offender == null ? TreeWalk.CONTINUE : TreeWalk.STOP;
+        return offenderName == null ? TreeWalk.CONTINUE : TreeWalk.STOP;
     }
 
     @Override
@@ -89,7 +97,7 @@ public final class NonDeterministicCalls implements PlanExpressionVisitor, PlanV
 
     @Override
     public BoundExpression visitExpression(BoundExpression expression) {
-        if (offender == null) {
+        if (offenderName == null) {
             findOffender(expression);
         }
         return expression;
@@ -110,9 +118,10 @@ public final class NonDeterministicCalls implements PlanExpressionVisitor, PlanV
                 }
             }
             if ((call.getFunctionFlags() & BoundExpression.NON_DETERMINISTIC) != 0) {
-                offender = call;
+                offenderName = call.getName();
+                offenderPosition = call.getPosition();
             }
         }
-        return offender != null;
+        return offenderName != null;
     }
 }

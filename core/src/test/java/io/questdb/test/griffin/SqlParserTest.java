@@ -14684,6 +14684,55 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPgCastToParameterisedType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, v VARCHAR, k INT)");
+            execute("INSERT INTO x VALUES ('s1', 'v1', 1), ('s2', 'v2', 2)");
+            assertQuery("SELECT 'abcdefghijkl'::varchar(3) a, CAST('abcdefghijkl' AS varchar(3)) b, typeof('x'::VARCHAR (10)) t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tt
+                            abcdefghijkl\tabcdefghijkl\tSTRING
+                            """);
+            assertQuery("SELECT s::varchar(255) s, v::varchar(255) v, k::varchar(5) k, 'x'::varchar(10)::varchar c FROM x ORDER BY k::varchar(5)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv\tk\tc
+                            s1\tv1\t1\tx
+                            s2\tv2\t2\tx
+                            """);
+            assertQuery("SELECT count() FROM x WHERE s = 's2'::varchar(10) AND v::varchar(10) = 'v2'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            1
+                            """);
+            execute("CREATE TABLE y AS (SELECT s::varchar(10) a FROM x)");
+            execute("INSERT INTO y VALUES ('c'::varchar(10))");
+            execute("INSERT INTO y SELECT v::varchar(10) FROM x");
+            assertQuery("SELECT a, typeof(a) t FROM y ORDER BY a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tt
+                            c\tSTRING
+                            s1\tSTRING
+                            s2\tSTRING
+                            v1\tSTRING
+                            v2\tSTRING
+                            """);
+            assertQuery("SELECT 'x'::char(10)").noLeakCheck().fails(12, "unknown function name: char(INT)");
+            assertQuery("SELECT CAST('x' AS char(10))").noLeakCheck().fails(19, "unknown function name: char(INT)");
+            assertQuery("SELECT 'x'::string(10)").noLeakCheck().fails(12, "unknown function name: string(INT)");
+            assertQuery("SELECT 'x'::timestamp(6)").noLeakCheck().fails(12, "unknown function name: timestamp(INT)");
+        });
+    }
+
+    @Test
     public void testPipeConcatInJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (x STRING)");

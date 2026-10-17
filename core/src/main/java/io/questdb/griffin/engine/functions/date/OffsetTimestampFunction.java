@@ -28,20 +28,30 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
 
-class OffsetTimestampFunction extends AbstractTimestampShiftFunction implements UnaryFunction, MonotonicTimestampFunction {
+class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
     private final long offset;
+    private final Function timestampFunc;
 
     public OffsetTimestampFunction(Function timestamp, long offset, int timestampType) {
-        super(timestamp, timestampType);
+        super(timestampType);
+        this.timestampFunc = timestamp;
         this.offset = offset;
     }
 
     @Override
     public Function getArg() {
         return timestampFunc;
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        final long timestamp = timestampFunc.getTimestamp(rec);
+        return timestamp != Numbers.LONG_NULL ? timestamp + offset : Numbers.LONG_NULL;
     }
 
     @Override
@@ -57,10 +67,5 @@ class OffsetTimestampFunction extends AbstractTimestampShiftFunction implements 
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(timestampFunc).val('+').val(offset);
-    }
-
-    @Override
-    protected long shift(Record rec, long timestamp) {
-        return timestamp + offset;
     }
 }

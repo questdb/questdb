@@ -3831,6 +3831,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAsSelectGeoHashBitsLiteralWithoutBits() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT ##")
+                    .noLeakCheck()
+                    .fails(7, "invalid constant: ##");
+            assertQuery("SELECT ## + 1")
+                    .noLeakCheck()
+                    .fails(7, "invalid constant: ##");
+            assertQuery("SELECT 1 FROM long_sequence(1) WHERE ## = ##1")
+                    .noLeakCheck()
+                    .fails(37, "invalid constant: ##");
+            assertQuery("SELECT #")
+                    .noLeakCheck()
+                    .fails(7, "invalid constant: #");
+        });
+    }
+
+    @Test
     public void testCreateAsSelectGeoHashCharsLiteralWithWrongBits() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("select #sp052w92p1p87")
