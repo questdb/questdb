@@ -665,7 +665,6 @@ public class TableSequencerImpl implements TableSequencer {
         if (closed) {
             return false;
         }
-        closed = true;
         try {
             // Distress and the fence are what a failed append or log flush leaves behind; the flush is skipped then.
             if (tableTransactionLog != null && !distressed && !seqTxnTracker.isDurableFrontierFenced()) {
@@ -681,6 +680,11 @@ public class TableSequencerImpl implements TableSequencer {
                 }
             }
         } finally {
+            // checkClose() holds the write lock, which keeps appends out during the flush; the flush changes neither
+            // the last txn nor the metadata. Marking the sequencer closed only now lets a lock-free lookup keep
+            // reading it meanwhile: a closed entry that is still registered makes that lookup spin until the close
+            // returns.
+            closed = true;
             Misc.free(metadata);
             Misc.free(tableTransactionLog);
             Misc.free(walIdGenerator);
