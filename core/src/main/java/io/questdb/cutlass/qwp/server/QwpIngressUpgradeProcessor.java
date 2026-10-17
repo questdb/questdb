@@ -2706,7 +2706,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
         long writeAddr = bufferAddr + headerLen;
         Unsafe.putByte(writeAddr, STATUS_DURABLE_ACK);
-        QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 1, progress);
+        QwpIngressProcessorState.writeDurableAckEntries(writeAddr + 1, progress, state.getDurableProgressDirNames());
 
         try {
             rawSocket.send(headerLen + payloadLen);
