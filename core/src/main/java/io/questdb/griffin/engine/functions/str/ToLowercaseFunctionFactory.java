@@ -85,7 +85,8 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(final Record rec) {
-            CharSequence str = getArg().getStrA(rec);
+            // Slot B, so a comparison can still read the other argument through slot A.
+            CharSequence str = getArg().getStrB(rec);
             if (str == null) {
                 return null;
             }

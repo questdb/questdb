@@ -61,7 +61,8 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             CharSequence str = strFunc.getStrA(rec);
-            CharSequence prefix = prefixFunc.getStrA(rec);
+            // Slot B. Both sides on slot A compare a non-cached symbol with itself.
+            CharSequence prefix = prefixFunc.getStrB(rec);
             if (str == null || prefix == null) {
                 return false;
             }
