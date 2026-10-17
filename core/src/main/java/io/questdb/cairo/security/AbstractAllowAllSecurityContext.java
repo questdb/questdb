@@ -146,6 +146,10 @@ public abstract class AbstractAllowAllSecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeHealthCheck() {
+    }
+
+    @Override
     public void authorizeHttp() {
     }
 
@@ -175,6 +179,10 @@ public abstract class AbstractAllowAllSecurityContext extends AbstractPrincipalA
 
     @Override
     public void authorizeMatViewRefresh(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeMetrics() {
     }
 
     @Override
