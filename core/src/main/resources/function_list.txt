@@ -834,6 +834,8 @@ io.questdb.griffin.engine.functions.str.LowerFunctionFactory
 io.questdb.griffin.engine.functions.str.LowerVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.UpperFunctionFactory
 io.questdb.griffin.engine.functions.str.UpperVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.AsciiStrFunctionFactory
+io.questdb.griffin.engine.functions.str.AsciiVarcharFunctionFactory
 
 # hash functions
 io.questdb.griffin.engine.functions.str.MD5BinFunctionFactory
