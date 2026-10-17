@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -85,8 +84,6 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
     public HorizonJoinMatcher(
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             int workerIndex
     ) {
         this.slaveCount = slaveStates.size();
@@ -115,11 +112,10 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
                         true
                 ));
                 if (state.isKeyed()) {
-                    assert masterAsOfJoinMapSinkClasses[s] != null && slaveAsOfJoinMapSinkClasses[s] != null;
                     isKeyed = true;
                     // RecordSink instances have mutable state, so every thread gets its own copy.
-                    masterSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                    slaveSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
+                    masterSinks.add(state.newMasterAsOfJoinMapSink());
+                    slaveSinks.add(state.newSlaveAsOfJoinMapSink());
                     // openOnInit=false: of() allocates the backing under the per-query tracker.
                     asOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, state.getAsOfJoinKeyTypes(), asOfValueTypes, false, false));
                 } else {

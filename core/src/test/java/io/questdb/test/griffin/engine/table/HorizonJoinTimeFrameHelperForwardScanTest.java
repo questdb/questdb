@@ -24,9 +24,12 @@
 
 package io.questdb.test.griffin.engine.table;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -45,6 +48,7 @@ import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
 import io.questdb.griffin.engine.table.HorizonJoinTimeFrameHelper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -582,10 +586,9 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
             final IntList keys = new IntList();
             addRareKeyRun(positions, keys, 100, 150);
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, 1, null, null));
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] sinkClasses = new Class[1];
+            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, null, null, 1, null, null));
             try (
-                    HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, sinkClasses, sinkClasses, -1);
+                    HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, -1);
                     Map map = newMap()
             ) {
                 Assert.assertEquals(22, firstForwardScanLookup(matcher.getHelper(0), cursor, map, positions, keys));
@@ -614,13 +617,11 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                     row -> row < 90_000 ? 1_000 + (int) row : (int) (row % 30)
             );
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, new SingleColumnType(ColumnType.INT), 1, null, null));
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] masterSinkClasses = new Class[]{MasterKeySink.class};
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] slaveSinkClasses = new Class[]{SlaveKeySink.class};
+            slaveStates.add(newKeyedSlaveState());
             final long outAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             try (
                     LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
-                    HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, masterSinkClasses, slaveSinkClasses, -1)
+                    HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, -1)
             ) {
                 Assert.assertTrue(matcher.isKeyed());
                 matcher.of(0, cursor, null, null, tracker);
@@ -692,9 +693,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                     row -> row < 90_000 ? 1_000 + (int) row : (int) (row % 30)
             );
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, new SingleColumnType(ColumnType.INT), 1, null, null));
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] masterSinkClasses = new Class[]{MasterKeySink.class};
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] slaveSinkClasses = new Class[]{SlaveKeySink.class};
+            slaveStates.add(newKeyedSlaveState());
             final LongList positions = new LongList();
             final IntList keys = new IntList();
             positions.add(99_998);
@@ -703,7 +702,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
             final long outAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             try (
                     LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
-                    HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, masterSinkClasses, slaveSinkClasses, -1)
+                    HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, -1)
             ) {
                 matcher.of(0, cursor, null, null, tracker);
                 final MasterRecord masterRecord = new MasterRecord();
@@ -748,10 +747,9 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
             Arrays.fill(frameRowCounts, 250_000);
             final SlaveCursor cursor = new SlaveCursor(frameRowCounts, row -> (int) (row % 30));
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, 1, null, null));
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] sinkClasses = new Class[1];
+            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, null, null, 1, null, null));
             try (
-                    HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, sinkClasses, sinkClasses, -1);
+                    HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, -1);
                     Map map = newMap()
             ) {
                 // The helpers of HorizonJoinMatcher are the ones that the projection cursors use.
@@ -882,11 +880,9 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
         assertMemoryLeak(() -> {
             final SlaveCursor cursor = new SlaveCursor(new long[]{10_000}, row -> COMMON_KEY);
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, new SingleColumnType(ColumnType.INT), 1, null, null));
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] masterSinkClasses = new Class[]{MasterKeySink.class};
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] slaveSinkClasses = new Class[]{SlaveKeySink.class};
+            slaveStates.add(newKeyedSlaveState());
             final long outAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try (HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, masterSinkClasses, slaveSinkClasses, -1)) {
+            try (HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, -1)) {
                 matcher.of(0, cursor, null, null, null);
                 final MasterRecord master = new MasterRecord();
                 for (int batch = 0; batch < 6; batch++) {
@@ -1142,6 +1138,32 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
         );
     }
 
+    private static RecordSinkTemplate newKeySinkTemplate(int keyColumnIndex) {
+        final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        for (int i = 0; i <= keyColumnIndex; i++) {
+            columnTypes.add(ColumnType.INT);
+        }
+        final ListColumnFilter columnFilter = new ListColumnFilter();
+        columnFilter.add(keyColumnIndex + 1);
+        return new RecordSinkTemplate(configuration, new BytecodeAssembler(), columnTypes, columnFilter, null, null, null);
+    }
+
+    // A slave state with an INT join key. HorizonJoinMatcher builds its key sinks from the sink
+    // templates of the state, which copy the key columns of MasterRecord and SlaveRecord.
+    private static HorizonJoinSlaveState newKeyedSlaveState() {
+        return new HorizonJoinSlaveState(
+                null,
+                1,
+                1,
+                new SingleColumnType(ColumnType.INT),
+                newKeySinkTemplate(MasterRecord.KEY_COLUMN),
+                newKeySinkTemplate(SlaveRecord.KEY_COLUMN),
+                1,
+                null,
+                null
+        );
+    }
+
     private static Map newMap() {
         // The INT key selects the same map implementation as a SYMBOL join key.
         return MapFactory.createUnorderedMap(
@@ -1187,35 +1209,6 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                 }
             }
         });
-    }
-
-    /**
-     * The master key sink of a {@link HorizonJoinMatcher}, which builds its sinks from their
-     * classes, so the class has to be public and have a public no-argument constructor.
-     */
-    public static final class MasterKeySink implements RecordSink {
-        @Override
-        public void copy(Record r, RecordSinkSPI w) {
-            w.putInt(r.getInt(MasterRecord.KEY_COLUMN));
-        }
-
-        @Override
-        public void setFunctions(ObjList<Function> keyFunctions) {
-        }
-    }
-
-    /**
-     * The slave key sink of a {@link HorizonJoinMatcher}, see {@link MasterKeySink}.
-     */
-    public static final class SlaveKeySink implements RecordSink {
-        @Override
-        public void copy(Record r, RecordSinkSPI w) {
-            w.putInt(r.getInt(SlaveRecord.KEY_COLUMN));
-        }
-
-        @Override
-        public void setFunctions(ObjList<Function> keyFunctions) {
-        }
     }
 
     private interface KeyFunction {

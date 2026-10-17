@@ -61,7 +61,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.List;
@@ -478,6 +477,9 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                 // An aggregating HORIZON JOIN takes the same path.
                 assertQuery("SELECT $1 tag, count() c FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (0s, 1s) AS h")
                         .noRandomAccess().expectSize().returns("tag\tc\nx\t12\n");
+                // The projection selects no column of the join, only the bind variable.
+                assertQuery("SELECT $1 tag FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (0s, 1s) AS h")
+                        .noRandomAccess().expectSize().returns("tag\n" + "x\n".repeat(12));
                 assertQuery("SELECT $1 tag, t.price, h.offset FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (0s, 1s) AS h")
                         .noRandomAccess().expectSize().returns("""
                                 tag\tprice\toffset
@@ -792,6 +794,35 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionDateaddOverHorizonTimestampIsSorted() throws Exception {
+        // The projection emits its rows in left-hand row order and then offset order, so neither
+        // h.timestamp nor a dateadd() over it follows the order of the rows. The sub-query outputs
+        // h.timestamp under the name of the left-hand designated timestamp column, and the
+        // optimiser used to take the dateadd() over it for a designated timestamp: ORDER BY x
+        // skipped the sort and returned 00:01, 00:06, 00:02, 00:07.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (timestamp TIMESTAMP, sym SYMBOL) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (timestamp TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES ('2026-01-01T00:00:00Z', 'A'), ('2026-01-01T00:00:01Z', 'A')");
+            execute("INSERT INTO quotes VALUES ('2026-01-01T00:00:00Z', 'A', 1.0)");
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("""
+                        SELECT dateadd('s', 1, timestamp) x FROM (
+                            SELECT h.timestamp FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 5s) AS h
+                        ) ORDER BY x
+                        """).expectSize().timestamp("x").returns("""
+                        x
+                        2026-01-01T00:00:01.000000Z
+                        2026-01-01T00:00:02.000000Z
+                        2026-01-01T00:00:06.000000Z
+                        2026-01-01T00:00:07.000000Z
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testProjectionDeepLookupsMatchAsOfJoin() throws Exception {
         // Trades 1 and 163 look up a key that the quotes last held 5,000 rows back, across an
         // hourly partition boundary: the backward scan puts about 4,500 keys into the key cache,
@@ -890,14 +921,13 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
             createTradesAndQuotes();
             final RecordCursorFactory masterFactory = select("TaqTrade");
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(select("TaqQuote"), 1, 1, null, masterFactory.getMetadata().getColumnCount(), null, null));
+            slaveStates.add(new HorizonJoinSlaveState(select("TaqQuote"), 1, 1, null, null, null, masterFactory.getMetadata().getColumnCount(), null, null));
             // The metadata and the bind variable memory of a stolen filter hold native memory.
             final JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 1);
             final MemoryCARW bindVarMemory = Vm.getCARWInstance(1_024, 1, MemoryTag.NATIVE_JIT);
             bindVarMemory.putLong(42);
             final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null, bindVarMemory, null, null, null, null);
             try {
-                //noinspection unchecked
                 new AsyncHorizonJoinProjectionRecordCursorFactory(
                         configuration,
                         engine,
@@ -905,8 +935,6 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         metadata,
                         masterFactory,
                         slaveStates,
-                        new Class[1],
-                        new Class[1],
                         new long[0],
                         0,
                         new int[0],
@@ -1639,7 +1667,6 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("A keyed projection fails to compile with the looping key sink: HorizonJoinMatcher asserts a generated sink class, or LoopingRecordSink throws an NPE with assertions disabled. Expected to be fixed by the sink templates of #7681.")
     @Test
     public void testProjectionLoopingKeySinkMatchesAsOfJoin() throws Exception {
         // debug.cairo.copier.type=3 makes the join key sinks fall back to the looping
@@ -2052,34 +2079,26 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("ORDER BY on a column the projection does not select fails to compile: generateSelectChoose() finds no such column in the projection's metadata.")
     @Test
     public void testProjectionOrderByUnselectedColumn() throws Exception {
-        // A projection keeps one row per left-hand row and offset, so, as any other SELECT, it
-        // can sort by a column it does not output.
+        // A projection keeps one row per left-hand row and offset, so it could sort by a column it
+        // doesn't output, as a plain SELECT does. The optimiser rejects such a column for every
+        // HORIZON JOIN instead, as it must for one with aggregates, where the column would become
+        // a grouping key. Accepting it later won't change the result of any query that runs today.
         assertMemoryLeak(() -> {
             createTradesAndQuotes();
+            final String sql = """
+                    SELECT t.sym, h.offset, q.bid FROM TaqTrade t
+                    HORIZON JOIN TaqQuote q ON (sym) LIST (0s, 1s) AS h
+                    ORDER BY t.price DESC, h.offset, q.bid
+                    """;
+            final int position = sql.indexOf("t.price");
+            final String message = "ORDER BY expressions must appear in select list. Invalid column: t.price";
+            final String outerPrefix = "SELECT count() FROM (";
             for (boolean isParallel : MODES) {
                 sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
-                assertQuery("""
-                        SELECT t.sym, h.offset, q.bid FROM TaqTrade t
-                        HORIZON JOIN TaqQuote q ON (sym) LIST (0s, 1s) AS h
-                        ORDER BY t.price DESC, h.offset, q.bid
-                        """).expectSize().returns("""
-                        sym\toffset\tbid
-                        C\t0\tnull
-                        C\t0\tnull
-                        C\t1000000\tnull
-                        C\t1000000\tnull
-                        B\t0\t20.0
-                        B\t1000000\t22.0
-                        A\t0\t10.0
-                        A\t0\t10.0
-                        A\t0\t10.0
-                        A\t1000000\t10.0
-                        A\t1000000\t10.0
-                        A\t1000000\t14.0
-                        """);
+                assertQuery(sql).noLeakCheck().fails(position, message);
+                assertQuery(outerPrefix + sql + ")").noLeakCheck().fails(outerPrefix.length() + position, message);
             }
         });
     }

@@ -29,7 +29,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -125,8 +124,6 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             @NotNull JoinRecordMetadata metadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             long @NotNull [] offsets,
             int masterTimestampIndex,
             int @NotNull [] columnSources,
@@ -167,8 +164,6 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             final AsyncHorizonJoinProjectionAtom atom = new AsyncHorizonJoinProjectionAtom(
                     configuration,
                     slaveStates,
-                    masterAsOfJoinMapSinkClasses,
-                    slaveAsOfJoinMapSinkClasses,
                     offsets,
                     masterTimestampIndex,
                     maxTaskRows,

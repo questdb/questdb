@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
@@ -97,8 +96,6 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
     public AsyncHorizonJoinProjectionAtom(
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             long @NotNull [] offsets,
             int masterTimestampIndex,
             long maxTaskRows,
@@ -131,14 +128,14 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
         try {
             this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             this.ownerHorizonIterator = new AsyncHorizonTimestampIterator(offsets);
-            this.ownerMatcher = new HorizonJoinMatcher(configuration, slaveStates, masterAsOfJoinMapSinkClasses, slaveAsOfJoinMapSinkClasses, -1);
+            this.ownerMatcher = new HorizonJoinMatcher(configuration, slaveStates, -1);
             for (int s = 0; s < slaveCount; s++) {
                 ownerSlaveTimeFrameCursors.add(slaveStates.getQuick(s).getFactory().newTimeFrameCursor());
                 outputSlaveTimeFrameCursors.add(slaveStates.getQuick(s).getFactory().newTimeFrameCursor());
             }
             for (int w = 0; w < workerCount; w++) {
                 perWorkerHorizonIterators.add(new AsyncHorizonTimestampIterator(offsets));
-                perWorkerMatchers.add(new HorizonJoinMatcher(configuration, slaveStates, masterAsOfJoinMapSinkClasses, slaveAsOfJoinMapSinkClasses, w));
+                perWorkerMatchers.add(new HorizonJoinMatcher(configuration, slaveStates, w));
                 perWorkerSelectivityStats.add(new SelectivityStats());
                 for (int s = 0; s < slaveCount; s++) {
                     perWorkerSlaveTimeFrameCursors.add(slaveStates.getQuick(s).getFactory().newTimeFrameCursor());

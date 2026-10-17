@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.ParquetDecodeHint;
@@ -70,8 +69,6 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
             JoinRecordMetadata metadata,
             RecordCursorFactory masterFactory,
             ObjList<HorizonJoinSlaveState> slaveStates,
-            Class<RecordSink>[] masterAsOfJoinMapSinkClasses,
-            Class<RecordSink>[] slaveAsOfJoinMapSinkClasses,
             long[] offsets,
             int masterTimestampColumnIndex,
             int[] columnSources,
@@ -87,8 +84,6 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
             cursor = new HorizonJoinProjectionRecordCursor(
                     configuration,
                     slaveStates,
-                    masterAsOfJoinMapSinkClasses,
-                    slaveAsOfJoinMapSinkClasses,
                     offsets,
                     Math.max(1, configuration.getSqlSmallPageFrameMaxRows() / slotsPerRow),
                     masterTimestampColumnIndex,
@@ -221,8 +216,6 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         private HorizonJoinProjectionRecordCursor(
                 CairoConfiguration configuration,
                 ObjList<HorizonJoinSlaveState> slaveStates,
-                Class<RecordSink>[] masterAsOfJoinMapSinkClasses,
-                Class<RecordSink>[] slaveAsOfJoinMapSinkClasses,
                 long[] offsets,
                 long batchCapacity,
                 int masterTimestampIndex,
@@ -255,7 +248,7 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
                 // SYMBOL column reads VALUE_IS_NULL as its key, not INT_NULL.
                 nullSlaveRecords.add(NullRecordFactory.getInstance(slaveStates.getQuick(s).getFactory().getMetadata()));
             }
-            this.matcher = new HorizonJoinMatcher(configuration, slaveStates, masterAsOfJoinMapSinkClasses, slaveAsOfJoinMapSinkClasses, -1);
+            this.matcher = new HorizonJoinMatcher(configuration, slaveStates, -1);
         }
 
         @Override
