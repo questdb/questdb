@@ -42,6 +42,10 @@ public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCurs
         this.slaveFactory = slaveFactory;
     }
 
+    public RecordCursorFactory getMasterFactory() {
+        return masterFactory;
+    }
+
     // A join reads externally if either input does. getBaseFactory() cannot express this because it
     // returns a single child, so the two-child propagation is explicit here. Guards against a
     // null child during teardown.

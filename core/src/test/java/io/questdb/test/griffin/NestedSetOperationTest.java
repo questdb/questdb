@@ -654,7 +654,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union all " +
                 "select 3 as id, 'st' as type, cast(3 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
@@ -677,7 +677,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union " +
                 "select 3 as id, 'st' as type, cast(3 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .returns("""
                         type\tts
@@ -744,7 +744,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union all " +
                 "select 2 as id, 'st' as type, cast(2 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
@@ -761,7 +761,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union all " +
                 "select 2 as id, 'st' as type, cast(2 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
@@ -779,7 +779,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union all " +
                 "select 1 as id, 'st' as type, cast(1 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
@@ -796,7 +796,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union " +
                 "select 2 as id, 'st' as type, cast(2 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .returns("""
                         type\tts
@@ -812,7 +812,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union " +
                 "select 1 as id, 'st' as type, cast(1 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .returns("""
                         type\tts

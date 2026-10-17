@@ -159,7 +159,13 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * @return the column name
      */
     default String getBaseColumnName(int idx) {
-        return getBaseFactory().getMetadata().getColumnName(idx);
+        final RecordCursorFactory base = getBaseFactory();
+        if (base == null) {
+            // No base to walk into, e.g. a join: fall back to this factory's own metadata
+            // instead of dereferencing a null base (a join's getBaseFactory() is null).
+            return getMetadata().getColumnName(idx);
+        }
+        return base.getMetadata().getColumnName(idx);
     }
 
     /**

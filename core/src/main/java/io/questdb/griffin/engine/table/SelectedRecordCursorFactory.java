@@ -96,6 +96,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         return base.followedOrderByAdvice();
     }
 
+    // The default resolves getBaseFactory().getMetadata().getColumnName(idx) directly against
+    // idx, which is this factory's OWN (post-projection) column space, not the base's. A plain
+    // projection reorders/drops/renames columns (e.g. an implicitly appended, nameless designated
+    // timestamp - see SqlCodeGenerator's implicit-timestamp column), so idx must cross through
+    // columnCrossIndex before it reaches the base, same as every other per-column lookup here.
+    @Override
+    public String getBaseColumnName(int idx) {
+        return base.getBaseColumnName(columnCrossIndex.getQuick(idx));
+    }
+
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
