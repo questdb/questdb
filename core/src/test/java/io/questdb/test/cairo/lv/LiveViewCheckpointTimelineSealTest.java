@@ -1324,6 +1324,13 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
+            if (!engine.getLiveViewCheckpointPurgeState().isReconciled(instance.getLifecycleIdentity())) {
+                // The first seal after a restart reconciles the directory, and that purge sweep
+                // writes the retirement queue too, best effort. The recorded seal made no such
+                // pass, so a seal settles the reconciliation before the walk fails one of its ops.
+                commitWideAndRefresh(job, ++commit);
+                Assert.assertTrue(engine.getLiveViewCheckpointPurgeState().isReconciled(instance.getLifecycleIdentity()));
+            }
             final long generation = durableGeneration(instance);
             final long sealFailures = instance.getCheckpointSealFailures();
             final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();

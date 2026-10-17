@@ -92,6 +92,11 @@ public final class LiveViewCheckpointLifecycle {
      * catalogued at all through {@link #purgeUncataloguedSegments}. Only where no
      * generation is adopted does the deferred id-ceiling rule decide anything, and
      * there the ceiling is zero, so it names every final-name file on disk.
+     * <p>
+     * A {@link CairoException} from the purge sweep fails neither the reconciliation nor
+     * the adoption: the result reports {@link ReconcileResult#isPurgeFailed()} and still
+     * carries the adopted generation's WAL purge floor and base coordinate, which the
+     * caller publishes. Any other throwable from the sweep propagates.
      */
     public static ReconcileResult reconcile(
             @NotNull CairoConfiguration configuration,
@@ -153,12 +158,13 @@ public final class LiveViewCheckpointLifecycle {
             LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
             if (!ff.exists(timelinePath.$())) {
                 final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, 0);
-                return result(false, -1, Numbers.LONG_NULL, cleanup, null, null, repairSweep);
+                return result(false, -1, Numbers.LONG_NULL, cleanup, null, false, null, repairSweep);
             }
         }
 
         boolean replaceEpoch = false;
         boolean catalogueMismatch = false;
+        boolean isPurgeFailed = false;
         long nextSegmentIdCeiling = 0;
         long walPurgeFloor = -1;
         long normalizedBaseSeqTxn = Numbers.LONG_NULL;
@@ -187,6 +193,22 @@ public final class LiveViewCheckpointLifecycle {
                     )) {
                         dataStore.of(checkpointsDir);
                         purgeResult = dataStore.purge();
+                    } catch (CairoException e) {
+                        // The sweep is reclamation only. A fault in it - a full disk
+                        // failing the _retirements rewrite, a queue load that cannot
+                        // map, a catalogue page it cannot read - leaves every file it
+                        // did not reach to the next sweep, and the queue it could not
+                        // prune is a superset that sweep re-checks against the
+                        // catalogue. The floor and coordinate above are what the
+                        // caller publishes as this generation's base WAL floor and
+                        // head; a throw here would cost the view both and let
+                        // WalPurgeJob delete the base WAL the restore replays.
+                        isPurgeFailed = true;
+                        LOG.error().$("could not purge live view checkpoint segments, deferring to the next sweep [path=")
+                                .$(checkpointsDir)
+                                .$(", errno=").$(e.getErrno())
+                                .$(", error=").$safe(e.getFlyweightMessage())
+                                .I$();
                     }
                     // The sweep above decides the fate of every segment this
                     // generation ever named; this decides the fate of the files it
@@ -229,6 +251,7 @@ public final class LiveViewCheckpointLifecycle {
                     0,
                     0,
                     null,
+                    false,
                     null,
                     repairSweep.getDiscardedRepairCount(),
                     repairSweep.getFailedCount()
@@ -242,7 +265,7 @@ public final class LiveViewCheckpointLifecycle {
         // at the ceiling and the deferred rule has no range left to apply.
         final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, nextSegmentIdCeiling);
         cleanup.add(uncatalogued);
-        return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgeResult, stats, repairSweep);
+        return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgeResult, isPurgeFailed, stats, repairSweep);
     }
 
     /**
@@ -819,6 +842,7 @@ public final class LiveViewCheckpointLifecycle {
             long normalizedBaseSeqTxn,
             CleanupResult cleanup,
             @Nullable LiveViewCheckpointDataStore.PurgeResult purge,
+            boolean isPurgeFailed,
             @Nullable LiveViewCheckpointTimelineStats stats,
             LiveViewCheckpointRepairState.SweepResult repairSweep
     ) {
@@ -833,6 +857,7 @@ public final class LiveViewCheckpointLifecycle {
                 cleanup.failed,
                 cleanup.finalOrphanUpperBound,
                 purge,
+                isPurgeFailed,
                 stats,
                 repairSweep.getDiscardedRepairCount(),
                 repairSweep.getFailedCount()
@@ -864,11 +889,11 @@ public final class LiveViewCheckpointLifecycle {
         private static final LongList EMPTY_SEGMENT_IDS = new LongList();
         private static final ReconcileResult FORMAT_RESET = new ReconcileResult(
                 false, true, false, LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
-                -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
+                -1, Numbers.LONG_NULL, 0, 0, 0, null, false, null, 0, 0
         );
         private static final ReconcileResult NOT_OWNER = new ReconcileResult(
                 false, false, false, LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
-                -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
+                -1, Numbers.LONG_NULL, 0, 0, 0, null, false, null, 0, 0
         );
         private final int discardedRepairCount;
         private final boolean epochReplaced;
@@ -879,6 +904,7 @@ public final class LiveViewCheckpointLifecycle {
         private final int foreignFormatVersion;
         private final boolean formatReset;
         private final boolean isFormatUpgrade;
+        private final boolean isPurgeFailed;
         private final int liveSegmentCount;
         private final long normalizedBaseSeqTxn;
         private final long obsoleteSegmentBytes;
@@ -899,6 +925,7 @@ public final class LiveViewCheckpointLifecycle {
                 int failedOrphanCount,
                 long finalOrphanUpperBound,
                 @Nullable LiveViewCheckpointDataStore.PurgeResult purge,
+                boolean isPurgeFailed,
                 @Nullable LiveViewCheckpointTimelineStats stats,
                 int discardedRepairCount,
                 int failedRepairCount
@@ -917,6 +944,7 @@ public final class LiveViewCheckpointLifecycle {
             this.liveSegmentCount = purge == null ? 0 : purge.getLiveSegmentCount();
             this.obsoleteSegmentBytes = purge == null ? 0 : purge.getObsoleteBytes();
             this.retirableSegmentIds = purge == null ? EMPTY_SEGMENT_IDS : purge.getRetirableSegmentIds();
+            this.isPurgeFailed = isPurgeFailed;
             this.stats = stats;
             this.discardedRepairCount = discardedRepairCount;
             this.failedRepairCount = failedRepairCount;
@@ -931,7 +959,7 @@ public final class LiveViewCheckpointLifecycle {
         private static ReconcileResult formatBlocked(int foreignFormatVersion) {
             return new ReconcileResult(
                     false, false, false, foreignFormatVersion,
-                    -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
+                    -1, Numbers.LONG_NULL, 0, 0, 0, null, false, null, 0, 0
             );
         }
 
@@ -944,7 +972,7 @@ public final class LiveViewCheckpointLifecycle {
         private static ReconcileResult formatUpgrade(int foreignFormatVersion) {
             return new ReconcileResult(
                     false, false, true, foreignFormatVersion,
-                    -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
+                    -1, Numbers.LONG_NULL, 0, 0, 0, null, false, null, 0, 0
             );
         }
 
@@ -1085,6 +1113,16 @@ public final class LiveViewCheckpointLifecycle {
          */
         public boolean isFormatReset() {
             return formatReset;
+        }
+
+        /**
+         * @return true when this reconciliation adopted a generation but its purge
+         * sweep failed. The floor, coordinate and stats still describe the adopted
+         * generation; the segment counts and retirable ids do not describe its
+         * catalogue, and the next sweep owes the reclamation this one deferred
+         */
+        public boolean isPurgeFailed() {
+            return isPurgeFailed;
         }
     }
 

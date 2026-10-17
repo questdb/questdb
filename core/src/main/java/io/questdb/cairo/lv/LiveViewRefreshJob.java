@@ -452,7 +452,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // One repair's change set decomposed into the closed anchor segments it touches, so
     // each of them is repaired over its own range instead of over one union range running
     // to the frontier. One instance per worker, refilled by classifyChangeSetSegments at
-    // the start of each repair that qualifies; repairs never nest.
+    // the start of each repair that qualifies and emptied by o3Replay when that repair
+    // ends; repairs never nest.
     private final LiveViewCheckpointSegmentChangeSet segmentChangeSet = new LiveViewCheckpointSegmentChangeSet();
     // Where a multi-segment repair loop had got to when one of its segments parked, read
     // out of the resuming turn's session before anything can free it. Worker-owned scratch
@@ -5502,17 +5503,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long viewLowerBoundTimestamp,
             @NotNull LiveViewCheckpointAnchorPlan anchorPlan,
             long activeSegmentStart,
-            boolean isResidualKeyCollectionRequested
+            boolean isResidualKeyCollectionRequested,
+            boolean isResidualKeyDomainKept
     ) {
         final boolean isKeyed = baseKeyWriterIndex > -1 && baseKeySymbols != null;
         // The open segment's own keys, for the resume that follows them. Collecting them
         // costs the walk the shortcut below skips - every commit's rows rather than every
-        // deep commit's - so it is asked for rather than always taken.
-        final boolean isCollectingResidualKeys = isKeyed && isResidualKeyCollectionRequested;
+        // deep commit's - so it is asked for rather than always taken. A walk asked for them
+        // places the open segment's commits the way its row loop does, rows under the view's
+        // boundary dropped, and the repair's route rests on that placement.
+        final boolean isWalkingResidualRows = isKeyed && isResidualKeyCollectionRequested;
+        // A view without the upsert identity the keyed resume publishes on keeps that
+        // placement and records no domain. Its domain is incomplete from the first commit,
+        // so each commit wholly inside the open segment folds whole through the arm that
+        // serves a domain that overflowed, which applies the view's boundary the same way,
+        // and a walked row resolves a key only in a closed segment.
+        final boolean isCollectingResidualKeys = isWalkingResidualRows && isResidualKeyDomainKept;
+        // Those keys come with one timestamp per open-segment row, and this walk reads every
+        // commit above the view's durable point up to wherever apply has reached, so nothing
+        // but a row budget bounds them. The scan row budget is the one the rows-bounds
+        // discovery spends on the same question - how far to look for a narrow repair's rows
+        // before falling back to the whole range - and at or below zero it is unlimited there
+        // too.
+        final long scanMaxRows = engine.getConfiguration().getLiveViewCheckpointRepairScanMaxRows();
         segmentChangeSet.of(
                 activeSegmentStart,
                 isKeyed ? segmentKeyBudgetOf(engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys()) : 0,
-                isCollectingResidualKeys
+                isCollectingResidualKeys,
+                scanMaxRows > 0 ? scanMaxRows : Long.MAX_VALUE
         );
         // An unkeyed walk passes a budget of zero, which collects no key, and addRow then
         // reads none, so the row loop skips resolving one rather than paying a base symbol
@@ -5577,13 +5595,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     continue;
                 }
                 final long txnMinTs = dataInfo.getMinTimestamp();
-                if (txnMinTs >= activeSegmentStart && !isCollectingResidualKeys) {
+                if (txnMinTs >= activeSegmentStart && !isWalkingResidualRows) {
                     segmentChangeSet.addResidual(txnMinTs, txnMaxTs);
                     continue;
                 }
                 final long startRow = dataInfo.getStartRowID();
                 final long endRow = dataInfo.getEndRowID();
                 if (endRow <= startRow) {
+                    continue;
+                }
+                if (txnMinTs >= Math.max(activeSegmentStart, viewLowerBoundTimestamp)
+                        && !segmentChangeSet.isResidualKeyDomainComplete()) {
+                    // Wholly in the open segment on a walk placing its rows - the shortcut
+                    // above took every other such commit - after the domain overflowed, or
+                    // on a walk that keeps none. Nothing reads the keys or the row
+                    // timestamps of an incomplete domain, so the only thing the row loop
+                    // below would leave for this commit is the residual widened by each
+                    // row's timestamp. No row sits below the view's boundary, which the loop
+                    // drops, so that is the commit's own span.
+                    segmentChangeSet.addResidual(txnMinTs, txnMaxTs);
                     continue;
                 }
                 walNameSink.clear();
@@ -5614,6 +5644,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (frame == null) {
                     continue;
                 }
+                stats.add(SEGMENT_CLASSIFY_WALKED_ROWS, endRow - startRow);
                 final long address = frame.getPageAddress(0);
                 final long keyAddress = isKeyed ? frame.getPageAddress(1) : 0;
                 final StaticSymbolTable keySymbols = isKeyed ? walFrameCursor.getSymbolTable(1) : null;
@@ -5737,6 +5768,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 engine.getConfiguration().isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled()
                         && instance.getCompiledPlan().getFilter() == null
                         && !isBaseDeduplicating;
+        // A view without the upsert identity the keyed resume publishes on still runs the
+        // decomposition this flag opens, from the same floor, because the walk does more
+        // than collect the domain: it places the rows of commits apply raced past the
+        // trigger in their own closed segments, drops rows under the view's boundary, and
+        // hands the residual repair a classified floor instead of the raw trigger. Planned
+        // from the raw trigger instead, the same correction rebuilds from the corrected day,
+        // or from START FROM, through the end of the table. What such a view skips is the
+        // domain itself - every key and row timestamp the walk would record for the open
+        // segment, and the pricing that reads them - because isOpenSegmentKeyedReplayAvailable
+        // denies the route however they come out. The instance fixes the identity when it is
+        // built, so it is known here.
+        final boolean isOpenSegmentKeyDomainKept = isOpenSegmentKeyed
+                && hasUpsertIdentity(
+                instance,
+                LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(instance.getCompiledPlan())
+        );
         if (fromSeqTxn == Numbers.LONG_NULL
                 || lateRowTs == Numbers.LONG_NULL
                 || changeMaxTs == Numbers.LONG_NULL
@@ -5782,6 +5829,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // is no closed segment to scope and the ordinary plan is already the bounded
             // one. A turn collecting the open segment's key domain runs the decomposition
             // anyway: the domain is what that resume follows, and nothing else produces it.
+            // So does a turn of a view without the identity that domain serves, for the
+            // placement described at isOpenSegmentKeyDomainKept.
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
         final long durableOutputMaxTs = readDurableOutputMaxTs(instance);
@@ -5884,7 +5933,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 viewLowerBoundTimestamp,
                 anchorPlan,
                 activeSegmentStart,
-                isOpenSegmentKeyed
+                isOpenSegmentKeyed,
+                isOpenSegmentKeyDomainKept
         )) {
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
@@ -7161,8 +7211,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 );
             }
         } finally {
-            if (!suspended) {
-                reader.close();
+            try {
+                // Everything above that reads the change set's key lists and row timestamps
+                // runs inside this try, and nothing relies on them after it: a parked repair
+                // carries its key domains, its row delta and its row positions in its session,
+                // and the turn that resumes it reads them from there. So the lists this
+                // repair's walk grew go back now, on every way out, rather than at this
+                // worker's next classification, which a worker whose views stop repairing
+                // never runs.
+                segmentChangeSet.endRepair();
+            } finally {
+                if (!suspended) {
+                    reader.close();
+                }
             }
         }
         if (suspended) {

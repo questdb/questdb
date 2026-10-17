@@ -430,7 +430,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                                 .put(']');
                     }
                     orphanUpperBound = reconciliation.getFinalOrphanUpperBound();
-                    if (reconciliation.getStats() != null) {
+                    // A sweep that failed counted nothing, so it leaves the counts
+                    // an earlier sweep reported, and the reconciliation stays owed
+                    // so the next seal retries the reclamation it deferred.
+                    if (reconciliation.getStats() != null && !reconciliation.isPurgeFailed()) {
                         liveSegmentCount = reconciliation.getLiveSegmentCount();
                         obsoleteSegmentBytes = reconciliation.getObsoleteSegmentBytes();
                     }
@@ -443,7 +446,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     }
                     if (reconciliation.getFailedOrphanCount() == 0
                             && reconciliation.getFailedPurgeCount() == 0
-                            && reconciliation.getFailedRepairCount() == 0) {
+                            && reconciliation.getFailedRepairCount() == 0
+                            && !reconciliation.isPurgeFailed()) {
                         purgeState.markReconciled(lifecycleIdentity);
                     }
                 }

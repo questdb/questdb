@@ -133,11 +133,19 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                         viewInstance().isDedupKeyed()
                 );
 
+                final long walkedRowsBefore = job.getStatsForTest().get(SEGMENT_CLASSIFY_WALKED_ROWS);
                 correct(job, 4, FIRST_HOUR, 1);
 
-                // The read the route would have taken is still the cheaper one, which is
-                // what says the missing identity and not the price turned it down.
-                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                // The missing identity turns the route down before the decomposition collects
+                // a key domain: the correction's commit lies wholly inside the open segment and
+                // folds whole, so no row is read and nothing is priced either. The same
+                // correction on a view that carries the identity prices the keyed read cheaper
+                // and takes it - see testTheOpenSegmentCapSelectsWhatTheConfiguredPriceDeclines -
+                // which is what says the identity and not the price turned this one down.
+                Assert.assertEquals(0, job.getStatsForTest().get(SEGMENT_CLASSIFY_WALKED_ROWS) - walkedRowsBefore);
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
                 Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
                 Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT));
                 assertViewMatchesRecompute();

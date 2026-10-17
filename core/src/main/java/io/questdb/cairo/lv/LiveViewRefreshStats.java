@@ -90,25 +90,28 @@ public final class LiveViewRefreshStats {
     public static final int OUTPUT_UNIQUENESS_UNIQUE_REPAIRS = 30;
     // O3 resumes served from the live window state instead of restoring the same root.
     public static final int RUNTIME_ANCHOR_REUSE_COUNT = 31;
+    // Base rows the change-set decomposition read one by one out of their WAL segments,
+    // rather than folding their commit's span into the residual whole.
+    public static final int SEGMENT_CLASSIFY_WALKED_ROWS = 32;
     // Closed anchor segments repaired over their own range whose replacement applied.
-    public static final int SEGMENT_REPAIR_COUNT = 32;
+    public static final int SEGMENT_REPAIR_COUNT = 33;
     // Segment replays parked on the refresh turn's budget.
-    public static final int SEGMENT_YIELD_COUNT = 33;
+    public static final int SEGMENT_YIELD_COUNT = 34;
     // Segment repairs and keyed resumes published as an upsert on the view's dedup keys.
-    public static final int SPARSE_PUBLICATION_COUNT = 34;
+    public static final int SPARSE_PUBLICATION_COUNT = 35;
     // Sparse publications abandoned before commit for a whole-range replacement.
-    public static final int SPARSE_PUBLICATION_FALLBACK_COUNT = 35;
+    public static final int SPARSE_PUBLICATION_FALLBACK_COUNT = 36;
     // Stored rows sparse publications left in place.
-    public static final int SPARSE_PUBLICATION_ROWS_KEPT = 36;
+    public static final int SPARSE_PUBLICATION_ROWS_KEPT = 37;
     // Attempts to take back the symbol ids a discarded pass assigned and no flush committed,
     // each one a call of LiveViewInMemoryTier.tryRewindSymbolCache.
-    public static final int SYMBOL_REWIND_ATTEMPT_COUNT = 37;
+    public static final int SYMBOL_REWIND_ATTEMPT_COUNT = 38;
     // Of those attempts, the ones a reader refused by pinning a slot whose symbol horizon
     // reaches the ids the rewind would take back.
-    public static final int SYMBOL_REWIND_REFUSAL_COUNT = 38;
+    public static final int SYMBOL_REWIND_REFUSAL_COUNT = 39;
     // Keys keyed resumes handed back to the primary runtime.
-    public static final int TRANSPLANTED_KEY_COUNT = 39;
-    private static final int STAT_COUNT = 40;
+    public static final int TRANSPLANTED_KEY_COUNT = 40;
+    private static final int STAT_COUNT = 41;
     // Completed repairs by route, one slot per LiveViewCheckpointRepairRoute.ROUTE_*, after the
     // counters above. A repair counts once, on the turn that publishes it.
     private final long[] values = new long[STAT_COUNT + LiveViewCheckpointRepairRoute.ROUTE_COUNT];

@@ -512,6 +512,57 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeThatCannotLoadTheRetirementQueueKeepsTheAdoptedFloor() throws Exception {
+        // The queue load maps _retirements read-write, so an mmap the kernel refuses - an
+        // exhausted vm.max_map_count, say - fails the sweep before it reclaims anything.
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            try (Path dir = checkpointsDir()) {
+                // A clean pass leaves the queue the next pass loads.
+                Assert.assertFalse(LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true).isPurgeFailed());
+                Assert.assertTrue(isRetirementQueuePresent(false));
+
+                fault.arm(LiveViewCheckpointDiskFullFault.OP_MMAP, LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME, 1);
+                final LiveViewCheckpointLifecycle.ReconcileResult result =
+                        LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+                Assert.assertEquals(LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME, fault.getFailedFile());
+                assertAdoptedThroughAFailedPurge(result);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeThatCannotRewriteTheRetirementQueueKeepsTheAdoptedFloor() throws Exception {
+        // A full disk fails the reserve of the staged _retirements image. The sweep has
+        // already unlinked what it could, and the queue it could not prune is a superset the
+        // next sweep re-checks against the catalogue, so only the reclamation is deferred.
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            try (Path dir = checkpointsDir()) {
+                fault.arm(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME, 1);
+                final LiveViewCheckpointLifecycle.ReconcileResult result =
+                        LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+                Assert.assertEquals(LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME, fault.getFailedFile());
+                assertAdoptedThroughAFailedPurge(result);
+                Assert.assertFalse("the failed rewrite must not publish a queue", isRetirementQueuePresent(false));
+
+                // The next pass retries the sweep, and its rewrite consumes the staged file the
+                // failed one left behind.
+                final LiveViewCheckpointLifecycle.ReconcileResult retry =
+                        LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+                Assert.assertFalse(retry.isPurgeFailed());
+                Assert.assertEquals(1, retry.getWalPurgeFloor());
+                Assert.assertTrue(isRetirementQueuePresent(false));
+                Assert.assertFalse(isRetirementQueuePresent(true));
+            }
+        });
+    }
+
+    @Test
     public void testSupersededTimelineVersionRefusesASealOverIt() throws Exception {
         assertMemoryLeak(() -> {
             ensureDirs();
@@ -696,6 +747,21 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
 
     private static Path checkpointsDir() {
         return new Path().of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
+    }
+
+    /**
+     * Asserts that a reconciliation whose purge sweep failed still reports what startup
+     * publishes from the generation it adopted: the base WAL floor and the head coordinate.
+     */
+    private void assertAdoptedThroughAFailedPurge(LiveViewCheckpointLifecycle.ReconcileResult result) {
+        Assert.assertTrue(result.isPurgeFailed());
+        Assert.assertFalse(result.isFormatReset());
+        Assert.assertFalse(result.isEpochReplaced());
+        Assert.assertEquals("the adopted generation's base WAL floor", 1, result.getWalPurgeFloor());
+        Assert.assertEquals("the adopted generation's head coordinate", 1, result.getNormalizedBaseSeqTxn());
+        Assert.assertNotNull(result.getStats());
+        Assert.assertEquals(0, result.getRetirableSegmentIds().size());
+        Assert.assertTrue(timelineExists());
     }
 
     private void assertCheckpointFilesUnchanged(Map<String, byte[]> before) throws IOException {
@@ -967,6 +1033,16 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     private boolean repairDescriptorExists(long repairId) {
         try (Path dir = checkpointsDir(); Path path = new Path()) {
             LiveViewCheckpointLayout.repairDescriptorPath(path, dir, repairId);
+            return configuration.getFilesFacade().exists(path.$());
+        }
+    }
+
+    private boolean isRetirementQueuePresent(boolean isTemporary) {
+        try (Path dir = checkpointsDir(); Path path = new Path()) {
+            LiveViewCheckpointLayout.retirementQueuePath(path, dir);
+            if (isTemporary) {
+                path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+            }
             return configuration.getFilesFacade().exists(path.$());
         }
     }

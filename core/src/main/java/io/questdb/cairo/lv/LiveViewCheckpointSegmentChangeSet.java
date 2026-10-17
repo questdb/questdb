@@ -89,8 +89,10 @@ import org.jetbrains.annotations.NotNull;
  * a refresh worker plans. The keys live in native memory the instance allocates on the
  * first keyed repair, and the open segment's row timestamps in native memory it allocates
  * on the first repair that collects the open segment's keys. It retains both across
- * repairs, up to the bounds below, so collecting a key or a row costs no heap object;
- * {@link #close()} releases both.
+ * repairs, up to the bounds below, so collecting a key or a row costs no heap object, and
+ * {@link #endRepair()} gives back anything past those bounds as soon as the repair that read
+ * it ends, rather than at the next repair, which a worker whose views stop repairing never
+ * runs; {@link #close()} releases both.
  */
 public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable {
     /**
@@ -101,10 +103,11 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * 1.68 and its maximum 35.
      */
     public static final int MAX_CLOSED_SEGMENTS = 64;
-    // The most keys of() keeps room for in one key list: 16 KiB, and 1,040 KiB across the
-    // closed segments' lists and the open segment's. A wide repair grows each list it
-    // touches to its key budget - 512 KiB at the default, 32.5 MiB across the 65 lists -
-    // and an of() that only rewound the lists would pin that on the worker until it closes.
+    // The most keys one key list keeps room for between repairs: 16 KiB, and 1,040 KiB across
+    // the closed segments' lists and the open segment's. A wide repair grows each list it
+    // touches to its key budget - 512 KiB at the default, 32.5 MiB across the 65 lists - and
+    // endRepair() gives that back when the repair ends, as of() does for a caller that did not
+    // end its repair. Rewinding the lists alone would pin it on the worker until it closes.
     private static final int MAX_RETAINED_KEY_LIST_CAPACITY = 1 << 12;
     // The widest key membership table the change set keeps for the next repair: 128 KiB. A
     // clear writes every slot, and one worker's change set is rebound for every repair of
@@ -114,9 +117,11 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     // does, for a caller that did not end its walk - and the next keyed repair allocates
     // the initial one.
     private static final int MAX_RETAINED_KEY_MEMBERSHIP_CAPACITY = 1 << 14;
-    // The most open-segment row timestamps of() keeps room for: 512 KiB. A keyed walk
-    // leaves one per open-segment row, so a wide one would otherwise pin its whole list
-    // on the worker until the next wide one.
+    // The most open-segment row timestamps the row list keeps room for between repairs:
+    // 512 KiB. A keyed walk leaves one per open-segment row it records, up to the row budget
+    // of() takes, so a wide one would otherwise pin its whole list on the worker until the
+    // next repair. endRepair() gives the growth back when the repair ends, as of() does for a
+    // caller that did not end its repair.
     private static final int MAX_RETAINED_RESIDUAL_ROWS = 1 << 16;
     // No WAL symbol integer is negative but the null one, which resolveKey answers without
     // the map, so -1 can mark an empty slot.
@@ -161,6 +166,12 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     // column asks for. This is not the configured budget's zero: the refresh job maps a
     // configured budget at or below zero, which means unlimited, to Integer.MAX_VALUE.
     private int maxKeysPerSegment;
+    // How many open-segment row timestamps the walk may record before the open segment's
+    // domain stops being worth its memory. The list is the one structure here that grows
+    // with the rows the walk reads rather than with their keys, and the walk reads every
+    // commit above the view's durable point, so no key budget bounds it. Long.MAX_VALUE
+    // records every row.
+    private long maxResidualRows;
     // Containment cache for the row loop: consecutive rows of one commit almost always
     // share a segment, and a hit skips both the floor arithmetic and the lookup.
     private long cachedSegmentEndExclusive;
@@ -204,10 +215,16 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
             widenResidual(ts, ts);
             addResidualKey(key);
             // Only a complete domain reads the timestamps back, and an incomplete one never
-            // completes again, so a row past the overflow costs the list nothing.
+            // completes again, so a row past the overflow costs the list nothing. A row past
+            // the row budget is an overflow of its own: the domain is incomplete from it on,
+            // which the resume answers by reading every row above its anchor.
             if (isCollectingResidualKeys && !isResidualKeyDomainOverflowed) {
-                residualRowTimestamps.add(ts);
-                isResidualRowSetSorted = false;
+                if (residualRowTimestamps.size() < maxResidualRows) {
+                    residualRowTimestamps.add(ts);
+                    isResidualRowSetSorted = false;
+                } else {
+                    isResidualKeyDomainOverflowed = true;
+                }
             }
             return true;
         }
@@ -282,8 +299,8 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * and so does the growth the walk's last transaction left in the {@link #resolveKey}
      * cache, which only the walk reads.
      * Everything the repair reads after the walk - the segments, their key lists and
-     * domain verdicts, the residual - stays valid until the next {@code of()}, and no
-     * {@link #addRow} may follow before it.
+     * domain verdicts, the residual - stays valid until {@link #endRepair()} or the next
+     * {@code of()}, and no {@link #addRow} may follow before the next {@code of()}.
      */
     public void endClassification() {
         freeOversizedKeyMembership();
@@ -293,6 +310,26 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
             // which no key budget bounds. A cache no transaction opened stays unallocated.
             resolvedKeys.restoreInitialCapacity();
         }
+    }
+
+    /**
+     * Ends the repair {@link #of} bound this scratch to. The key lists and the open
+     * segment's row timestamps are what the repair reads after the walk, so they outlive
+     * {@link #endClassification()}; once the repair is over nothing reads them before the
+     * next {@code of()}, which does not come for as long as no view on the worker repairs.
+     * Each list goes back to its retained width here rather than at that call, and every
+     * one of them comes out empty, as {@code of()} would leave it.
+     * <p>
+     * A repair that parks hands what its later turns need to its session rather than
+     * leaving it here, so this runs on the parking turn too. It frees or shrinks memory and
+     * allocates none.
+     */
+    public void endRepair() {
+        for (int i = 0, n = keySets.size(); i < n; i++) {
+            clearKeyList(keySets.getQuick(i));
+        }
+        clearKeyList(residualKeys);
+        clearResidualRows();
     }
 
     /**
@@ -347,7 +384,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * symbol keys the corrections at or above {@code activeSegmentStart} carried, distinct,
      * which a keyed resume follows through the base's posting index instead of reading
      * every row above its anchor. Meaningless unless {@link #isResidualKeyDomainComplete()}
-     * holds, and valid until the next {@link #of}.
+     * holds, and valid until {@link #endRepair()} or the next {@link #of}.
      * <p>
      * The list carries no null, which {@link #hasResidualNullKey()} reports separately, for
      * the same reason a closed segment's does: a duplicate null in a keyed scan's key list
@@ -368,9 +405,10 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     /**
      * @return whether the keys collected for the open anchor segment are all of them.
      * False when the caller collected none, when the collection reached its budget, when a
-     * key did not resolve against the pinned reader, and when any commit was folded through
-     * {@link #addResidual} without its rows being walked - in every case the resume has to
-     * read every row above its anchor, which costs what it always did.
+     * key did not resolve against the pinned reader, when the walk met more open-segment
+     * rows than its row budget, and when any commit was folded through {@link #addResidual}
+     * without its rows being walked - in every case the resume has to read every row above
+     * its anchor, which costs what it always did.
      */
     public boolean isResidualKeyDomainComplete() {
         return isCollectingResidualKeys && !isResidualKeyDomainOverflowed;
@@ -406,8 +444,8 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * @return the affected keys of closed segment {@code index} - the pinned base reader's
      * symbol keys the corrections carried, distinct, which a keyed replay would follow
      * through the base's posting index. Empty when the caller collected none, meaningless
-     * unless {@link #isSegmentKeyDomainComplete(int)} holds, and valid until the next
-     * {@link #of}.
+     * unless {@link #isSegmentKeyDomainComplete(int)} holds, and valid until
+     * {@link #endRepair()} or the next {@link #of}.
      * <p>
      * The list carries no null, which {@link #hasSegmentNullKey(int)} reports separately -
      * it is a partition key like any other, and holding it beside the list rather than in
@@ -495,8 +533,25 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * its anchor, which is what every resume did before the keyed one existed.
      */
     public void of(long activeSegmentStart, int maxKeysPerSegment, boolean isResidualKeyCollectionRequested) {
+        of(activeSegmentStart, maxKeysPerSegment, isResidualKeyCollectionRequested, Long.MAX_VALUE);
+    }
+
+    /**
+     * As above, and records at most {@code maxResidualRows} of the open segment's row
+     * timestamps. The open segment's domain carries one per row the walk reads there, so
+     * this is what bounds its memory: a walk that meets more such rows leaves the domain
+     * incomplete, the way one that meets more keys than {@code maxKeysPerSegment} does, and
+     * records no further row. {@link Long#MAX_VALUE} records every row.
+     */
+    public void of(
+            long activeSegmentStart,
+            int maxKeysPerSegment,
+            boolean isResidualKeyCollectionRequested,
+            long maxResidualRows
+    ) {
         this.activeSegmentStart = activeSegmentStart;
         this.maxKeysPerSegment = maxKeysPerSegment;
+        this.maxResidualRows = maxResidualRows;
         this.isCollectingResidualKeys = isResidualKeyCollectionRequested && maxKeysPerSegment > 0;
         for (int i = 0, n = keySets.size(); i < n; i++) {
             clearKeyList(keySets.getQuick(i));
@@ -518,17 +573,12 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
                     false
             );
         }
-        // Cleared before the shrink, which keeps as many of the old rows as still fit.
-        residualRowTimestamps.clear();
-        if (residualRowTimestamps.getCapacity() > MAX_RETAINED_RESIDUAL_ROWS) {
-            residualRowTimestamps.resetCapacity();
-        }
+        clearResidualRows();
         if (isCollectingResidualKeys) {
             // A no-op once open. DirectLongList cannot grow from zero capacity, so a closed
             // list opens here rather than on the walk's first row.
             residualRowTimestamps.reopen();
         }
-        isResidualRowSetSorted = true;
         hasResidualNullKey = false;
         isResidualKeyDomainOverflowed = false;
         segments.clear();
@@ -686,6 +736,20 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
             keys.add(key);
         }
         return true;
+    }
+
+    /**
+     * Empties the open segment's row list for the next repair, giving back its block past
+     * {@link #MAX_RETAINED_RESIDUAL_ROWS}. Never allocates: the shrink only returns memory,
+     * and an empty list counts nothing whatever its order.
+     */
+    private void clearResidualRows() {
+        // Cleared before the shrink, which keeps as many of the old rows as still fit.
+        residualRowTimestamps.clear();
+        if (residualRowTimestamps.getCapacity() > MAX_RETAINED_RESIDUAL_ROWS) {
+            residualRowTimestamps.resetCapacity();
+        }
+        isResidualRowSetSorted = true;
     }
 
     private void freeOversizedKeyMembership() {

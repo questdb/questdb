@@ -38,6 +38,7 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -6147,6 +6148,248 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testWalPurgeHoldsBaseWalWhenStartupReconcileCannotRewriteRetirementQueue() throws Exception {
+        // A restart on a full disk. The startup reconciliation adopts the durable
+        // generation and then runs the purge sweep, which rewrites the _retirements
+        // work set. That rewrite is the first checkpoint write the restart makes,
+        // so it is the one ENOSPC fails. The sweep is best-effort reclamation and
+        // the work set it could not prune stays a safe superset, so the failure
+        // must not cost the view the base WAL floor and the head that the
+        // reconciliation read off the adopted superblock. Without them,
+        // WalPurgeJob floors the view at lvConsumed and deletes the
+        // (headBaseSeqTxn, applied] base WAL the restore replays. The restore then
+        // fails on the purged _event file and falls back to the whole-view
+        // rebuild, which the restatement guard refuses over a base that lost its
+        // rows, so the view stops for good.
+        //
+        // Roll a fresh base WAL segment per commit (rollover row count = 1) so each
+        // gap seqTxn lands in its own segment; WalPurgeJob purges at segment
+        // granularity.
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        assertMemoryLeak(fault, () -> {
+            // Pin the clock past the epoch so the WAL purge interval gate never
+            // skips a sweep; data timestamps sit above it so the non-SEED view
+            // keeps every row.
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
+
+            // Base seqTxn 1 (wal1/0). The first flush seals the head checkpoint at
+            // base seqTxn 1.
+            execute("""
+                    INSERT INTO base (ts, sym, x) VALUES
+                    ('2026-06-01T00:00:00.000000Z', 'a', 1.0),
+                    ('2026-06-01T00:00:01.000000Z', 'a', 2.0)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Base seqTxn 2 (wal1/1) and 3 (wal1/2) flush, but the head cadence does
+            // not fire, so the durable head stays at base seqTxn 1 while lvConsumed
+            // runs to 3: the gap the restart's restore replays.
+            execute("""
+                    INSERT INTO base (ts, sym, x) VALUES
+                    ('2026-06-01T00:00:02.000000Z', 'a', 4.0),
+                    ('2026-06-01T00:00:03.000000Z', 'a', 8.0)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(t0 + 100_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:05.000000Z', 'a', 32.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(t0 + 200_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals("head still covers base seqTxn 1", 1L, instance.getHeadCheckpointBaseSeqTxn());
+            Assert.assertEquals("lvConsumed ran ahead of the head", 3L, instance.getStateReader().getLvConsumedSeqTxn());
+
+            // Base seqTxn 4 drops every row the view materialized, so the restart
+            // has no rebuild to fall back to: only the restore keeps the view going.
+            execute("ALTER TABLE base DROP PARTITION LIST '2026-06-01'");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // Restart with the disk full: the first allocate on _retirements fails.
+            engine.getLiveViewRegistry().clear();
+            fault.arm(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME, 1);
+            engine.buildViewGraphs();
+            fault.disarm();
+            Assert.assertEquals(
+                    "the startup reconciliation must have met the full disk on the staged _retirements image",
+                    LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME,
+                    fault.getFailedFile()
+            );
+
+            final LiveViewInstance booted = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(booted);
+            Assert.assertEquals(
+                    "the startup reconciliation must publish the adopted generation's WAL floor",
+                    1L,
+                    booted.getCheckpointTimelineWalPurgeFloor()
+            );
+            Assert.assertEquals(
+                    "the startup reconciliation must publish the adopted generation's head",
+                    1L,
+                    booted.getHeadCheckpointBaseSeqTxn()
+            );
+            Assert.assertEquals(
+                    "a failed sweep counted no segments",
+                    Numbers.LONG_NULL,
+                    booted.getCheckpointDataSegmentCount()
+            );
+
+            // The first WalPurgeJob pass lands before the first refresh.
+            drainPurgeJob();
+            assertSegmentExistence(true, "base", 1, 1); // seqTxn 2: the gap the restore replays
+            assertSegmentExistence(true, "base", 1, 2); // seqTxn 3: the gap the restore replays
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(t0 + 300_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(recovered);
+            Assert.assertEquals(
+                    "timeline_restore",
+                    LiveViewCheckpointRecoveryPhase.routeName(recovered.getCheckpointRestoreRoute())
+            );
+            Assert.assertFalse(recovered.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(recovered.isInvalid());
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status
+                            active
+                            """);
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\ts
+                            2026-06-01T00:00:00.000000Z\ta\t1.0
+                            2026-06-01T00:00:01.000000Z\ta\t3.0
+                            2026-06-01T00:00:02.000000Z\ta\t7.0
+                            2026-06-01T00:00:03.000000Z\ta\t15.0
+                            2026-06-01T00:00:05.000000Z\ta\t47.0
+                            """);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFirstSealAfterRestartSurvivesRetirementQueueRewriteFailure() throws Exception {
+        // The first seal a worker makes over a directory reconciles it first, and that
+        // reconciliation runs the purge sweep. A sweep that cannot rewrite the _retirements
+        // work set defers reclamation and nothing else, so the seal must still publish. The
+        // reconciliation must stay owed, though: with the purge cadence off, the next seal's
+        // reconciliation is the only sweep left before a restart. And a sweep that failed
+        // counted nothing, so it must not overwrite the segment count startup reported.
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
+                setCurrentMicros(t0);
+                execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // A RANGE frame keeps its ring in data segments, so the catalogue the sweep
+                // counts is not empty.
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
+                        "SELECT ts, sym, sum(x) OVER (" +
+                        "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW" +
+                        ") AS s FROM base");
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:00.000000Z', 'a', 1.0)");
+                drainWalQueue();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                final LiveViewInstance booted = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(booted);
+                final long bootSegmentCount = booted.getCheckpointDataSegmentCount();
+                Assert.assertTrue("startup must report the catalogue's segment count", bootSegmentCount > 0);
+                final long lifecycleIdentity = booted.getLifecycleIdentity();
+
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:01.000000Z', 'a', 2.0)");
+                drainWalQueue();
+                fault.arm(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME, 1);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    setCurrentMicros(t0 + 100_000L);
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                fault.disarm();
+                Assert.assertEquals(LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME, fault.getFailedFile());
+
+                final LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(restored);
+                Assert.assertEquals("the seal must publish over a failed sweep", 0, restored.getCheckpointSealFailures());
+                Assert.assertEquals(2L, restored.getHeadCheckpointBaseSeqTxn());
+                capture.assertLogged("could not purge live view checkpoint segments, deferring to the next sweep");
+                Assert.assertFalse(
+                        "a failed sweep must leave the reconciliation owed",
+                        engine.getLiveViewCheckpointPurgeState().isReconciled(lifecycleIdentity)
+                );
+                Assert.assertEquals(
+                        "a failed sweep must not overwrite the reported segment count",
+                        bootSegmentCount,
+                        restored.getCheckpointDataSegmentCount()
+                );
+
+                // The next seal reconciles again, and this time the sweep completes.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:02.000000Z', 'a', 4.0)");
+                drainWalQueue();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    setCurrentMicros(t0 + 200_000L);
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                Assert.assertEquals(3L, restored.getHeadCheckpointBaseSeqTxn());
+                Assert.assertTrue(engine.getLiveViewCheckpointPurgeState().isReconciled(lifecycleIdentity));
+                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\ts
+                                2026-06-01T00:00:00.000000Z\ta\t1.0
+                                2026-06-01T00:00:01.000000Z\ta\t3.0
+                                2026-06-01T00:00:02.000000Z\ta\t7.0
+                                """);
+
+                execute("DROP LIVE VIEW lv");
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test

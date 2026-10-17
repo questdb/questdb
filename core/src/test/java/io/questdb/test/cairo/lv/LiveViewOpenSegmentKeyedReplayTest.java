@@ -35,6 +35,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointOpenSegmentCost;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentChangeSet;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -83,6 +84,12 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     // outrun what the whole-range estimate counts of that partition, which is the slice
     // above the anchor and not the partition.
     private static final int HOT_ACCOUNT_ROWS_PER_HOUR = 60;
+    // The cairo.live.view.checkpoint.repair.scan.max.rows the row-budget cases run under.
+    private static final int OPEN_SEGMENT_SCAN_ROW_BUDGET = 1_000;
+    // Late rows one wide correction carries into the open segment: past the 64Ki row
+    // timestamps the change set keeps room for between repairs, so the walk that records
+    // them grows its list past what it may keep.
+    private static final int WIDE_OPEN_SEGMENT_ROWS = 70_000;
     // The account column's symbol capacity in the cases that correct from a few thousand to
     // tens of thousands of accounts at once: above every account count they insert, so no
     // commit grows it.
@@ -1701,6 +1708,13 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         // The publication is an upsert on the view's own identity, so a view CREATEd
         // without it has nothing to upsert onto - and the block would otherwise have to
         // carry every stored row above the anchor, which is the whole range and no saving.
+        // The identity is fixed when the view is built, so the decomposition keeps no key
+        // domain for it and pays for neither the wider walk nor the pricing: the correction's
+        // commit lies wholly inside the open segment and folds whole. The decomposition still
+        // runs, unlike with the switch off, because it also scopes the commits apply raced
+        // past the trigger - see LiveViewIdentitylessRepairRouteTest.
+        // testACorrectionInTheOpenSegmentCollectsItsKeysAndPricesThem runs the same
+        // correction on a view that carries the identity, and prices it.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "false");
@@ -1709,14 +1723,20 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 openTheDayAboveARoot(job);
+                final long walkedRowsBefore = job.getStatsForTest().get(SEGMENT_CLASSIFY_WALKED_ROWS);
 
                 commit(row(4, 2, 35, "acct-1"), job);
 
                 Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
                 Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT));
-                // The pricing still runs and still says the keyed read is smaller, which is
-                // what says the identity is what turned the route down.
-                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(
+                        "a correction inside the open segment must not walk WAL rows for a keyed route the view cannot take",
+                        0,
+                        job.getStatsForTest().get(SEGMENT_CLASSIFY_WALKED_ROWS) - walkedRowsBefore
+                );
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -1762,6 +1782,232 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
                 Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
                 Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAnOverflowedOpenSegmentDomainFoldsLaterCommitsWhole() throws Exception {
+        // Once the open segment's key domain overflows, the keyed route is off and nothing
+        // reads the keys or the row timestamps the walk would go on collecting. A later
+        // commit wholly inside the open segment then folds its span into the residual
+        // without its rows being read, as it would for a walk that never collected them.
+        // That commit sits below the one that overflowed, so a span the fold lost would
+        // raise the residual's floor above its rows and leave their output stale.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final long walkedRowsBefore = job.getStatsForTest().get(SEGMENT_CLASSIFY_WALKED_ROWS);
+
+                // Two commits for one repair to walk, so each is its own INSERT. The first
+                // carries two accounts against a budget of one and overflows the domain.
+                execute("INSERT INTO tx VALUES " + row(4, 5, 35, "acct-1") + ", " + row(4, 5, 36, "acct-2"));
+                execute("INSERT INTO tx VALUES " + row(4, 2, 35, "acct-3") + ", "
+                        + row(4, 3, 35, "acct-3") + ", "
+                        + row(4, 4, 35, "acct-3"));
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(
+                        "only the commit that overflowed the open segment's domain may be read row by row",
+                        2,
+                        job.getStatsForTest().get(SEGMENT_CLASSIFY_WALKED_ROWS) - walkedRowsBefore
+                );
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAWideOpenSegmentWalkLeavesTheWorkerNoRoomForItsRows() throws Exception {
+        // A repair that collects the open segment's key domain records one timestamp per row
+        // its walk reads there, in native scratch the worker keeps for every later repair of
+        // every view on it. The list has to go back to its retained width when the repair that
+        // read it ends: the next repair to rebind the change set may never come on a worker
+        // whose views stop taking out-of-order data.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final LiveViewCheckpointSegmentChangeSet changeSet = job.segmentChangeSetForTest();
+                final long[] rowsDuringRepair = {-1};
+                hooks(job).setSimulateResumeReplayStart(() -> rowsDuringRepair[0] = changeSet.getResidualRowCount());
+
+                insertLateOpenSegmentRows(4, WIDE_OPEN_SEGMENT_ROWS);
+                driveRefreshToQuiescence(job);
+
+                Assert.assertTrue(
+                        "the resume must run on the walk's rows, or the case covers nothing [rows="
+                                + rowsDuringRepair[0] + ']',
+                        rowsDuringRepair[0] >= WIDE_OPEN_SEGMENT_ROWS
+                );
+                assertNoRoomKeptForAWideWalksRows(changeSet);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAWideOpenSegmentWalkWhoseRepairFaultsLeavesTheWorkerNoRoomForItsRows() throws Exception {
+        // The same walk, with the resume behind it faulting before its replay reads a row. The
+        // fault leaves the turn through the repair's unwind rather than its tail, and that has
+        // to give the walk's rows back as well: the view backs off, and nothing rebinds the
+        // change set until its retry.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final LiveViewCheckpointSegmentChangeSet changeSet = job.segmentChangeSetForTest();
+                final long[] rowsDuringRepair = {-1};
+                hooks(job).setSimulateResumeReplayStart(() -> {
+                    rowsDuringRepair[0] = changeSet.getResidualRowCount();
+                    throw CairoException.critical(0).put("simulated fault ahead of the resume replay");
+                });
+
+                insertLateOpenSegmentRows(4, WIDE_OPEN_SEGMENT_ROWS);
+                // One burst at a fixed clock: a faulted turn leaves the view backing off, so the
+                // burst ends at the fault rather than retrying past it.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                drainJob(job);
+
+                Assert.assertTrue(
+                        "the fault must stop a resume that runs on the walk's rows, or the case covers nothing [rows="
+                                + rowsDuringRepair[0] + ']',
+                        rowsDuringRepair[0] >= WIDE_OPEN_SEGMENT_ROWS
+                );
+                assertNoRoomKeptForAWideWalksRows(changeSet);
+
+                // The retry walks the rows again and completes.
+                driveRefreshToQuiescence(job);
+                assertNoRoomKeptForAWideWalksRows(changeSet);
+                assertViewMatchesRecomputeIgnoringFaults();
+            }
+        });
+    }
+
+    @Test
+    public void testAParkedRepairAfterAWideOpenSegmentWalkLeavesTheWorkerNoRoomForItsRows() throws Exception {
+        // A cold keyed repair takes its exact row delta and its boundaries' row positions into
+        // its session when it parks on the replay budget, so no later turn reads the walk's
+        // rows. The parked turn is the last one that does, and the rows go back with it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, WIDE_OPEN_SEGMENT_ROWS / 4);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewCheckpointSegmentChangeSet changeSet = job.segmentChangeSetForTest();
+
+                // Below the seed's one head root, in the day it leaves open.
+                insertLateOpenSegmentRows(3, WIDE_OPEN_SEGMENT_ROWS);
+                driveUntilParked(job, "lv");
+
+                Assert.assertEquals(
+                        "the parked repair must be the cold keyed one",
+                        1,
+                        job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT)
+                );
+                Assert.assertTrue(
+                        "the cold route's row delta is the walk's own count, so the walk must have"
+                                + " recorded every late row [delta=" + job.repairRouteForTest().getInsertedRowDelta() + ']',
+                        job.repairRouteForTest().getInsertedRowDelta() >= WIDE_OPEN_SEGMENT_ROWS
+                );
+                assertNoRoomKeptForAWideWalksRows(changeSet);
+
+                driveRefreshToQuiescence(job);
+                Assert.assertNull("the repair must have finished", viewInstance().getSuspendedRepair());
+                Assert.assertEquals(
+                        1,
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT)
+                );
+                assertNoRoomKeptForAWideWalksRows(changeSet);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAnOpenSegmentWalkPastTheScanRowBudgetStopsRecordingRows() throws Exception {
+        // The open segment's row timestamps are the one thing the walk keeps per row rather
+        // than per key, and the walk covers every commit whose output is not durable, up to
+        // whatever apply has reached - so no key budget bounds them. The scan row budget does:
+        // past it the domain is incomplete, the walk records no further row, and the resume
+        // reads every row above its anchor, as it does for a domain past its key budget.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, OPEN_SEGMENT_SCAN_ROW_BUDGET);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final LiveViewCheckpointSegmentChangeSet changeSet = job.segmentChangeSetForTest();
+                final long[] rowsDuringRepair = {-1};
+                hooks(job).setSimulateResumeReplayStart(() -> rowsDuringRepair[0] = changeSet.getResidualRowCount());
+
+                insertLateOpenSegmentRows(4, 4 * OPEN_SEGMENT_SCAN_ROW_BUDGET);
+                driveRefreshToQuiescence(job);
+
+                Assert.assertTrue(
+                        "the walk must record no more open-segment rows than the scan row budget [rows="
+                                + rowsDuringRepair[0] + ", budget=" + OPEN_SEGMENT_SCAN_ROW_BUDGET + ']',
+                        rowsDuringRepair[0] > -1 && rowsDuringRepair[0] <= OPEN_SEGMENT_SCAN_ROW_BUDGET
+                );
+                Assert.assertEquals(
+                        "a domain past its row budget is incomplete, so the resume reads whole",
+                        0,
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAnOpenSegmentWalkWithinTheScanRowBudgetStillResumesByKey() throws Exception {
+        // The budget bounds the rows the walk records and nothing else: a correction whose
+        // open-segment rows fit it keeps its whole domain and resumes by key.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, OPEN_SEGMENT_SCAN_ROW_BUDGET);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final LiveViewCheckpointSegmentChangeSet changeSet = job.segmentChangeSetForTest();
+                final long[] rowsDuringRepair = {-1};
+                hooks(job).setSimulateResumeReplayStart(() -> rowsDuringRepair[0] = changeSet.getResidualRowCount());
+
+                insertLateOpenSegmentRows(4, OPEN_SEGMENT_SCAN_ROW_BUDGET);
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(
+                        "a walk exactly at its row budget must record every row",
+                        OPEN_SEGMENT_SCAN_ROW_BUDGET,
+                        rowsDuringRepair[0]
+                );
+                Assert.assertEquals(
+                        "and its resume must still follow the correction's keys",
+                        1,
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
+                );
                 assertViewMatchesRecompute();
             }
         });
@@ -1838,6 +2084,16 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute();
             }
         });
+    }
+
+    private static void assertNoRoomKeptForAWideWalksRows(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
+        final long capacity = LiveViewCheckpointSegmentChangeSetTest.residualRowCapacity(changeSet);
+        final long retained = LiveViewCheckpointSegmentChangeSetTest.maxRetainedResidualRows();
+        Assert.assertTrue(
+                "the worker must not keep room for a wide walk's rows once the repair that read them"
+                        + " is over [capacity=" + capacity + ", retained=" + retained + ']',
+                capacity <= retained
+        );
     }
 
     /**
@@ -2258,6 +2514,18 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         execute("insert into tx values " + values);
         drainWalQueue();
         driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Commits {@code rows} acct-1 rows a millisecond apart from 02:35 on 2026-01-{@code day},
+     * as one transaction, and applies it without refreshing. Every case calls it on the open
+     * day below the frontier, which makes the commit one correction whose rows all land in
+     * the open segment, none of them tying a stored row.
+     */
+    private void insertLateOpenSegmentRows(int day, int rows) throws Exception {
+        execute("INSERT INTO tx SELECT timestamp_sequence('2026-01-" + String.format("%02d", day)
+                + "T02:35:00.000001Z', 1_000), 'acct-1'::SYMBOL, 1.0 FROM long_sequence(" + rows + ")");
+        drainWalQueue();
     }
 
     /**

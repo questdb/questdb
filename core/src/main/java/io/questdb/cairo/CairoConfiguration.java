@@ -427,7 +427,10 @@ public interface CairoConfiguration {
      * arbitrary span, so this is the bound that keeps discovery from costing
      * the view's whole history. Crossing it reports an explicit budget status
      * and leaves the conservative bound in place rather than continuing the
-     * scan. A value {@code <= 0} disables the budget.
+     * scan. It also bounds the open-segment row timestamps the change-set walk
+     * records; past it the open segment's key domain is incomplete and the
+     * repair reads every row above its anchor. A value {@code <= 0} disables
+     * the budget.
      */
     long getLiveViewCheckpointRepairScanMaxRows();
 

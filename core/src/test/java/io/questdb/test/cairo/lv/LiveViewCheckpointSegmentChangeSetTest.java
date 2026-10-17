@@ -1183,6 +1183,146 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         });
     }
 
+    @Test
+    public void testTheOpenSegmentsDomainIsIncompletePastItsRowBudget() throws Exception {
+        // One timestamp per open-segment row is the one cost of the walk no key budget
+        // bounds. Up to the row budget the domain stays complete and counts every row; the
+        // first row past it leaves the domain incomplete, as a key past the key budget does,
+        // and grows nothing. Closed segments record no row, so the budget leaves them alone.
+        TestUtils.assertMemoryLeak(() -> {
+            final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+            try (
+                    LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+                    LiveViewCheckpointSegmentChangeSet fresh = new LiveViewCheckpointSegmentChangeSet()
+            ) {
+                changeSet.of(DAY_8, 16, true, 3);
+                fresh.of(DAY_8, 16, true, 3);
+                for (int row = 0; row < 3; row++) {
+                    Assert.assertTrue(changeSet.addRow(DAY_8 + row, 1, plan));
+                    Assert.assertTrue(fresh.addRow(DAY_8 + row, 1, plan));
+                }
+                Assert.assertTrue(
+                        "a walk exactly at its row budget must keep its whole domain",
+                        changeSet.isResidualKeyDomainComplete()
+                );
+                Assert.assertEquals(3, changeSet.getResidualRowCount());
+                Assert.assertEquals(2, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 1));
+
+                for (int row = 3; row < WIDE_RESIDUAL_ROWS; row++) {
+                    Assert.assertTrue(changeSet.addRow(DAY_8 + row, 1, plan));
+                }
+                Assert.assertFalse(
+                        "the first row past the row budget must leave the open segment's domain incomplete",
+                        changeSet.isResidualKeyDomainComplete()
+                );
+                Assert.assertEquals(DAY_8, changeSet.getResidualMinTs());
+                Assert.assertEquals(DAY_8 + WIDE_RESIDUAL_ROWS - 1, changeSet.getResidualMaxTs());
+                Assert.assertEquals(
+                        "rows past the row budget must not grow the row list",
+                        residualRowCapacity(fresh),
+                        residualRowCapacity(changeSet)
+                );
+                Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 1, 2, plan));
+                Assert.assertEquals(1, changeSet.getClosedSegmentCount());
+                Assert.assertTrue(changeSet.isSegmentKeyDomainComplete(0));
+                assertKeys(changeSet.getSegmentKeys(0), 2);
+
+                // The budget belongs to the repair of() binds: the next one starts from no row.
+                changeSet.of(DAY_8, 16, true, 3);
+                Assert.assertTrue(changeSet.addRow(DAY_8 + 1, 1, plan));
+                Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+                Assert.assertEquals(1, changeSet.getResidualRowCount());
+            }
+        });
+    }
+
+    @Test
+    public void testTheEndOfAWideRepairHandsBackItsRowsAndKeys() throws Exception {
+        // The key lists and the open segment's row timestamps are what a repair reads after
+        // its walk, so endClassification() leaves them alone. Once the repair is over nothing
+        // reads them before the next of(), which does not come for as long as no view on the
+        // worker repairs. endRepair() must give a wide repair's growth back and leave every
+        // list as a fresh of() would, while a narrow repair's lists keep their room, as of()
+        // keeps it.
+        TestUtils.assertMemoryLeak(() -> {
+            final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+            try (
+                    LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+                    LiveViewCheckpointSegmentChangeSet fresh = new LiveViewCheckpointSegmentChangeSet()
+            ) {
+                changeSet.of(DAY_8, WIDE_KEY_DOMAIN, true);
+                for (int key = 0; key < WIDE_KEY_DOMAIN; key++) {
+                    Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + key, key, plan));
+                    Assert.assertTrue(changeSet.addRow(DAY_8 + key, key, plan));
+                }
+                for (int row = 0; row < WIDE_RESIDUAL_ROWS; row++) {
+                    Assert.assertTrue(changeSet.addRow(DAY_8 + row, 1, plan));
+                }
+                changeSet.endClassification();
+                Assert.assertTrue(changeSet.isSegmentKeyDomainComplete(0));
+                Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+                Assert.assertEquals(WIDE_KEY_DOMAIN + WIDE_RESIDUAL_ROWS, changeSet.getResidualRowCount());
+                final long wideListBytes = keyListBytes(changeSet);
+                final long wideRowCapacity = residualRowCapacity(changeSet);
+                Assert.assertTrue(
+                        "the wide repair must have grown both key lists, or the case covers nothing",
+                        wideListBytes >= 2L * WIDE_KEY_DOMAIN * Integer.BYTES
+                );
+                Assert.assertTrue(
+                        "the wide repair must have grown the row list past its retained width, or the case covers nothing",
+                        wideRowCapacity > maxRetainedResidualRows()
+                );
+                final long wideMemUsed = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+
+                changeSet.endRepair();
+                final long releasedBytes = wideMemUsed - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                fresh.of(DAY_8, WIDE_KEY_DOMAIN, true);
+                Assert.assertEquals(
+                        "the end of a wide repair must keep no room for its keys",
+                        keyListBytes(fresh),
+                        keyListBytes(changeSet)
+                );
+                Assert.assertEquals(
+                        "the end of a wide repair must keep no room for its rows",
+                        residualRowCapacity(fresh),
+                        residualRowCapacity(changeSet)
+                );
+                final long keptBytes = keyListBytes(changeSet) + residualRowCapacity(changeSet) * Long.BYTES;
+                Assert.assertTrue(
+                        "the wide lists' native blocks must be released [releasedBytes=" + releasedBytes
+                                + ", wideListBytes=" + wideListBytes
+                                + ", wideRowBytes=" + wideRowCapacity * Long.BYTES + ']',
+                        releasedBytes >= wideListBytes + wideRowCapacity * Long.BYTES - keptBytes
+                );
+                Assert.assertEquals(0, changeSet.getResidualRowCount());
+                Assert.assertEquals(0, changeSet.getResidualRowCountAtOrBelow(DAY_8 + WIDE_RESIDUAL_ROWS));
+                Assert.assertEquals(0, changeSet.getResidualKeys().size());
+                Assert.assertEquals(0, changeSet.getSegmentKeys(0).size());
+
+                // The next repair runs in full on what is left.
+                changeSet.of(DAY_8, WIDE_KEY_DOMAIN, true);
+                Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 1, 1, plan));
+                Assert.assertTrue(changeSet.addRow(DAY_8 + 2, 2, plan));
+                Assert.assertTrue(changeSet.addRow(DAY_8 + 1, 3, plan));
+                changeSet.endClassification();
+                assertKeys(changeSet.getSegmentKeys(0), 1);
+                assertKeys(changeSet.getResidualKeys(), 2, 3);
+                Assert.assertEquals(1, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 1));
+                Assert.assertEquals(2, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 2));
+
+                // Its lists are narrow, and they keep their room for the repair after it.
+                final long narrowListBytes = keyListBytes(changeSet);
+                final long narrowRowCapacity = residualRowCapacity(changeSet);
+                Assert.assertTrue(narrowListBytes > 0);
+                changeSet.endRepair();
+                Assert.assertEquals(narrowListBytes, keyListBytes(changeSet));
+                Assert.assertEquals(narrowRowCapacity, residualRowCapacity(changeSet));
+                Assert.assertEquals(0, changeSet.getResidualRowCount());
+                Assert.assertEquals(0, changeSet.getResidualKeys().size());
+            }
+        });
+    }
+
     private static void assertKeys(DirectIntList actual, int... expected) {
         Assert.assertEquals(expected.length, actual.size());
         for (int i = 0; i < expected.length; i++) {
@@ -1290,7 +1430,20 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         return keyMembership != null ? keyMembership.capacity() : 0;
     }
 
-    private static long residualRowCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
+    /**
+     * The most open-segment row timestamps the change set keeps room for between repairs.
+     */
+    static long maxRetainedResidualRows() throws ReflectiveOperationException {
+        final Field field = LiveViewCheckpointSegmentChangeSet.class.getDeclaredField("MAX_RETAINED_RESIDUAL_ROWS");
+        field.setAccessible(true);
+        return field.getInt(null);
+    }
+
+    /**
+     * The open-segment row timestamps the change set's row list holds room for, whatever
+     * rows it currently carries.
+     */
+    static long residualRowCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
         return ((DirectLongList) fieldOf(changeSet, "residualRowTimestamps")).getCapacity();
     }
 
