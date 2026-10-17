@@ -173,9 +173,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Oversized partitionUpdateSink (offset, description):
     // 0, partitionTimestamp
     // 1, timestampMin
-    // 2, newPartitionSize
+    // 2, newPartitionSize, -1 when the O3 task left the partition as it was, see isO3PartitionUnchanged()
     // 3, oldPartitionSize
-    // 4, flags (partitionMutates INT, isLastWrittenPartition INT)
+    // 4, flags (partitionMutates INT, isIndexVersioned INT: a parquet update in place moved the index
+    //    of an indexed SYMBOL column to a new column version, see O3PartitionJob.updateParquetIndexes())
     // 5. o3SplitPartitionSize size of "split" partition, new partition that branches out of the old one
     // 6. original partition timestamp (before the split)
     // 7. parquet partition file size
@@ -188,6 +189,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
+    // [columnIndex, oldColumnNameTxn, newColumnNameTxn, partitionTimestamp, partitionNameTxn]
+    private static final int PARQUET_INDEX_VERSION_CHANGE_LONGS = 5;
     // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(TableWriter.class);
@@ -287,6 +290,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final IntList parquetDecodedTableColumnIdx = new IntList();
     private final ParquetPartitionDecoder parquetDecoder;
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
+    // Index versions that in-place parquet O3 updates moved, PARQUET_INDEX_VERSION_CHANGE_LONGS per entry.
+    // processO3Block() collects them from the partition update sink. Once the commit lands,
+    // housekeep() purges the old versions; rollback() and a failed O3 block remove the new ones.
+    private final LongList parquetIndexVersionChanges = new LongList();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
@@ -399,6 +406,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
     private volatile boolean o3oomObserved;
+    // Separate from purgingOperator: UPDATE and DROP INDEX hold that one across their internal
+    // commits, and housekeep() would purge and clear their entries.
+    private PurgingOperator parquetIndexPurgingOperator;
     private IntList parquetRewriteColumnIndexes;
     private SymbolColumnIndexer parquetRewriteIndexer;
     private byte parquetRewriteIndexerType = IndexType.NONE;
@@ -530,22 +540,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, partitionBy != PartitionBy.NONE);
-            if (columnVersionWriter.getVersion() != txWriter.getColumnVersion()) {
-                if (columnVersionWriter.getVersion() - 1 == txWriter.getColumnVersion()) {
-                    // This is case when transaction was aborted during column version change
-                    // we need to use previous version of _cv file, which should still be available for reading
-                    LOG.info().$("rolling back column version change to match _txn file [table=").$(tableToken)
-                            .$(", txnVersion=").$(txWriter.getColumnVersion())
-                            .$(", actualFileVersion=").$(columnVersionWriter.getVersion())
-                            .I$();
-                    columnVersionWriter.rollback();
-                } else {
-                    throw CairoException.critical(0).put("Unrecoverable storage corruption detected: column version mismatch [table=").put(tableToken)
-                            .put(", txnVersion=").put(txWriter.getColumnVersion())
-                            .put(", actualFileVersion=").put(columnVersionWriter.getVersion())
-                            .put(']');
-                }
-            }
+            rollbackColumnVersionToTxn();
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
             this.parquetBloomFilterIndexes = new DirectIntList(8, MemoryTag.NATIVE_TABLE_WRITER, true);
             this.parquetColumnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_TABLE_WRITER);
@@ -2205,6 +2200,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             metadata.getColumnMetadata(i).setDedupKeyFlag(false);
         }
+        // the mode has no effect without dedup keys, reset it so that _meta does not carry a stale value
+        metadata.setDedupMode(TableUtils.DEDUP_MODE_UPSERT);
         rewriteAndSwapMetadata(metadata);
         clearTodoAndCommitMetaStructureVersion();
         if (dedupColumnCommitAddresses != null) {
@@ -2311,10 +2308,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    public boolean enableDeduplication(LongList columnsIndexes, int tableDedupMode) {
         assert txWriter.getLagRowCount() == 0;
+        assert tableDedupMode == TableUtils.DEDUP_MODE_UPSERT || tableDedupMode == TableUtils.DEDUP_MODE_SKIP;
         checkDistressed();
-        LogRecord logRec = LOG.info().$("enabling row deduplication [table=").$(tableToken).$(", columns=[");
+        LogRecord logRec = LOG.info().$("enabling row deduplication [table=").$(tableToken)
+                .$(", mode=").$(tableDedupMode == TableUtils.DEDUP_MODE_SKIP ? "SKIP" : "UPSERT")
+                .$(", columns=[");
 
         boolean isSubsetOfOldKeys = true;
         try {
@@ -2351,6 +2351,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 j++;
             }
         }
+        metadata.setDedupMode(tableDedupMode);
         rewriteAndSwapMetadata(metadata);
         clearTodoAndCommitMetaStructureVersion();
 
@@ -2769,6 +2770,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         return dedupMode == WalUtils.WAL_DEDUP_MODE_DEFAULT || dedupMode == WalUtils.WAL_DEDUP_MODE_UPSERT_NEW;
+    }
+
+    /**
+     * Returns true when the current commit deduplicates (see {@link #isCommitDedupMode()}) and
+     * duplicates resolve in favour of the row that was written first: a new row that matches an
+     * existing row, or an earlier row of the same commit, on all dedup keys is discarded. This is
+     * the case for tables with the SKIP dedup mode, unless the commit explicitly requests UPSERT.
+     */
+    public boolean isCommitDedupSkipMode() {
+        return dedupMode == WalUtils.WAL_DEDUP_MODE_DEFAULT
+                && metadata.getDedupMode() == TableUtils.DEDUP_MODE_SKIP
+                && isDeduplicationEnabled();
     }
 
     public boolean isCommitPlainInsert() {
@@ -3526,6 +3539,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rollbackIndexes();
                 rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
+                // the _cv commit may have landed while the _txn commit did not
+                rollbackColumnVersionToTxn();
+                // the restored _cv references none of the index versions the failed commit built
+                removeParquetIndexVersionOrphans();
                 closeActivePartition(false);
                 purgeUnusedPartitions();
                 configureAppendPosition();
@@ -4097,6 +4114,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     nullers.add(NOOP);
             }
         }
+    }
+
+    /**
+     * Returns true when the partition update sink block reports a partition that the O3 task left as it was,
+     * e.g. because the dedup dropped every O3 row of the partition. The task changed no file of the partition,
+     * neither column data nor index, and reports it with {@code newPartitionSize = -1} and
+     * {@code partitionMutates = 0}. There is nothing to apply for such a partition.
+     */
+    private static boolean isO3PartitionUnchanged(long partitionUpdateSinkBlockAddress) {
+        return Unsafe.getLong(partitionUpdateSinkBlockAddress + 2 * Long.BYTES) < 0
+                && Numbers.decodeLowInt(Unsafe.getLong(partitionUpdateSinkBlockAddress + 4 * Long.BYTES)) == 0;
     }
 
     private static boolean linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
@@ -5677,6 +5705,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Adds an entry to {@link #parquetIndexVersionChanges} for every indexed SYMBOL column whose index
+     * an in-place parquet O3 update moved to the column version named after the current txn. The sink
+     * flags say which partitions did, and O3PartitionJob.isParquetIndexLiveForReaders(), evaluated on
+     * the column top before the commit, says which of their columns.
+     */
+    private void collectParquetIndexVersionChanges() {
+        long blockIndex = -1;
+        while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
+            final long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
+            if (Numbers.decodeHighInt(Unsafe.getLong(blockAddress + 4 * Long.BYTES)) == 0) {
+                continue;
+            }
+            final long partitionTimestamp = Unsafe.getLong(blockAddress);
+            final long oldPartitionSize = Unsafe.getLong(blockAddress + 3 * Long.BYTES);
+            final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+                if (
+                        O3PartitionJob.isParquetIndexedSymbol(metadata, columnIndex)
+                                && O3PartitionJob.isParquetIndexLiveForReaders(columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex), oldPartitionSize)
+                ) {
+                    parquetIndexVersionChanges.add(
+                            columnIndex,
+                            columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex),
+                            txWriter.txn,
+                            partitionTimestamp
+                    );
+                    parquetIndexVersionChanges.add(partitionNameTxn);
+                }
+            }
+        }
+    }
+
+    /**
      * Commits newly added rows of data. This method updates transaction file with pointers to the end of appended data.
      * <p>
      * <b>Pending rows</b>
@@ -6958,7 +7019,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Map column buffers for lag rows for deduplication
                             long lagKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, lagMapSize, false) : 0L;
                             long o3ColumnData = o3Columns.get(getPrimaryColumnIndex(i)).addressOf(0);
-                            assert o3ColumnData != 0;
+                            // A commit without rows, e.g. a seed transaction of REBASE WAL, maps no column
+                            // data, and the dedup then reads the rows of the WAL lag only.
+                            assert o3ColumnData != 0 || longIndexLength == lagRows;
 
                             DedupColumnCommitAddresses.setColAddressValues(addr, o3ColumnData);
                             DedupColumnCommitAddresses.setO3DataAddressValues(addr, Math.abs(lagKeyAddr));
@@ -7007,7 +7070,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexDstAddr,
                     tempIndexAddr,
                     dedupKeyIndex,
-                    DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
+                    DedupColumnCommitAddresses.getAddress(dedupCommitAddr),
+                    isCommitDedupSkipMode()
             );
 
             long dedupRowsRemoved = dedupRowCount > 0 ? longIndexLength - dedupRowCount : 0;
@@ -8008,6 +8072,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
             processPartitionRemoveCandidates();
+            purgeReplacedParquetIndexVersions();
             tableWriterMetrics().incrementCommits();
             enforceTtl(wallClockMicros);
             scaleSymbolCapacities();
@@ -9033,8 +9098,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
-                if (!partitionMutates && srcDataNewPartitionSize < 0) {
-                    // noop
+                if (isO3PartitionUnchanged(blockAddress)) {
                     continue;
                 }
 
@@ -9201,17 +9265,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // The parquet O3 update ran in place: processParquetPartition
                             // appended row groups to the existing data.parquet and
                             // published partitionMutates=1 with the new file size. The
-                            // directory and partition name txn stay; only the row count
-                            // and the committed file length move.
+                            // directory and partition name txn stay; the row count, the
+                            // committed file length and the column tops move.
                             txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
                             txWriter.setPartitionParquetGeneratedByRawIndex(partitionIndexRaw, true);
                             txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
-                            // The Rust updater zeros every column_top in the parquet metadata in
-                            // update mode as well (update.rs end()), and merged row groups carry
-                            // real data below the old top. Zero ALL column tops, like the rewrite
-                            // branch does, so a stale full top (e.g. a column added after the
+                            if (Numbers.decodeHighInt(flags) != 0) {
+                                upsertParquetIndexVersions(partitionTimestamp);
+                            }
+                            // The Rust updater zeroes column_top of every column in the
+                            // file (update.rs end()), merged row groups carry real data
+                            // below the old top, and updateParquetIndexes() indexed every
+                            // column from row 0. Zero ALL column tops, like the rewrite
+                            // branch does, so a stale top (e.g. a column added after the
                             // partition was written) does not hide the merged values from
-                            // CONVERT TO NATIVE or from the dedup merge.
+                            // index scans, CONVERT TO NATIVE or the dedup merge.
                             zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
@@ -10432,6 +10500,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+                    // A task that does not run after an error leaves the flags as they are, and the
+                    // failure path reads them in collectParquetIndexVersionChanges()
+                    Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, 0);
                     // original partition timestamp
                     Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
 
@@ -10629,11 +10700,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             o3ConsumePartitionUpdates();
             if (o3ErrorCount.get() == 0 && success) {
+                // collected before the sink is consumed, so that rollback() removes the new index
+                // versions of every partition, including those a failing consume did not reach
+                collectParquetIndexVersionChanges();
                 o3ConsumePartitionUpdateSink();
             }
             o3DoneLatch.await(latchCount);
 
             o3InError = !success || o3ErrorCount.get() > 0;
+            if (o3InError) {
+                // the partition tasks are done: remove the index versions they built for a commit
+                // that does not land
+                collectParquetIndexVersionChanges();
+                removeParquetIndexVersionOrphans();
+            }
             if (success && o3ErrorCount.get() > 0) {
                 //noinspection ThrowFromFinallyBlock
                 throw CairoException.critical(0).put("bulk update failed and will be rolled back").setOutOfMemory(o3oomObserved);
@@ -11446,7 +11526,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     srcIndexSrcAddr,
                     outIndexAddr,
                     dedupKeyIndex,
-                    DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
+                    DedupColumnCommitAddresses.getAddress(dedupCommitAddr),
+                    isCommitDedupSkipMode()
             );
         } finally {
             dedupColumnCommitAddresses.clear();
@@ -12537,6 +12618,52 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Purges the index versions that the committed transaction replaced, the old side of every
+     * {@link #parquetIndexVersionChanges} entry, and clears the list. A reader of an earlier txn may
+     * still use them, so the purge goes async when the scoreboard says so.
+     */
+    private void purgeReplacedParquetIndexVersions() {
+        try {
+            final int n = parquetIndexVersionChanges.size();
+            if (n == 0) {
+                return;
+            }
+            if (parquetIndexPurgingOperator == null) {
+                parquetIndexPurgingOperator = new PurgingOperator(LOG, configuration, messageBus);
+            }
+            try {
+                for (int i = 0; i < n; i += PARQUET_INDEX_VERSION_CHANGE_LONGS) {
+                    final int columnIndex = (int) parquetIndexVersionChanges.getQuick(i);
+                    parquetIndexPurgingOperator.add(
+                            columnIndex,
+                            metadata.getColumnName(columnIndex),
+                            metadata.getColumnType(columnIndex),
+                            metadata.getColumnIndexType(columnIndex),
+                            parquetIndexVersionChanges.getQuick(i + 1),
+                            parquetIndexVersionChanges.getQuick(i + 3),
+                            parquetIndexVersionChanges.getQuick(i + 4)
+                    );
+                }
+                // When a backup checkpoint is in progress, defer to the async purge, as finishColumnPurge() does
+                final boolean isAsyncOnly = checkScoreboardHasReadersBeforeLastCommittedTxn() || isCheckpointInProgress();
+                parquetIndexPurgingOperator.purge(
+                        path.trimTo(pathSize),
+                        tableToken,
+                        timestampType,
+                        partitionBy,
+                        isAsyncOnly,
+                        getTruncateVersion(),
+                        getTxn()
+                );
+            } finally {
+                parquetIndexPurgingOperator.clear();
+            }
+        } finally {
+            parquetIndexVersionChanges.clear();
+        }
+    }
+
     private long readMinTimestamp() {
         other.of(path).trimTo(pathSize); // reset the path to table root
         final long timestamp = txWriter.getPartitionTimestampByIndex(1);
@@ -13301,9 +13428,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
+        removeIndexFilesInPartition(
+                columnName,
+                columnIndex,
+                partitionTimestamp,
+                partitionNameTxn,
+                columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex)
+        );
+    }
+
+    private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn, long columnNameTxn) {
         setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
-        long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         byte indexType = metadata.getColumnIndexType(columnIndex);
         if (IndexType.isIndexed(indexType)) {
             if (IndexType.isPosting(indexType)) {
@@ -13347,6 +13483,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             processPartitionRemoveCandidates();
         } finally {
             path.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Removes the index versions that a failed transaction built, the new side of every
+     * {@link #parquetIndexVersionChanges} entry, and clears the list. No committed _cv references them,
+     * so no reader does. The removal is synchronous only: the retry of the transaction runs at the same
+     * txn and commits files under the same names, which a queued async purge would delete. The retry
+     * overwrites a file that could not be removed; if no retry commits it, VACUUM TABLE removes it.
+     */
+    private void removeParquetIndexVersionOrphans() {
+        try {
+            for (int i = 0, n = parquetIndexVersionChanges.size(); i < n; i += PARQUET_INDEX_VERSION_CHANGE_LONGS) {
+                final int columnIndex = (int) parquetIndexVersionChanges.getQuick(i);
+                path.trimTo(pathSize);
+                removeIndexFilesInPartition(
+                        metadata.getColumnName(columnIndex),
+                        columnIndex,
+                        parquetIndexVersionChanges.getQuick(i + 3),
+                        parquetIndexVersionChanges.getQuick(i + 4),
+                        parquetIndexVersionChanges.getQuick(i + 2)
+                );
+            }
+        } finally {
+            parquetIndexVersionChanges.clear();
         }
     }
 
@@ -13909,6 +14070,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
+            ddlMem.putInt(metadata.getDedupMode());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
@@ -13973,6 +14135,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // truncate _meta file exactly, the file size never changes.
             // Metadata updates are written to a new file and then swapped by renaming.
             ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
+    }
+
+    /**
+     * Restores the _cv state that the committed _txn references. A transaction that fails between the
+     * _cv commit and the _txn commit leaves _cv one version ahead; its previous version is still in
+     * the other area of the file.
+     */
+    private void rollbackColumnVersionToTxn() {
+        if (columnVersionWriter.getVersion() != txWriter.getColumnVersion()) {
+            if (columnVersionWriter.getVersion() - 1 == txWriter.getColumnVersion()) {
+                LOG.info().$("rolling back column version change to match _txn file [table=").$(tableToken)
+                        .$(", txnVersion=").$(txWriter.getColumnVersion())
+                        .$(", actualFileVersion=").$(columnVersionWriter.getVersion())
+                        .I$();
+                columnVersionWriter.rollback();
+            } else {
+                throw CairoException.critical(0).put("Unrecoverable storage corruption detected: column version mismatch [table=").put(tableToken)
+                        .put(", txnVersion=").put(txWriter.getColumnVersion())
+                        .put(", actualFileVersion=").put(columnVersionWriter.getVersion())
+                        .put(']');
+            }
         }
     }
 
@@ -14325,6 +14509,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long blockIndex = -1;
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
+            if (isO3PartitionUnchanged(blockAddress)) {
+                // The O3 task changed no file of the partition, so its committed posting index still matches
+                // the partition data. A reseal would rebuild the index from the whole column, on every commit
+                // that re-sends rows the table has. o3ConsumePartitionUpdateSink() skips the block, too.
+                continue;
+            }
             long partitionTimestamp = Unsafe.getLong(blockAddress);
             long newPartitionSize = Unsafe.getLong(blockAddress + 2 * Long.BYTES);
             long oldPartitionSize = Unsafe.getLong(blockAddress + 3 * Long.BYTES);
@@ -15387,6 +15577,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Commits the new index version of every {@link #parquetIndexVersionChanges} entry of the partition
+     * to _cv, with column top 0: the parquet file updated in place holds every column from row 0, and
+     * O3PartitionJob built the new version from row 0.
+     */
+    private void upsertParquetIndexVersions(long partitionTimestamp) {
+        for (int i = 0, n = parquetIndexVersionChanges.size(); i < n; i += PARQUET_INDEX_VERSION_CHANGE_LONGS) {
+            if (parquetIndexVersionChanges.getQuick(i + 3) == partitionTimestamp) {
+                columnVersionWriter.upsert(
+                        partitionTimestamp,
+                        (int) parquetIndexVersionChanges.getQuick(i),
+                        parquetIndexVersionChanges.getQuick(i + 2),
+                        0
+                );
+            }
+        }
+    }
+
     private void validateSwapMeta() {
         try {
             try {
@@ -15482,8 +15690,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * @param zeroAllColumns when {@code true}, zero column tops for ALL
      *                       columns (including ones that had no data at all).
-     *                       Use {@code true} for the O3 parquet-rewrite path
-     *                       where the Rust updater zeros all column_tops in
+     *                       Use {@code true} for the O3 parquet rewrite and
+     *                       update in place, where the Rust updater zeros all column_tops in
      *                       the parquet metadata, so the decoder produces data
      *                       for every column.  Use {@code false} for
      *                       native→parquet conversion, where the encoder

@@ -83,6 +83,7 @@ public final class PurgingOperator {
     public void clear() {
         updateColumnIndexes.clear();
         cleanupColumnVersions.clear();
+        columnNames.clear();
     }
 
     public void purge(

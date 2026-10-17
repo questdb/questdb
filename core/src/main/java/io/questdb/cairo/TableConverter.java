@@ -119,15 +119,17 @@ public class TableConverter {
                                 txWriter.resetLagValuesUnsafe();
 
                                 if (walEnabled) {
+                                    // Reset structure version in _meta and _txn files. The reset goes before the reload
+                                    // that registers the table with a sequencer: when this conversion repeats one that
+                                    // died in the middle of the reset, the reset completes first, and the sequencer's
+                                    // initial metadata, which replicas rebuild _meta from, gets the trusted header fields.
+                                    TableUtils.updateMetadataVersion(metaMem, 0);
+                                    txWriter.resetStructureVersionUnsafe();
                                     try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
                                         metadata.reload(metaPath, metaMem);
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
-
-                                    // Reset structure version in _meta and _txn files
-                                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
                                     path.trimTo(rootLen).concat(dirNameSink);
-                                    txWriter.resetStructureVersionUnsafe();
                                 } else {
                                     if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
                                         removeWalPersistence(path, rootLen, ff, dirNameSink);

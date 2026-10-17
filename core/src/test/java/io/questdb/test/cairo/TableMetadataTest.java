@@ -29,9 +29,11 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -49,6 +51,8 @@ import static org.junit.Assert.assertTrue;
 
 @RunWith(Parameterized.class)
 public class TableMetadataTest extends AbstractCairoTest {
+    // the header fields up to and including the dedup mode, the last field that the minor version gates
+    private static final int HEADER_SIZE = 64;
     private final boolean walEnabled;
 
     public TableMetadataTest(WalMode walMode) {
@@ -157,5 +161,158 @@ public class TableMetadataTest extends AbstractCairoTest {
                 Assert.assertEquals(m1.getColumnCount() - 1, m1.getColumnIndex("f"));
             }
         });
+    }
+
+    @Test
+    public void testUpdateMetadataVersionCompletesInterruptedStamp() throws Exception {
+        Assume.assumeFalse(walEnabled); // The test doesn't deal with tables
+
+        assertMemoryLeak(() -> {
+            try (VersionWriteFailingMemory metaMem = new VersionWriteFailingMemory()) {
+                writeHeader(
+                        metaMem,
+                        3,
+                        5,
+                        Numbers.encodeLowHighShorts(
+                                TableUtils.checksumForMetaFormatMinorVersionField(5, 3),
+                                TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+                        )
+                );
+                assertTrue(TableUtils.isMetaFormatUpToDate(metaMem));
+
+                // the process dies between the two writes
+                metaMem.isVersionWriteFailing = true;
+                try {
+                    TableUtils.updateMetadataVersion(metaMem, 0);
+                    Assert.fail("the version write must fail");
+                } catch (IllegalStateException ignore) {
+                }
+                // the checksum for the new version went first, the version is still the old one
+                Assert.assertEquals(5, metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION));
+                Assert.assertEquals(
+                        Numbers.encodeLowHighShorts(
+                                TableUtils.checksumForMetaFormatMinorVersionField(0, 3),
+                                TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+                        ),
+                        metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION)
+                );
+                assertFalse(TableUtils.isMetaFormatUpToDate(metaMem));
+
+                // the retried table type conversion repeats the call, which completes the stamp
+                metaMem.isVersionWriteFailing = false;
+                TableUtils.updateMetadataVersion(metaMem, 0);
+                Assert.assertEquals(0, metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION));
+                assertTrue(TableUtils.isMetaFormatUpToDate(metaMem));
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateMetadataVersionKeepsTrustedFieldTrusted() throws Exception {
+        Assume.assumeFalse(walEnabled); // The test doesn't deal with tables
+
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final byte[] headerBefore = new byte[HEADER_SIZE];
+            try (MemoryCARW metaMem = Vm.getCARWInstance(128, 1, MemoryTag.NATIVE_DEFAULT)) {
+                for (int i = 0; i < 10_000; i++) {
+                    for (int offset = 0; offset < HEADER_SIZE; offset += Integer.BYTES) {
+                        metaMem.putInt(offset, rnd.nextInt());
+                    }
+                    final int columnCount = 1 + rnd.nextInt(1000);
+                    final long metadataVersion = rnd.nextLong(1_000_000);
+                    final long newMetadataVersion = rnd.nextBoolean() ? 0 : rnd.nextLong(1_000_000);
+                    // a release that predates the latest minor version, this one, or a newer one wrote the field
+                    final short minorVersion = (short) (1 + rnd.nextInt(TableUtils.META_FORMAT_MINOR_VERSION_LATEST + 1));
+                    writeHeader(
+                            metaMem,
+                            columnCount,
+                            metadataVersion,
+                            Numbers.encodeLowHighShorts(TableUtils.checksumForMetaFormatMinorVersionField(metadataVersion, columnCount), minorVersion)
+                    );
+                    for (int offset = 0; offset < HEADER_SIZE; offset++) {
+                        headerBefore[offset] = metaMem.getByte(offset);
+                    }
+
+                    TableUtils.updateMetadataVersion(metaMem, newMetadataVersion);
+                    // a repeated call, e.g. by a retried table type conversion, changes nothing
+                    TableUtils.updateMetadataVersion(metaMem, newMetadataVersion);
+
+                    Assert.assertEquals(newMetadataVersion, metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION));
+                    Assert.assertEquals(
+                            Numbers.encodeLowHighShorts(TableUtils.checksumForMetaFormatMinorVersionField(newMetadataVersion, columnCount), minorVersion),
+                            metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION)
+                    );
+                    assertTrue(TableUtils.hasParquetEncodingConfig(metaMem));
+                    Assert.assertEquals(minorVersion >= TableUtils.META_FORMAT_MINOR_VERSION_LATEST, TableUtils.isMetaFormatUpToDate(metaMem));
+                    assertOnlyVersionAndChecksumChanged(metaMem, headerBefore);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateMetadataVersionKeepsUntrustedFieldUntrusted() throws Exception {
+        Assume.assumeFalse(walEnabled); // The test doesn't deal with tables
+
+        assertMemoryLeak(() -> {
+            try (MemoryCARW metaMem = Vm.getCARWInstance(128, 1, MemoryTag.NATIVE_DEFAULT)) {
+                // A release that predates the field leaves zeros there, while a checksum is never zero.
+                writeHeader(metaMem, 3, 5, 0);
+                TableUtils.updateMetadataVersion(metaMem, 0);
+                Assert.assertEquals(0, metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION));
+                Assert.assertEquals(0, metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION));
+                assertFalse(TableUtils.hasParquetEncodingConfig(metaMem));
+
+                // A checksum that does not match the version, e.g. one that a version reset without a re-stamp
+                // left behind, must not turn trusted for the new version.
+                final int staleField = Numbers.encodeLowHighShorts(
+                        TableUtils.checksumForMetaFormatMinorVersionField(7, 3),
+                        TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+                );
+                writeHeader(metaMem, 3, 5, staleField);
+                TableUtils.updateMetadataVersion(metaMem, 9);
+                Assert.assertEquals(9, metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION));
+                Assert.assertEquals(staleField, metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION));
+                assertFalse(TableUtils.hasParquetEncodingConfig(metaMem));
+            }
+        });
+    }
+
+    private static void assertOnlyVersionAndChecksumChanged(MemoryCARW metaMem, byte[] headerBefore) {
+        for (int offset = 0; offset < HEADER_SIZE; offset++) {
+            final boolean isVersion = offset >= TableUtils.META_OFFSET_METADATA_VERSION
+                    && offset < TableUtils.META_OFFSET_METADATA_VERSION + Long.BYTES;
+            // the checksum is the low short of the little-endian minor version field
+            final boolean isChecksum = offset >= TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION
+                    && offset < TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION + Short.BYTES;
+            if (!isVersion && !isChecksum) {
+                Assert.assertEquals("offset " + offset, headerBefore[offset], metaMem.getByte(offset));
+            }
+        }
+    }
+
+    private static void writeHeader(MemoryCARW metaMem, int columnCount, long metadataVersion, int metaFormatMinorVersionField) {
+        metaMem.putInt(TableUtils.META_OFFSET_COUNT, columnCount);
+        metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, metadataVersion);
+        metaMem.putInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, metaFormatMinorVersionField);
+    }
+
+    // Fails the metadata version write on demand, which leaves the memory as a process death right before that
+    // write would.
+    private static class VersionWriteFailingMemory extends MemoryCARWImpl {
+        private boolean isVersionWriteFailing;
+
+        private VersionWriteFailingMemory() {
+            super(128, 1, MemoryTag.NATIVE_DEFAULT);
+        }
+
+        @Override
+        public void putLong(long offset, long value) {
+            if (isVersionWriteFailing && offset == TableUtils.META_OFFSET_METADATA_VERSION) {
+                throw new IllegalStateException("simulated process death");
+            }
+            super.putLong(offset, value);
+        }
     }
 }

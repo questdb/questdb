@@ -56,6 +56,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
+    private int dedupMode = TableUtils.DEDUP_MODE_UPSERT;
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
@@ -111,6 +112,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     ttlHoursOrMonths,
                     ttlPosition,
                     tableFormat,
+                    dedupMode,
                     walEnabled,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
@@ -161,6 +163,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 ttlHoursOrMonths,
                 ttlPosition,
                 tableFormat,
+                dedupMode,
                 walEnabled,
                 autoIncludeTs
         );
@@ -173,6 +176,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnModels.clear();
         batchO3MaxLag = -1;
         batchSize = -1;
+        dedupMode = TableUtils.DEDUP_MODE_UPSERT;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
         tableFormatPosition = 0;
         defaultSymbolCapacity = 0;
@@ -280,6 +284,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setBatchSize(long batchSize) {
         this.batchSize = batchSize;
+    }
+
+    public void setDedupMode(int dedupMode) {
+        this.dedupMode = dedupMode;
     }
 
     public void setDefaultSymbolCapacity(int defaultSymbolCapacity) {

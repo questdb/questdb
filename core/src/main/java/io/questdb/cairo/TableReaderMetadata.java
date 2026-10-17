@@ -48,6 +48,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private int dedupMode;
     private boolean isCopy;
     private boolean isSoftLink;
     private int maxUncommittedRows;
@@ -129,6 +130,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         o3MaxLag = 0;
         ttlHoursOrMonths = 0;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
+        dedupMode = TableUtils.DEDUP_MODE_UPSERT;
         writerColumnCount = 0;
     }
 
@@ -157,6 +159,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public IntList getCoveringColumnIndices(int columnIndex) {
         return getColumnMetadata(columnIndex).getCoveringColumnIndices();
+    }
+
+    @Override
+    public int getDedupMode() {
+        return dedupMode;
     }
 
     public int getDenseSymbolIndex(int columnIndex) {
@@ -323,6 +330,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
         this.tableFormat = TableUtils.getTableFormat(mem);
+        this.dedupMode = TableUtils.getDedupMode(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -394,6 +402,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
         this.tableFormat = TableUtils.getTableFormat(newMetaMem);
+        this.dedupMode = TableUtils.getDedupMode(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);
