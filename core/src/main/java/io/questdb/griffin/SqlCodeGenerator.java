@@ -3460,6 +3460,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return result;
     }
 
+    /**
+     * Whether a LIMIT pushed into the async filter over {@code factory} selects the same rows as
+     * the LIMIT applied after the ORDER BY. The async filter applies the limit in the factory's
+     * scan order: a positive limit keeps the first matching rows of the scan, a negative one the
+     * last. This holds only when the ORDER BY does not reorder the filter's output, i.e. there is
+     * no ORDER BY, the factory already followed the ORDER BY advice, or the sole ORDER BY key is
+     * the designated timestamp in the direction the factory scans.
+     * <p>
+     * SqlOptimiser pushes the limit advice for any ORDER BY on the designated timestamp, regardless
+     * of its direction, because a native table flips its scan to match the ORDER BY. A factory that
+     * scans only forward, such as read_parquet(), leaves ORDER BY ts DESC to a sort; a limit pushed
+     * below that sort would feed it the wrong end of the data.
+     */
+    private boolean filterScanOrderMatchesQuery(IQueryModel model, RecordCursorFactory factory) {
+        if (factory.followedOrderByAdvice()) {
+            return true;
+        }
+        final int scanDirection = factory.getScanDirection();
+        final RecordMetadata metadata = factory.getMetadata();
+        final int timestampIndex = metadata.getTimestampIndex();
+        // An ORDER BY on this model sorts the filter's output directly.
+        final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
+        final ObjList<CharSequence> orderByColumnNames = orderHash.keys();
+        if (orderByColumnNames.size() > 0) {
+            final CharSequence column = orderByColumnNames.getQuick(0);
+            return orderByColumnNames.size() == 1
+                    && timestampIndex != -1
+                    && SqlUtil.getColumnIndexQuiet(metadata, column) == timestampIndex
+                    && directionMatchesScan(orderHash.get(column), scanDirection);
+        }
+        // The optimiser moves an ORDER BY to an outer model and leaves this model the advice.
+        if (model.getOrderByAdvice().size() == 0) {
+            return true;
+        }
+        return isOrderByDesignatedTimestampOnly(model)
+                && timestampIndex != -1
+                && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
     private ObjList<Function> generateCastFunctions(
             SqlExecutionContext executionContext,
             RecordMetadata castToMetadata,
@@ -5191,6 +5230,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
             final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
             if (enableParallelFilter && factory.supportsPageFrameCursor()) {
+                final boolean canPushLimit = filterScanOrderMatchesQuery(model, factory);
                 IntHashSet filterUsedColumnIndexes = new IntHashSet();
                 collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
@@ -5226,7 +5266,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             clearJitScratch(jitScratchFailure);
                         }
 
-                        limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                        limitLoFunction = canPushLimit ? getLimitLoFunctionOnly(model, executionContext) : null;
                         final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
 
                         LOG.debug()
@@ -5292,7 +5332,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // Use Java filter.
-                limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                limitLoFunction = canPushLimit ? getLimitLoFunctionOnly(model, executionContext) : null;
                 final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
                 perWorkerFilters = compileWorkerFiltersConditionally(
                         executionContext,
