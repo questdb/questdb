@@ -22,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
@@ -231,6 +232,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     // and munmap stay allowed. Cleared by the next markDurableBaseline, powerLoss or reset.
     private final Set<Long> staleFds = new HashSet<>();
     private final Set<Long> staleMappings = new HashSet<>(); // mapping base addresses
+    // Base addresses of the live MAP_RW mappings. crash() rolls a file back in place, so a writable mapping from
+    // before the power loss keeps aliasing the rolled-back bytes, and a store through it reaches no intercepted call:
+    // the stale-handle fence cannot refuse it. crash() refuses to run while one under a table directory is live.
+    private final Set<Long> writableMappings = new HashSet<>();
+    // Set by the facade's self-tests that carry a writable mapping across the rollback to prove the stale-handle fence.
+    private boolean isWritableMappingAcrossCrashAllowed;
     // The negative control of the sweeps: while set, a durability op whose first io.questdb.cairo frame matches
     // returns before the model update (as a removed flush would) and is counted in neuteredOps, not as an op.
     private Predicate<StackWalker.StackFrame> neuterPredicate;
@@ -407,6 +414,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         long addr = super.mmap(fd, len, offset, flags, memoryTag);
         recordMmap(fd, addr, len, offset);
+        recordWritableMapping(addr, flags);
         return addr;
     }
 
@@ -414,6 +422,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     public long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
         long addr = super.mmapNoCache(fd, len, offset, flags, memoryTag);
         recordMmap(fd, addr, len, offset);
+        recordWritableMapping(addr, flags);
         return addr;
     }
 
@@ -421,6 +430,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
         long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
         remapMoved(addr, newAddr, newSize, offset, fd);
+        moveWritableMapping(addr, newAddr, mode);
         return newAddr;
     }
 
@@ -428,12 +438,14 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     public long mremapNoCache(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
         long newAddr = super.mremapNoCache(fd, addr, previousSize, newSize, offset, mode, memoryTag);
         remapMoved(addr, newAddr, newSize, offset, fd);
+        moveWritableMapping(addr, newAddr, mode);
         return newAddr;
     }
 
     @Override
     public void munmap(long address, long size, int memoryTag) {
         countKillPoint();
+        writableMappings.remove(address);
         // Drop the addr->path mapping but keep the content model state keyed by path: a file's durable content outlives
         // its mapping (unmap, then crash), as in the size model.
         mmapAddrRange.remove(address);
@@ -925,6 +937,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         durabilityOpLog.clear();
         mmapAddrRange.clear();
         mmapAddrToPath.clear();
+        writableMappings.clear();
         trackedFiles.clear();
         pteFlushed.clear();
         deviceCacheContent.clear();
@@ -1079,8 +1092,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      * <p>
      * When a kill image was taken ({@link #armKillAt}, {@link #takeKillImage}), the tree under the kill's root is
      * restored to that image instead, and the image is consumed.
+     * <p>
+     * Either way, crash() refuses to run while a writable mapping under a table directory of {@code dbRoot} is live
+     * (see {@link #assertNoWritableMappingUnder}).
      */
     public void crash(CharSequence dbRoot) {
+        assertNoWritableMappingUnder(dbRoot);
         if (killImageTaken) {
             clearPowerLoss();
             restoreKillImage();
@@ -1169,6 +1186,15 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         // and the baseline above has already counted it as durable. Engine-root files (tables.d, the id generator)
         // are held by singletons that outlive the simulated restart and are exempt, as in noCacheOpenFdsSnapshot().
         markStaleHandles(root.toString());
+    }
+
+    /**
+     * Lets {@link #crash} roll back while a writable mapping under a table directory is live. Only the facade's
+     * self-tests call it: they carry a mapping across the rollback to prove that the stale-handle fence refuses every
+     * intercepted mutation through it.
+     */
+    public void allowWritableMappingAcrossCrash() {
+        isWritableMappingAcrossCrashAllowed = true;
     }
 
     /**
@@ -1358,6 +1384,32 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             throw new IllegalStateException("a handle opened before the power loss mutates "
                     + relativePath(fdToPath.get(fd)) + " after it [op=" + op + ", fd=" + fd
                     + "]: release writers before crash()");
+        }
+    }
+
+    /**
+     * Refuses the rollback while a writable mapping under a table directory of {@code dbRoot} is live. crash() rewrites
+     * each file in place, so the mapping keeps aliasing the rolled-back bytes, and a store through it reaches no
+     * intercepted call: {@link #assertMappingNotStale} cannot refuse it, and recovery would read what the dead process
+     * wrote. A rebooted machine has no such mapping. The check does not depend on whether the owner writes after the
+     * rollback, so a writer, WAL writer or table sequencer left open fails here on every run, not only on the runs
+     * where its close happens to flush. A file directly under the root, such as {@code tables.d}, is exempt.
+     */
+    private void assertNoWritableMappingUnder(CharSequence dbRoot) {
+        if (isWritableMappingAcrossCrashAllowed || writableMappings.isEmpty()) {
+            return;
+        }
+        final String prefix = Paths.get(dbRoot.toString()).toAbsolutePath() + File.separator;
+        final Set<String> live = new TreeSet<>();
+        for (long address : writableMappings) {
+            final String path = mmapAddrToPath.get(address);
+            if (isUnderTableDirectory(path, prefix)) {
+                live.add(relativePath(path));
+            }
+        }
+        if (!live.isEmpty()) {
+            throw new IllegalStateException("a writable mapping from before the power loss is live at crash() "
+                    + live + ": close every writer, WAL writer and table sequencer between powerLoss() and crash()");
         }
     }
 
@@ -1875,6 +1927,27 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (p != null && transferred > 0) {
             track(p);
             advanceWrittenDataEnd(p, super.length(destFd));
+        }
+    }
+
+    private void moveWritableMapping(long oldAddr, long newAddr, int mode) {
+        if (newAddr == 0 || newAddr == -1L) {
+            return;
+        }
+        if (writableMappings.remove(oldAddr) || (mode & io.questdb.std.Files.MAP_RW) != 0) {
+            writableMappings.add(newAddr);
+        }
+    }
+
+    private void recordWritableMapping(long addr, int flags) {
+        if (addr == 0 || addr == -1L) {
+            return;
+        }
+        if ((flags & io.questdb.std.Files.MAP_RW) != 0) {
+            writableMappings.add(addr);
+        } else {
+            // A read-only mapping can reuse the address of a writable one unmapped before.
+            writableMappings.remove(addr);
         }
     }
 

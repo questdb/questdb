@@ -761,6 +761,8 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     @Test
     public void test23_aHandleFromBeforeThePowerLossCannotMutateAfterTheRollback() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        // The test carries a writable mapping across the rollback on purpose: the stale-handle fence is under test.
+        ff.allowWritableMappingAcrossCrash();
         final String dir = temp.newFolder("model23").getAbsolutePath();
         final String p = Paths.get(dir, "p").toString();
         java.nio.file.Files.createDirectories(Paths.get(p));
@@ -813,6 +815,46 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             assertAllBytes("test23: a fresh handle after the rollback must work", ff, a, NEW);
         } finally {
             Unsafe.free(buf, SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Test 24: crash() refuses to roll back under a live writable mapping.
+     * A durable (PRIOR) -> A mapped MAP_RW, NEW -> power loss -> crash refused, naming A -> A unmapped, a read-only
+     * mapping of A and a writable one of a file directly under the root still live -> crash rolls back -> A holds
+     * PRIOR. crash() rewrites A in place, so a store through the writable mapping would reach the rolled-back file
+     * without any intercepted call. The refusal comes first, whether or not the owner would write after it.
+     */
+    @Test
+    public void test24_crashRefusesALiveWritableMapping() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("model24").getAbsolutePath();
+        final String p = Paths.get(dir, "p").toString();
+        java.nio.file.Files.createDirectories(Paths.get(p));
+        try (Path a = new Path().of(p).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
+            unmapAndClose(ff, mapAndFill(ff, a, PRIOR));
+            ff.markDurableBaseline(dir);
+            final Mapped ma = mapAndFill(ff, a, NEW);
+            final Mapped mb = mapAndFill(ff, b, NEW);
+            ff.powerLoss();
+            try {
+                ff.crash(dir);
+                Assert.fail("expected IllegalStateException");
+            } catch (IllegalStateException expected) {
+                Assert.assertTrue(expected.getMessage(), expected.getMessage().contains("a.d"));
+                Assert.assertFalse(expected.getMessage(), expected.getMessage().contains("b.d"));
+            }
+            unmapAndClose(ff, ma);
+            final long fd = ff.openRO(a.$());
+            final long addr = ff.mmap(fd, SIZE, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+            try {
+                ff.crash(dir);
+            } finally {
+                ff.munmap(addr, SIZE, MemoryTag.MMAP_DEFAULT);
+                ff.close(fd);
+                unmapAndClose(ff, mb);
+            }
+            assertAllBytes("test24: the rollback must restore the durable bytes", ff, a, PRIOR);
         }
     }
 
