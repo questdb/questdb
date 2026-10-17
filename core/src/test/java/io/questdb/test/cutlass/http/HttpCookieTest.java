@@ -27,6 +27,16 @@ public class HttpCookieTest extends BaseHttpCookieTest {
     }
 
     @Test
+    public void testConnectionLimitedRequestDoesNotExtendSession() throws Exception {
+        final AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
+        testConnectionLimitedRequestDoesNotExtendSession(
+                () -> new ServerMain(getBootstrapWithMockClock(currentMicros)),
+                HttpClientFactory::newPlainTextInstance,
+                currentMicros
+        );
+    }
+
+    @Test
     public void testExpiredSessionEvicted() throws Exception {
         final AtomicLong currentMicros = new AtomicLong(1760743438000000L);
         final Bootstrap bootstrap = getBootstrapWithMockClock(currentMicros);
@@ -38,6 +48,23 @@ public class HttpCookieTest extends BaseHttpCookieTest {
         final AtomicLong currentMicros = new AtomicLong(1760743438000000L);
         final Bootstrap bootstrap = getBootstrapWithMockClock(currentMicros);
         testIdleSessionEvictedBySweep(() -> new ServerMain(bootstrap), HttpClientFactory::newPlainTextInstance, currentMicros);
+    }
+
+    @Test
+    public void testRefusedLogoutEndsSession() throws Exception {
+        testRefusedLogoutEndsSession(() -> new ServerMain(getServerMainArgs()), HttpClientFactory::newPlainTextInstance);
+    }
+
+    @Test
+    public void testRefusedRequestDoesNotExtendSession() throws Exception {
+        final AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
+        final Bootstrap bootstrap = getBootstrapWithMockClock(currentMicros);
+        testRefusedRequestDoesNotExtendSession(() -> new ServerMain(bootstrap), HttpClientFactory::newPlainTextInstance, currentMicros);
+    }
+
+    @Test
+    public void testRejectedCredentialEndsSession() throws Exception {
+        testRejectedCredentialEndsSession(() -> new ServerMain(getServerMainArgs()), HttpClientFactory::newPlainTextInstance);
     }
 
     @Test
