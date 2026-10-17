@@ -422,6 +422,97 @@ public class JoinPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDisconnectedLeadingCrossTrailsKeyedJoinOverWindowInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_cross_a AS (SELECT x id FROM long_sequence(1000))");
+            execute("CREATE TABLE lp_cross_b AS (SELECT x k FROM long_sequence(10_000))");
+            execute("CREATE TABLE lp_cross_c AS (SELECT x + 9_999 k FROM long_sequence(1))");
+            final String join = "lp_cross_a a CROSS JOIN (SELECT k, row_number() OVER () rn FROM lp_cross_b) b JOIN lp_cross_c c ON b.k=c.k";
+            assertQuery("SELECT sum(a.id) FROM " + join).noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                    GroupBy vectorized: false
+                      values: [sum(a.id)]
+                    """ + TRAILING_CROSS_PLAN.indent(4)).returns("sum\n500500\n");
+            assertQuery("SELECT sum(a.id), sum(b.rn) FROM " + join).noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                    GroupBy vectorized: false
+                      values: [sum(a.id),sum(b.rn)]
+                        Cross Join
+                            Hash Join Light
+                              condition: c.k=b.k
+                                Window
+                                  functions: [row_number()]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_cross_b
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_cross_c
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: lp_cross_a
+                    """).returns("sum\tsum1\n500500\t10000000\n");
+        });
+    }
+
+    @Test
+    public void testDisconnectedLeadingCrossTrailsKeyedJoinUnlessReadWindowInputIsUnordered() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_cross_a (id INT)");
+            execute("CREATE TABLE lp_cross_b (k INT)");
+            execute("CREATE TABLE lp_cross_c (k INT)");
+            execute("INSERT INTO lp_cross_a VALUES (1), (2)");
+            execute("INSERT INTO lp_cross_b VALUES (1), (2), (3)");
+            execute("INSERT INTO lp_cross_c VALUES (2), (3)");
+            final String join = "lp_cross_a a CROSS JOIN (SELECT k, row_number() OVER () rn FROM (SELECT k, count() n FROM lp_cross_b)) b "
+                    + "JOIN lp_cross_c c ON b.k=c.k";
+            assertQuery("SELECT sum(a.id) FROM " + join).noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                    GroupBy vectorized: false
+                      values: [sum(a.id)]
+                        Cross Join
+                            Hash Join Light
+                              condition: c.k=b.k
+                                GroupBy vectorized: true workers: 1
+                                  keys: [k]
+                                  values: [count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_cross_b
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_cross_c
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: lp_cross_a
+                    """).returns("sum\n6\n");
+            assertQuery("SELECT sum(a.id) FROM " + join + " WHERE b.rn > 0").noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                    GroupBy vectorized: false
+                      values: [sum(a.id)]
+                        Hash Join Light
+                          condition: c.k=b.k
+                            Cross Join
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_cross_a
+                                SelectedRecord
+                                    Filter filter: 0<rn
+                                        Window
+                                          functions: [row_number()]
+                                            GroupBy vectorized: true workers: 1
+                                              keys: [k]
+                                              values: [count(*)]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_cross_b
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_cross_c
+                    """).returns("sum\n6\n");
+        });
+    }
+
+    @Test
     public void testDisconnectedLeadingCrossTrailsKeyedOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_outer_a AS (SELECT x id FROM long_sequence(1000))");

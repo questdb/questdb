@@ -82,9 +82,6 @@ public class StrCursorFunctionFactoryTest extends AbstractCursorFunctionFactoryT
             assertQuery("SELECT id FROM t WHERE sym > (SELECT sym FROM t)")
                     .noLeakCheck()
                     .fails(30, "scalar sub-query returned more than one row");
-            assertQuery("SELECT id FROM t WHERE sym = (SELECT id FROM t WHERE id = 1)")
-                    .noLeakCheck()
-                    .fails(30, "cannot compare SYMBOL and INT");
             assertQuery("SELECT id FROM t WHERE s < (SELECT 1.5)")
                     .noLeakCheck()
                     .fails(28, "cannot compare STRING and DOUBLE");
@@ -190,6 +187,20 @@ public class StrCursorFunctionFactoryTest extends AbstractCursorFunctionFactoryT
             assertQuery("SELECT id FROM t WHERE (SELECT sym FROM t WHERE id = 2) = sym")
                     .noLeakCheck()
                     .returns("id\n2\n");
+        });
+    }
+
+    @Test
+    public void testSymbolEqualsIntegerSubQueryByText() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (id INT, sym SYMBOL)");
+            execute("INSERT INTO u VALUES (1, '1'), (2, '2'), (3, 'a'), (4, null)");
+            assertQuery("SELECT id FROM u WHERE sym = (SELECT id FROM u WHERE id = 2)")
+                    .noLeakCheck()
+                    .returns("id\n2\n");
+            assertQuery("SELECT id FROM u WHERE sym = (SELECT id FROM u WHERE id = 99)")
+                    .noLeakCheck()
+                    .returns("id\n4\n");
         });
     }
 

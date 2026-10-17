@@ -1353,7 +1353,30 @@ public class LimitTest extends AbstractCairoTest {
                     .returns(lastThree);
             assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT 3").noLeakCheck().timestamp("ts").expectSize().returns(firstThree);
             assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT 0").noLeakCheck().timestamp("ts").expectSize().returns(none);
-            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT NULL::LONG").noLeakCheck().timestamp("ts").expectSize().returns(all);
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT NULL::LONG")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: nullL partiallySorted: true
+                              keys: [ts, v]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns(all);
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT NULL::INT")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: null partiallySorted: true
+                              keys: [ts, v]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns(all);
 
             final int[] types = {ColumnType.LONG, ColumnType.INT, ColumnType.SHORT, ColumnType.BYTE};
             final long[] minValues = {Numbers.LONG_NULL, Numbers.INT_NULL, Short.MIN_VALUE, Byte.MIN_VALUE};

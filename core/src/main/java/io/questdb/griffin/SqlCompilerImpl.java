@@ -468,7 +468,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         nonDeterministicCalls.rejectExternalSource(subqueryRoot, position, executionContext);
         final Subquery subquery = planNodePools.subqueries.next().of(subqueryRoot, scopes.depth() + 1,
-                LogicalPlans.isResultStable(subqueryRoot, executionContext.isParallelGroupByEnabled()));
+                LogicalPlans.isResultStable(subqueryRoot, executionContext.isParallelGroupByEnabled(), null));
         subqueries.add(subquery);
         return subquery;
     }

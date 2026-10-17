@@ -65,6 +65,11 @@ public class TouchTableFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isCursorArgumentExecutedPerWorker() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,

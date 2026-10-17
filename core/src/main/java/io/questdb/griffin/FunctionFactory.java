@@ -141,6 +141,17 @@ public interface FunctionFactory {
     }
 
     /**
+     * Returns true if each per-worker clone of the function executes its cursor arguments itself instead of taking
+     * the value its owner computed through {@link Function#offerStateTo}. Such a clone receives its own executable
+     * sub-query.
+     *
+     * @return true if a per-worker clone of the function executes its sub-queries
+     */
+    default boolean isCursorArgumentExecutedPerWorker() {
+        return false;
+    }
+
+    /**
      * Returns true if the function is a group by function.
      *
      * @return true if the function is a group by function

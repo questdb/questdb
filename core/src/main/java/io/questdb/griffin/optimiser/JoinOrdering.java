@@ -262,7 +262,7 @@ final class JoinOrdering implements OptimiserPass {
                 }
             }
             if (join.getGraph() != null) {
-                solver.order(join, isTimestampRequired);
+                solver.order(join, isTimestampRequired, readColumnIds);
                 place(join, join.getGraph());
                 join.setGraph(null);
             }

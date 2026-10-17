@@ -40,7 +40,6 @@ import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
@@ -75,8 +74,8 @@ final class NegativeLimitReversal implements OptimiserPass {
      * A negative constant, or the negation of an integer value.
      */
     private static boolean isNegatedCount(BoundExpression lo) {
-        if (lo instanceof ConstantExpression constant) {
-            return constant.getLongValue() < 0 && constant.getLongValue() != Numbers.LONG_NULL;
+        if (lo instanceof ConstantExpression) {
+            return LogicalPlans.mayBeNegativeLimit(lo);
         }
         if (!(lo instanceof FunctionExpression call) || call.getArgumentCount() != 1 || !Chars.equals(call.getName(), '-')) {
             return false;

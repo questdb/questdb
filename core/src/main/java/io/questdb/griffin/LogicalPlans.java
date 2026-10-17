@@ -653,10 +653,11 @@ public final class LogicalPlans {
 
     /**
      * Whether every evaluation of the plan within one execution yields the same multiset of rows, which is all the
-     * value of a sub-query depends on: its consumers read a set or a single row.
+     * value of a sub-query depends on: its consumers read a set or a single row. Unless {@code readColumnIds} is null,
+     * only the computations of the columns it holds count, since column pruning removes the others.
      */
-    public static boolean isResultStable(LogicalPlan plan, boolean isParallelGroupByEnabled) {
-        return (stability(plan, isParallelGroupByEnabled) & RESULT_STABLE) != 0;
+    public static boolean isResultStable(LogicalPlan plan, boolean isParallelGroupByEnabled, IntHashSet readColumnIds) {
+        return (stability(plan, isParallelGroupByEnabled, readColumnIds) & RESULT_STABLE) != 0;
     }
 
     /**
@@ -1018,6 +1019,19 @@ public final class LogicalPlans {
     }
 
     /**
+     * True when every expression that computes a read column is stable: expression {@code i} computes the output column
+     * at {@code firstIndex + i}, and every column is read when {@code readColumnIds} is null.
+     */
+    private static boolean areStable(ObjList<? extends BoundExpression> expressions, OutputSchema output, int firstIndex, IntHashSet readColumnIds) {
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            if ((readColumnIds == null || readColumnIds.contains(output.getColumnId(firstIndex + i))) && !isStable(expressions.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Walks the left-deep chain of set operations once: every operation keeps the column type and either declares
      * no timestamp or declares the column, and the bottom operation resolves its timestamp to the column.
      */
@@ -1062,9 +1076,10 @@ public final class LogicalPlans {
         return null;
     }
 
-    private static int groupingStability(AggregatePlan aggregate, boolean isParallelGroupByEnabled) {
-        if (aggregate.getSharedSource() != null || stability(aggregate.getChild(), isParallelGroupByEnabled) != SEQUENCE_STABLE
-                || !areStable(aggregate.getGroupingExpressions()) || !areStable(aggregate.getAggregates())) {
+    private static int groupingStability(AggregatePlan aggregate, boolean isParallelGroupByEnabled, IntHashSet readColumnIds) {
+        if (aggregate.getSharedSource() != null || stability(aggregate.getChild(), isParallelGroupByEnabled, readColumnIds) != SEQUENCE_STABLE
+                || !areStable(aggregate.getGroupingExpressions())
+                || !areStable(aggregate.getAggregates(), aggregate.getOutput(), aggregate.getGroupingExpressions().size(), readColumnIds)) {
             return 0;
         }
         return aggregate.getGroupingExpressions().size() == 0 || !isParallelGroupByEnabled ? SEQUENCE_STABLE : RESULT_STABLE;
@@ -1097,23 +1112,43 @@ public final class LogicalPlans {
         return true;
     }
 
-    private static int stability(LogicalPlan plan, boolean isParallelGroupByEnabled) {
+    private static int stability(LogicalPlan plan, boolean isParallelGroupByEnabled, IntHashSet readColumnIds) {
         return switch (plan) {
             case ScanPlan scan -> scan.getTableToken().isLiveView() ? 0 : SEQUENCE_STABLE;
             case FunctionSourcePlan source -> source.isDeterministic() ? SEQUENCE_STABLE : 0;
             case FilterPlan filter ->
-                    isStable(filter.getPredicate()) ? stability(filter.getChild(), isParallelGroupByEnabled) : 0;
-            case ProjectPlan project ->
-                    areStable(project.getExpressions()) ? stability(project.getChild(), isParallelGroupByEnabled) : 0;
-            case SortPlan sort -> sort.isMarkoutHorizon() ? 0 : stability(sort.getChild(), isParallelGroupByEnabled);
+                    isStable(filter.getPredicate()) ? stability(filter.getChild(), isParallelGroupByEnabled, readColumnIds) : 0;
+            case ProjectPlan project -> areStable(project.getExpressions(), project.getOutput(), 0, readColumnIds)
+                    ? stability(project.getChild(), isParallelGroupByEnabled, readColumnIds) : 0;
+            case SortPlan sort -> sort.isMarkoutHorizon() ? 0 : stability(sort.getChild(), isParallelGroupByEnabled, readColumnIds);
             case LimitPlan limit -> isStable(limit.getLo()) && isStable(limit.getHi())
-                    && stability(limit.getChild(), isParallelGroupByEnabled) == SEQUENCE_STABLE ? SEQUENCE_STABLE : 0;
-            case AggregatePlan aggregate -> groupingStability(aggregate, isParallelGroupByEnabled);
-            case DistinctPlan distinct -> stability(distinct.getChild(), isParallelGroupByEnabled) & RESULT_STABLE;
-            case SetOperationPlan operation ->
-                    stability(operation.getLeft(), isParallelGroupByEnabled) & stability(operation.getRight(), isParallelGroupByEnabled);
+                    && stability(limit.getChild(), isParallelGroupByEnabled, readColumnIds) == SEQUENCE_STABLE ? SEQUENCE_STABLE : 0;
+            case AggregatePlan aggregate -> groupingStability(aggregate, isParallelGroupByEnabled, readColumnIds);
+            case WindowPlan window -> windowStability(window, isParallelGroupByEnabled, readColumnIds);
+            case DistinctPlan distinct -> stability(distinct.getChild(), isParallelGroupByEnabled, readColumnIds) & RESULT_STABLE;
+            case SetOperationPlan operation -> stability(operation.getLeft(), isParallelGroupByEnabled, readColumnIds)
+                    & stability(operation.getRight(), isParallelGroupByEnabled, readColumnIds);
             default -> 0;
         };
+    }
+
+    /**
+     * A window that computes no read column has the stability of its input. A read window result depends on the order
+     * of the input rows, so the window is stable only when its input delivers the same rows in the same order and every
+     * read window function and its partition keys are stable.
+     */
+    private static int windowStability(WindowPlan window, boolean isParallelGroupByEnabled, IntHashSet readColumnIds) {
+        final int inputStability = stability(window.getChild(), isParallelGroupByEnabled, readColumnIds);
+        boolean isComputing = false;
+        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
+            if (readColumnIds == null || readColumnIds.contains(window.getFunctionColumnIds().getQuick(i))) {
+                if (!isStable(window.getFunctions().getQuick(i)) || !areStable(window.getSpecs().getQuick(i).getPartitionBy())) {
+                    return 0;
+                }
+                isComputing = true;
+            }
+        }
+        return isComputing && inputStability != SEQUENCE_STABLE ? 0 : inputStability;
     }
 
     /**

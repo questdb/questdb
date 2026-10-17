@@ -115,10 +115,12 @@ final class JoinOrderSolver implements Mutable {
      * Selects the order of a join binding left a graph for and publishes the keys, join types and ordered inputs; the
      * caller places the graph's filter conjuncts. An input binding added after the graph joins as an unkeyed CROSS
      * step. The first input stays first when the join designates its timestamp and a part of the query requires it,
-     * {@code isTimestampRequired}; when the order leads with another input, the join designates no timestamp.
+     * {@code isTimestampRequired}; when the order leads with another input, the join designates no timestamp. It also
+     * stays first when an input may yield other rows on another evaluation, judged by the columns the query reads,
+     * {@code readColumnIds}.
      */
-    void order(JoinPlan join, boolean isTimestampRequired) {
-        of(join, join.getGraph(), isTimestampRequired);
+    void order(JoinPlan join, boolean isTimestampRequired, IntHashSet readColumnIds) {
+        of(join, join.getGraph(), isTimestampRequired, readColumnIds);
         try {
             for (int i = dependencies.size(), n = join.getInputs().size(); i < n; i++) {
                 dependencies.add(null);
@@ -339,7 +341,7 @@ final class JoinOrderSolver implements Mutable {
         return retained;
     }
 
-    private void of(JoinPlan join, JoinGraph graph, boolean isTimestampRequired) {
+    private void of(JoinPlan join, JoinGraph graph, boolean isTimestampRequired, IntHashSet readColumnIds) {
         clear();
         children.clear();
         childrenPool.clear();
@@ -355,7 +357,7 @@ final class JoinOrderSolver implements Mutable {
             children.add(childrenPool.next());
             joinTypes.add(type);
             isFirstInputFixed = isFirstInputFixed || type.isTemporal() || type == JoinKind.UNNEST || input.isDependent()
-                    || !LogicalPlans.isResultStable(input.getInput(), true);
+                    || !LogicalPlans.isResultStable(input.getInput(), true, readColumnIds);
         }
         for (int i = 0, n = graph.getResiduals().size(); !isFirstInputFixed && i < n; i++) {
             isFirstInputFixed = !LogicalPlans.isOrderIndependent(graph.getResiduals().getQuick(i));

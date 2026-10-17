@@ -1561,13 +1561,13 @@ public class PivotTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (grp SYMBOL, cat BINARY, val INT);");
             execute("CREATE TABLE cats (c BINARY);");
-            execute("INSERT INTO cats VALUES ('A'::binary), ('B'::binary);");
+            execute("INSERT INTO cats VALUES (from_base64('QQ==')), (from_base64('Qg=='));");
             execute("""
                     INSERT INTO data VALUES
-                        ('A', 'A'::binary, 10),
-                        ('A', 'B'::binary, 20),
-                        ('B', 'A'::binary, 30),
-                        ('B', 'B'::binary, 40);
+                        ('A', from_base64('QQ=='), 10),
+                        ('A', from_base64('Qg=='), 20),
+                        ('B', from_base64('QQ=='), 30),
+                        ('B', from_base64('Qg=='), 40);
                     """);
             assertQuery("""
                     SELECT * FROM data

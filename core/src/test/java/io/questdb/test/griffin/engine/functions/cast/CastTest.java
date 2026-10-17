@@ -5213,6 +5213,23 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrToBinary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s STRING)");
+            assertExceptionNoLeakCheck("SELECT CAST('payload' AS BINARY)", 25, "unsupported cast");
+            assertExceptionNoLeakCheck("SELECT s::BINARY FROM tab", 10, "unsupported cast");
+            assertExceptionNoLeakCheck("SELECT 'a'::VARCHAR::BINARY", 21, "unsupported cast");
+            assertQuery("SELECT CAST(NULL::STRING AS BINARY) b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b
+
+                            """);
+        });
+    }
+
+    @Test
     public void testStrToBoolean() throws Exception {
         assertQuery("select boolean from tab")
                 .ddl("create table tab as (" +

@@ -218,10 +218,17 @@ public final class FunctionInstantiator implements Mutable {
     }
 
     /**
-     * An owned factory of the sub-query for a consumer that reads it directly.
+     * An owned factory of the sub-query for a consumer that reads it directly. The sub-query owns the functions it
+     * generates, also when a worker clone generates it.
      */
     public RecordCursorFactory generateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
-        return compiler.generateSubquery(cursor.getSubquery(), executionContext);
+        final int cloneDepth = workerCloneDepth;
+        workerCloneDepth = 0;
+        try {
+            return compiler.generateSubquery(cursor.getSubquery(), executionContext);
+        } finally {
+            workerCloneDepth = cloneDepth;
+        }
     }
 
     /**
@@ -703,10 +710,14 @@ public final class FunctionInstantiator implements Mutable {
         frame.functions.setPos(count);
         frame.positions.setPos(count);
         try {
+            final boolean isSubqueryExecuted = workerCloneDepth > 0 && call.getOverload().getFactory().isCursorArgumentExecutedPerWorker();
             for (int i = 0; i < count; i++) {
                 // Reserve every slot before construction; each returned child is
                 // immediately owned by this frame until its factory consumes it.
-                final Function child = instantiateNew(call.argumentAt(i), input, metadata, executionContext, isAdoptionAllowed, preparation);
+                final BoundExpression argument = call.argumentAt(i);
+                final Function child = isSubqueryExecuted && argument instanceof CursorExpression cursor
+                        ? new CursorFunction(generateSubquery(cursor, executionContext))
+                        : instantiateNew(argument, input, metadata, executionContext, isAdoptionAllowed, preparation);
                 frame.functions.setQuick(i, child);
                 frame.positions.setQuick(i, call.getArgumentPosition(i));
             }
