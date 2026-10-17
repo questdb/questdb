@@ -2328,6 +2328,14 @@ public class MaxMinWindowFunctionFactoryHelper {
             return offset;
         }
 
+        /**
+         * The image is the running extremum, the family's one slot.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Long.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
             return 1;

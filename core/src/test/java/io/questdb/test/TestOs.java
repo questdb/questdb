@@ -118,8 +118,11 @@ public class TestOs {
                     rustLibPath = absolutePrdPath;
                 }
 
+                // Os.loadLib uses its first argument only to name the temp copy, and splits it at
+                // the first dot. Pass the bare file name: a dotted checkout directory (for example
+                // .claude/worktrees/...) would otherwise put a path separator into the suffix.
                 try (InputStream is = Files.newInputStream(rustLibPath)) {
-                    Os.loadLib(rustLibPath.toString(), is);
+                    Os.loadLib(rustLibName, is);
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }

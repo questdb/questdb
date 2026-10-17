@@ -322,6 +322,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
+    private final boolean isLiveViewCheckpointAdaptiveCadenceEnabled;
+    private final boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled;
+    private final boolean isLiveViewCheckpointRepairKeyedReplayEnabled;
+    private final boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled;
+    private final boolean isLiveViewCheckpointRepairPerSegmentEnabled;
+    private final boolean isLiveViewCheckpointRepairSegmentYieldEnabled;
+    private final boolean isLiveViewCheckpointRepairSparsePublicationEnabled;
+    private final boolean isLiveViewRebuildRestatementGuardEnabled;
     private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
@@ -333,6 +341,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long liveViewCheckpointCompactionInterval;
     private final long liveViewCheckpointMaxDurationMicros;
     private final long liveViewCheckpointPurgeInterval;
+    private final long liveViewCheckpointRepairKeyedScanIndexOpenRows;
+    private final int liveViewCheckpointRepairMaxChainedBoundaries;
     private final long liveViewCheckpointRepairReplayMaxRows;
     private final long liveViewCheckpointRepairScanMaxKeys;
     private final long liveViewCheckpointRepairScanMaxRows;
@@ -343,6 +353,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long liveViewInMemoryBufferGrowthBytes;
     private final long liveViewInMemoryBufferInitialBytes;
     private final long liveViewInMemoryMaxMicros;
+    private final int liveViewPartitionCompactStalePercent;
     private final int liveViewPartitionCompactThreshold;
     private final long liveViewRefreshMemoryLimitBytes;
     private final WorkerPoolConfiguration liveViewRefreshPoolConfiguration = new PropLiveViewRefreshPoolConfiguration();
@@ -1638,10 +1649,19 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
             // live-view config
+            this.isLiveViewCheckpointAdaptiveCadenceEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, true);
             this.liveViewCheckpointCompactionInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL, 0L);
             this.liveViewCheckpointMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5L * Micros.MINUTE_MICROS);
             this.liveViewCheckpointPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 1L);
+            this.liveViewCheckpointRepairMaxChainedBoundaries = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 256);
+            this.isLiveViewCheckpointRepairIsolatedRuntimeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, true);
+            this.isLiveViewCheckpointRepairPerSegmentEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, true);
             this.liveViewCheckpointRepairReplayMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000L);
+            this.isLiveViewCheckpointRepairKeyedReplayEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, true);
+            this.isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, true);
+            this.isLiveViewCheckpointRepairSegmentYieldEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SEGMENT_YIELD_ENABLED, true);
+            this.isLiveViewCheckpointRepairSparsePublicationEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, true);
+            this.liveViewCheckpointRepairKeyedScanIndexOpenRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 256L);
             this.liveViewCheckpointRepairScanMaxKeys = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 100_000L);
             this.liveViewCheckpointRepairScanMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 1_000_000L);
             this.liveViewCheckpointRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000L);
@@ -1658,7 +1678,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             // failing the start. The minValue overload rejects zero and negatives at parse time.
             this.liveViewInMemoryBufferInitialBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, 64L * 1024L, 1);
             this.liveViewInMemoryMaxMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, 60L * Micros.MINUTE_MICROS);
+            this.liveViewPartitionCompactStalePercent = getIntPercentage(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 50);
             this.liveViewPartitionCompactThreshold = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 100_000);
+            this.isLiveViewRebuildRestatementGuardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REBUILD_RESTATEMENT_GUARD_ENABLED, true);
             this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
             this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
             // Live views own their pool rather than borrowing the mat-view one: the count is the
@@ -4590,6 +4612,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
+            return liveViewCheckpointRepairKeyedScanIndexOpenRows;
+        }
+
+        @Override
+        public int getLiveViewCheckpointRepairMaxChainedBoundaries() {
+            return liveViewCheckpointRepairMaxChainedBoundaries;
+        }
+
+        @Override
         public long getLiveViewCheckpointRepairReplayMaxRows() {
             return liveViewCheckpointRepairReplayMaxRows;
         }
@@ -4632,6 +4664,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getLiveViewInMemoryMaxMicros() {
             return liveViewInMemoryMaxMicros;
+        }
+
+        @Override
+        public int getLiveViewPartitionCompactStalePercent() {
+            return liveViewPartitionCompactStalePercent;
         }
 
         @Override
@@ -5800,8 +5837,48 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isLiveViewCheckpointAdaptiveCadenceEnabled() {
+            return isLiveViewCheckpointAdaptiveCadenceEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
+            return isLiveViewCheckpointRepairIsolatedRuntimeEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
+            return isLiveViewCheckpointRepairKeyedReplayEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
+            return isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
+            return isLiveViewCheckpointRepairPerSegmentEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
+            return isLiveViewCheckpointRepairSegmentYieldEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
+            return isLiveViewCheckpointRepairSparsePublicationEnabled;
+        }
+
+        @Override
         public boolean isLiveViewEnabled() {
             return liveViewEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewRebuildRestatementGuardEnabled() {
+            return isLiveViewRebuildRestatementGuardEnabled;
         }
 
         @Override

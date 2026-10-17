@@ -555,15 +555,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         // Live views publish lv_consumed_seqTxn through this purge floor
-        // alongside mat-view consumers. Both dropped and invalid views release
-        // their floor, mirroring the mat-view arm above. Invalidation is
-        // terminal for a live view - there is no in-place revalidation path,
+        // alongside mat-view consumers. Dropped, invalid and blocked views release
+        // their floor, mirroring the mat-view arm above. Invalidation
+        // is terminal for a live view - there is no in-place revalidation path,
         // the refresh worker permanently skips an invalid view, and its
         // lvConsumed / head checkpoint would otherwise freeze forever. Keeping
         // the floor pinned would clamp safeToPurgeTxn to that frozen value and
         // block base WAL purging indefinitely while the base keeps ingesting.
         // Re-CREATE requires a DROP first and seeds through an MVCC snapshot
         // reader, not the raw base WAL, so the retained WAL is never load-bearing.
+        // A blocked view releases too: its floor is frozen, so any hold would grow
+        // the shared base WAL without bound. A view whose rebuild waits for the
+        // base's apply, or whose upgrade rebuild has not run, is not blocked and
+        // keeps its floor; the rebuild's commit bounds that hold.
         // Skip the LV arm when no LiveViewRefreshJob will run - the feature is off, or the
         // dedicated live view refresh pool has no workers. In either case nothing advances
         // lvConsumedSeqTxn / headCheckpointBaseSeqTxn, and clamping to those frozen values would
@@ -598,7 +602,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         final boolean readOnly = engine.isReadOnlyMode();
         for (int v = 0, n = liveViewSink.size(); v < n; v++) {
             final LiveViewInstance instance = liveViewSink.getQuick(v);
-            if (instance.isDropped() || instance.isInvalid()) {
+            if (instance.isDropped() || instance.isInvalid() || instance.isCheckpointRecoveryBlocked()) {
                 continue;
             }
             final long lvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
@@ -624,9 +628,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             // checkpoint cadence, so lvConsumed can outrun it and let this range be
             // purged out from under the next restart's replay. Capping at
             // headBaseSeqTxn keeps the replay WAL until a later seal moves the head
-            // past it. LONG_NULL (no head, or one an O3 repair cleared) leaves the
-            // floor at lvConsumed: those views recover by rebuilding from the applied
-            // base table, which needs no raw base WAL.
+            // past it. LONG_NULL (no head, or one an O3 repair cleared) adds no floor
+            // here: a view with no timeline rebuilds from the applied base table, and
+            // until an O3 head miss's replacement commits, the timeline floor arm
+            // below holds the WAL a restart's restore replays.
             final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
             if (headBaseSeqTxn > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, headBaseSeqTxn);

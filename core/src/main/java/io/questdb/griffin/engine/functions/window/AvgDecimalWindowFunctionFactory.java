@@ -2658,6 +2658,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL256, Long.BYTES);
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
             return 1;
         }
@@ -4371,6 +4376,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL64, Long.BYTES);
         }
 
         @Override
@@ -6334,6 +6344,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL256, Long.BYTES);
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
             return 1;
         }
@@ -8054,6 +8069,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL64, Long.BYTES);
         }
 
         @Override
@@ -9818,6 +9838,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL128, Long.BYTES);
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
             return 1;
         }
@@ -11520,6 +11545,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL64, Long.BYTES);
         }
 
         @Override

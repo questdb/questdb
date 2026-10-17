@@ -558,7 +558,7 @@ public class LiveViewCheckpointStatePageElisionTest extends AbstractLiveViewTest
                                 1,
                                 partition.getStatePageCount()
                         );
-                        pages.put(hex(partition.getKey()), new Page(partition.getStatePageRef(0)));
+                        pages.put(hex(partition.copyKeyForTest()), new Page(partition.getStatePageRef(0)));
                     });
                     out.add(new Boundary(entry.maxTimestamp, entry.checkpointId, pages));
                 });

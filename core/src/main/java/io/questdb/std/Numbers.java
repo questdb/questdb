@@ -2352,6 +2352,34 @@ public final class Numbers {
         return diff < 0 ? Long.MAX_VALUE : diff;
     }
 
+    /**
+     * Returns {@code a + b} for two non-negative longs, saturated at {@link Long#MAX_VALUE}
+     * instead of wrapping. A negative operand is outside the contract.
+     *
+     * @param a first non-negative term
+     * @param b second non-negative term
+     * @return {@code a + b}, or {@code Long.MAX_VALUE} when that does not fit in a long
+     */
+    public static long saturatedAddNonNegative(long a, long b) {
+        return Long.MAX_VALUE - a < b ? Long.MAX_VALUE : a + b;
+    }
+
+    /**
+     * Returns {@code a * b} saturated at {@link Long#MAX_VALUE} instead of wrapping, or 0 when
+     * either operand is zero or negative.
+     *
+     * @param a first factor
+     * @param b second factor
+     * @return {@code a * b} for two positive factors, capped at {@code Long.MAX_VALUE}; 0
+     * otherwise
+     */
+    public static long saturatedMultiplyNonNegative(long a, long b) {
+        if (a <= 0 || b <= 0) {
+            return 0;
+        }
+        return a > Long.MAX_VALUE / b ? Long.MAX_VALUE : a * b;
+    }
+
     public static int sinkSizeIPv4(int value) {
         // NULL handling should be done outside
         int sz = sinkSizeInt((value >> 24) & 0xff);

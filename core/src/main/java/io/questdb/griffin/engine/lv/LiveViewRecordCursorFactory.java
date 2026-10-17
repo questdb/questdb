@@ -126,6 +126,15 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     // LiveViewRecordCursor.
     private final boolean inMemRoutable;
     private final TableToken liveViewToken;
+    // Scratch the frame path builds its output-to-tier mapping into before a cursor
+    // exists to hold it. LiveViewPageFrameCursor.of() copies it into the cursor's own
+    // list (the parameter is @Transient), so it lives only for the bindFrameCursor call
+    // and two cursors with overlapping lifetimes never share it - unlike the cursor
+    // itself, which is why that one is still allocated per query. A factory serves one
+    // getCursor at a time, the same assumption every factory that reuses a cursor field
+    // makes. The record path needs no equivalent: LiveViewRecordCursor owns its list and
+    // fills it in place.
+    private final IntList tierColumnsScratch = new IntList();
     private final int timestampColumnIndex;
 
     public LiveViewRecordCursorFactory(CairoEngine engine, TableToken liveViewToken, RecordCursorFactory base) {
@@ -271,7 +280,8 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
             runSlotPinnedHook();
             final LiveViewInMemoryBuffer slot = tier.getSlot(pin);
             final long diskSeqTxn = LiveViewRouting.diskReaderSeqTxn(tableDiskCursor);
-            final IntList tierColumns = new IntList();
+            final IntList tierColumns = tierColumnsScratch;
+            tierColumns.clear();
             if (diskSeqTxn != Numbers.LONG_NULL
                     && LiveViewRouting.buildTierColumnMapping(tableDiskCursor, base.getMetadata(), slot, tierColumns)) {
                 if (!isLastAttempt && LiveViewRouting.isSlotNewerThanDisk(slot, diskSeqTxn)) {

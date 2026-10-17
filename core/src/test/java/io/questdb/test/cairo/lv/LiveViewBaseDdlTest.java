@@ -29,11 +29,15 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshTask;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.lv.LiveViewStateStore;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -42,6 +46,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * DDL-on-base-table behaviour for live views. Focuses on schema changes that are
@@ -60,6 +66,31 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
 
+    // The non-data-commit-among-late-rows cases' view: a per-account cumulative sum that
+    // resets at midnight, and what its defining query returns after the burst and the
+    // follow-up row.
+    private static final String ANCHORED_DAILY_EXPECTED = """
+            created_at\taccount_id\tamount\tcumulative_sum
+            2026-01-02T01:00:00.000000Z\tacct-1\t1.0\t1.0
+            2026-01-02T08:35:58.000000Z\tacct-7\t3.0\t3.0
+            2026-01-02T12:00:00.000000Z\tacct-7\t1.0\t4.0
+            2026-01-03T00:10:00.000000Z\tacct-1\t1.0\t1.0
+            2026-01-03T00:54:22.000000Z\tacct-5\t1.0\t1.0
+            2026-01-03T01:00:00.000000Z\tacct-2\t1.0\t1.0
+            2026-01-03T02:07:07.000000Z\tacct-1\t1.0\t2.0
+            2026-01-03T02:30:00.000000Z\tacct-5\t1.0\t2.0
+            """;
+    // The same sums off the base table: ANCHOR is live-view syntax, so the recompute writes the
+    // daily segment out as a partition key.
+    private static final String ANCHORED_DAILY_RECOMPUTE = """
+            SELECT created_at, account_id, amount, sum(amount) OVER (
+                PARTITION BY account_id, day
+                ORDER BY created_at
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ) AS cumulative_sum
+            FROM (SELECT created_at, account_id, amount, timestamp_floor('1d', created_at) AS day FROM tx)
+            """;
+    private static final String ANCHORED_DAILY_WINDOW = "PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00'";
     // > FLUSH EVERY 100ms, so a single driveRefreshToQuiescence pass crosses the flush window.
     // First data timestamp (2026-01-01). Data sits well above the pinned test clock,
     // which starts at 0 and only creeps forward 250ms per refresh pass.
@@ -418,6 +449,70 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testNonDataCommitAmongLateRowsAddColumnKeepsEveryRow() throws Exception {
+        assertAnchoredViewKeepsEveryRowAcrossNonDataCommit("", "ALTER TABLE tx ADD COLUMN note INT", false);
+    }
+
+    @Test
+    public void testNonDataCommitAmongLateRowsDedupDisableKeepsEveryRow() throws Exception {
+        // A dedup base refreshes from the applied base until the DISABLE lands; once it has,
+        // the pass that reads the burst takes the raw-WAL drain like any other base.
+        assertAnchoredViewKeepsEveryRowAcrossNonDataCommit(
+                " DEDUP UPSERT KEYS(created_at, account_id)",
+                "ALTER TABLE tx DEDUP DISABLE",
+                false
+        );
+    }
+
+    @Test
+    public void testNonDataCommitAmongLateRowsDedupEnableKeepsEveryRow() throws Exception {
+        // Once DEDUP ENABLE applies, the base refreshes from the applied base. The burst
+        // reaches the raw-WAL drain only when the pass routes the view before that apply and
+        // the apply lands before the repair pins its reader.
+        assertAnchoredViewKeepsEveryRowAcrossNonDataCommit(
+                "",
+                "ALTER TABLE tx DEDUP ENABLE UPSERT KEYS(created_at, account_id)",
+                true
+        );
+    }
+
+    @Test
+    public void testNonDataCommitAmongLateRowsNoOpUpdateKeepsEveryRow() throws Exception {
+        // A non-data commit that changes neither the metadata nor a row: the replay raises no
+        // metadata drift, so the repair plan alone decides what the view keeps.
+        assertAnchoredViewKeepsEveryRowAcrossNonDataCommit(
+                "",
+                "UPDATE tx SET amount = 42.0 WHERE account_id = 'acct-none'",
+                false
+        );
+    }
+
+    @Test
+    public void testNonDataCommitAmongLateRowsRangeFrameKeepsEveryRow() throws Exception {
+        // An un-anchored RANGE frame bounds the repair at changeMaxTs + W rather than at a
+        // segment end, which a too-low ceiling drops below the open-day row just the same.
+        final String window = "PARTITION BY account_id ORDER BY created_at RANGE BETWEEN 2 HOUR PRECEDING AND CURRENT ROW";
+        assertNonDataCommitAmongLateRowsKeepsEveryRow(
+                "",
+                window,
+                "SELECT created_at, account_id, amount, sum(amount) OVER (" + window + ") AS cumulative_sum FROM tx",
+                "ALTER TABLE tx ADD COLUMN note INT",
+                false,
+                """
+                        created_at\taccount_id\tamount\tcumulative_sum
+                        2026-01-02T01:00:00.000000Z\tacct-1\t1.0\t1.0
+                        2026-01-02T08:35:58.000000Z\tacct-7\t3.0\t3.0
+                        2026-01-02T12:00:00.000000Z\tacct-7\t1.0\t1.0
+                        2026-01-03T00:10:00.000000Z\tacct-1\t1.0\t1.0
+                        2026-01-03T00:54:22.000000Z\tacct-5\t1.0\t1.0
+                        2026-01-03T01:00:00.000000Z\tacct-2\t1.0\t1.0
+                        2026-01-03T02:07:07.000000Z\tacct-1\t1.0\t2.0
+                        2026-01-03T02:30:00.000000Z\tacct-5\t1.0\t2.0
+                        """
+        );
+    }
+
+    @Test
     public void testNonStructuralAlterIsTransparentToLiveView() throws Exception {
         // Non-structural base ALTERs - SET PARAM, ADD / DROP INDEX, symbol CACHE /
         // NOCACHE, SYMBOL CAPACITY - travel the executeAlter apply path, which never
@@ -664,6 +759,159 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                 "LV must stay valid across the unreferenced change",
                 engine.getLiveViewRegistry().getViewInstance("lv").isInvalid()
         );
+    }
+
+    private void assertAnchoredViewKeepsEveryRowAcrossNonDataCommit(
+            String dedupClause,
+            String nonDataSql,
+            boolean isAppliedDuringDrain
+    ) throws Exception {
+        assertNonDataCommitAmongLateRowsKeepsEveryRow(
+                dedupClause,
+                ANCHORED_DAILY_WINDOW,
+                ANCHORED_DAILY_RECOMPUTE,
+                nonDataSql,
+                isAppliedDuringDrain,
+                ANCHORED_DAILY_EXPECTED
+        );
+    }
+
+    // Four base statements reach one refresh pass together: an in-order row, a non-data
+    // commit, a late row in the open day, and a late row in an earlier day. The drain walks
+    // the first two, stops on the third, and hands the repair no change ceiling, because the
+    // non-data commit can have changed rows anywhere. The base has applied the fourth by then,
+    // so the repair classifies it as the apply-ahead range. Folding that range's maximum into
+    // the missing ceiling turned "unknown" into the earlier day's timestamp: the repair
+    // replaced a range ending below the open-day row and walked the watermark past it, so the
+    // view lost the row for good and every later sum over its account came out short.
+    //
+    // isAppliedDuringDrain holds the base apply back until the pass that reads the burst has
+    // routed the view and started its raw-WAL drain, then lands all four statements at the
+    // drain's first base WAL event read. That is the order a refresh worker and an apply
+    // worker produce when the apply wins the race in the middle of the drain, and it is the
+    // only order in which a commit that changes the routing, such as DEDUP ENABLE, still
+    // reaches the raw-WAL drain.
+    private void assertNonDataCommitAmongLateRowsKeepsEveryRow(
+            String dedupClause,
+            String window,
+            String recomputeSql,
+            String nonDataSql,
+            boolean isAppliedDuringDrain,
+            String expected
+    ) throws Exception {
+        final String viewSql = "SELECT created_at, account_id, amount, sum(amount) OVER w AS cumulative_sum FROM tx WINDOW w AS (" + window + ")";
+        final AtomicBoolean isApplyArmed = new AtomicBoolean();
+        final AtomicInteger midDrainApplies = new AtomicInteger();
+        final AtomicReference<Throwable> midDrainApplyFailure = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, WalUtils.EVENT_FILE_NAME)
+                        && Utf8s.containsAscii(name, "tx~")
+                        && isApplyArmed.compareAndSet(true, false)) {
+                    // On a thread of its own, as an apply worker runs it. The drain is reading
+                    // the base's sequencer through a cursor the sequencer keeps per thread, and
+                    // an apply on this thread would take that same cursor and close it.
+                    final Thread applier = new Thread(() -> {
+                        try {
+                            drainWalQueue();
+                        } catch (Throwable th) {
+                            midDrainApplyFailure.set(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    applier.start();
+                    try {
+                        applier.join();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException(e);
+                    }
+                    midDrainApplies.incrementAndGet();
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                    + "TIMESTAMP(created_at) PARTITION BY DAY WAL" + dedupClause);
+            execute("""
+                    INSERT INTO tx (created_at, account_id, amount) VALUES
+                        ('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0),
+                        ('2026-01-02T12:00:00.000000Z', 'acct-7', 1.0),
+                        ('2026-01-03T00:10:00.000000Z', 'acct-1', 1.0),
+                        ('2026-01-03T01:00:00.000000Z', 'acct-2', 1.0)
+                    """);
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+
+                // No refresh pass runs between the four statements, and the base applies all
+                // of them before the repair pins its reader.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T02:07:07.000000Z', 'acct-1', 1.0)");
+                execute(nonDataSql);
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T00:54:22.000000Z', 'acct-5', 1.0)");
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T08:35:58.000000Z', 'acct-7', 3.0)");
+                if (isAppliedDuringDrain) {
+                    // The first statement queued a refresh task and closed the notification gate
+                    // on the other three, so a pass over that task would stop at the first. Hand
+                    // the task back the way a finished pass does, which re-queues it at the
+                    // newest commit, and the next pass then reads all four.
+                    final LiveViewStateStore stateStore = engine.getLiveViewStateStore();
+                    final LiveViewRefreshTask pendingTask = new LiveViewRefreshTask();
+                    Assert.assertTrue(
+                            "the burst must have queued a refresh task",
+                            stateStore.tryDequeueRefreshTask(pendingTask)
+                    );
+                    stateStore.notifyBaseRefreshed(pendingTask, pendingTask.seqTxn);
+                    isApplyArmed.set(true);
+                    drainJob(job);
+                    if (midDrainApplyFailure.get() != null) {
+                        throw new AssertionError("the mid-drain apply failed", midDrainApplyFailure.get());
+                    }
+                    Assert.assertEquals(
+                            "the base must have applied the burst in the middle of the drain",
+                            1,
+                            midDrainApplies.get()
+                    );
+                }
+                driveRefreshToQuiescence(job);
+
+                // A later in-order row of the open-day row's account, whose sum counts that row.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T02:30:00.000000Z', 'acct-5', 1.0)");
+                driveRefreshToQuiescence(job);
+
+                assertQuery("SELECT * FROM lv")
+                        .noLeakCheck()
+                        .timestamp("created_at")
+                        .expectSize()
+                        .returns(expected);
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + recomputeSql + ") ORDER BY 2, 1",
+                        "(lv) ORDER BY 2, 1",
+                        LOG,
+                        true
+                );
+                // A structural commit leaves the view's compiled query behind the base's
+                // metadata, so the repair's replay raises a metadata drift; the recovery
+                // restores the runtime from the timeline and runs the same plan again. That is
+                // the one fault these cases may record. A fault recovered any other way
+                // recomputes the whole view from the base, which matches the rows above
+                // whatever the plan did.
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(
+                        "every refresh fault must end in a timeline restore that re-runs the repair plan",
+                        instance.getRefreshFaultCount(),
+                        instance.getCheckpointRuntimeRestores()
+                );
+                assertViewValid();
+            }
+            execute("DROP LIVE VIEW lv");
+        });
     }
 
     private void assertReferencedColumnOpNamesColumn(String alterSql, String opReason, String columnName) throws Exception {

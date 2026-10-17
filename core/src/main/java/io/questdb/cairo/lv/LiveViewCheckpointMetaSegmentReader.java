@@ -96,6 +96,16 @@ public class LiveViewCheckpointMetaSegmentReader implements Closeable {
     }
 
     /**
+     * @return the native address of {@code length} bytes at {@code payloadOffset} within
+     * the currently open page, bounds-checked against the page payload length. The
+     * address stays valid only until this reader opens another page or segment.
+     */
+    public long addressOf(long payloadOffset, int length) {
+        boundsCheck(payloadOffset, length);
+        return mem.addressOf(pagePayloadFileOffset + payloadOffset);
+    }
+
+    /**
      * @return the file offset one past the last page, i.e. the exclusive walk
      * terminator for sequential iteration from {@link #firstPageOffset()}
      */

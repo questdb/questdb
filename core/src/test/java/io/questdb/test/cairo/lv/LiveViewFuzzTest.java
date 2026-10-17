@@ -32,10 +32,12 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -51,6 +53,7 @@ import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -62,7 +65,9 @@ import io.questdb.std.datetime.nanotime.NanosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -70,7 +75,11 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Phaser;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -88,23 +97,25 @@ import java.util.concurrent.atomic.AtomicLong;
  * batch path agree on a total ordering of the input rows. Two design choices
  * guarantee that:
  * <ul>
- *   <li><b>Strictly-unique timestamps.</b> Every generated row has a distinct,
- *   strictly-increasing timestamp. The base table's designated timestamp is
- *   therefore a total order, and {@code OVER (ORDER BY ts ...)} - as well as the
- *   natural ts scan order used by {@code OVER ()} - is unambiguous. Duplicate
- *   timestamps would let the two paths break ties differently, which is not a
- *   correctness bug but would still fail a row-level diff. So out-of-order
+ *   <li><b>Unique (timestamp, key) pairs.</b> No two generated rows share a
+ *   timestamp and a {@code sym} key, so within every {@code PARTITION BY sym}
+ *   partition the designated timestamp is a total order and
+ *   {@code OVER (... ORDER BY ts ...)} is unambiguous. Rows of different keys
+ *   may tie on the timestamp (see {@link LiveViewFuzzRows}), which is what the
+ *   repair paths have to keep apart. A shape that is not partitioned by the key -
+ *   {@code PARTITION BY 0}, ranking in scan order - would let the two paths break
+ *   such ties differently, so its runs keep every timestamp unique. Out-of-order
  *   ingestion is produced by <i>shuffling insertion order across commits</i>,
- *   never by colliding timestamps.</li>
+ *   never by colliding (timestamp, key) pairs.</li>
  *   <li><b>Grammar-legal, deterministic window shapes.</b> Only bounded
  *   {@code ROWS BETWEEN N PRECEDING AND CURRENT ROW} frames and ranking
  *   {@code OVER ()} are used. Live views reject unbounded aggregate frames
  *   without an ANCHOR clause, and bounded frames over a unique-ts ordering are
  *   deterministic functions of the row set.</li>
  * </ul>
- * The comparison normalizes row order with {@code ORDER BY 1} (the unique
- * timestamp) and uses {@code genericStringMatch} so a SYMBOL passthrough that
- * the materializer stores as STRING still compares by value.
+ * The comparison normalizes row order with {@code ORDER BY 1, 2} (the unique
+ * timestamp and key pair) and uses {@code genericStringMatch} so a SYMBOL
+ * passthrough that the materializer stores as STRING still compares by value.
  */
 public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
@@ -180,6 +191,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             0, 1, 2, 3, 4, 5, 6,
             RANGE_SUM_VARIANT, RANGE_AVG_VARIANT, RANGE_FIRST_VALUE_VARIANT,
             LAG_VARIANT, LAG_OFFSET_VARIANT
+    };
+    // The anchor shapes testFuzzConcurrentWritersAnchored drives over runConcurrentWriterFuzz,
+    // one run each: zone-less and zoned daily anchors, twice over. Each draws a wall time its
+    // zone's fall-back does not repeat, so the bucket oracle stays exact.
+    private static final int[] CONCURRENT_WRITER_ANCHOR_MODES = {
+            LiveViewFuzzAnchor.DAILY_PLAIN, LiveViewFuzzAnchor.DAILY_ZONED,
+            LiveViewFuzzAnchor.DAILY_PLAIN, LiveViewFuzzAnchor.DAILY_ZONED
     };
     // Partitioned (PARTITION BY sym ORDER BY ts) variants driven over a DEDUP base
     // by runDedupFuzz. Their output is a deterministic function of the deduped base
@@ -260,6 +278,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Sentinel i for phantom (rolled-back) rows: large and positive, so a leaked phantom
     // both survives a WHERE i>0 filter and stands out against the [-1000, 1000] real data.
     private static final long PHANTOM_SENTINEL = 999_999;
+    // The base removals runAnchoredRemovalFuzz drives.
+    private static final int REMOVAL_DROP_PARTITION = 1;
+    private static final int REMOVAL_TRUNCATE = 0;
+    private static final int REMOVAL_TTL = 2;
     private static final String[] SYMBOLS = {
             "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
             "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP"
@@ -280,6 +302,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // they ride the anchor here rather than a bounded-ROWS frame.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        if (rnd.nextBoolean()) {
+            // A replay budget of a few rows parks repairs across turns, so a restart can land
+            // on a parked repair as well as on an un-flushed lead.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1 + rnd.nextInt(8));
+        }
         assertMemoryLeak(() -> {
             for (int v = 0; v < ANCHORED_VARIANT_COUNT; v++) {
                 runAnchoredFuzz(rnd, v, 120 + rnd.nextInt(180), rnd.nextBoolean(), rnd.nextBoolean());
@@ -367,6 +394,21 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFuzzBaseTtlAnchored() throws Exception {
+        // testFuzzBaseTtl over anchored views, whose repairs follow the anchor's segments and,
+        // over an indexed key, the correction's keys, with the repair knobs drawn per run (see
+        // LiveViewFuzzKnobs). Phase two stays in timestamp order, as there, because TTL keeps
+        // evicting behind it, so the oracle is the whole logical dataset bucketed by the anchor.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 3; i++) {
+                runAnchoredRemovalFuzz(rnd, rnd.nextInt(ANCHORED_VARIANT_COUNT), 120 + rnd.nextInt(160),
+                        REMOVAL_TTL, rnd.nextBoolean(), false, rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
     public void testFuzzConcurrentWriters() throws Exception {
         // Differential fuzz with the base ingested by MULTIPLE concurrent WAL
         // writers rather than the single-writer SQL INSERT path every other arm
@@ -393,8 +435,36 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // so the apply-ahead re-sequencing path is exercised every run.
                 final boolean concurrentRefresh = variant == 5 || rnd.nextBoolean();
                 runConcurrentWriterFuzz(rnd, variant, 200 + rnd.nextInt(300),
-                        2 + rnd.nextInt(3), concurrentRefresh, rnd.nextBoolean());
+                        2 + rnd.nextInt(3), concurrentRefresh, rnd.nextBoolean(), null);
             }
+        });
+    }
+
+    @Test
+    public void testFuzzConcurrentWritersAnchored() throws Exception {
+        // testFuzzConcurrentWriters over anchored windows, zone-less and zoned, each run with a
+        // concurrent refresh driver and a backfilling writer. The streaming writers commit the
+        // rows in timestamp order; the backfilling writer holds back a share of them and commits
+        // each one only once the stream has moved past it. Every writer commits once per refresh
+        // tick, and half the late commits land behind the tick's streaming ones, so a drain
+        // meets in-order rows and a late row into a closed anchor segment in one pass. That
+        // interleave is where a per-segment loop over a runtime still holding the drain's
+        // in-order rows folded them twice, and inflated count and sum: the deterministic cases
+        // are the testInOrderRowsCoalescedWithALateCommit* family in
+        // LiveViewCheckpointSegmentRepairTest. A later repair of the same segment can heal such
+        // a row before the run ends, so the refresh driver also compares the view with the
+        // recompute between ticks, whenever the view has caught up with the base. The repair
+        // knobs are drawn per run with the per-segment loop on (see LiveViewFuzzKnobs).
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            long segmentRepairs = 0;
+            for (int i = 0; i < CONCURRENT_WRITER_ANCHOR_MODES.length; i++) {
+                segmentRepairs += runConcurrentWriterFuzz(rnd, rnd.nextInt(ANCHORED_VARIANT_COUNT), 300 + rnd.nextInt(300),
+                        2 + rnd.nextInt(2), true, rnd.nextBoolean(),
+                        LiveViewFuzzAnchor.draw(rnd, CONCURRENT_WRITER_ANCHOR_MODES[i]));
+            }
+            // A batch whose late rows never reached a closed segment raced nothing this test is about.
+            Assert.assertTrue("the late rows must have repaired closed anchor segments", segmentRepairs > 0);
         });
     }
 
@@ -417,7 +487,23 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             for (int i = 0; i < DEDUP_VARIANTS.length; i++) {
                 runDedupFuzz(rnd, DEDUP_VARIANTS[i], 120 + rnd.nextInt(160),
-                        true, rnd.nextBoolean(), rnd.nextBoolean(), true);
+                        true, rnd.nextBoolean(), rnd.nextBoolean(), true, null);
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzDedupAnchored() throws Exception {
+        // testFuzzDedup over anchored views on a DEDUP UPSERT KEYS(ts, sym) base whose key is
+        // indexed in most runs, with the repair knobs drawn per run. Restarts land within a
+        // checkpoint cadence or two of a collapse, behind removals of rows the view never
+        // emitted: the shape that once stopped a restarting view over a deduplicating base.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 3; i++) {
+                runDedupFuzz(rnd, rnd.nextInt(ANCHORED_VARIANT_COUNT), 120 + rnd.nextInt(160),
+                        true, true, rnd.nextBoolean(), true,
+                        LiveViewFuzzAnchor.draw(rnd, rnd.nextInt(LiveViewFuzzAnchor.DAILY_EPOCH)));
             }
         });
     }
@@ -712,6 +798,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFuzzRemovalFreezeAndContinueAnchored() throws Exception {
+        // testFuzzRemovalFreezeAndContinue over anchored views, whose repairs follow the anchor's
+        // segments and, over an indexed key, the correction's keys, with the repair knobs drawn
+        // per run. Phase two arrives out of order, so repairs run with removed rows below them.
+        // See runAnchoredRemovalFuzz for what the oracle can and cannot claim then.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 4; i++) {
+                runAnchoredRemovalFuzz(rnd, rnd.nextInt(ANCHORED_VARIANT_COUNT), 120 + rnd.nextInt(160),
+                        rnd.nextBoolean() ? REMOVAL_TRUNCATE : REMOVAL_DROP_PARTITION,
+                        rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
     public void testFuzzReplaceRange() throws Exception {
         // Differential fuzz with REPLACE_RANGE data commits on the base,
         // interleaved with plain O3 inserts. Each replace atomically deletes a
@@ -897,6 +999,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         row.append();
     }
 
+    // Arrives at the current phase of a backfilling run's ticks and waits for every other
+    // party to arrive. runConcurrentWriterFuzz runs each tick as two phases: in the first,
+    // every writer still running makes its commit for the tick; in the second, the refresh
+    // driver drains them while the writers wait. A party that leaves deregisters, and one that
+    // fails terminates the phaser, so no party waits on it. Bounded, so a stalled party fails
+    // the run instead of hanging it.
+    private static void arriveAndAwaitTick(Phaser ticks) throws InterruptedException, TimeoutException {
+        ticks.awaitAdvanceInterruptibly(ticks.arrive(), REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+    }
+
     // Asserts the view has a checkpoint timeline on disk for a restart to restore from.
     // Without one, LiveViewRefreshJob.tryRestoreFromTimeline rebuilds from the applied
     // base instead, so a crash-recovery arm that needs the restore path checks this
@@ -998,56 +1110,40 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         // Disk-only fallback content equals the applied prefix (recompute minus the lead).
         StringSink diskOnly = new StringSink();
-        printDiskOnly("SELECT * FROM lv", diskOnly);
+        printDiskOnly("lv", "SELECT * FROM lv", diskOnly);
         Assert.assertEquals("disk-only read must equal the applied prefix",
                 dropTrailingDataRows(recompute.toString(), leadRows), diskOnly.toString());
     }
 
-    // Confirms SELECT * FROM lv actually routes through Mode B (the in-mem tier),
-    // not disk-only. Opens the inner LiveViewRecordCursor directly (unwrapping any
-    // QueryProgress wrapper), drains it, and asserts the fence engaged and the tier
-    // served rows. Run single-threaded after quiescence; the top-up cycle guarantees
-    // the slot is populated.
-    private static void assertModeBEngaged() throws SqlException {
-        try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
-            RecordCursorFactory f = factory;
-            while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
-                f = f.getBaseFactory();
-            }
-            Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
-            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) f.getCursor(sqlExecutionContext)) {
-                StringSink sink = new StringSink();
-                println(f.getMetadata(), cursor, sink);
-                Assert.assertTrue("read-back must route through Mode B", cursor.isRoutingEligible());
-                Assert.assertTrue("Mode B must serve in-mem rows", cursor.inMemRowsServed() > 0);
-            }
+    // The symbol checks a resident lead must pass: each key under one label through the view's
+    // own symbol table, and a keyed WINDOW JOIN from the view that matches the same join from
+    // a plain copy of it. The view projects (ts, sym, i, rn).
+    private static void assertLeadSymbols(int symCount) throws SqlException {
+        final ObjList<String> keys = new ObjList<>();
+        for (int k = 0; k < symCount; k++) {
+            keys.add(SYMBOLS[k]);
         }
+        assertSymbolLabelsConsistent("lv", "sym", keys);
+        assertViewWindowJoinMatchesCopy("lv", "base", "sym", "i", "t.rn > 0");
     }
 
-    // Runs the SELECT with the tier on (Mode B) and then with the fence forced off
-    // (disk-only, achieved by mismatching both slots' stamps) and asserts the two
-    // outputs are byte-identical. Restores the stamps afterwards. Mirrors the
-    // differential oracle in LiveViewInMemReadTest; safe single-threaded only.
-    private static void assertModeBMatchesDiskOnly(String sql) throws SqlException {
-        StringSink modeB = new StringSink();
-        printSql(sql, modeB);
-
-        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-        Assert.assertNotNull(instance);
-        LiveViewInMemoryTier tier = instance.getInMemoryTier();
-        Assert.assertNotNull(tier);
-        long s0 = tier.getSlot(0).lvSeqTxn();
-        long s1 = tier.getSlot(1).lvSeqTxn();
-        tier.getSlot(0).setLvSeqTxn(mismatch(s0));
-        tier.getSlot(1).setLvSeqTxn(mismatch(s1));
-        StringSink diskOnly = new StringSink();
-        try {
-            printSql(sql, diskOnly);
-        } finally {
-            tier.getSlot(0).setLvSeqTxn(s0);
-            tier.getSlot(1).setLvSeqTxn(s1);
+    // Waits until every streaming writer still running has committed in the current tick of
+    // runConcurrentWriterFuzz. Each commits once per tick, so the wait ends inside the tick;
+    // the bound fails a stalled stream instead of hanging the run.
+    private static void awaitTickStreamCommits(
+            AtomicInteger tickStreamCommits,
+            AtomicInteger streamingWritersDone,
+            int numStreamingWriters,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        final long deadlineNanos = System.nanoTime() + REFRESH_TICK_WAIT_NANOS;
+        while (tickStreamCommits.get() < numStreamingWriters - streamingWritersDone.get() && errors.isEmpty()) {
+            if (System.nanoTime() >= deadlineNanos) {
+                throw new AssertionError("the streaming writers did not commit within "
+                        + (REFRESH_TICK_WAIT_NANOS / 1_000_000_000L) + 's');
+            }
+            Os.pause();
         }
-        Assert.assertEquals("Mode B vs disk-only mismatch for: " + sql, diskOnly.toString(), modeB.toString());
     }
 
     // Boundaries [0, ..., len] splitting a segment of length len into 1..~10
@@ -1155,30 +1251,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
     }
 
-    // Maps a slot stamp to a value the disk reader can never report, forcing the
-    // fence off so the read serves disk-only. LONG_NULL slots map to 1.
-    private static long mismatch(long seqTxn) {
-        return seqTxn == Numbers.LONG_NULL ? 1 : seqTxn + 1_000_000;
-    }
-
-    // Prints the SELECT with the seqTxn fence forced off (both slot stamps
-    // mismatched), so the cursor falls back to the disk-only path and serves only
-    // the applied prefix. Restores the stamps afterwards.
-    private static void printDiskOnly(String sql, StringSink sink) throws SqlException {
-        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-        Assert.assertNotNull(instance);
-        LiveViewInMemoryTier tier = instance.getInMemoryTier();
-        Assert.assertNotNull(tier);
-        long s0 = tier.getSlot(0).lvSeqTxn();
-        long s1 = tier.getSlot(1).lvSeqTxn();
-        tier.getSlot(0).setLvSeqTxn(mismatch(s0));
-        tier.getSlot(1).setLvSeqTxn(mismatch(s1));
-        try {
-            printSql(sql, sink);
-        } finally {
-            tier.getSlot(0).setLvSeqTxn(s0);
-            tier.getSlot(1).setLvSeqTxn(s1);
+    // The first row at or above from that isHeldBack marks, or rowCount when none is left.
+    private static int nextHeldBackRow(boolean[] isHeldBack, int from, int rowCount) {
+        int k = from;
+        while (k < rowCount && !isHeldBack[k]) {
+            k++;
         }
+        return k;
     }
 
     // Returns the projection (SELECT list) for the given non-decimal window-query
@@ -1403,6 +1482,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return sink.put(' ').toString();
     }
 
+    // A run's share of rows that tie the previous row's timestamp under another key: none in
+    // one run of three, so a batch still runs on unique timestamps too.
+    private static int tiePct(Rnd rnd) {
+        return rnd.nextInt(3) == 0 ? 0 : 10 + rnd.nextInt(40);
+    }
+
     private static int variantCount() {
         return DECIMAL_VARIANT + 1;
     }
@@ -1569,6 +1654,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 return;
             }
             throw e;
+        }
+    }
+
+    // The first column of the first row of a query returning a TIMESTAMP, or LONG_NULL.
+    private long queryTimestamp(String sql) throws SqlException {
+        try (
+                RecordCursorFactory factory = select(sql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            return cursor.hasNext() ? cursor.getRecord().getTimestamp(0) : Numbers.LONG_NULL;
         }
     }
 
@@ -1826,6 +1921,75 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
     }
 
+    // A writer thread that commits the rows the streaming writers hold back, each one late, on
+    // the ticks of runConcurrentWriterFuzz (see arriveAndAwaitTick). Every tick it commits the
+    // next batch of its rows the stream has moved lagRows past, if there is one, and then
+    // waits the tick out. The held-back rows go in ascending ts order, so each lands below the
+    // stream's head, and a lag past a day jump puts it in a closed anchor segment. Once the
+    // stream has finished it commits a batch per tick until its rows run out.
+    // <p>
+    // Half of its commits wait for every streaming commit of the tick first. A refresh task
+    // names the commit that queued it, so the first commit of a tick drains alone and the task
+    // re-queued behind it carries the rest together: a late commit behind the stream's meets a
+    // drain that has already fed in-order rows. The other half race the stream. Like
+    // newConcurrentWriterThread, it awaits the barrier before its first write and clears
+    // thread-locals on exit for the leak check.
+    private Thread newBackfillWriterThread(
+            boolean[] isHeldBack,
+            int fromIndex,
+            int rowCount,
+            int lagRows,
+            int batch,
+            long orderSeed,
+            long[] tsv,
+            int[] symIdx,
+            long[] iv,
+            double[] xv,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            Phaser ticks,
+            AtomicInteger streamedTo,
+            AtomicInteger tickStreamCommits,
+            AtomicInteger streamingWritersDone,
+            int numStreamingWriters,
+            AtomicLong backfilledRows,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            final Rnd orderRnd = new Rnd(orderSeed, orderSeed >>> 1);
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await();
+                int k = nextHeldBackRow(isHeldBack, fromIndex, rowCount);
+                while (k < rowCount && errors.isEmpty()) {
+                    final boolean isStreamDone = streamingWritersDone.get() == numStreamingWriters;
+                    if (isStreamDone || streamedTo.get() >= k + lagRows) {
+                        if (!isStreamDone && orderRnd.nextBoolean()) {
+                            awaitTickStreamCommits(tickStreamCommits, streamingWritersDone, numStreamingWriters, errors);
+                        }
+                        int rows = 0;
+                        while (rows < batch && k < rowCount && (isStreamDone || streamedTo.get() >= k + lagRows)) {
+                            appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+                            rows++;
+                            k = nextHeldBackRow(isHeldBack, k + 1, rowCount);
+                        }
+                        walWriter.commit();
+                        backfilledRows.addAndGet(rows);
+                    }
+                    // The commit phase, then the drain phase.
+                    arriveAndAwaitTick(ticks);
+                    arriveAndAwaitTick(ticks);
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+                barrier.reset();
+                ticks.forceTermination();
+            } finally {
+                ticks.arriveAndDeregister();
+                Path.clearThreadLocals();
+            }
+        }, "lv-cw-backfill-writer");
+    }
+
     // A writer thread that owns its own WalWriter and ingests the round-robin slice
     // [fromIndex+writerId, rowCount) with stride numWriters, committing every batch
     // rows. The slices are disjoint and globally ts-ordered, so timestamps stay
@@ -1934,6 +2098,74 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }, "lv-rvr-reader");
     }
 
+    // A streaming writer of a backfilling run (see runConcurrentWriterFuzz). It owns its own
+    // WalWriter, and once per tick (see arriveAndAwaitTick) claims the next batch of rows the
+    // backfilling writer does not hold back, appends and commits them under streamLock, raises
+    // streamedTo to the batch's last row and counts the commit into tickStreamCommits. The lock
+    // keeps the stream in timestamp order across writers, so every streaming commit is an
+    // in-order one and the late rows are the backfilling writer's alone. It counts itself into
+    // streamingWritersDone on exit, failed or not, so the backfilling writer never waits on a
+    // stream that has stopped. It awaits the barrier before its first write and clears
+    // thread-locals on exit for the leak check.
+    private Thread newStreamingWriterThread(
+            int writerId,
+            int rowCount,
+            int batch,
+            long[] tsv,
+            int[] symIdx,
+            long[] iv,
+            double[] xv,
+            boolean[] isHeldBack,
+            AtomicInteger nextStreamRow,
+            Object streamLock,
+            Phaser ticks,
+            AtomicInteger streamedTo,
+            AtomicInteger tickStreamCommits,
+            AtomicInteger streamingWritersDone,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await();
+                boolean isStreamLeft = true;
+                while (isStreamLeft && errors.isEmpty()) {
+                    synchronized (streamLock) {
+                        int k = nextStreamRow.get();
+                        int rows = 0;
+                        int lastRow = -1;
+                        while (rows < batch && k < rowCount) {
+                            if (!isHeldBack[k]) {
+                                appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+                                lastRow = k;
+                                rows++;
+                            }
+                            k++;
+                        }
+                        nextStreamRow.set(k);
+                        walWriter.commit();
+                        if (lastRow > -1) {
+                            streamedTo.set(lastRow);
+                        }
+                        isStreamLeft = k < rowCount;
+                    }
+                    tickStreamCommits.incrementAndGet();
+                    // The commit phase, then the drain phase.
+                    arriveAndAwaitTick(ticks);
+                    arriveAndAwaitTick(ticks);
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+                ticks.forceTermination();
+            } finally {
+                streamingWritersDone.incrementAndGet();
+                ticks.arriveAndDeregister();
+                Path.clearThreadLocals();
+            }
+        }, "lv-cw-stream-writer-" + writerId);
+    }
+
     // One refresh cycle with the flush held off, then the lead-ordering check;
     // returns true if the check actually compared (see assertLeadAboveDisk).
     // Pinning lastFlushTimeUs to now makes flushDue false for this drain (the same
@@ -1979,7 +2211,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     // Differential fuzz for an anchored window variant. Mirrors runFuzz's
     // ingestion shape (pre-CREATE seed history, then per-commit O3 refresh
-    // with optional quiescent restarts) but cross-checks against a DISTINCT oracle
+    // with optional restarts, over an un-flushed lead or a parked repair as
+    // well) but cross-checks against a DISTINCT oracle
     // SQL: the anchored live view vs. the equivalent (sym, bucket)-partitioned
     // regular window over the base. O3 is always on (segmentOrder shuffles), so
     // the anchor map is rebuilt on head-miss / head-hit replay and is verified to
@@ -2014,28 +2247,19 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-        // Strictly-unique, strictly-increasing timestamps so ts is a total order;
-        // random symbols and values with occasional NULLs.
-        final long[] tsv = new long[rowCount];
-        final int[] symIdx = new int[rowCount];
-        final long[] iv = new long[rowCount];
-        final double[] xv = new double[rowCount];
-        final boolean[] xNull = new boolean[rowCount];
-        final int maxDayJumps = 30;
-        int dayJumps = 0;
-        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
-        for (int k = 0; k < rowCount; k++) {
-            ts += 1 + rnd.nextInt(baseStepMax);
-            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
-                ts += 86_400_000_000L;
-                dayJumps++;
-            }
-            tsv[k] = ts;
-            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
-            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
-            xNull[k] = rnd.nextInt(20) == 0;
-            xv[k] = rnd.nextDouble() * 1000.0;
-        }
+        // Ascending timestamps with ties across keys: every anchored variant partitions by sym,
+        // and (ts, sym) stays unique, so ts is a total order within each partition. Random
+        // symbols and values with occasional NULLs.
+        final int tiePct = tiePct(rnd);
+        final LiveViewFuzzRows rows = LiveViewFuzzRows.generate(
+                rnd, rowCount, symCount, MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"),
+                baseStepMax, dayJumpEvery, tiePct
+        );
+        final long[] tsv = rows.tsv;
+        final int[] symIdx = rows.symIdx;
+        final long[] iv = rows.iv;
+        final double[] xv = rows.xv;
+        final boolean[] xNull = rows.xNull;
 
         // Pre-CREATE history (the earliest rows by ts): a base with committed history at CREATE
         // seeds under every start mode, and the boundary decides how much of it the sweep
@@ -2054,6 +2278,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         LOG.info().$("LV anchored fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", tiePct=").$(tiePct).$(", ties=").$(rows.getTieCount())
                 .$(", restart=").$(restart).$(", preCount=").$(preCount)
                 .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
                 .$(", bucket=").$(bucket).$(", sql=").$(viewSql).$();
@@ -2084,7 +2309,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 for (int c = 0; c + 1 < cb.length; c++) {
                     insertCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
                     drainWalQueue();
-                    refreshCycle(job);
+                    if (restart && rnd.nextInt(4) == 0) {
+                        // Holds the flush off, so the restart below can land on an un-flushed
+                        // lead; a small replay budget (see testFuzzAnchored) can leave a repair
+                        // parked under it too.
+                        pinnedRefreshCycle(job);
+                    } else {
+                        refreshCycle(job);
+                    }
 
                     if (restart && rnd.nextInt(3) == 0) {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -2105,12 +2337,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
 
         // The oracle: the anchored live view must equal the equivalent
-        // (sym, bucket)-partitioned window recomputed over the base table.
+        // (sym, bucket)-partitioned window recomputed over the base table. ORDER BY 1, 2 -
+        // (ts, sym), unique over ties - gives both sides a total order.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + oracleSql + ") ORDER BY 1",
-                "(lv) ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1, 2",
+                "(lv) ORDER BY 1, 2",
                 LOG,
                 true
         );
@@ -2638,22 +2871,60 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // trigger - the apply-ahead path); otherwise the refresh runs single-threaded
     // after the writers join. Either way the view is quiesced before the exact-
     // equality recompute oracle.
-    private void runConcurrentWriterFuzz(
+    // <p>
+    // With an anchor (see testFuzzConcurrentWritersAnchored) the run is an
+    // ANCHORED_VARIANT_COUNT shape over the anchor's named window, over a key indexed in most
+    // runs, under the repair knobs drawn for it. Its streaming writers commit an in-order
+    // stream (see newStreamingWriterThread) and a backfilling writer commits a share of the
+    // suffix late, behind them (see newBackfillWriterThread), all paced to the refresh
+    // driver's ticks. Between ticks the driver also checks a view caught up with the base
+    // against the recompute, and the run ends by asserting that the backfill and those
+    // checks happened.
+    //
+    // Returns the closed anchor segments the run's refresh job repaired over their own range.
+    private long runConcurrentWriterFuzz(
             Rnd rnd,
             int variant,
             int rowCount,
             int numWriters,
             boolean concurrentRefresh,
-            boolean seed
+            boolean seed,
+            @Nullable LiveViewFuzzAnchor anchor
     ) throws Exception {
+        Assert.assertTrue("an anchored run paces its writers to a concurrent refresh driver", anchor == null || concurrentRefresh);
         // A concurrent refresh driver advances the flush clock in an unbounded loop while
         // ingestion is in flight, so - unlike the single-threaded fuzz arms, which sit a day
         // below the data - the clock is pinned a full YEAR below the data start. A START FROM
         // NOW view resolves its boundary from that clock, and the year of headroom keeps the
         // boundary below every row for the whole run (a 250ms-per-advance loop never climbs a
-        // year), so only an explicit-boundary run excludes any row.
-        setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
-        final long dataStart = MicrosTimestampDriver.floor("2027-01-01T00:00:00.000000Z");
+        // year), so only an explicit-boundary run excludes any row. An anchored run's data
+        // starts where its shape needs it, a day above the clock the anchor pins; the boundary
+        // resolves at CREATE, before the driver moves the clock at all.
+        final long dataStart;
+        final StringSink knobLog = new StringSink();
+        if (anchor != null) {
+            setCurrentMicros(anchor.clockMicros);
+            dataStart = anchor.dataStartMicros;
+            // The per-segment loop stays on: it is the route that repairs a closed anchor
+            // segment's late row on its own, and the late rows are what the backfilling
+            // writer brings. A turn drains every commit a tick lands at the default budget,
+            // so it can feed a streaming commit before it meets the late one; a budget of one
+            // commit never does. Half the runs truncate at every segment repair rather than
+            // splice: a truncate drops the root at the frontier, and the seal behind the
+            // segment then freezes whatever runtime the loop kept, which is where a runtime
+            // still holding the drain's in-order rows got folded twice.
+            final LiveViewFuzzKnobs knobs = LiveViewFuzzKnobs.randomize(rnd);
+            knobs.isPerSegment = true;
+            knobs.turnMaxCommits = LiveViewFuzzKnobs.DEFAULT;
+            if (rnd.nextBoolean()) {
+                knobs.maxChainedBoundaries = 0;
+            }
+            knobs.apply(AbstractLiveViewTest::setProperty);
+            knobs.toSink(knobLog);
+        } else {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+            dataStart = MicrosTimestampDriver.floor("2027-01-01T00:00:00.000000Z");
+        }
 
         final int n = 1 + rnd.nextInt(MAX_FRAME);
         final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
@@ -2661,52 +2932,68 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
         final boolean withWhere = rnd.nextInt(3) == 0;
+        final boolean isIndexed = anchor != null && rnd.nextInt(4) != 0;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
-        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL" + (isIndexed ? " INDEX" : "")
+                + ", i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-        // Strictly-unique, strictly-increasing timestamps so ts is a total order;
-        // random symbols and values with occasional NULLs.
-        final long[] tsv = new long[rowCount];
-        final int[] symIdx = new int[rowCount];
-        final long[] iv = new long[rowCount];
-        final double[] xv = new double[rowCount];
-        final int maxDayJumps = 30;
-        int dayJumps = 0;
-        long ts = dataStart;
-        for (int k = 0; k < rowCount; k++) {
-            ts += 1 + rnd.nextInt(baseStepMax);
-            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
-                ts += 86_400_000_000L;
-                dayJumps++;
-            }
-            tsv[k] = ts;
-            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
-            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
-            xv[k] = rnd.nextDouble() * 1000.0;
-        }
+        // Ascending timestamps, with ties across keys for every variant partitioned by sym
+        // (all but 5, and every anchored shape): (ts, sym) stays unique, so ts is a total
+        // order within each partition. The round-robin slices put the rows of one tie group on
+        // different writers. Random symbols and values with occasional NULLs.
+        final int tiePct = anchor == null && variant == 5 ? 0 : tiePct(rnd);
+        final LiveViewFuzzRows rows = LiveViewFuzzRows.generate(rnd, rowCount, symCount, dataStart, baseStepMax, dayJumpEvery, tiePct);
+        final long[] tsv = rows.tsv;
+        final int[] symIdx = rows.symIdx;
+        final long[] iv = rows.iv;
+        final double[] xv = rows.xv;
 
         // Pre-CREATE history: the earliest rows [0, preCount), committed by a single writer in
         // ts order. Committed history at CREATE puts the view in SEEDING under every start
-        // mode; the boundary decides how much of it the sweep emits.
-        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        // mode; the boundary decides how much of it the sweep emits. An anchored run keeps at
+        // least half the rows for its concurrent phase, which is what the run is about.
+        final int preCount = seed ? rnd.nextInt(anchor != null ? rowCount / 2 : rowCount + 1) : 0;
         final int startMode = rnd.nextInt(START_FROM_MODES);
         final long boundary = startBoundary(rnd, startMode, tsv, false);
-        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
-        final String oracleSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, boundary);
+        final String projection = anchor != null ? anchoredViewProjection(variant) : projection(variant, n);
+        final String oracleProjection = anchor != null ? anchoredOracleProjection(variant, anchor.bucket) : projection;
+        final String window = anchor != null ? " WINDOW w AS (PARTITION BY sym ORDER BY ts " + anchor.clause + ")" : "";
+        final String viewSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL) + window;
+        final String oracleSql = "SELECT " + oracleProjection + " FROM base" + whereTail(withWhere, boundary);
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + startFromClause(startMode, boundary, false)
                 + "AS " + viewSql;
 
+        // The backfilling writer's share of the concurrent suffix, and how far behind the
+        // stream it commits each of its rows. With a day jump every dayJumpEvery rows on
+        // average, most of those rows land in a closed anchor segment.
+        final boolean[] isHeldBack = anchor != null ? new boolean[rowCount] : null;
+        final int backfillPct = 10 + rnd.nextInt(21);
+        final int backfillLagRows = 2 * dayJumpEvery + rnd.nextInt(4 * dayJumpEvery);
+        if (isHeldBack != null) {
+            for (int k = preCount; k < rowCount; k++) {
+                isHeldBack[k] = rnd.nextInt(100) < backfillPct;
+            }
+        }
+
         LOG.info().$("LV concurrent-writer fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", tiePct=").$(tiePct).$(", ties=").$(rows.getTieCount())
                 .$(", n=").$(n).$(", writers=").$(numWriters).$(", symCount=").$(symCount)
                 .$(", stepMode=").$(stepMode).$(", concurrentRefresh=").$(concurrentRefresh)
                 .$(", preCount=").$(preCount).$(", startMode=").$(startMode).$(", boundary=").$(boundary)
-                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+                .$(", where=").$(withWhere).$(", indexed=").$(isIndexed)
+                .$(", anchor=").$(anchor != null ? anchor.clause : "none")
+                .$(", backfillPct=").$(isHeldBack != null ? backfillPct : 0)
+                .$(", backfillLagRows=").$(backfillLagRows)
+                .$(", knobs=[").$(knobLog).$("], sql=").$(viewSql).$();
 
         final TableToken baseToken = engine.verifyTableName("base");
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final AtomicLong backfilledRows = new AtomicLong();
+        final AtomicLong midRunRecomputeChecks = new AtomicLong();
+        final long segmentRepairs;
         LiveViewRefreshJob job = null;
         try {
             if (preCount > 0) {
@@ -2729,18 +3016,42 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
             // Concurrent suffix [preCount, rowCount): numWriters threads each own a
             // WalWriter and commit a disjoint round-robin slice in parallel, with an
-            // optional refresh driver racing them.
+            // optional refresh driver racing them; or, in an anchored run, stream it in
+            // order beside the backfilling writer.
             if (preCount < rowCount) {
                 final int driverCount = concurrentRefresh ? 1 : 0;
-                final CyclicBarrier barrier = new CyclicBarrier(numWriters + driverCount);
+                final int backfillWriterCount = isHeldBack != null ? 1 : 0;
+                final CyclicBarrier barrier = new CyclicBarrier(numWriters + driverCount + backfillWriterCount);
                 final AtomicBoolean ingesting = new AtomicBoolean(true);
+                final AtomicInteger streamedTo = new AtomicInteger(-1);
+                final AtomicInteger streamingWritersDone = new AtomicInteger();
+                // A backfilling run's ticks, one commit per writer each, so every drain reads
+                // the commits of one tick together (see arriveAndAwaitTick). The driver is a
+                // party, and so is every writer until it leaves. Unpaced without a backfill.
+                final Phaser ticks = isHeldBack != null ? new Phaser(numWriters + 2) : null;
+                // The streaming commits of the current tick; the driver resets it between the
+                // tick's two phases, while every writer waits.
+                final AtomicInteger tickStreamCommits = new AtomicInteger();
 
+                // Without a backfill, round-robin slices; with one, an in-order stream the
+                // writers claim batch by batch, so the late rows are the backfilling writer's.
+                final AtomicInteger nextStreamRow = new AtomicInteger(preCount);
+                final Object streamLock = new Object();
                 final Thread[] writers = new Thread[numWriters];
                 for (int w = 0; w < numWriters; w++) {
                     final int batch = 5 + rnd.nextInt(20);
-                    writers[w] = newConcurrentWriterThread(
+                    writers[w] = isHeldBack != null
+                            ? newStreamingWriterThread(
+                            w, rowCount, batch, tsv, symIdx, iv, xv, isHeldBack, nextStreamRow, streamLock,
+                            ticks, streamedTo, tickStreamCommits, streamingWritersDone, baseToken, barrier, errors)
+                            : newConcurrentWriterThread(
                             w, numWriters, preCount, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
                 }
+                final Thread backfillWriter = isHeldBack != null ? newBackfillWriterThread(
+                        isHeldBack, preCount, rowCount, backfillLagRows, 1 + rnd.nextInt(3), rnd.nextLong(), tsv, symIdx, iv, xv,
+                        baseToken, barrier, ticks, streamedTo, tickStreamCommits, streamingWritersDone, numWriters,
+                        backfilledRows, errors
+                ) : null;
 
                 // Only the driver touches the clock during the concurrent phase; the
                 // final quiescence drive runs after it has joined.
@@ -2749,12 +3060,31 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     try {
                         barrier.await();
                         while (ingesting.get()) {
+                            if (ticks != null) {
+                                // The commit phase: every writer still running has committed.
+                                arriveAndAwaitTick(ticks);
+                                tickStreamCommits.set(0);
+                            }
                             setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                             drainWalQueue();
                             drainJob(driverJob);
+                            if (ticks != null) {
+                                // The writers wait, so the base holds still: a view caught up with
+                                // it must already equal the recompute. A later repair of the same
+                                // segment can heal a wrong row before the run ends, so the
+                                // run-end oracle alone misses what this sees.
+                                if (assertTierReadConsistent("lv", "base", oracleSql, "1, 2") == TIER_READ_RECOMPUTE) {
+                                    midRunRecomputeChecks.incrementAndGet();
+                                }
+                                // The drain phase: the writers may commit again.
+                                arriveAndAwaitTick(ticks);
+                            }
                         }
                     } catch (Throwable th) {
                         errors.add(th);
+                        if (ticks != null) {
+                            ticks.forceTermination();
+                        }
                     } finally {
                         Path.clearThreadLocals();
                     }
@@ -2763,11 +3093,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 for (Thread t : writers) {
                     t.start();
                 }
+                if (backfillWriter != null) {
+                    backfillWriter.start();
+                }
                 if (driver != null) {
                     driver.start();
                 }
                 for (Thread t : writers) {
                     t.join();
+                }
+                if (backfillWriter != null) {
+                    backfillWriter.join();
                 }
                 ingesting.set(false);
                 if (driver != null) {
@@ -2782,18 +3118,34 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // Quiesce single-threaded, then assert the differential oracle below.
             drainWalQueue();
             driveRefreshToQuiescence(job);
+            segmentRepairs = job.getStatsForTest().get(LiveViewRefreshStats.SEGMENT_REPAIR_COUNT);
+            if (anchor != null) {
+                LOG.info().$("LV concurrent-writer fuzz done: backfilledRows=").$(backfilledRows.get())
+                        .$(", midRunRecomputeChecks=").$(midRunRecomputeChecks.get())
+                        .$(", segmentRepairs=").$(segmentRepairs)
+                        .$(", segmentYields=").$(job.getStatsForTest().get(LiveViewRefreshStats.SEGMENT_YIELD_COUNT))
+                        .$(", keyedSegments=").$(job.getStatsForTest().get(LiveViewRefreshStats.KEYED_REPLAY_SEGMENT_COUNT)).$();
+                // The run's own evidence: without it a run whose backfill never landed, or whose
+                // view never caught up with the base between ticks, passes having raced nothing.
+                Assert.assertTrue("the backfilling writer must have committed late rows", backfilledRows.get() > 0);
+                Assert.assertTrue(
+                        "the driver must have compared a caught-up view with the recompute mid-run",
+                        midRunRecomputeChecks.get() > 0
+                );
+            }
         } finally {
             Misc.free(job);
         }
 
         // The oracle: the live view must equal its own window query recomputed over the base
-        // table under the run's START FROM boundary. ORDER BY 1 (the unique ts) gives both sides
-        // a total order; genericStringMatch tolerates SYMBOL-vs-STRING on passthrough.
+        // table under the run's START FROM boundary. ORDER BY 1, 2 - (ts, sym), unique over
+        // ties - gives both sides a total order; genericStringMatch tolerates SYMBOL-vs-STRING
+        // on passthrough.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + oracleSql + ") ORDER BY 1",
-                "(lv) ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1, 2",
+                "(lv) ORDER BY 1, 2",
                 LOG,
                 true
         );
@@ -2801,6 +3153,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
+        return segmentRepairs;
     }
 
     // Differential fuzz for a DEDUP UPSERT KEYS(ts, sym) base. Mirrors runFuzz's
@@ -2819,13 +3172,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean o3,
             boolean restart,
             boolean seed,
-            boolean removals
+            boolean removals,
+            @Nullable LiveViewFuzzAnchor anchor
     ) throws Exception {
         // Pin the clock a day below the data (see runFuzz): START FROM NOW resolves the
         // CREATE-moment clock into the view's lower bound, and this harness wants that bound to
         // admit the whole dataset. Only an explicit-boundary run excludes any row.
-        if (currentMicros < 0) {
+        if (anchor != null) {
+            setCurrentMicros(anchor.clockMicros);
+        } else if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+        }
+        // An anchored run is an ANCHORED_VARIANT_COUNT shape over the anchor's named window,
+        // over a key indexed in most runs, under the repair knobs drawn for it.
+        final StringSink knobLog = new StringSink();
+        final boolean isIndexed = anchor != null && rnd.nextInt(4) != 0;
+        if (anchor != null) {
+            final LiveViewFuzzKnobs knobs = LiveViewFuzzKnobs.randomize(rnd);
+            knobs.apply(AbstractLiveViewTest::setProperty);
+            knobs.toSink(knobLog);
         }
 
         final int n = 1 + rnd.nextInt(MAX_FRAME);
@@ -2835,11 +3200,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
         final boolean withWhere = rnd.nextInt(3) == 0;
 
-        final String projection = projection(variant, n);
+        final String projection = anchor != null ? anchoredViewProjection(variant) : projection(variant, n);
+        final String oracleProjection = anchor != null ? anchoredOracleProjection(variant, anchor.bucket) : projection;
+        final String window = anchor != null ? " WINDOW w AS (PARTITION BY sym ORDER BY ts " + anchor.clause + ")" : "";
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
-        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) "
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL" + (isIndexed ? " INDEX" : "") + ", i LONG, x DOUBLE) "
                 + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
 
         // Distinct, strictly-increasing timestamp pool - fewer distinct values than
@@ -2850,7 +3217,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final long[] pool = new long[poolSize];
         final int maxDayJumps = 30;
         int dayJumps = 0;
-        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        long ts = anchor != null ? anchor.dataStartMicros : MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
         for (int k = 0; k < poolSize; k++) {
             ts += 1 + rnd.nextInt(baseStepMax);
             if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
@@ -2895,8 +3262,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
         final int startMode = rnd.nextInt(START_FROM_MODES);
         final long boundary = startBoundary(rnd, startMode, pool, false);
-        final String viewSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
-        final String oracleSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, boundary);
+        final String viewSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL) + window;
+        final String oracleSql = "SELECT " + oracleProjection + " FROM base" + whereTail(withWhere, boundary);
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + startFromClause(startMode, boundary, false)
                 + "AS " + viewSql;
@@ -2905,7 +3272,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", o3=").$(o3).$(", restart=").$(restart).$(", preCount=").$(preCount)
                 .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
-                .$(", removals=").$(removals).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+                .$(", removals=").$(removals).$(", where=").$(withWhere).$(", indexed=").$(isIndexed)
+                .$(", knobs=[").$(knobLog).$("], sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -3091,29 +3459,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 + (isDecimal ? ", d " + decimalType : "")
                 + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-        // Generate the logical dataset: strictly-unique, strictly-increasing
-        // timestamps; random symbols and values with occasional NULLs.
-        final long[] tsv = new long[rowCount];
-        final int[] symIdx = new int[rowCount];
-        final long[] iv = new long[rowCount];
-        final double[] xv = new double[rowCount];
-        final boolean[] xNull = new boolean[rowCount];
+        // Generate the logical dataset: ascending timestamps, random symbols and values with
+        // occasional NULLs. A window partitioned by sym also draws timestamp ties across keys,
+        // which keep (ts, sym) unique and so every sym partition a total order (see
+        // LiveViewFuzzRows). Variant 5 and the read-back outputs are not partitioned by sym, so
+        // their timestamps stay unique.
+        final int tiePct = inMemReadBack || leadReadBack || variant == 5 ? 0 : tiePct(rnd);
+        final LiveViewFuzzRows rows = LiveViewFuzzRows.generate(
+                rnd, rowCount, symCount, MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"),
+                baseStepMax, dayJumpEvery, tiePct
+        );
+        final long[] tsv = rows.tsv;
+        final int[] symIdx = rows.symIdx;
+        final long[] iv = rows.iv;
+        final double[] xv = rows.xv;
+        final boolean[] xNull = rows.xNull;
         final String[] dLit = isDecimal ? new String[rowCount] : null;
-        final int maxDayJumps = 30; // cap partition spread so a wide-step run stays fast
-        int dayJumps = 0;
-        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
-        for (int k = 0; k < rowCount; k++) {
-            ts += 1 + rnd.nextInt(baseStepMax); // keeps ts strictly increasing
-            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
-                ts += 86_400_000_000L; // full-day jump to span more partitions
-                dayJumps++;
-            }
-            tsv[k] = ts;
-            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount); // -1 => NULL symbol
-            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
-            xNull[k] = rnd.nextInt(20) == 0;
-            xv[k] = rnd.nextDouble() * 1000.0;
-            if (isDecimal) {
+        if (isDecimal) {
+            for (int k = 0; k < rowCount; k++) {
                 dLit[k] = decimalLiteral(rnd, decimalPrecision, decimalScale);
             }
         }
@@ -3139,6 +3502,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         LOG.info().$("LV fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", tiePct=").$(tiePct).$(", ties=").$(rows.getTieCount())
                 .$(", o3=").$(o3).$(", restart=").$(restart)
                 .$(", preCount=").$(preCount).$(", startMode=").$(startMode)
                 .$(", boundary=").$(boundary).$(", inMem=").$(inMem)
@@ -3180,9 +3544,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 for (int c = 0; c + 1 < cb.length; c++) {
                     insertCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, dLit);
                     drainWalQueue();
-                    refreshCycle(job);
+                    if (restart && inMem && rnd.nextInt(4) == 0) {
+                        // Holds the flush off, so the restart below can land on an un-flushed
+                        // lead rather than only at a point where everything is on disk.
+                        pinnedRefreshCycle(job);
+                    } else {
+                        refreshCycle(job);
+                    }
 
-                    // Simulate a restart at a quiescent point (ACTIVE state only).
+                    // Simulate a restart (ACTIVE state only), a resident lead included.
                     if (restart && rnd.nextInt(3) == 0) {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
@@ -3250,6 +3620,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // lead). Uses a direct SELECT * FROM lv (native ts order) rather than
             // the ORDER BY 1 wrapper, whose routing is not guaranteed to be Mode A.
             assertLeadReadBack(oracleSql);
+            if (symbolReadBack) {
+                assertLeadSymbols(symCount);
+            }
 
             if (restart) {
                 // Crash-before-flush: drop the in-memory registry (losing the RAM
@@ -3258,17 +3631,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // must hold on the recovered lead.
                 restartAndRecoverLead();
                 assertLeadReadBack(oracleSql);
+                if (symbolReadBack) {
+                    assertLeadSymbols(symCount);
+                }
             }
         } else {
             // The oracle: the live view must equal its own window query recomputed over the
-            // base table under the run's START FROM boundary. ORDER BY 1 (the unique ts) gives
-            // both sides a total order; genericStringMatch tolerates SYMBOL-vs-STRING on
-            // passthrough.
+            // base table under the run's START FROM boundary. ORDER BY 1, 2 - (ts, sym), unique
+            // even over timestamp ties - gives both sides a total order; genericStringMatch
+            // tolerates SYMBOL-vs-STRING on passthrough.
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,
-                    "(" + oracleSql + ") ORDER BY 1",
-                    "(lv) ORDER BY 1",
+                    "(" + oracleSql + ") ORDER BY 1, 2",
+                    "(lv) ORDER BY 1, 2",
                     LOG,
                     true
             );
@@ -3280,8 +3656,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // read, and the Mode B result is byte-identical to the forced
                 // disk-only path under whatever O3 / restart / seed pattern this
                 // run produced.
-                assertModeBEngaged();
-                assertModeBMatchesDiskOnly("SELECT * FROM lv");
+                assertModeBEngaged("lv");
+                assertModeBMatchesDiskOnly("lv", "SELECT * FROM lv");
                 // The same differential over the shapes that route LEAD-ONLY rather than
                 // seam-split. The view is quiesced, so the lead is flushed and the slot is
                 // pure overlap - which is what makes routed and disk-only comparable, and
@@ -3297,10 +3673,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // serves its rows in the opposite order; count() covers size()'s
                 // mode-independent diskSize + leadRowCount sum; and sum(i) leaves the
                 // record cursor entirely for the page-frame path.
-                assertModeBMatchesDiskOnly("SELECT i, rn FROM lv");
-                assertModeBMatchesDiskOnly("SELECT * FROM lv ORDER BY ts DESC");
-                assertModeBMatchesDiskOnly("SELECT count() FROM lv");
-                assertModeBMatchesDiskOnly("SELECT sum(i) FROM lv");
+                assertModeBMatchesDiskOnly("lv", "SELECT i, rn FROM lv");
+                assertModeBMatchesDiskOnly("lv", "SELECT * FROM lv ORDER BY ts DESC");
+                assertModeBMatchesDiskOnly("lv", "SELECT count() FROM lv");
+                assertModeBMatchesDiskOnly("lv", "SELECT sum(i) FROM lv");
             }
         }
 
@@ -3357,8 +3733,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         final StringSink sink = new StringSink();
         final IntList bounds = new IntList();
+        final ObjList<String> keys = new ObjList<>();
+        for (int k = 0; k < symCount; k++) {
+            keys.add(SYMBOLS[k]);
+        }
         LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         long leadChecks = 0;
+        long tierReadChecks = 0;
         try {
             // A fixed 16-way split rather than commitBounds' random 2..10: the check
             // only runs on a pinned cycle carrying a resident lead, and a 2-commit
@@ -3377,8 +3758,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // in-order cycles carrying the check).
                 if (c % CYCLES_PER_GROUP == 0) {
                     refreshCycle(job);
-                } else if (pinnedRefreshCycle(job)) {
-                    leadChecks++;
+                } else {
+                    if (pinnedRefreshCycle(job)) {
+                        leadChecks++;
+                    }
+                    // With the lead resident: a read through the tier must already equal the
+                    // recompute once the view has refreshed every applied commit, and the
+                    // lead's symbols must read back under one label each.
+                    if (assertTierReadConsistent("lv", "base", viewSql, "1, 2, 3, 4") == TIER_READ_RECOMPUTE) {
+                        tierReadChecks++;
+                    }
+                    assertSymbolLabelsConsistent("lv", "sym", keys);
                 }
             }
             driveRefreshToQuiescence(job);
@@ -3393,6 +3783,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // one, makes the worker emergency-flush and leadRowCount is then always 0.
         // Fail loudly instead.
         Assert.assertTrue("the lead-ordering compare never ran - this arm is vacuous", leadChecks > 0);
+        Assert.assertTrue("no read through the tier ran over a resident lead - this arm is vacuous", tierReadChecks > 0);
 
         // The lead must not merely be well-ordered - it must also be right. The
         // usual oracle: the view equals its own recompute over the base.
@@ -4156,28 +4547,19 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP TABLE IF EXISTS shadow");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-        // Strictly-unique, strictly-increasing timestamps so ts is a total order;
-        // random symbols and values with occasional NULLs.
-        final long[] tsv = new long[rowCount];
-        final int[] symIdx = new int[rowCount];
-        final long[] iv = new long[rowCount];
-        final double[] xv = new double[rowCount];
-        final boolean[] xNull = new boolean[rowCount];
-        final int maxDayJumps = 30;
-        int dayJumps = 0;
-        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
-        for (int k = 0; k < rowCount; k++) {
-            ts += 1 + rnd.nextInt(baseStepMax);
-            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
-                ts += 86_400_000_000L;
-                dayJumps++;
-            }
-            tsv[k] = ts;
-            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
-            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
-            xNull[k] = rnd.nextInt(20) == 0;
-            xv[k] = rnd.nextDouble() * 1000.0;
-        }
+        // Ascending timestamps, with ties across keys for every variant partitioned by sym
+        // (all but 5): (ts, sym) stays unique, so ts is a total order within each partition.
+        // Random symbols and values with occasional NULLs.
+        final int tiePct = variant == 5 ? 0 : tiePct(rnd);
+        final LiveViewFuzzRows rows = LiveViewFuzzRows.generate(
+                rnd, rowCount, symCount, MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"),
+                baseStepMax, dayJumpEvery, tiePct
+        );
+        final long[] tsv = rows.tsv;
+        final int[] symIdx = rows.symIdx;
+        final long[] iv = rows.iv;
+        final double[] xv = rows.xv;
+        final boolean[] xNull = rows.xNull;
 
         // Phase 1 rows [0, splitPoint) are ingested, refreshed, and quiesced
         // before the removal; phase 2 rows [splitPoint, rowCount) continue after
@@ -4200,6 +4582,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 + "AS " + viewSql;
 
         LOG.info().$("LV removal fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", tiePct=").$(tiePct).$(", ties=").$(rows.getTieCount())
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", truncate=").$(truncate).$(", restart=").$(restart)
                 .$(", preCount=").$(preCount).$(", startMode=").$(startMode).$(", boundary=").$(boundary)
@@ -4251,17 +4634,18 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
 
             // Intact-base checkpoint of the oracle: at this point logical ==
-            // physical, so the standard recompute must already hold.
+            // physical, so the standard recompute must already hold. ORDER BY 1, 2 -
+            // (ts, sym), unique over ties - gives both sides a total order.
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,
-                    "(" + oracleSql + ") ORDER BY 1",
-                    "(lv) ORDER BY 1",
+                    "(" + oracleSql + ") ORDER BY 1, 2",
+                    "(lv) ORDER BY 1, 2",
                     LOG,
                     true
             );
             assertNoRefreshFaults("lv");
-            printSql("(lv) ORDER BY 1", preRemoval);
+            printSql("(lv) ORDER BY 1, 2", preRemoval);
 
             // The removal event: every targeted row is emitted (phase 1 has
             // quiesced), so this removes derived history, not pending input.
@@ -4293,7 +4677,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Assert.assertNotNull(instance);
             Assert.assertFalse("LV must stay valid after base row removal", instance.isInvalid());
             sink.clear();
-            printSql("(lv) ORDER BY 1", sink);
+            printSql("(lv) ORDER BY 1, 2", sink);
             TestUtils.assertEquals("removal must not retract emitted LV rows", preRemoval, sink);
 
             // Phase 2: strictly in-order continuation on top of the frozen state.
@@ -4330,8 +4714,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(SELECT " + projection + " FROM shadow" + oracleWhere + ") ORDER BY 1",
-                "(lv) ORDER BY 1",
+                "(SELECT " + projection + " FROM shadow" + oracleWhere + ") ORDER BY 1, 2",
+                "(lv) ORDER BY 1, 2",
                 LOG,
                 true
         );
@@ -4339,6 +4723,296 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
         execute("DROP TABLE shadow");
+    }
+
+    // Base removal under an anchored view (see testFuzzRemovalFreezeAndContinueAnchored and
+    // testFuzzBaseTtlAnchored). The shape of runRemovalFreezeContinueFuzz and runBaseTtlFuzz:
+    // phase one is ingested out of order and quiesced, the removal drops rows the view has
+    // already emitted, and phase two continues above them. What differs is the window - an
+    // ANCHOR clause from LiveViewFuzzAnchor over an indexed key in most runs, with the repair
+    // knobs drawn per run - and that phase two may arrive out of order too.
+    //
+    // A repair after the removal reads the base, which no longer holds the removed rows. Rows
+    // below its output floor stay as the view emitted them, and rows above it are derived
+    // again from the base as it stands, and a resume can take its floor from a root anywhere
+    // below the correction, removed rows included. What a segment holds once it lies above a
+    // floor that reached below the removal therefore depends on the route the repair took. An
+    // anchored segment's rows are a function of that segment's base rows alone, though, so
+    // every segment above every removed row equals the recompute over the logical dataset
+    // (every row ever inserted, held in a shadow table), whatever repaired it. Below that, the
+    // log and the view's state speak for the run.
+    // TTL keeps evicting behind phase two, so a TTL run keeps phase two in timestamp order and
+    // its whole output equals the recompute over the logical dataset.
+    //
+    // Every run must end ACTIVE, except that a restart after the removal may stop the view as
+    // rebuild_blocked when it finds no checkpoint to restore: the rebuild would drop rows the
+    // view retains. No run may log a CRITICAL line from the live view package; a stale row a
+    // repair leaves behind in a segment it rewrote fails its row-count proof at that level.
+    private void runAnchoredRemovalFuzz(
+            Rnd rnd,
+            int variant,
+            int rowCount,
+            int removal,
+            boolean restart,
+            boolean seed,
+            boolean inMemory
+    ) throws Exception {
+        final LiveViewFuzzKnobs knobs = LiveViewFuzzKnobs.randomize(rnd);
+        knobs.apply(AbstractLiveViewTest::setProperty);
+        final StringSink knobLog = new StringSink();
+        knobs.toSink(knobLog);
+        // The 1970 shape is left out: a TTL run moves the clock above the data, which for 1970
+        // data is a clock the next run cannot pin below its own.
+        final LiveViewFuzzAnchor anchor = LiveViewFuzzAnchor.draw(rnd, rnd.nextInt(LiveViewFuzzAnchor.DAILY_EPOCH));
+        setCurrentMicros(anchor.clockMicros);
+        final boolean isIndexed = rnd.nextInt(4) != 0;
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        final int stepMode = rnd.nextInt(3);
+        final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
+        final int dayJumpEvery = stepMode == 0 ? 20 : 12;
+        final int tiePct = tiePct(rnd);
+        final LiveViewFuzzRows rows = LiveViewFuzzRows.generate(
+                rnd, rowCount, symCount, anchor.dataStartMicros, baseStepMax, dayJumpEvery, tiePct);
+        final long[] tsv = rows.tsv;
+        final LongHashSet usedTs = new LongHashSet();
+        for (int k = 0; k < rowCount; k++) {
+            usedTs.add(tsv[k]);
+        }
+        final int splitPoint = rowCount / 3 + rnd.nextInt(rowCount / 3);
+        if (removal == REMOVAL_TTL) {
+            // Three days above phase one, so applying the first phase-two row moves the base's
+            // maximum well past the one-day TTL window and evicts every phase-one partition.
+            // Every row moves alike, so the ties stay.
+            for (int k = splitPoint; k < rowCount; k++) {
+                tsv[k] += 3 * 86_400_000_000L;
+            }
+        }
+        final boolean isPhaseTwoO3 = removal != REMOVAL_TTL && rnd.nextBoolean();
+        final int maxLateness = rnd.nextBoolean() ? 0 : 1 + rnd.nextInt(20);
+        final int preCount = seed ? 1 + rnd.nextInt(splitPoint) : 0;
+        final int pinPct = inMemory ? rnd.nextInt(40) : 0;
+
+        final String viewSql = "SELECT " + anchoredViewProjection(variant) + " FROM base"
+                + " WINDOW w AS (PARTITION BY sym ORDER BY ts " + anchor.clause + ")";
+        final String oracleProjection = anchoredOracleProjection(variant, anchor.bucket);
+        LOG.info().$("LV anchored removal fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", removal=").$(removal).$(", symCount=").$(symCount).$(", indexed=").$(isIndexed)
+                .$(", anchor=").$(anchor.clause).$(", stepMode=").$(stepMode).$(", tiePct=").$(tiePct)
+                .$(", ties=").$(rows.getTieCount()).$(", splitPoint=").$(splitPoint)
+                .$(", phaseTwoO3=").$(isPhaseTwoO3).$(", maxLateness=").$(maxLateness)
+                .$(", restart=").$(restart).$(", preCount=").$(preCount).$(", inMem=").$(inMemory)
+                .$(", pinPct=").$(pinPct).$(", knobs=[").$(knobLog).$("]").$();
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("DROP TABLE IF EXISTS shadow");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL" + (isIndexed ? " INDEX" : "")
+                + ", i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY"
+                + (removal == REMOVAL_TTL ? " TTL 1 DAY" : "") + " WAL");
+
+        final LogCapture capture = new LogCapture();
+        final StringSink sink = new StringSink();
+        long maxRemovedTs = Numbers.LONG_NULL;
+        long dropLo = Numbers.LONG_NULL;
+        long dropHi = Numbers.LONG_NULL;
+        // Late rows phase two sends into the dropped days, kept for the shadow table.
+        final LongList lateIntoRemoved = new LongList();
+        final IntList lateIntoRemovedKeys = new IntList();
+        int phaseTwoFrom = splitPoint;
+        boolean isRestartedAfterRemoval = false;
+        LiveViewRefreshJob job = null;
+        capture.start();
+        try {
+            if (preCount > 0) {
+                final int[] preOrder = segmentOrder(rnd, 0, preCount, true);
+                final int[] cb = commitBounds(rnd, preOrder.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertCommit(sink, preOrder, cb[c], cb[c + 1], tsv, rows.symIdx, rows.iv, rows.xv, rows.xNull, null);
+                    drainWalQueue();
+                }
+            }
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms " + (inMemory ? "IN MEMORY 60s " : "")
+                    + "START FROM BEGINNING AS " + viewSql);
+            job = new LiveViewRefreshJob(0, engine, 1);
+            if (preCount > 0) {
+                driveSeedToCompletion(job, "lv");
+            }
+
+            // Phase 1: out of order over an intact base.
+            if (preCount < splitPoint) {
+                final int[] phase1Order = segmentOrder(rnd, preCount, splitPoint, true, maxLateness);
+                final int[] cb = commitBounds(rnd, phase1Order.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertCommit(sink, phase1Order, cb[c], cb[c + 1], tsv, rows.symIdx, rows.iv, rows.xv, rows.xNull, null);
+                    drainWalQueue();
+                    job = anchoredRemovalPass(rnd, job, pinPct, restart);
+                }
+            }
+            driveRefreshToQuiescence(job);
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "(SELECT " + oracleProjection + " FROM base) ORDER BY 1, 2",
+                    "(lv) ORDER BY 1, 2",
+                    LOG,
+                    true
+            );
+            final StringSink preRemoval = new StringSink();
+            printSql("(lv) ORDER BY 1, 2", preRemoval);
+
+            // The removal: every removed row is one the view has already emitted.
+            switch (removal) {
+                case REMOVAL_TRUNCATE -> {
+                    execute("TRUNCATE TABLE base");
+                    maxRemovedTs = tsv[splitPoint - 1];
+                }
+                case REMOVAL_DROP_PARTITION -> {
+                    final LongHashSet seenDays = new LongHashSet();
+                    final ObjList<String> days = new ObjList<>();
+                    for (int k = 0; k < splitPoint; k++) {
+                        final long dayFloor = tsv[k] - tsv[k] % 86_400_000_000L;
+                        if (seenDays.add(dayFloor)) {
+                            days.add(Micros.toString(dayFloor).substring(0, 10));
+                        }
+                    }
+                    final int dropIdx = rnd.nextInt(days.size());
+                    final int dropCount = rnd.nextBoolean() && dropIdx + 1 < days.size() ? 2 : 1;
+                    sink.clear();
+                    sink.put("ALTER TABLE base DROP PARTITION LIST '").put(days.getQuick(dropIdx)).put('\'');
+                    if (dropCount == 2) {
+                        sink.put(", '").put(days.getQuick(dropIdx + 1)).put('\'');
+                    }
+                    execute(sink);
+                    dropLo = MicrosTimestampDriver.floor(days.getQuick(dropIdx) + "T00:00:00.000000Z");
+                    dropHi = dropLo + dropCount * 86_400_000_000L;
+                    for (int k = 0; k < splitPoint; k++) {
+                        if (tsv[k] >= dropLo && tsv[k] < dropHi) {
+                            maxRemovedTs = Math.max(maxRemovedTs, tsv[k]);
+                        }
+                    }
+                }
+                case REMOVAL_TTL -> {
+                    // TTL evicts relative to min(maxTimestamp, wall clock), so the clock moves
+                    // above the trigger row before it lands.
+                    setCurrentMicros(tsv[splitPoint] + 86_400_000_000L);
+                    insertCommit(sink, new int[]{splitPoint}, 0, 1, tsv, rows.symIdx, rows.iv, rows.xv, rows.xNull, null);
+                    phaseTwoFrom = splitPoint + 1;
+                }
+                default -> throw new IllegalArgumentException("removal=" + removal);
+            }
+            drainWalQueue();
+            refreshCycle(job);
+            final LiveViewInstance afterRemoval = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(afterRemoval);
+            Assert.assertFalse("the view must stay valid after the base lost rows it emitted", afterRemoval.isInvalid());
+            sink.clear();
+            printSql("(lv) ORDER BY 1, 2", sink);
+            if (removal == REMOVAL_TTL) {
+                // The trigger row sorts last, so the pre-removal output stays a prefix.
+                Assert.assertTrue("TTL eviction must not retract emitted rows", sink.toString().startsWith(preRemoval.toString()));
+            } else {
+                TestUtils.assertEquals("the removal must not retract emitted rows", preRemoval, sink);
+            }
+
+            // Phase 2, above the removal; out of order unless TTL keeps evicting behind it.
+            if (phaseTwoFrom < rowCount) {
+                final int[] phase2Order = segmentOrder(rnd, phaseTwoFrom, rowCount, isPhaseTwoO3, maxLateness);
+                final int[] cb = commitBounds(rnd, phase2Order.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertCommit(sink, phase2Order, cb[c], cb[c + 1], tsv, rows.symIdx, rows.iv, rows.xv, rows.xNull, null);
+                    if (isPhaseTwoO3 && dropLo != Numbers.LONG_NULL && rnd.nextInt(3) == 0) {
+                        // A late row into a dropped day, on the key of a row that day held: a
+                        // repair of its segment meets the stale rows the view keeps for that key.
+                        final int k = rnd.nextInt(splitPoint);
+                        final long lateTs = tsv[k] + 1;
+                        if (tsv[k] >= dropLo && tsv[k] < dropHi && !usedTs.contains(lateTs)) {
+                            usedTs.add(lateTs);
+                            lateIntoRemoved.add(lateTs);
+                            lateIntoRemovedKeys.add(rows.symIdx[k]);
+                            insertCommit(sink, new int[]{0}, 0, 1, new long[]{lateTs}, new int[]{rows.symIdx[k]},
+                                    new long[]{1}, new double[]{1.0}, new boolean[]{false}, null);
+                        }
+                    }
+                    drainWalQueue();
+                    final LiveViewRefreshJob before = job;
+                    job = anchoredRemovalPass(rnd, job, pinPct, restart);
+                    isRestartedAfterRemoval |= job != before;
+                }
+            }
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+            capture.drain();
+            capture.stop();
+        }
+
+        capture.assertNotLogged(" C i.q.c.l.");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        if (instance.isCheckpointRecoveryBlocked()) {
+            Assert.assertTrue(
+                    "the view stopped in recovery phase " + LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
+                            + " with no restart after the removal",
+                    isRestartedAfterRemoval
+            );
+            Assert.assertEquals(
+                    "a restart after a removal may stop the view only on a refused rebuild",
+                    LiveViewCheckpointRecoveryPhase.ROUTE_REBUILD_BLOCKED,
+                    instance.getCheckpointRestoreRoute()
+            );
+            LOG.info().$("LV anchored removal fuzz: the view stopped as rebuild_blocked after a restart").$();
+        } else {
+            Assert.assertFalse("view invalid: " + instance.getInvalidationReason(), instance.isInvalid());
+            execute("CREATE TABLE shadow (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            insertLogicalDataset("shadow", tsv, rows.symIdx, rows.iv, rows.xv, rows.xNull);
+            for (int r = 0, n = lateIntoRemoved.size(); r < n; r++) {
+                final int key = lateIntoRemovedKeys.getQuick(r);
+                execute("INSERT INTO shadow (ts, sym, i, x) VALUES (" + lateIntoRemoved.getQuick(r) + "::timestamp, "
+                        + (key < 0 ? "null" : "'" + SYMBOLS[key] + "'") + ", 1, 1.0)");
+            }
+            drainWalQueue();
+            final String shadowOracle = "SELECT " + oracleProjection + " FROM shadow";
+            if (maxRemovedTs == Numbers.LONG_NULL || !isPhaseTwoO3) {
+                // Nothing removed (a TTL run checks its eviction separately), or phase two in
+                // order: nothing repaired a segment that held removed rows.
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                        "(" + shadowOracle + ") ORDER BY 1, 2", "(lv) ORDER BY 1, 2", LOG, true);
+            } else {
+                // The segments above every removed row equal the recompute.
+                final long maxRemovedBucket = queryTimestamp("SELECT max(" + anchor.bucket + ") FROM shadow WHERE ts <= " + maxRemovedTs);
+                final long cleanFromTs = queryTimestamp("SELECT min(ts) FROM shadow WHERE " + anchor.bucket + " > " + maxRemovedBucket + "::timestamp");
+                if (cleanFromTs != Numbers.LONG_NULL) {
+                    TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                            "(" + shadowOracle + ") WHERE ts >= " + cleanFromTs + " ORDER BY 1, 2",
+                            "(SELECT * FROM lv WHERE ts >= " + cleanFromTs + ") ORDER BY 1, 2", LOG, true);
+                }
+            }
+            execute("DROP TABLE shadow");
+        }
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // One refresh pass of runAnchoredRemovalFuzz: a pinned flush now and then, so a lead is
+    // resident when the next pass lands, and a restart now and then, whatever the view holds.
+    // Returns the job the next pass runs on.
+    private LiveViewRefreshJob anchoredRemovalPass(Rnd rnd, LiveViewRefreshJob job, int pinPct, boolean restart) {
+        if (rnd.nextInt(100) < pinPct) {
+            pinnedRefreshCycle(job);
+        } else {
+            refreshCycle(job);
+        }
+        if (restart && rnd.nextInt(3) == 0) {
+            final LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
+            if (inst != null && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
+                Misc.free(job);
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                return new LiveViewRefreshJob(0, engine, 1);
+            }
+        }
+        return job;
     }
 
     // Differential fuzz where the base receives REPLACE_RANGE data commits
@@ -4380,31 +5054,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-        // Strictly-unique, strictly-increasing timestamps so ts is a total order;
-        // random symbols and values with occasional NULLs. Every dataset ts goes
-        // into usedTs up front so replace rows can never collide with a dataset
-        // row that is still to be inserted.
-        final long[] tsv = new long[rowCount];
-        final int[] symIdx = new int[rowCount];
-        final long[] iv = new long[rowCount];
-        final double[] xv = new double[rowCount];
-        final boolean[] xNull = new boolean[rowCount];
+        // Ascending timestamps, with ties across keys for every variant partitioned by sym
+        // (all but 5): (ts, sym) stays unique, so ts is a total order within each partition.
+        // Random symbols and values with occasional NULLs. Every dataset ts goes into usedTs
+        // up front so replace rows can never collide with a dataset row that is still to be
+        // inserted.
+        final int tiePct = variant == 5 ? 0 : tiePct(rnd);
+        final LiveViewFuzzRows rows = LiveViewFuzzRows.generate(
+                rnd, rowCount, symCount, MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"),
+                baseStepMax, dayJumpEvery, tiePct
+        );
+        final long[] tsv = rows.tsv;
+        final int[] symIdx = rows.symIdx;
+        final long[] iv = rows.iv;
+        final double[] xv = rows.xv;
+        final boolean[] xNull = rows.xNull;
         final LongHashSet usedTs = new LongHashSet();
-        final int maxDayJumps = 30;
-        int dayJumps = 0;
-        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
         for (int k = 0; k < rowCount; k++) {
-            ts += 1 + rnd.nextInt(baseStepMax);
-            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
-                ts += 86_400_000_000L;
-                dayJumps++;
-            }
-            tsv[k] = ts;
-            usedTs.add(ts);
-            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
-            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
-            xNull[k] = rnd.nextInt(20) == 0;
-            xv[k] = rnd.nextDouble() * 1000.0;
+            usedTs.add(tsv[k]);
         }
 
         // Pre-CREATE history (the earliest rows by ts), plus the run's start mode. A cutting
@@ -4425,6 +5092,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 + "AS " + viewSql;
 
         LOG.info().$("LV replace-range fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", tiePct=").$(tiePct).$(", ties=").$(rows.getTieCount())
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", restart=").$(restart).$(", preCount=").$(preCount)
                 .$(", startMode=").$(startMode).$(", boundary=").$(boundary).$(", inMem=").$(inMemory)
@@ -4492,14 +5160,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
 
         // The oracle: the live view must equal its own window query recomputed over the applied
-        // (post-replace) base under the run's START FROM boundary. ORDER BY 1 (the unique ts)
-        // gives both sides a total order; genericStringMatch tolerates SYMBOL-vs-STRING on
-        // passthrough.
+        // (post-replace) base under the run's START FROM boundary. ORDER BY 1, 2 - (ts, sym),
+        // unique over ties - gives both sides a total order; genericStringMatch tolerates
+        // SYMBOL-vs-STRING on passthrough.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + oracleSql + ") ORDER BY 1",
-                "(lv) ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1, 2",
+                "(lv) ORDER BY 1, 2",
                 LOG,
                 true
         );
@@ -4782,8 +5450,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // Mode B (the tier serves the var-length values from RAM), and the Mode B
         // result is byte-identical to the forced disk-only path - so a tier that
         // stored a var-length value wrong would diverge from the disk oracle here.
-        assertModeBEngaged();
-        assertModeBMatchesDiskOnly("SELECT * FROM lv");
+        assertModeBEngaged("lv");
+        assertModeBMatchesDiskOnly("lv", "SELECT * FROM lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");

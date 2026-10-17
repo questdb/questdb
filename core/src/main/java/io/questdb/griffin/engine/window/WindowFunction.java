@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
+import io.questdb.cairo.lv.LiveViewCheckpointSealState;
 import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.map.Map;
@@ -123,10 +124,10 @@ public interface WindowFunction extends Function {
      * maintain exactly {@code (sum, nonNullCount)}, and {@code count(*)} beside
      * {@code row_number()} both report
      * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT} because both maintain one
-     * counter of rows. Declaring a family is a claim about the <b>whole</b> of the
-     * per-partition state, so a function keeps anything the family's fields do not
-     * describe - the live rows behind a bounded frame's scalar tail, say - must not
-     * declare one: the group carries the family's fields and nothing else.
+     * counter of rows. Declaring a family is a claim about
+     * the whole-state image, so it may only be made where
+     * {@link #checkpointStateFixedLength()} declares the family's own width - the plan
+     * checks the two against each other and declines the projection when they disagree.
      */
     default int windowAccumulatorFamily() {
         return WindowAccumulatorDescriptor.FAMILY_NONE;
@@ -149,9 +150,10 @@ public interface WindowFunction extends Function {
      * Absorbs one row into this function's accumulator, which lives in the group's
      * fused map value rather than in a map of its own.
      * <p>
-     * Called once per row by {@link WindowMapState#computeNext(Record)}, the runtime that
-     * owns the group's map, and only on the one function the plan chose as a component's
-     * <b>contributor</b>.
+     * Called once per row by whichever runtime owns the group's map -
+     * {@link WindowMapState#computeNext(Record)} for an ordinary query,
+     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow} for an anchored live view - and
+     * only on the one function the plan chose as a component's <b>contributor</b>.
      * Every other projection on the same component reads the state this call updates
      * and writes nothing, which is what stops {@code sum(x)} beside {@code avg(x)}
      * counting the row twice.
@@ -167,6 +169,24 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * {@link #accumulateWindowState(Record, MapValue)} off an argument the caller already
+     * evaluated: {@code argument} is exactly what
+     * {@code windowAccumulatorArgument().getDouble(record)} returned for this row, non-finite
+     * values included. {@link WindowMapState#computeNext(Record)}'s pass-1 skip offers it to
+     * avoid a second read.
+     * <p>
+     * The default re-reads, which is always correct. Override only where the two-argument body
+     * begins with {@code arg.getDouble(record)}, and delegate from it, so one predicate serves
+     * both forms.
+     *
+     * @param value the partition's fused window-state value, already loaded and reset for the
+     *              current bucket
+     */
+    default void accumulateWindowState(Record record, MapValue value, double argument) {
+        accumulateWindowState(record, value);
+    }
+
+    /**
      * Adopts the fused slots this output reads out of the group's map value, or clears
      * them when {@code projection} is null.
      * <p>
@@ -174,12 +194,13 @@ public interface WindowFunction extends Function {
      * {@code computeNext}, {@code resetPartition}, {@code markPartitionAlive},
      * {@code retainPartitions} and per-function freeze/restore participation all become
      * no-ops, and its getters return whatever {@link #projectWindowState} last
-     * materialized. Binding is the plan's to do, because the plan is the single owner of
-     * which accumulator is whose.
+     * materialized. Binding is the plan's to do - see
+     * {@code LiveViewWindowStatePlan.bindProjectionFunctions} - because the plan is the
+     * single owner of which accumulator is whose.
      * <p>
-     * The parameter is the runtime projection: a bound function reads map value slots,
-     * and where a component's image would sit in a persisted payload is no business of
-     * the hot path.
+     * The parameter is the runtime projection rather than the durable one a live view
+     * persists: a bound function reads map value slots, and where a component's image
+     * sits in a persisted payload is no business of the hot path.
      * <p>
      * The whole projection rather than a pair of slots, because a family's field set is
      * the family's business: {@code (sum, nonNullCount)} covers the DOUBLE accumulators
@@ -193,6 +214,15 @@ public interface WindowFunction extends Function {
      *                   state back to the map this function owns outside a fused group
      */
     default void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+    }
+
+    /**
+     * Puts back the incremental-seal bookkeeping {@link #detachCheckpointSealState} took
+     * aside, re-stamped against {@code generation}, the generation of the newest root the
+     * baseline names. The dirty set returns as the same map, so the next seal freezes the keys
+     * the cadence already named. Only a function whose detach filled {@code state} is offered it.
+     */
+    default void attachCheckpointSealState(@NotNull LiveViewCheckpointSealState state, long generation) {
     }
 
     /**
@@ -230,6 +260,16 @@ public interface WindowFunction extends Function {
     @Nullable
     default ObjList<? extends Function> checkpointPartitionByFunctions() {
         return null;
+    }
+
+    /**
+     * Hands this function's incremental-seal bookkeeping to {@code state} and leaves the
+     * function owing a complete freeze, so a converging live-view repair can wipe and replay
+     * through it without losing the bookkeeping; see
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointSealCarryover}. A function already owing a
+     * complete freeze fills nothing in.
+     */
+    default void detachCheckpointSealState(@NotNull LiveViewCheckpointSealState state) {
     }
 
     default void computeNext(Record record) {
@@ -284,11 +324,13 @@ public interface WindowFunction extends Function {
      * <p>
      * A function opts in by calling
      * {@link io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction#markCheckpointPartitionDirty}
-     * from {@link #markPartitionAlive(Record)}. That call must be unconditional or
-     * absent altogether: a partial mark leaves a changed key out of the map, and the
-     * seal then publishes a root that still names the key's stale state. Opting out
-     * is fail-safe - the map stays null, the seal full-scans, and correctness does
-     * not depend on the function at all.
+     * from {@link #markPartitionAlive(Record, boolean)} on exactly the rows its
+     * {@code isFirstCadenceTouch} flag names, or on no row at all: a partial mark leaves
+     * a changed key out of the map, and the seal then publishes a root that still names
+     * the key's stale state. Marking on the flag is complete: it is raised on a partition's
+     * first row in a cadence, and every later row of that cadence moves state already named.
+     * Opting out is fail-safe - the map stays null, the seal full-scans, and correctness
+     * does not depend on the function at all.
      */
     @Nullable
     default Map getCheckpointDirtyPartitionMap() {
@@ -818,8 +860,13 @@ public interface WindowFunction extends Function {
      * tombstone bit. Implementations must be branchless on the common (no-tombstone)
      * case -- check the function-local tombstoneCount first and bail before the
      * Map lookup.
+     * <p>
+     * {@code isFirstCadenceTouch} is true on the first row the current checkpoint cadence sees
+     * for this partition. A function with a checkpoint dirty set marks only on those rows - see
+     * {@link #getCheckpointDirtyPartitionMap()} - while the tombstone clear above runs on every
+     * row, since its guard is a field load rather than a probe.
      */
-    default void markPartitionAlive(Record record) {
+    default void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
     }
 
     /**
@@ -840,6 +887,17 @@ public interface WindowFunction extends Function {
      *                          exactly this generation
      */
     default void onCheckpointPersisted(long logicalStateBytes, long generation) {
+    }
+
+    /**
+     * Converts the {@link io.questdb.cairo.lv.LiveViewCheckpointContracts#REPAIR_BASELINE_GENERATION
+     * provisional repair stamp} this function carries into {@code generation}, the one the
+     * repair's splice published. Unlike {@link #onCheckpointPersisted(long, long)}, it keeps the
+     * dirty set: the keys the replay touched above the newest root are what the next head seal
+     * freezes. Only a function still carrying the provisional stamp moves, so a stray call
+     * cannot hand a real generation to state that never stood at that root.
+     */
+    default void onCheckpointRepairBaselinePublished(long generation) {
     }
 
     /**
@@ -906,10 +964,11 @@ public interface WindowFunction extends Function {
      * Materializes this output's current value from the group's fused map value, so the
      * getters can answer without a map probe of their own.
      * <p>
-     * Called once per row by the runtime that owns the group's map -
+     * Called once per row by whichever runtime owns the group's map -
      * {@link WindowMapState#computeNext(Record)}, or {@link WindowMapState#projectPass2(Record)}
-     * for a two-pass group - on every projection of the group and after every contributor
-     * has run. Running it from the group's owner rather than from this function's own
+     * for a two-pass group, and {@link io.questdb.cairo.lv.LiveViewWindow#processRow} for an
+     * anchored live view - on every projection of the group and after every contributor has
+     * run. Running it from the group's owner rather than from this function's own
      * {@link #computeNext(Record)} is what removes the ordering dependency on the SELECT
      * list: the accumulators are whole before the first output reads one, however the
      * outputs happen to be ordered.
@@ -931,6 +990,17 @@ public interface WindowFunction extends Function {
      * Prepares state before the optional secondary cached traversal.
      */
     default void preparePass2() {
+    }
+
+    /**
+     * Ends the incremental baseline this function's own root is built on, so its next seal
+     * walks its whole live key domain. A function joining or leaving a window-state group
+     * needs it: while the group owns its state, moved keys land in the group's dirty set, so
+     * an incremental seal would leave stale entries a restart reads back as live. A function
+     * that does not implement this keeps {@link #isCheckpointFullScanRequired()} answering
+     * true, which asks for the same complete freeze.
+     */
+    default void requireCheckpointFullScan() {
     }
 
     /**
@@ -1150,11 +1220,37 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * The exact byte length {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)}
+     * emits for <b>every</b> partition of this function, or {@code -1} when the image is not
+     * fixed width. The default declines.
+     * <p>
+     * A fixed width lets the seal inline the image in the partition-map leaf's scalar slot, up
+     * to {@link io.questdb.cairo.lv.LiveViewCheckpointContracts#MAX_INLINE_COMPONENT_STATE_BYTES}.
+     * The leaf stores no per-entry length, so the declaration is a hard invariant:
+     * {@link LiveViewStatePageWriter#freeze(WindowFunction, MapValue)} treats a mismatch as a
+     * critical failure. Declare it only where the <b>complete</b> image is fixed - an unbounded
+     * accumulator, never a bounded ring or ROWS buffer, whose image carries live rows, nor a
+     * {@link #supportsCheckpointRingState() ring-shaped} function.
+     * <p>
+     * <b>The number is durable.</b> A build that changes it would slice earlier entries at the
+     * wrong size, so a change demands a {@link #checkpointStateFormatVersion()} bump. Adding a
+     * declaration where a function previously declined is safe without a bump: the image is
+     * unchanged, and a reader tells a leaf scalar from a data page by shape.
+     */
+    default int checkpointStateFixedLength() {
+        return -1;
+    }
+
+    /**
      * @return the checkpoint state layout version this build writes. The compiler folds it into
      * the function's state codec identity, and the checkpoint timeline records it in the function
      * root. Bump on any state-layout change: the bump changes the identity, so a root written under
      * the old layout no longer resolves to this function and the timeline rejects it wholesale
-     * instead of decoding foreign bytes.
+     * instead of decoding foreign bytes. A changed {@link #checkpointStateFixedLength()} is such a
+     * change.
+     * <p>
+     * A bump is not free: a view whose roots stop resolving retires its checkpoint ladder and
+     * recomputes its window from the base table once, on the first start after the upgrade.
      */
     default int checkpointStateFormatVersion() {
         return 0;

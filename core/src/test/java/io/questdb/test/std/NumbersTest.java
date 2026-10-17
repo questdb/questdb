@@ -2411,6 +2411,67 @@ public class NumbersTest {
     }
 
     @Test
+    public void testSaturatedAddNonNegative() {
+        assertEquals(0, Numbers.saturatedAddNonNegative(0, 0));
+        assertEquals(10, Numbers.saturatedAddNonNegative(3, 7));
+        assertEquals(10, Numbers.saturatedAddNonNegative(7, 3));
+
+        // The widest sum that still fits, and every sum one past it.
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAddNonNegative(Long.MAX_VALUE, 0));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAddNonNegative(0, Long.MAX_VALUE));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAddNonNegative(Long.MAX_VALUE - 5, 5));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAddNonNegative(Long.MAX_VALUE - 5, 6));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAddNonNegative(1, Long.MAX_VALUE));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAddNonNegative(Long.MAX_VALUE, Long.MAX_VALUE));
+
+        Rnd rnd = new Rnd();
+        for (int i = 0; i < 10_000; i++) {
+            long a = rnd.nextLong() & Long.MAX_VALUE;
+            long b = rnd.nextLong() & Long.MAX_VALUE;
+            long expected = Long.MAX_VALUE - a < b ? Long.MAX_VALUE : a + b;
+            assertEquals(expected, Numbers.saturatedAddNonNegative(a, b));
+            assertEquals(expected, Numbers.saturatedAddNonNegative(b, a));
+            assertTrue(Numbers.saturatedAddNonNegative(a, b) >= Math.max(a, b));
+        }
+    }
+
+    @Test
+    public void testSaturatedMultiplyNonNegative() {
+        assertEquals(21, Numbers.saturatedMultiplyNonNegative(3, 7));
+        assertEquals(21, Numbers.saturatedMultiplyNonNegative(7, 3));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedMultiplyNonNegative(Long.MAX_VALUE, 1));
+        assertEquals(Long.MAX_VALUE - 1, Numbers.saturatedMultiplyNonNegative(Long.MAX_VALUE / 2, 2));
+
+        // A zero or negative factor gives zero rather than a negative product.
+        assertEquals(0, Numbers.saturatedMultiplyNonNegative(0, Long.MAX_VALUE));
+        assertEquals(0, Numbers.saturatedMultiplyNonNegative(Long.MAX_VALUE, 0));
+        assertEquals(0, Numbers.saturatedMultiplyNonNegative(-3, 7));
+        assertEquals(0, Numbers.saturatedMultiplyNonNegative(3, -7));
+        assertEquals(0, Numbers.saturatedMultiplyNonNegative(Long.MIN_VALUE, Long.MIN_VALUE));
+
+        // Products past the long range saturate instead of wrapping.
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedMultiplyNonNegative(Long.MAX_VALUE / 2 + 1, 2));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedMultiplyNonNegative(1L << 32, 1L << 31));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedMultiplyNonNegative(Long.MAX_VALUE, Long.MAX_VALUE));
+        assertEquals(1L << 62, Numbers.saturatedMultiplyNonNegative(1L << 31, 1L << 31));
+
+        Rnd rnd = new Rnd();
+        for (int i = 0; i < 10_000; i++) {
+            long a = rnd.nextLong() & Long.MAX_VALUE;
+            long b = (rnd.nextLong() & Long.MAX_VALUE) >>> rnd.nextInt(63);
+            long product = Numbers.saturatedMultiplyNonNegative(a, b);
+            assertEquals(product, Numbers.saturatedMultiplyNonNegative(b, a));
+            if (a == 0 || b == 0) {
+                assertEquals(0, product);
+            } else if (Math.multiplyHigh(a, b) != 0 || a * b < 0) {
+                assertEquals(Long.MAX_VALUE, product);
+            } else {
+                assertEquals(a * b, product);
+            }
+        }
+    }
+
+    @Test
     public void testShortBswap() {
         short v = Numbers.bswap((short) -7976);
         assertEquals(-7976, Numbers.bswap(v));

@@ -37,6 +37,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -870,7 +871,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (writer.getTableToken().isMatView()) {
                     engine.invalidateLiveViewsForBaseTable(
                             writer.getTableToken(),
-                            "base materialized view was rebuilt"
+                            LiveViewRefreshJob.BASE_MAT_VIEW_REBUILT_REASON
                     );
                 }
                 long txn = writer.getTxn();
@@ -990,11 +991,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
                                 // Live views must be invalidated too. An UPDATE rewrites base rows in
                                 // place, which the data-removal operations routed through the ALTER
-                                // branch above never do: those only retire settled data below the view's
-                                // replay window, so the view's already-computed rows stay consistent with
-                                // the base rows they came from. An UPDATE instead mutates the very rows a
-                                // live view derives from, and it does so only in the applied partitions -
-                                // the WAL segments the refresh worker drains keep the pre-update values.
+                                // branch above never do: those retire whole rows, and the view keeps the
+                                // rows it derived from them until a repair replaces their range. An UPDATE
+                                // instead mutates the very rows a live view derives from, and it does so
+                                // only in the applied partitions - the WAL segments the refresh worker
+                                // drains keep the pre-update values.
                                 // The two sources the view reads then disagree: the forward drain emits
                                 // pre-update rows, while every recovery path (restart, O3 replay, refresh
                                 // failure) recomputes the same range from the applied base and emits
