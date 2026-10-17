@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
@@ -56,7 +57,6 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -124,8 +124,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             int masterTimestampColumnIndex,
             long @NotNull [] offsets,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable ObjectFactory<RecordSink> masterAsOfJoinMapSinkFactory,
-            @Nullable ObjectFactory<RecordSink> slaveAsOfJoinMapSinkFactory,
+            @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate,
+            @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -166,15 +166,18 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
                     0L, // owner memory pool budget (single-buffer effective behavior)
                     0L  // per-worker memory pool budget
             );
-            // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types)
+            // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types).
+            // The join keys decide whether the join is keyed; the templates build a LoopingRecordSink
+            // when class generation declined.
             if (asOfJoinKeyTypes != null) {
-                this.ownerMasterAsOfJoinMapSink = masterAsOfJoinMapSinkFactory.newInstance();
-                this.ownerSlaveAsOfJoinMapSink = slaveAsOfJoinMapSinkFactory.newInstance();
+                assert masterAsOfJoinMapSinkTemplate != null && slaveAsOfJoinMapSinkTemplate != null;
+                this.ownerMasterAsOfJoinMapSink = masterAsOfJoinMapSinkTemplate.newInstance();
+                this.ownerSlaveAsOfJoinMapSink = slaveAsOfJoinMapSinkTemplate.newInstance();
                 this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(workerCount);
                 this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerMasterAsOfJoinMapSinks.add(masterAsOfJoinMapSinkFactory.newInstance());
-                    perWorkerSlaveAsOfJoinMapSinks.add(slaveAsOfJoinMapSinkFactory.newInstance());
+                    perWorkerMasterAsOfJoinMapSinks.add(masterAsOfJoinMapSinkTemplate.newInstance());
+                    perWorkerSlaveAsOfJoinMapSinks.add(slaveAsOfJoinMapSinkTemplate.newInstance());
                 }
             } else {
                 this.ownerMasterAsOfJoinMapSink = null;

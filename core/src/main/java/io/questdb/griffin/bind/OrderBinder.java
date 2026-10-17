@@ -129,7 +129,7 @@ final class OrderBinder implements Mutable {
                 if (ordering != null) {
                     scope.substitutionNodes.clear();
                     scope.substitutionColumns.clear();
-                    collectOrderSubstitutions(order, sourceScope, scopeAlias, project, visibleCount, source.getSubsample() != null);
+                    collectOrderSubstitutions(order, sourceScope, scopeAlias, project, visibleCount, source.getSubsample() != null, null, null);
                     expression = ctx.functionBinder.bind(order, project.getOutput(), null,
                             scope.substitutionNodes, scope.substitutionColumns, executionContext);
                     if (expression instanceof ColumnExpression column) {
@@ -571,12 +571,24 @@ final class OrderBinder implements Mutable {
         return bindOutputOrder(model, sourcePlan, project, source, scopeAlias, null, null, executionContext);
     }
 
+    /**
+     * Collects the substitutions that bind an ORDER BY expression over the columns of {@code project}. With
+     * {@code selected}, a window call that spells a selected expression reads that expression's column.
+     */
     void collectOrderSubstitutions(
             ExpressionNode expression, OutputSchema input, CharSequence scopeAlias, ProjectPlan project, int visibleCount,
-            boolean isAliasPreferred
+            boolean isAliasPreferred, ObjList<ExpressionNode> selected, QueryModel source
     ) throws SqlException {
         final BindScope scope = ctx.scope();
         if (expression == null) {
+            return;
+        }
+        if (selected != null && expression.windowExpression != null) {
+            final int index = selectedOrderIndex(expression, selected, input, source, null);
+            assert index >= 0;
+            final OutputSchema output = project.getOutput();
+            scope.substitutionNodes.add(expression);
+            scope.substitutionColumns.add(ctx.planNodes.columns.next().of(output.getColumnId(index), output.getColumnType(index), expression.position));
             return;
         }
         if (expression.type == ExpressionNode.LITERAL) {
@@ -602,11 +614,11 @@ final class OrderBinder implements Mutable {
             return;
         }
         if (expression.paramCount < 3) {
-            collectOrderSubstitutions(expression.lhs, input, scopeAlias, project, visibleCount, isAliasPreferred);
-            collectOrderSubstitutions(expression.rhs, input, scopeAlias, project, visibleCount, isAliasPreferred);
+            collectOrderSubstitutions(expression.lhs, input, scopeAlias, project, visibleCount, isAliasPreferred, selected, source);
+            collectOrderSubstitutions(expression.rhs, input, scopeAlias, project, visibleCount, isAliasPreferred, selected, source);
         } else {
             for (int i = 0, n = expression.args.size(); i < n; i++) {
-                collectOrderSubstitutions(expression.args.getQuick(i), input, scopeAlias, project, visibleCount, isAliasPreferred);
+                collectOrderSubstitutions(expression.args.getQuick(i), input, scopeAlias, project, visibleCount, isAliasPreferred, selected, source);
             }
         }
     }

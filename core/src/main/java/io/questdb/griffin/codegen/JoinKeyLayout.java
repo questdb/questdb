@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
@@ -39,7 +40,6 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjectFactory;
 
 import static io.questdb.cairo.ColumnType.*;
 
@@ -256,14 +256,12 @@ final class JoinKeyLayout implements Mutable {
     }
 
     /**
-     * The factory of master key sinks, which reads this layout whenever it creates a sink, so the layout must not
-     * be reused while the factory is live.
+     * The template of master key sinks, which keeps this layout's filter and bit sets, so the layout must not be
+     * reused while the template is live.
      */
-    ObjectFactory<RecordSink> masterSinkFactory(CairoConfiguration configuration, BytecodeAssembler asm, RecordMetadata masterMetadata) {
-        final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, masterMetadata,
-                masterColumns, null, null, masterSymbolAsString, masterStringAsVarchar, masterTimestampAsNanos);
-        return () -> RecordSinkFactory.getInstance(sinkClass, masterMetadata, masterColumns, null, null,
-                masterSymbolAsString, masterStringAsVarchar, masterTimestampAsNanos);
+    RecordSinkTemplate masterSinkTemplate(CairoConfiguration configuration, BytecodeAssembler asm, RecordMetadata masterMetadata) {
+        return new RecordSinkTemplate(configuration, asm, masterMetadata, masterColumns, masterSymbolAsString,
+                masterStringAsVarchar, masterTimestampAsNanos);
     }
 
     /**
@@ -358,13 +356,11 @@ final class JoinKeyLayout implements Mutable {
     }
 
     /**
-     * The factory of slave key sinks, which reads this layout whenever it creates a sink, so the layout must not be
-     * reused while the factory is live.
+     * The template of slave key sinks, which keeps this layout's filter and bit sets, so the layout must not be
+     * reused while the template is live.
      */
-    ObjectFactory<RecordSink> slaveSinkFactory(CairoConfiguration configuration, BytecodeAssembler asm, RecordMetadata slaveMetadata) {
-        final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, slaveMetadata,
-                slaveColumns, null, null, slaveSymbolAsString, slaveStringAsVarchar, slaveTimestampAsNanos);
-        return () -> RecordSinkFactory.getInstance(sinkClass, slaveMetadata, slaveColumns, null, null,
-                slaveSymbolAsString, slaveStringAsVarchar, slaveTimestampAsNanos);
+    RecordSinkTemplate slaveSinkTemplate(CairoConfiguration configuration, BytecodeAssembler asm, RecordMetadata slaveMetadata) {
+        return new RecordSinkTemplate(configuration, asm, slaveMetadata, slaveColumns, slaveSymbolAsString,
+                slaveStringAsVarchar, slaveTimestampAsNanos);
     }
 }

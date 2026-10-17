@@ -19711,17 +19711,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTimestampPredicateNoPushdownNonDesignatedTimestamp() throws Exception {
-        // dateadd on a non-designated timestamp column should NOT trigger optimization
-        // The predicate stays at select-virtual level, no ts_offset
+        // dateadd on a non-designated timestamp column gets no interval scan: the predicate moves into the
+        // scan's filter
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, other_ts TIMESTAMP, timestamp TIMESTAMP) TIMESTAMP(timestamp)");
             assertQuery("SELECT * FROM ((SELECT dateadd('h', -1, other_ts) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: ts in [1640995200000000,1672531199999999]
-                                    VirtualRecord
-                                      functions: [dateadd('h',-1,other_ts),price]
+                                VirtualRecord
+                                  functions: [dateadd('h',-1,other_ts),price]
+                                    Async Filter workers: 1
+                                      filter: dateadd('h',-1,other_ts) in [1640995200000000,1672531199999999]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
@@ -19864,14 +19865,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("SELECT * FROM ((SELECT dateadd('M', -1, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            VirtualRecord
-                              functions: [dateadd('M',-1,timestamp),price]
-                                Async Filter workers: 1
-                                  filter: dateadd('M',-1,timestamp) in [1640995200000000,1672531199999999]
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: trades
-                                          intervals: [("2022-02-01T00:00:00.000000Z","2023-02-03T23:59:59.999999Z")]
+                            SelectedRecord
+                                VirtualRecord
+                                  functions: [dateadd('M',-1,timestamp),price]
+                                    Async Filter workers: 1
+                                      filter: dateadd('M',-1,timestamp) in [1640995200000000,1672531199999999]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("2022-02-01T00:00:00.000000Z","2023-02-03T23:59:59.999999Z")]
                             """);
         });
     }

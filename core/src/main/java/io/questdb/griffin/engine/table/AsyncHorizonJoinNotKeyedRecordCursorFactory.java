@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -59,7 +60,6 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -106,8 +106,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             int valueCount,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable ObjectFactory<RecordSink> masterAsOfJoinMapSinkFactory,
-            @Nullable ObjectFactory<RecordSink> slaveAsOfJoinMapSinkFactory,
+            @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate,
+            @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -145,8 +145,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     offsets,
                     valueCount,
                     asOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkFactory,
-                    slaveAsOfJoinMapSinkFactory,
+                    masterAsOfJoinMapSinkTemplate,
+                    slaveAsOfJoinMapSinkTemplate,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
@@ -401,7 +401,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             GroupByFunctionsUpdater functionUpdater,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
+        final boolean keyedAsOfJoin = asOfJoinMap != null;
         final SymbolTranslatingRecord symbolTranslatingRecord =
                 masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
 

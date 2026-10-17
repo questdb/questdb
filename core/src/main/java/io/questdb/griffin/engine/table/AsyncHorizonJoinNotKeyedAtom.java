@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -59,8 +58,8 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
             long @NotNull [] offsets,
             int valueCount,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable ObjectFactory<RecordSink> masterAsOfJoinMapSinkFactory,
-            @Nullable ObjectFactory<RecordSink> slaveAsOfJoinMapSinkFactory,
+            @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate,
+            @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -79,8 +78,8 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
                 masterTimestampColumnIndex,
                 offsets,
                 asOfJoinKeyTypes,
-                masterAsOfJoinMapSinkFactory,
-                slaveAsOfJoinMapSinkFactory,
+                masterAsOfJoinMapSinkTemplate,
+                slaveAsOfJoinMapSinkTemplate,
                 masterColumnCount,
                 masterSymbolKeyColumnIndices,
                 slaveSymbolKeyColumnIndices,

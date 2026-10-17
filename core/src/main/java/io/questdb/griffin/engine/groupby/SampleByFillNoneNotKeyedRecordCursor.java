@@ -79,8 +79,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
 
     @Override
     public boolean hasNext() {
-        initTimestamps();
-        return baseRecord != null && notKeyedLoop(value);
+        return initTimestamps() || (baseRecord != null && notKeyedLoop(value));
     }
 
     /**
@@ -100,7 +99,9 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
 
     @Override
     public long peekNextTimestamp() {
-        initTimestamps();
+        if (initTimestamps()) {
+            throw nullTimestampException();
+        }
         return baseRecord != null ? localEpoch - tzOffset : Numbers.LONG_NULL;
     }
 
@@ -108,6 +109,11 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
     public void toTop() {
         super.toTop();
         setNullValue();
+    }
+
+    @Override
+    protected boolean aggregateNullTimestampRows() {
+        return notKeyedNullLoop(value);
     }
 
     private void setNullValue() {

@@ -25,6 +25,7 @@
 package io.questdb.griffin.bind;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
@@ -395,6 +396,22 @@ final class SampleByBinder {
         return call;
     }
 
+    /**
+     * A minus sign over a numeric literal as one signed constant, so the fill parses the lowest INT and LONG literals
+     * as their NULL and names the signed value in errors.
+     */
+    private ExpressionNode signedFillLiteral(ExpressionNode expression) {
+        final ExpressionNode operand = expression.rhs;
+        if (expression.type != ExpressionNode.OPERATION || expression.paramCount != 1 || !Chars.equals(expression.token, '-')
+                || operand == null || operand.type != ExpressionNode.CONSTANT || operand.token.isEmpty()
+                || !(Character.isDigit(operand.token.charAt(0)) || operand.token.charAt(0) == '.')) {
+            return expression;
+        }
+        final CharacterStoreEntry entry = ctx.characterStore.newEntry();
+        entry.put('-').put(operand.token);
+        return ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, entry.toImmutable(), 0, expression.position);
+    }
+
     private int subsampleTimestamp(LogicalPlan plan) {
         final OutputSchema output = plan.getOutput();
         switch (plan) {
@@ -610,7 +627,7 @@ final class SampleByBinder {
         validateFill(aggregate.getAggregates(), aggregateNodes, fill);
         scope.fillBindings.clear();
         for (int i = 0; i < fillCount; i++) {
-            final ExpressionNode expression = fill.getQuick(i);
+            final ExpressionNode expression = signedFillLiteral(fill.getQuick(i));
             scope.fillBindings.add(SqlKeywords.isPrevKeyword(expression.token) ? null : bindFillValue(expression, executionContext));
         }
         final FillPlan plan = ctx.planNodes.fills.next().of(aggregate, source.getSampleBy().position);
@@ -637,7 +654,7 @@ final class SampleByBinder {
         final int aggregateCount = aggregate.getAggregates().size();
         final boolean isBroadcast = fillCount < aggregateCount;
         if (isBroadcast) {
-            final ExpressionNode only = fillCount == 1 ? fill.getQuick(0) : null;
+            final ExpressionNode only = fillCount == 1 ? signedFillLiteral(fill.getQuick(0)) : null;
             if (only != null && SqlKeywords.isPrevKeyword(only.token) && only.type != ExpressionNode.LITERAL) {
                 validateFillPrev(only);
                 throw SqlException.$(only.position, "FILL(PREV(").put(only.rhs.token)
@@ -651,7 +668,7 @@ final class SampleByBinder {
         final int keyCount = aggregate.getGroupingExpressions().size();
         for (int i = 0; i < aggregateCount; i++) {
             final int fillIndex = isBroadcast ? 0 : i;
-            final ExpressionNode expression = fill.getQuick(fillIndex);
+            final ExpressionNode expression = signedFillLiteral(fill.getQuick(fillIndex));
             final int targetId = output.getColumnId(keyCount + i);
             final int targetType = output.getColumnType(keyCount + i);
             int mode = FillPlan.FILL_VALUE;
@@ -795,7 +812,7 @@ final class SampleByBinder {
         final ObjList<ExpressionNode> fill = source.getSampleByFill();
         plan.setFillMode(fill.size() > 1 ? SampleByPlan.FILL_VALUE : SampleByPlan.FILL_NONE);
         for (int i = 0, n = fill.size(); i < n; i++) {
-            final ExpressionNode value = fill.getQuick(i);
+            final ExpressionNode value = signedFillLiteral(fill.getQuick(i));
             final int mode = SqlKeywords.isNoneKeyword(value.token) ? SampleByPlan.FILL_NONE
                     : SqlKeywords.isPrevKeyword(value.token) ? SampleByPlan.FILL_PREV
                       : SqlKeywords.isNullKeyword(value.token) ? SampleByPlan.FILL_NULL
@@ -810,7 +827,7 @@ final class SampleByBinder {
         validateFill(aggregates, aggregateNodes, fill);
         final int fillCount = fill.size();
         for (int k = 0, n = Math.min(fillCount, aggregates.size()); k < n; k++) {
-            final ExpressionNode value = fill.getQuick(k);
+            final ExpressionNode value = signedFillLiteral(fill.getQuick(k));
             final BoundExpression bound = plan.getFillValues().getQuick(k);
             if (bound != null) {
                 plan.getFillValues().setQuick(k, bindFillConstant(bound, aggregates.getQuick(k).getDataType(), value.token, value.position, executionContext));
@@ -1032,7 +1049,11 @@ final class SampleByBinder {
             try (Function zone = ctx.functionInstantiator.instantiate(timezone, emptySchema, executionContext)) {
                 final CharSequence name = zone.getStrA(null);
                 if (name != null) {
-                    ColumnType.getTimestampDriver(timestampType).getTimezoneRules(DateLocaleFactory.EN_LOCALE, name);
+                    try {
+                        ColumnType.getTimestampDriver(timestampType).getTimezoneRules(DateLocaleFactory.EN_LOCALE, name);
+                    } catch (CairoException e) {
+                        throw SqlException.$(plan.getTimezonePosition(), e.getFlyweightMessage());
+                    }
                 }
             }
         }

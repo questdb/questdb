@@ -59,10 +59,8 @@ import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
@@ -86,8 +84,6 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
-            @NotNull ObjList<ObjectFactory<RecordSink>> masterAsOfJoinMapSinkFactories,
-            @NotNull ObjList<ObjectFactory<RecordSink>> slaveAsOfJoinMapSinkFactories,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -107,10 +103,8 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             ObjList<RecordSink> masterAsOfJoinMapSinks = new ObjList<>(slaveStates.size());
             ObjList<RecordSink> slaveAsOfJoinMapSinks = new ObjList<>(slaveStates.size());
             for (int i = 0; i < slaveStates.size(); i++) {
-                final ObjectFactory<RecordSink> masterSinkFactory = masterAsOfJoinMapSinkFactories.getQuick(i);
-                masterAsOfJoinMapSinks.add(masterSinkFactory != null ? masterSinkFactory.newInstance() : null);
-                final ObjectFactory<RecordSink> slaveSinkFactory = slaveAsOfJoinMapSinkFactories.getQuick(i);
-                slaveAsOfJoinMapSinks.add(slaveSinkFactory != null ? slaveSinkFactory.newInstance() : null);
+                masterAsOfJoinMapSinks.add(slaveStates.getQuick(i).newMasterAsOfJoinMapSink());
+                slaveAsOfJoinMapSinks.add(slaveStates.getQuick(i).newSlaveAsOfJoinMapSink());
             }
 
             this.cursor = new MultiHorizonJoinNotKeyedRecordCursor(

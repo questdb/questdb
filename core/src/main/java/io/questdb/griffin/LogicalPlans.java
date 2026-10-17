@@ -502,6 +502,18 @@ public final class LogicalPlans {
     }
 
     /**
+     * A dateadd unit literal that adds the same duration to every timestamp. Months and years clamp the day of
+     * month, so January 29, 30 and 31 plus one month all land on the last day of February.
+     */
+    public static boolean isFixedDurationDateaddUnit(BoundExpression unit) {
+        return unit instanceof ConstantExpression constant && constant.isLiteral() && constant.getDataType() == ColumnType.CHAR
+                && switch ((char) constant.getLongValue()) {
+            case 'n', 'u', 'U', 'T', 's', 'm', 'h', 'H', 'd', 'w' -> true;
+            default -> false;
+        };
+    }
+
+    /**
      * True when the join runs its first input first. Join ordering leads with another input only when the join
      * designates no timestamp or no part of the query requires it, and a join that leads with another input designates
      * no timestamp.

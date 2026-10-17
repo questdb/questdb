@@ -68,6 +68,7 @@ final class TemporalJoinBinder {
     private final OutputSchema emptySchema;
     private final JoinBinder joinBinder;
     private final OrderBinder orderBinder;
+    private final WindowBinder windowBinder;
 
     TemporalJoinBinder(
             BindContext ctx,
@@ -75,7 +76,8 @@ final class TemporalJoinBinder {
             OutputSchema emptySchema,
             OrderBinder orderBinder,
             AggregateBinder aggregateBinder,
-            JoinBinder joinBinder
+            JoinBinder joinBinder,
+            WindowBinder windowBinder
     ) {
         this.ctx = ctx;
         this.binder = binder;
@@ -83,6 +85,7 @@ final class TemporalJoinBinder {
         this.orderBinder = orderBinder;
         this.aggregateBinder = aggregateBinder;
         this.joinBinder = joinBinder;
+        this.windowBinder = windowBinder;
     }
 
     private static void bindHorizonOffsets(HorizonJoinPlan plan, HorizonJoinContext horizon, int timestampType, int maxOffsets) throws SqlException {
@@ -437,6 +440,28 @@ final class TemporalJoinBinder {
         }
     }
 
+    /**
+     * Rejects a window function anywhere in a SELECT or ORDER BY expression of a WINDOW or HORIZON JOIN query, at the
+     * position of the leftmost one.
+     */
+    private void rejectWindows(QueryModel model, QueryModel source, String message) throws SqlException {
+        final ObjList<QueryColumn> selected = model.getBottomUpColumns();
+        for (int i = 0, n = selected.size(); i < n; i++) {
+            final QueryColumn column = selected.getQuick(i);
+            final int position = column.isWindowExpression() ? column.getAst().position : windowBinder.findWindowPosition(column.getAst());
+            if (position >= 0) {
+                throw SqlException.$(position, message);
+            }
+        }
+        final ObjList<ExpressionNode> orderBy = source.getOrderBy();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            final int position = windowBinder.findWindowPosition(orderBy.getQuick(i));
+            if (position >= 0) {
+                throw SqlException.$(position, message);
+            }
+        }
+    }
+
     private void validateHorizonGroupBy(ObjList<QueryColumn> selected, ObjList<ExpressionNode> groupBy) throws SqlException {
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             final ExpressionNode key = groupBy.getQuick(i);
@@ -565,8 +590,8 @@ final class TemporalJoinBinder {
     }
 
     /**
-     * A constant-offset dateadd over the designated timestamp keeps its order, so it designates the
-     * projection when the timestamp itself is not selected.
+     * A constant-offset dateadd over the designated timestamp keeps its order when its unit adds a fixed
+     * duration, so it designates the projection when the timestamp itself is not selected.
      */
     static void designateTimestampOffset(ProjectPlan project) {
         final OutputSchema output = project.getOutput();
@@ -584,7 +609,7 @@ final class TemporalJoinBinder {
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (project.getExpressions().getQuick(i) instanceof FunctionExpression call && call.getArgumentCount() == 3
                     && SqlKeywords.isDateaddKeyword(call.getName())
-                    && call.argumentAt(0) instanceof ConstantExpression
+                    && LogicalPlans.isFixedDurationDateaddUnit(call.argumentAt(0))
                     && call.argumentAt(1) instanceof ConstantExpression stride && stride.isLiteral()
                     && (ColumnType.tagOf(stride.getDataType()) == ColumnType.INT || ColumnType.tagOf(stride.getDataType()) == ColumnType.LONG
                     || ColumnType.tagOf(stride.getDataType()) == ColumnType.SHORT || ColumnType.tagOf(stride.getDataType()) == ColumnType.BYTE)
@@ -707,13 +732,8 @@ final class TemporalJoinBinder {
         if (source.getSampleBy() != null) {
             throw SqlException.$(source.getSampleBy().position, "SAMPLE BY cannot be used with HORIZON JOIN");
         }
+        rejectWindows(model, source, "WINDOW functions are not allowed in HORIZON JOIN queries");
         final ObjList<QueryColumn> selected = model.getBottomUpColumns();
-        for (int i = 0, n = selected.size(); i < n; i++) {
-            final QueryColumn column = selected.getQuick(i);
-            if (column.isWindowExpression()) {
-                throw SqlException.$(column.getAst().position, "WINDOW functions are not allowed in HORIZON JOIN queries");
-            }
-        }
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
         if (groupBy.size() > 0 && !model.isPivot()) {
             validateHorizonGroupBy(selected, groupBy);
@@ -825,12 +845,7 @@ final class TemporalJoinBinder {
         if (source.getSampleBy() != null) {
             throw SqlException.$(source.getSampleBy().position, "SAMPLE BY cannot be used with WINDOW JOIN");
         }
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final QueryColumn column = model.getBottomUpColumns().getQuick(i);
-            if (column.isWindowExpression()) {
-                throw SqlException.$(column.getAst().position, "WINDOW functions are not allowed in WINDOW JOIN queries");
-            }
-        }
+        rejectWindows(model, source, "WINDOW functions are not allowed in WINDOW JOIN queries");
         final QueryModel masterModel = sources.getQuick(0);
         final CharSequence masterAlias = first > 1 ? null : sourceAlias(masterModel);
         LogicalPlan master;
@@ -988,9 +1003,17 @@ final class TemporalJoinBinder {
         aggregateSources.clear();
         aggregateColumns.clear();
         final boolean isOrderBound = !ctx.isSetOperationBranch;
-        final LogicalPlan result = isOrderBound && source.getOrderBy().size() > 0
-                ? orderBinder.bindOutputOrder(model, plan, project, source, masterAlias, null, executionContext)
-                : orderBinder.designateTimestamp(project);
+        final LogicalPlan result;
+        if (model.isDistinct()) {
+            if (isOrderBound) {
+                aggregateBinder.validateDistinctOrder(model, source, plan.getOutput());
+            }
+            result = aggregateBinder.bindDistinct(model, source, plan, project, executionContext);
+        } else {
+            result = isOrderBound && source.getOrderBy().size() > 0
+                    ? orderBinder.bindOutputOrder(model, plan, project, source, masterAlias, null, executionContext)
+                    : orderBinder.designateTimestamp(project);
+        }
         return isOrderBound ? orderBinder.bindLimit(result, model, executionContext) : result;
     }
 

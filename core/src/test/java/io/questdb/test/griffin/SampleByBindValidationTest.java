@@ -142,7 +142,7 @@ public class SampleByBindValidationTest extends AbstractCairoTest {
             createTable();
             assertQuery("SELECT ts FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Foo/Bar')")
                     .noLeakCheck()
-                    .fails(0, "invalid timezone: Foo/Bar");
+                    .fails(97, "invalid timezone: Foo/Bar");
         });
     }
 

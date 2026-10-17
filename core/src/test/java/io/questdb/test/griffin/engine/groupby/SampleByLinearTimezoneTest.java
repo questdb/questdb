@@ -308,7 +308,12 @@ public class SampleByLinearTimezoneTest extends AbstractCairoTest {
                     2026-07-01T01:00:00.000000Z\t30.0
                     """;
             if (isCursor) {
-                assertSample(clause.formatted("FILL(NONE)"), expected);
+                // the Sample By cursor anchors at FROM plus OFFSET, as the GROUP BY path does
+                assertSample(clause.formatted("FILL(NONE)"), """
+                        ts\tsum
+                        2026-07-01T00:15:00.000000Z\t30.0
+                        2026-07-01T01:15:00.000000Z\t30.0
+                        """);
             }
             assertSample(clause.formatted("FILL(LINEAR)"), expected);
         });

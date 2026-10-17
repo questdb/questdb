@@ -497,7 +497,7 @@ final class WindowBinder {
         if (position < 0) {
             position = findWindowPosition(expression.rhs, searchMode);
         }
-        for (int i = 0, n = expression.args.size(); position < 0 && i < n; i++) {
+        for (int i = expression.args.size() - 1; position < 0 && i >= 0; i--) {
             position = findWindowPosition(expression.args.getQuick(i), searchMode);
         }
         return position;

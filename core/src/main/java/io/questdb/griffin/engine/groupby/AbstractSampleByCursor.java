@@ -99,17 +99,25 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
     protected long anchorCalendarGrid() {
         if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
             final long from = sampleFromFunc.getTimestamp(null);
-            timestampSampler.setLocalAnchor(from != Long.MIN_VALUE ? localFrom(from) : 0);
+            timestampSampler.setLocalAnchor(from != Long.MIN_VALUE ? localAnchor(from) : 0);
             return from;
         }
         timestampSampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
         return Long.MIN_VALUE;
     }
 
+    // The grid line timestamp_floor_utc anchors at: FROM plus OFFSET.
+    protected long localAnchor(long from) {
+        return localFrom(from) + (fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
+    }
+
     // SampleByFactoryGenerator hands sub-day strides their FROM in UTC and longer strides in local time.
-    protected long localFrom(long from) {
-        final long timestamp = timestampDriver.from(from, sampleFromFuncType);
+    protected long localBound(long timestamp) {
         return CommonUtils.isSubDayUnit(samplingIntervalUnit) ? timestamp + tzOffset : timestamp;
+    }
+
+    protected long localFrom(long from) {
+        return localBound(timestampDriver.from(from, sampleFromFuncType));
     }
 
     /**

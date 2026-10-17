@@ -175,7 +175,7 @@ public final class SqlBinder implements Mutable {
         this.orderBinder = new OrderBinder(ctx, emptySchema, sampleByBinder, tmpNodes);
         this.aggregateBinder = new AggregateBinder(ctx, this, configuration, orderBinder, sampleByBinder, tmpIds, tmpIdMap, tmpSlaveKeys,
                 tmpIndexes, tmpValues, tmpMasterKeys, tmpUniqueNames);
-        this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, emptySchema, orderBinder, aggregateBinder, joinBinder);
+        this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, emptySchema, orderBinder, aggregateBinder, joinBinder, windowBinder);
         this.pivotBinder = new PivotBinder(ctx, this, configuration, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
                 tmpSink, tmpTokens, compiler);
         this.updateBinder = new UpdateBinder(ctx, this, windowBinder, orderBinder, updateTarget);

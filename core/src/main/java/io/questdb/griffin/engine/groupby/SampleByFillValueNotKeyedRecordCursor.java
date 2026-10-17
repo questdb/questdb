@@ -30,10 +30,14 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillRecordCursor {
     private final SimpleMapValuePeeker peeker;
+    // the group-by functions of the FILL(PREV) columns, which serve as their own placeholders
+    private final ObjList<GroupByFunction> prevFunctions = new ObjList<>();
     private final SimpleMapValue value;
     private boolean endFill = false;
     private boolean firstRun = true;
@@ -83,6 +87,11 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         this.peeker = peeker;
         this.value = value;
         record.of(value);
+        for (int i = 0, n = placeholderFunctions.size(); i < n; i++) {
+            if (placeholderFunctions.getQuick(i) instanceof GroupByFunction function && !(function instanceof InterpolationGroupByFunction)) {
+                prevFunctions.add(function);
+            }
+        }
     }
 
     @Override
@@ -113,24 +122,30 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         }
 
         if (endFill) {
+            // the bucket that TO ends can follow the last bucket with rows without a gap
+            setActiveB(expectedLocalEpoch);
             sampleLocalEpoch = expectedLocalEpoch;
             nextSampleLocalEpoch = expectedLocalEpoch;
             endFill = false;
             gapFill = false;
-
-            return localEpoch < upperBound;
+            return expectedLocalEpoch < upperBound;
         }
-        if (setActiveA(expectedLocalEpoch)) {
-            return peeker.reset();
+        final boolean hasNext;
+        if (setActiveA()) {
+            // the peek after a gap may have read the last row, so the end fill can start after this bucket
+            hasNext = peeker.reset();
+        } else {
+            hasNext = notKeyedLoop(value);
         }
 
-        final boolean hasNext = notKeyedLoop(value);
-
-        if (baseRecord == null && sampleToFunc != timestampDriver.getTimestampConstantNull() && !endFill) {
-            endFill = true;
-            upperBound = timestampDriver.from(sampleToFunc.getTimestamp(null), sampleToFuncType);
-            // we must not re-initialize baseRecord after base cursor has been exhausted
-            nextSamplePeriod(upperBound);
+        if (baseRecord == null && !endFill) {
+            final long to = sampleToFunc.getTimestamp(null);
+            if (to != Numbers.LONG_NULL) {
+                endFill = true;
+                upperBound = timestampSampler.localAnchorAsUtc(localBound(timestampDriver.from(to, sampleToFuncType)));
+                // we must not re-initialize baseRecord after base cursor has been exhausted
+                nextSamplePeriod(upperBound);
+            }
         }
         return hasNext;
     }
@@ -143,6 +158,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         upperBound = Long.MAX_VALUE;
         firstRun = true;
         peeker.clear();
+        setPrevValuesToNull();
         record.setActiveA();
     }
 
@@ -154,29 +170,38 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         upperBound = Long.MAX_VALUE;
         firstRun = true;
         peeker.clear();
+        setPrevValuesToNull();
         record.setActiveA();
     }
 
-    private boolean setActiveA(long expectedLocalEpoch) {
+    // peeker.reset() restores the bucket start that the loop left
+    private boolean setActiveA() {
         if (gapFill) {
             gapFill = false;
             record.setActiveA();
-            sampleLocalEpoch = expectedLocalEpoch;
-            nextSampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
         return false;
     }
 
+    // The end fill has no bucket to interpolate towards: a LINEAR column shows the last bucket's value.
     private void setActiveB(long expectedLocalEpoch) {
         if (!gapFill) {
-            record.setActiveB(sampleLocalEpoch, expectedLocalEpoch, localEpoch);
             if (endFill) {
-                record.setInterpolationTarget(null);
+                record.setActiveB();
             } else {
+                record.setActiveB(sampleLocalEpoch, expectedLocalEpoch, localEpoch);
                 record.setInterpolationTarget(peeker.peek());
             }
             gapFill = true;
+        }
+    }
+
+    // The buckets between FROM and the first row read the zeroed value; the PREV columns show NULL there. LINEAR
+    // columns keep the zeroed slots, as interpolating from a NULL sentinel yields garbage.
+    private void setPrevValuesToNull() {
+        for (int i = 0, n = prevFunctions.size(); i < n; i++) {
+            prevFunctions.getQuick(i).setNull(value);
         }
     }
 }

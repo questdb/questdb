@@ -978,8 +978,9 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillFromIgnoresOffsetOverSampleByCursor() throws Exception {
-        // A SAMPLE BY cursor anchors its buckets at FROM without OFFSET, and its fill grid does the same.
+    public void testFillFromWithOffsetOverSampleByCursor() throws Exception {
+        // A SAMPLE BY cursor anchors its buckets at FROM plus OFFSET, as the GROUP BY path does, and its fill grid
+        // does the same.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE sp2 (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -993,8 +994,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsum
-                            2024-03-31T04:00:00.000000Z\t3.0
-                            2024-03-31T08:00:00.000000Z\t4.0
+                            2024-03-31T04:30:00.000000Z\t3.0
+                            2024-03-31T08:30:00.000000Z\t4.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '00:30'")
                     .noLeakCheck()
@@ -1002,12 +1003,12 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsum
-                            2024-03-30T22:00:00.000000Z\tnull
-                            2024-03-31T00:00:00.000000Z\tnull
-                            2024-03-31T02:00:00.000000Z\tnull
-                            2024-03-31T04:00:00.000000Z\t3.0
-                            2024-03-31T06:00:00.000000Z\tnull
-                            2024-03-31T08:00:00.000000Z\t4.0
+                            2024-03-30T22:30:00.000000Z\tnull
+                            2024-03-31T00:30:00.000000Z\tnull
+                            2024-03-31T02:30:00.000000Z\tnull
+                            2024-03-31T04:30:00.000000Z\t3.0
+                            2024-03-31T06:30:00.000000Z\tnull
+                            2024-03-31T08:30:00.000000Z\t4.0
                             """);
             assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' FILL(PREV) ALIGN TO CALENDAR WITH OFFSET '00:30'")
                     .noLeakCheck()
@@ -1015,18 +1016,18 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsym\tsum
-                            2024-03-30T22:00:00.000000Z\tA\tnull
-                            2024-03-30T22:00:00.000000Z\tB\tnull
-                            2024-03-31T00:00:00.000000Z\tA\tnull
-                            2024-03-31T00:00:00.000000Z\tB\tnull
-                            2024-03-31T02:00:00.000000Z\tA\tnull
-                            2024-03-31T02:00:00.000000Z\tB\tnull
-                            2024-03-31T04:00:00.000000Z\tA\t3.0
-                            2024-03-31T04:00:00.000000Z\tB\tnull
-                            2024-03-31T06:00:00.000000Z\tA\t3.0
-                            2024-03-31T06:00:00.000000Z\tB\tnull
-                            2024-03-31T08:00:00.000000Z\tA\t3.0
-                            2024-03-31T08:00:00.000000Z\tB\t4.0
+                            2024-03-30T22:30:00.000000Z\tA\tnull
+                            2024-03-30T22:30:00.000000Z\tB\tnull
+                            2024-03-31T00:30:00.000000Z\tA\tnull
+                            2024-03-31T00:30:00.000000Z\tB\tnull
+                            2024-03-31T02:30:00.000000Z\tA\tnull
+                            2024-03-31T02:30:00.000000Z\tB\tnull
+                            2024-03-31T04:30:00.000000Z\tA\t3.0
+                            2024-03-31T04:30:00.000000Z\tB\tnull
+                            2024-03-31T06:30:00.000000Z\tA\t3.0
+                            2024-03-31T06:30:00.000000Z\tB\tnull
+                            2024-03-31T08:30:00.000000Z\tA\t3.0
+                            2024-03-31T08:30:00.000000Z\tB\t4.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' ALIGN TO CALENDAR TIME ZONE '+01:00' WITH OFFSET '00:30'")
                     .noLeakCheck()
@@ -1034,8 +1035,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsum
-                            2024-03-31T05:00:00.000000Z\t3.0
-                            2024-03-31T09:00:00.000000Z\t4.0
+                            2024-03-31T03:30:00.000000Z\t3.0
+                            2024-03-31T09:30:00.000000Z\t4.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+01:00' WITH OFFSET '00:30'")
                     .noLeakCheck()
@@ -1043,13 +1044,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsum
-                            2024-03-30T21:00:00.000000Z\tnull
-                            2024-03-30T23:00:00.000000Z\tnull
-                            2024-03-31T01:00:00.000000Z\tnull
-                            2024-03-31T03:00:00.000000Z\tnull
-                            2024-03-31T05:00:00.000000Z\t3.0
-                            2024-03-31T07:00:00.000000Z\tnull
-                            2024-03-31T09:00:00.000000Z\t4.0
+                            2024-03-30T21:30:00.000000Z\tnull
+                            2024-03-30T23:30:00.000000Z\tnull
+                            2024-03-31T01:30:00.000000Z\tnull
+                            2024-03-31T03:30:00.000000Z\t3.0
+                            2024-03-31T05:30:00.000000Z\tnull
+                            2024-03-31T07:30:00.000000Z\tnull
+                            2024-03-31T09:30:00.000000Z\t4.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' FILL(10) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'")
                     .noLeakCheck()
@@ -1057,13 +1058,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsum
-                            2024-03-30T21:00:00.000000Z\t10.0
-                            2024-03-30T23:00:00.000000Z\t10.0
-                            2024-03-31T01:00:00.000000Z\t10.0
-                            2024-03-31T03:00:00.000000Z\t10.0
-                            2024-03-31T05:00:00.000000Z\t3.0
-                            2024-03-31T07:00:00.000000Z\t10.0
-                            2024-03-31T09:00:00.000000Z\t4.0
+                            2024-03-30T21:30:00.000000Z\t10.0
+                            2024-03-30T23:30:00.000000Z\t10.0
+                            2024-03-31T01:30:00.000000Z\t10.0
+                            2024-03-31T03:30:00.000000Z\t3.0
+                            2024-03-31T05:30:00.000000Z\t10.0
+                            2024-03-31T07:30:00.000000Z\t10.0
+                            2024-03-31T09:30:00.000000Z\t4.0
                             """);
             execute("CREATE TABLE dd (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -1077,8 +1078,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsum
-                            2024-03-28T23:00:00.000000Z\t1.0
-                            2024-04-01T22:00:00.000000Z\t2.0
+                            2024-03-29T05:00:00.000000Z\t1.0
+                            2024-04-02T04:00:00.000000Z\t2.0
                             """);
             assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-27' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
                     .noLeakCheck()
@@ -1086,13 +1087,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsum
-                            2024-03-26T23:00:00.000000Z\tnull
-                            2024-03-27T23:00:00.000000Z\tnull
-                            2024-03-28T23:00:00.000000Z\t1.0
-                            2024-03-29T23:00:00.000000Z\tnull
-                            2024-03-30T23:00:00.000000Z\tnull
-                            2024-03-31T22:00:00.000000Z\tnull
-                            2024-04-01T22:00:00.000000Z\t2.0
+                            2024-03-27T05:00:00.000000Z\tnull
+                            2024-03-28T05:00:00.000000Z\tnull
+                            2024-03-29T05:00:00.000000Z\t1.0
+                            2024-03-30T05:00:00.000000Z\tnull
+                            2024-03-31T04:00:00.000000Z\tnull
+                            2024-04-01T04:00:00.000000Z\tnull
+                            2024-04-02T04:00:00.000000Z\t2.0
                             """);
             assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-27' FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
                     .noLeakCheck()
@@ -1100,20 +1101,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsym\tsum
-                            2024-03-26T23:00:00.000000Z\tA\tnull
-                            2024-03-26T23:00:00.000000Z\tB\tnull
-                            2024-03-27T23:00:00.000000Z\tA\tnull
-                            2024-03-27T23:00:00.000000Z\tB\tnull
-                            2024-03-28T23:00:00.000000Z\tA\t1.0
-                            2024-03-28T23:00:00.000000Z\tB\tnull
-                            2024-03-29T23:00:00.000000Z\tA\t1.0
-                            2024-03-29T23:00:00.000000Z\tB\tnull
-                            2024-03-30T23:00:00.000000Z\tA\t1.0
-                            2024-03-30T23:00:00.000000Z\tB\tnull
-                            2024-03-31T22:00:00.000000Z\tA\t1.0
-                            2024-03-31T22:00:00.000000Z\tB\tnull
-                            2024-04-01T22:00:00.000000Z\tA\t1.0
-                            2024-04-01T22:00:00.000000Z\tB\t2.0
+                            2024-03-27T05:00:00.000000Z\tA\tnull
+                            2024-03-27T05:00:00.000000Z\tB\tnull
+                            2024-03-28T05:00:00.000000Z\tA\tnull
+                            2024-03-28T05:00:00.000000Z\tB\tnull
+                            2024-03-29T05:00:00.000000Z\tA\t1.0
+                            2024-03-29T05:00:00.000000Z\tB\tnull
+                            2024-03-30T05:00:00.000000Z\tA\t1.0
+                            2024-03-30T05:00:00.000000Z\tB\tnull
+                            2024-03-31T04:00:00.000000Z\tA\t1.0
+                            2024-03-31T04:00:00.000000Z\tB\tnull
+                            2024-04-01T04:00:00.000000Z\tA\t1.0
+                            2024-04-01T04:00:00.000000Z\tB\tnull
+                            2024-04-02T04:00:00.000000Z\tA\t1.0
+                            2024-04-02T04:00:00.000000Z\tB\t2.0
                             """);
         });
     }

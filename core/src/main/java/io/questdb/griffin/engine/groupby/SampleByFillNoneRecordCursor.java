@@ -195,6 +195,8 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
         // Bind+reopen the map as super.of() does the allocator; reopen() is idempotent.
         map.setMemoryTracker(executionContext.getMemoryTracker());
         map.reopen();
+        map.clear();
+        map.getCursor();
         rowId = 0;
         isMapBuildPending = true;
         isRetainingKeys = false;
@@ -245,6 +247,10 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
     @Override
     public void toTop() {
         super.toTop();
+        if (!isRetainingKeys) {
+            map.clear();
+            map.getCursor();
+        }
         rowId = 0;
         isMapBuildPending = true;
         bucketRowsLeft = 0;
@@ -254,6 +260,21 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
             hasFillData = false;
             isEmittingGapKeys = false;
         }
+    }
+
+    @Override
+    protected boolean aggregateNullTimestampRows() {
+        if (isRetainingKeys || fillGrid != null) {
+            throw nullTimestampException();
+        }
+        boolean hasNext;
+        do {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            aggregateRow();
+            hasNext = baseCursor.hasNext();
+        } while (hasNext && baseRecord.getTimestamp(timestampIndex) == Numbers.LONG_NULL);
+        map.getCursor();
+        return hasNext;
     }
 
     private void activateKeyRecord() {

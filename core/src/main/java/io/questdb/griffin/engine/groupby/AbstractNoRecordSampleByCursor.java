@@ -58,6 +58,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     private long rowId;
     private long topLocalEpoch;
 
+    static CairoException nullTimestampException() {
+        return CairoException.nonCritical().put("SAMPLE BY designated timestamp cannot be NULL");
+    }
+
     public AbstractNoRecordSampleByCursor(
             CairoConfiguration configuration,
             ObjList<Function> recordFunctions,
@@ -156,23 +160,42 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         areTimestampsInitialized = false;
     }
 
+    /**
+     * Aggregates the leading rows with a NULL designated timestamp into a bucket of their own, starting with the
+     * current row. Returns true when it stopped at the first row with a timestamp, false when the base ran out.
+     * Only the cursors without FILL aggregate them: a filled grid has no place for these rows.
+     */
+    protected boolean aggregateNullTimestampRows() {
+        throw nullTimestampException();
+    }
+
     protected long getBaseRecordTimestamp() {
         return baseRecord.getTimestamp(timestampIndex) + tzOffset;
     }
 
-    protected void initTimestamps() {
+    /**
+     * Returns true when the call also aggregated the NULL bucket, which the caller emits first.
+     */
+    protected boolean initTimestamps() {
         if (areTimestampsInitialized) {
-            return;
+            return false;
         }
 
         if (!baseCursor.hasNext()) {
             baseRecord = null;
-            return;
+            return false;
         }
 
-        final long timestamp = baseRecord.getTimestamp(timestampIndex);
-        if (timestamp == Numbers.LONG_NULL) {
-            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+        long timestamp = baseRecord.getTimestamp(timestampIndex);
+        final boolean hasNullBucket = timestamp == Numbers.LONG_NULL;
+        if (hasNullBucket) {
+            if (!aggregateNullTimestampRows()) {
+                baseRecord = null;
+                setNullBucketLabel();
+                areTimestampsInitialized = true;
+                return true;
+            }
+            timestamp = baseRecord.getTimestamp(timestampIndex);
         }
 
         long from = Long.MIN_VALUE;
@@ -184,15 +207,21 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         if (from != Long.MIN_VALUE) {
-            // set the top epoch to be the lower limit
-            topLocalEpoch = timestampSampler.round(timestampSampler.localAnchorAsUtc(localFrom(from)));
-            // set current epoch to be the floor of the starting timestamp
-            localEpoch = timestampSampler.round(timestamp + tzOffset);
+            // the top epoch is the bucket of FROM; timestamp_floor_utc puts the values between FROM and a later
+            // anchor (a positive OFFSET) into the bucket at the anchor
+            final long anchor = timestampSampler.localAnchorAsUtc(localAnchor(from));
+            topLocalEpoch = Math.max(anchor, timestampSampler.round(timestampSampler.localAnchorAsUtc(localFrom(from))));
+            localEpoch = Math.max(anchor, timestampSampler.round(timestamp + tzOffset));
         } else {
             topLocalEpoch = localEpoch = timestampSampler.round(timestamp + tzOffset);
         }
         sampleLocalEpoch = nextSampleLocalEpoch = topLocalEpoch;
+        if (hasNullBucket) {
+            GroupByUtils.toTop(groupByFunctions);
+            setNullBucketLabel();
+        }
         areTimestampsInitialized = true;
+        return hasNullBucket;
     }
 
     /**
@@ -234,6 +263,23 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         baseRecord = null;
         isNotKeyedLoopInitialized = false;
         return true;
+    }
+
+    protected boolean notKeyedNullLoop(MapValue mapValue) {
+        groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
+        while (baseCursor.hasNext()) {
+            if (baseRecord.getTimestamp(timestampIndex) != Numbers.LONG_NULL) {
+                return true;
+            }
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            groupByFunctionsUpdater.updateExisting(mapValue, baseRecord, rowId++);
+        }
+        return false;
+    }
+
+    // TimestampFunc subtracts tzOffset, and the wrapped difference is NULL whatever the offset
+    private void setNullBucketLabel() {
+        sampleLocalEpoch = Numbers.LONG_NULL + tzOffset;
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {

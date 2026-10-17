@@ -739,7 +739,7 @@ final class SampleByFactoryGenerator {
                 timezone = functionInstantiator.instantiate(plan.getTimezone(), input, metadata, executionContext);
                 assignUndefinedType(timezone, STRING, executionContext);
             }
-            offset = plan.getOffset() == null || plan.getFrom() != null && plan.getAlgorithm() == FillPlan.Algorithm.SAMPLE_BY_ROWS ? StrConstant.NULL
+            offset = plan.getOffset() == null ? StrConstant.NULL
                     : functionInstantiator.instantiate(plan.getOffset(), input, metadata, executionContext);
             assignUndefinedType(offset, STRING, executionContext);
 

@@ -34,6 +34,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -101,7 +102,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.Nullable;
 
 final class AggregateFactoryGenerator {
@@ -1053,8 +1053,8 @@ final class AggregateFactoryGenerator {
                 }
                 final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, workerKeyFunctions,
                         compiledFilter, bindVariableMemory, bindVariables, filter, filterColumnIndexes, workerFilters);
-                final ObjectFactory<RecordSink> masterSinkFactory = key == null ? null : key.masterSinkFactory(configuration, asm, masterMetadata);
-                final ObjectFactory<RecordSink> slaveSinkFactory = key == null ? null : key.slaveSinkFactory(configuration, asm, slave.getMetadata());
+                final RecordSinkTemplate masterSinkTemplate = key == null ? null : key.masterSinkTemplate(configuration, asm, masterMetadata);
+                final RecordSinkTemplate slaveSinkTemplate = key == null ? null : key.slaveSinkTemplate(configuration, asm, slave.getMetadata());
                 if (slaveFilter != null) {
                     final ObjList<Function> slaveWorkerFilters = slaveFilter.getWorkers();
                     resources.setSlaveFilters(adoptFilter(slaveFilter), slaveWorkerFilters);
@@ -1063,17 +1063,15 @@ final class AggregateFactoryGenerator {
                 return isKeyed
                         ? new AsyncHorizonJoinRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), metadata, innerMetadata, master, slave, offsets, masterTimestampIndex,
-                        groupByFunctions, recordFunctions, keyFunctions, keyTypes, valueTypes, joinKeyTypes, masterSinkFactory,
-                        slaveSinkFactory, masterColumnCount, masterSymbols, slaveSymbols, columnFilter, columnSources, columnIndices,
+                        groupByFunctions, recordFunctions, keyFunctions, keyTypes, valueTypes, joinKeyTypes, masterSinkTemplate,
+                        slaveSinkTemplate, masterColumnCount, masterSymbols, slaveSymbols, columnFilter, columnSources, columnIndices,
                         resources, workerCount)
                         : new AsyncHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), metadata, innerMetadata, master, slave, offsets, masterTimestampIndex,
-                        groupByFunctions, valueTypes.getColumnCount(), joinKeyTypes, masterSinkFactory, slaveSinkFactory,
+                        groupByFunctions, valueTypes.getColumnCount(), joinKeyTypes, masterSinkTemplate, slaveSinkTemplate,
                         masterColumnCount, masterSymbols, slaveSymbols, columnSources, columnIndices, resources, workerCount);
             }
             final ColumnTypes[] joinKeyTypes = new ColumnTypes[slaveCount];
-            final ObjList<ObjectFactory<RecordSink>> masterSinkFactories = new ObjList<>(slaveCount);
-            final ObjList<ObjectFactory<RecordSink>> slaveSinkFactories = new ObjList<>(slaveCount);
             final int masterTimestampType = masterMetadata.getTimestampType();
             slaveStates = new ObjList<>(slaveCount);
             for (int s = 0; s < slaveCount; s++) {
@@ -1084,12 +1082,13 @@ final class AggregateFactoryGenerator {
                 if (key != null) {
                     joinKeyTypes[s] = key.keyTypes;
                 }
-                masterSinkFactories.add(key == null ? null : key.masterSinkFactory(configuration, asm, masterMetadata));
-                slaveSinkFactories.add(key == null ? null : key.slaveSinkFactory(configuration, asm, slave.getMetadata()));
                 final HorizonJoinSlaveState state = new HorizonJoinSlaveState(slave,
                         isScaled ? ColumnType.getTimestampDriver(masterTimestampType).toNanosScale() : 1,
                         isScaled ? ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale() : 1,
-                        joinKeyTypes[s], masterColumnCount,
+                        joinKeyTypes[s],
+                        key == null ? null : key.masterSinkTemplate(configuration, asm, masterMetadata),
+                        key == null ? null : key.slaveSinkTemplate(configuration, asm, slave.getMetadata()),
+                        masterColumnCount,
                         key == null ? null : key.masterSymbolKeys, key == null ? null : key.slaveSymbolKeys);
                 slaveStates.add(state);
                 slaves.setQuick(s, null);
@@ -1103,23 +1102,22 @@ final class AggregateFactoryGenerator {
                 isAdopted = true;
                 return isKeyed
                         ? new MultiHorizonJoinRecordCursorFactory(configuration, asm, metadata, innerMetadata, master, slaveStates,
-                        masterSinkFactories, slaveSinkFactories, offsets, masterTimestampIndex, groupByFunctions, recordFunctions,
+                        offsets, masterTimestampIndex, groupByFunctions, recordFunctions,
                         keyFunctions, keyTypes, valueTypes, columnFilter, columnSources, columnIndices)
                         : new MultiHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, metadata, innerMetadata, master, slaveStates,
-                        masterSinkFactories, slaveSinkFactories, offsets, masterTimestampIndex, groupByFunctions,
-                        valueTypes.getColumnCount(), columnSources, columnIndices);
+                        offsets, masterTimestampIndex, groupByFunctions, valueTypes.getColumnCount(), columnSources, columnIndices);
             }
             final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, workerKeyFunctions,
                     compiledFilter, bindVariableMemory, bindVariables, filter, filterColumnIndexes, workerFilters);
             isAdopted = true;
             return isKeyed
                     ? new AsyncMultiHorizonJoinRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
-                    executionContext.getMessageBus(), metadata, innerMetadata, master, slaveStates, joinKeyTypes, masterSinkFactories,
-                    slaveSinkFactories, offsets, masterTimestampIndex, groupByFunctions, recordFunctions, keyFunctions, keyTypes,
+                    executionContext.getMessageBus(), metadata, innerMetadata, master, slaveStates, joinKeyTypes,
+                    offsets, masterTimestampIndex, groupByFunctions, recordFunctions, keyFunctions, keyTypes,
                     valueTypes, columnFilter, columnSources, columnIndices, resources, workerCount)
                     : new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
-                    executionContext.getMessageBus(), metadata, innerMetadata, master, slaveStates, joinKeyTypes, masterSinkFactories,
-                    slaveSinkFactories, offsets, masterTimestampIndex, groupByFunctions, valueTypes.getColumnCount(), columnSources,
+                    executionContext.getMessageBus(), metadata, innerMetadata, master, slaveStates, joinKeyTypes,
+                    offsets, masterTimestampIndex, groupByFunctions, valueTypes.getColumnCount(), columnSources,
                     columnIndices, resources, workerCount);
         } catch (Throwable th) {
             if (!isAdopted) {

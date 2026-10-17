@@ -1131,7 +1131,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // source bound prevRecord above.
             if (peekNextRow()) {
                 if (pendingTs == Numbers.LONG_NULL) {
-                    throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+                    throw AbstractNoRecordSampleByCursor.nullTimestampException();
                 }
                 if (isPrevPositioningNeeded && sampleBySource == null) {
                     prevRecord = baseCursor.getRecordB();

@@ -1174,6 +1174,20 @@ final class AggregateBinder implements Mutable {
         return true;
     }
 
+    /**
+     * Whether a SELECT expression reads the input column of the literal outside the arguments of aggregate calls.
+     */
+    private boolean isReadBySelectExpression(ExpressionNode literal, OutputSchema input) {
+        final int index = FunctionBinder.findColumn(literal, input, null);
+        final ObjList<ExpressionNode> selected = ctx.scope().aggregateSelectExpressions;
+        for (int i = 0, n = selected.size(); i < n; i++) {
+            if (readsColumn(selected.getQuick(i), input, index)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void markNestedReads(BoundExpression expression) {
         if (expression instanceof ColumnExpression column) {
             nestedReads.add(column.getColumnId());
@@ -1462,6 +1476,24 @@ final class AggregateBinder implements Mutable {
         sampleBy.replaceInput(0, project);
     }
 
+    private boolean readsColumn(ExpressionNode node, OutputSchema input, int index) {
+        if (node == null || ctx.isAggregate(node)) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return FunctionBinder.findColumn(node, input, null) == index;
+        }
+        if (readsColumn(node.lhs, input, index) || readsColumn(node.rhs, input, index)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (readsColumn(node.args.getQuick(i), input, index)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private ExpressionNode resolveDistinctOrderOrdinal(
             ExpressionNode order, QueryModel source, GroupingPlan aggregate, ProjectPlan selected, int selectedCount
     ) throws SqlException {
@@ -1626,6 +1658,9 @@ final class AggregateBinder implements Mutable {
             }
             return;
         }
+        if (node.windowExpression != null) {
+            throw orderNotSelected(node);
+        }
         if (node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION) {
             return;
         }
@@ -1743,6 +1778,9 @@ final class AggregateBinder implements Mutable {
                         && (!isHorizonJoin && !hasSelectAliases && !ctx.hasAggregate(order) && findGroupingExpression(order, source, aggregate) < 0
                         && !hasVirtualSelection
                         || !isAggregateOrderAvailable(order, model, source, aggregate, hasSelectAliases))) {
+                    if (order.type == ExpressionNode.LITERAL && !isReadBySelectExpression(order, input.getOutput())) {
+                        throw orderNotSelected(order);
+                    }
                     if ((sampleByBucket != null || sampleBy != null) && sampleByBinder.referencesSampleByTimestamp(order, input.getOutput(), source)) {
                         collectSampleByDependencies(order, model, source, aggregate, executionContext);
                     } else {
@@ -1918,7 +1956,8 @@ final class AggregateBinder implements Mutable {
                         }
                         scope.substitutionNodes.clear();
                         scope.substitutionColumns.clear();
-                        orderBinder.collectOrderSubstitutions(order, sourcePlan.getOutput(), sourceAlias(source), original, visibleCount, false);
+                        orderBinder.collectOrderSubstitutions(order, sourcePlan.getOutput(), sourceAlias(source), original, visibleCount, false,
+                                orderBinder.selectExpressions(model), source);
                         final BoundExpression bound = ctx.functionBinder.bind(order, original.getOutput(), null,
                                 scope.substitutionNodes, scope.substitutionColumns, executionContext);
                         final CharSequence name = SqlUtil.createColumnAlias(ctx.characterStore, order.token,

@@ -58,7 +58,6 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -98,8 +97,6 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
-            @NotNull ObjList<ObjectFactory<RecordSink>> masterAsOfJoinMapSinkFactories,
-            @NotNull ObjList<ObjectFactory<RecordSink>> slaveAsOfJoinMapSinkFactories,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -126,8 +123,6 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     configuration,
                     slaveStates,
                     perSlaveAsOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkFactories,
-                    slaveAsOfJoinMapSinkFactories,
                     masterTimestampColumnIndex,
                     offsets,
                     valueCount,
@@ -388,7 +383,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                 final RecordSink masterSink = atom.getMasterAsOfJoinSink(slotId, s);
                 final RecordSink slaveSink = atom.getSlaveAsOfJoinMapSink(slotId, s);
 
-                if (asOfJoinMap != null && masterSink != null && slaveSink != null) {
+                if (asOfJoinMap != null) {
                     final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, s, masterRecord);
                     final SymbolTranslatingRecord symbolTranslatingRecord =
                             masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;

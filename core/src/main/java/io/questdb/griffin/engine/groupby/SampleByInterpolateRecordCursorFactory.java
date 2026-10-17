@@ -797,7 +797,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
             final long timestamp = managedRecord.getTimestamp(timestampIndex);
             if (timestamp == Numbers.LONG_NULL) {
-                throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+                throw AbstractNoRecordSampleByCursor.nullTimestampException();
             }
             final TimeZoneRules rules = timezone.getRules();
             final long tzOffset = timezone.getTzOffset();

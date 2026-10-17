@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
@@ -67,7 +66,6 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -2208,12 +2206,6 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         }
     }
 
-    private static ObjList<ObjectFactory<RecordSink>> noSinkFactories(int count) {
-        final ObjList<ObjectFactory<RecordSink>> factories = new ObjList<>(count);
-        factories.setPos(count);
-        return factories;
-    }
-
     private void assertHorizonConstructorRollback(boolean isMulti) {
         final RuntimeException primary = new RuntimeException("constructor primary");
         final RuntimeException ownerFilterFailure = new RuntimeException("owner filter close");
@@ -2255,8 +2247,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         try {
             if (isMulti) {
                 final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-                slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, 1, null, null));
-                slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, 1, null, null));
+                slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, null, null, 1, null, null));
+                slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, null, null, 1, null, null));
                 slaveStates.getQuick(0).setFilter(slaveFilter);
                 slaveStates.getQuick(0).setPerWorkerFilters(perWorkerSlaveFilters);
                 new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
@@ -2269,8 +2261,6 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         masterFactory,
                         slaveStates,
                         null,
-                        noSinkFactories(2),
-                        noSinkFactories(2),
                         new long[]{0},
                         0,
                         groupByFunctions,
@@ -2473,8 +2463,6 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     masterFactory,
                     states,
                     null,
-                    noSinkFactories(3),
-                    noSinkFactories(3),
                     new long[]{0},
                     0,
                     groups,
@@ -2559,12 +2547,12 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null, null, null, null, null, null);
         final StatefulAtom atom;
         if (isMulti) {
-            final HorizonJoinSlaveState state = new HorizonJoinSlaveState(slaveFactory, 1, 1, null, 1, null, null);
+            final HorizonJoinSlaveState state = new HorizonJoinSlaveState(slaveFactory, 1, 1, null, null, null, 1, null, null);
             state.setFilter(ownerFilter);
             state.setPerWorkerFilters(workerFilters);
             states.add(state);
             atom = new AsyncMultiHorizonJoinNotKeyedAtom(
-                    new BytecodeAssembler(), configuration, states, null, noSinkFactories(1), noSinkFactories(1),
+                    new BytecodeAssembler(), configuration, states, null,
                     0, new long[]{0}, 1, new int[0], new int[0], groups, resources, 2
             );
         } else {
@@ -2789,7 +2777,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         private int getFactoryCalls;
 
         private CountingSlaveState(RecordCursorFactory factory, RuntimeException failure, int failureCall) {
-            super(factory, 1, 1, null, 1, null, null);
+            super(factory, 1, 1, null, null, null, 1, null, null);
             this.failure = failure;
             this.failureCall = failureCall;
         }

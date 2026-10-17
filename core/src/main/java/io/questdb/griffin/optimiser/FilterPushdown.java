@@ -235,9 +235,9 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     /**
-     * Whether the conjunct reads only plain projected columns and projected timestamp offsets: dateadd with constant
-     * unit and INT stride over the input's designated timestamp. A conjunct over an offset compares it with constants
-     * only, so interval extraction below can invert the offset.
+     * Whether the conjunct reads only plain projected columns and projected timestamp offsets (see
+     * {@link #isTimestampOffset}). A conjunct over an offset compares it with constants only, so interval extraction
+     * inverts the offset where the column reaches a scan as its designated timestamp.
      */
     private static boolean isComputedProjectionPushable(BoundExpression conjunct, ProjectPlan project) {
         final int leaves = projectedLeaves(conjunct, project);
@@ -370,6 +370,10 @@ final class FilterPushdown implements OptimiserPass {
         return false;
     }
 
+    /**
+     * A dateadd with a constant unit and INT stride over a plain input column. Over the input's designated timestamp
+     * any unit qualifies; over another column only a fixed-duration unit does.
+     */
     private static boolean isTimestampOffset(BoundExpression expression, OutputSchema input) {
         return expression instanceof FunctionExpression call && call.getArgumentCount() == 3
                 && SqlKeywords.isDateaddKeyword(call.getName())
@@ -377,7 +381,7 @@ final class FilterPushdown implements OptimiserPass {
                 && call.argumentAt(1) instanceof ConstantExpression stride && stride.isLiteral()
                 && stride.getDataType() == ColumnType.INT
                 && call.argumentAt(2) instanceof ColumnExpression column && column.isDirectReference()
-                && column.getColumnId() == input.getTimestampColumnId();
+                && (column.getColumnId() == input.getTimestampColumnId() || LogicalPlans.isFixedDurationDateaddUnit(call.argumentAt(0)));
     }
 
     /**
