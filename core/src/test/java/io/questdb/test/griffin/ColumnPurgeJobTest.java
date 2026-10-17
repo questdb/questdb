@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
@@ -76,6 +77,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.ObjIntConsumer;
 import java.util.regex.Pattern;
 
 @RunWith(Parameterized.class)
@@ -1113,6 +1115,16 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 dropTruncateTable();
             }
         });
+    }
+
+    @Test
+    public void testPurgeTruncateRefusalListenerPassesThroughConfigurationWrapper() {
+        // CairoConfigurationWrapper must hand out the delegate's listener, or a wrapped configuration
+        // silently drops the refusal reports
+        final ObjIntConsumer<ColumnPurgeTask> listener = (task, offset) -> {
+        };
+        node1.getConfigurationOverrides().setColumnPurgeTruncateRefusalListener(listener);
+        Assert.assertSame(listener, new CairoConfigurationWrapper(configuration).getColumnPurgeTruncateRefusalListener());
     }
 
     @Test
