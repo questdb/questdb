@@ -11050,6 +11050,7 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 IQueryModel orderByModel = nested;
+                final IQueryModel limitModel = model;
 
                 if (nested.getOrderBy().size() == 0) {
                     // There is no explicit ORDER BY, so we need to add one.
@@ -11081,7 +11082,7 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 // If we removed functions with timestamp column as an argument, they could be
-                // used in the ORDER BY clause, so we need to move it at the level where
+                // used in the ORDER BY clause, so we need to move it and LIMIT to the level where
                 // the functions are restored.
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0 && nested.getOrderBy().size() > 0) {
                     final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
@@ -11089,6 +11090,7 @@ public class SqlOptimiser implements Mutable {
                     for (int i = 0, n = orderBy.size(); i < n; i++) {
                         orderByModel.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
                     }
+                    model.moveLimitFrom(limitModel);
                     nested.clearOrderBy();
                 }
             }
