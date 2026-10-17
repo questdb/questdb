@@ -34,6 +34,8 @@ import static io.questdb.std.datetime.nanotime.Nanos.toNanos;
 
 public class MonthTimestampNanosSampler implements TimestampSampler {
     private final int stepMonths;
+    // Time of day of the bucket starts. A negative value comes from setOffset() and places each bucket start that
+    // long before the start of its calendar month, on the last day of the previous month.
     private long dayMod;
     private int startDay;
 
@@ -76,9 +78,12 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Nanos.getYear(value);
+        // a negative offset moves each bucket start into the previous month, so the bucket of a value
+        // follows the calendar month of the value shifted by the offset
+        final long shifted = value - Math.min(dayMod, 0);
+        int y = Nanos.getYear(shifted);
         final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Nanos.getMonthOfYear(value, y, leap);
+        int m = Nanos.getMonthOfYear(shifted, y, leap);
         // target month
         int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
         int d = startDay > 0 ? startDay : 1;
@@ -87,6 +92,8 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public void setOffset(long timestamp) {
+        // the offset applies to the calendar grid, which starts on the first day of the month
+        this.startDay = 0;
         this.dayMod = timestamp;
     }
 
@@ -108,9 +115,11 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
     }
 
     private long addMonth(long timestamp, int monthCount) {
-        int y = Nanos.getYear(timestamp);
+        // the calendar month of a bucket start that a negative offset moved into the previous month
+        final long shifted = timestamp - Math.min(dayMod, 0);
+        int y = Nanos.getYear(shifted);
         final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Nanos.getMonthOfYear(timestamp, y, leap);
+        int m = Nanos.getMonthOfYear(shifted, y, leap);
 
         int _y;
         int _m = m - 1 + monthCount;
