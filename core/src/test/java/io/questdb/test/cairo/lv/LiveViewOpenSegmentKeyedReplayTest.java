@@ -79,6 +79,9 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     // account_id's position in the view's base page-frame scan, which is the index both
     // index checks of a cold keyed repair are asked about.
     private static final int BASE_KEY_COLUMN_INDEX = 1;
+    // The errno an anchor restore's timeline open reports in the case whose fault clears after
+    // one open: EMFILE, a fault a retry gets past.
+    private static final int ERRNO_EMFILE = 24;
     // How many extra rows of one account a hot hour of openTheDayAboveARoot carries.
     // Enough that the account's postings over the partition the replay starts inside
     // outrun what the whole-range estimate counts of that partition, which is the slice
@@ -86,6 +89,10 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     private static final int HOT_ACCOUNT_ROWS_PER_HOUR = 60;
     // The cairo.live.view.checkpoint.repair.scan.max.rows the row-budget cases run under.
     private static final int OPEN_SEGMENT_SCAN_ROW_BUDGET = 1_000;
+    // The errno every anchor restore's timeline open reports in the case whose fault never
+    // clears on its own: EACCES, a timeline file the process can no longer open for writing.
+    // It is an OS error other than a missing file, so it reads as one a retry may get past.
+    private static final int PERSISTENT_ERRNO = CairoException.ERRNO_EACCES_LINUX;
     // Late rows one wide correction carries into the open segment: past the 64Ki row
     // timestamps the change set keeps room for between repairs, so the walk that records
     // them grows its list past what it may keep.
@@ -1524,6 +1531,157 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute();
             }
         });
+    }
+
+    @Test
+    public void testAKeyedResumeWhoseAnchorRestoreFaultsOnceKeepsTheTimelineAndResumesByKeyAgain() throws Exception {
+        // A keyed resume whose key-scoped restore of its anchor root fails once, on an error a
+        // retry gets past: EMFILE opening the timeline. The resume used to retire the whole
+        // timeline on any failed anchor restore, so the view lost every root below the correction
+        // to a fault that clears. It now hands the fault to the flush-retry accounting with the
+        // timeline as it found it, and the turn after the back-off resumes by key again.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final LiveViewInstance instance = viewInstance();
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+
+                fault.armAnchorRestoreOpen(ERRNO_EMFILE);
+                commit(row(4, 2, 35, "acct-1"), job);
+
+                Assert.assertEquals("the anchor restore must have been failed once", 1, fault.getAnchorRestoreOpenFailures());
+                Assert.assertFalse(fault.isAnchorRestoreOpenArmed());
+                assertQuery("SELECT view_status, checkpoint_recovery_phase, last_processed_seqtxn FROM live_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_status\tcheckpoint_recovery_phase\tlast_processed_seqtxn\n"
+                                + "active\t\t" + (processedBefore + 1) + "\n");
+                Assert.assertEquals(
+                        "a fault a retry gets past must not retire the timeline",
+                        resetsBefore,
+                        instance.getCheckpointTimelineResets()
+                );
+                Assert.assertEquals(
+                        "the faulted resume and its retry must both have followed the correction's keys",
+                        2,
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
+                );
+                Assert.assertEquals("the anchor restore's is the one fault", 1, instance.getRefreshFaultCount());
+                Assert.assertFalse("the retry must have settled the window-state debt", instance.isWindowStateDirty());
+                Assert.assertEquals(0, instance.getFlushRetryCount());
+                Assert.assertEquals(0, instance.getCheckpointRebuildAttempts());
+                assertViewMatchesRecomputeIgnoringFaults();
+            }
+
+            // The ladder the retried resume left is the one a restart restores from.
+            restartAndCommitForwardRows(4, 12);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAKeyedResumeWhoseAnchorRestoreFaultPersistsRebuildsOnceTheRetryBudgetRunsOut() throws Exception {
+        // testAKeyedResumeWhoseAnchorRestoreFaultsOnceKeepsTheTimelineAndResumesByKeyAgain with a
+        // fault that never clears: every key-scoped restore of the anchor root fails, on EACCES
+        // opening the timeline, until the flush-retry budget runs out. A keyed resume restores
+        // into its isolated runtime, so nothing ahead of the restore puts the window-state debt
+        // on the view the way a whole-range resume does; the resume's handling of the failed
+        // restore has to. With the debt on the view, the gate of each turn after the back-off
+        // restores the runtime in place, and once the budget runs out the view takes the
+        // whole-view rebuild, which heals it over a base that still holds every row it retains.
+        // Without the debt, the exhausted budget invalidates the view for good, still holding
+        // the rows from before the correction.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault.facade(), () -> {
+                createView(seedFourAccountsOverTwoDays(), true);
+                final int retryMax = configuration.getLiveViewFlushRetryMax();
+                final long processedBefore;
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    openTheDayAboveARoot(job);
+                    final LiveViewInstance instance = viewInstance();
+                    processedBefore = instance.getLastProcessedSeqTxn();
+
+                    // The commit drives the view through every back-off, so the budget runs out
+                    // before the fault is lifted.
+                    fault.armAnchorRestoreOpenUntilDisarmed(PERSISTENT_ERRNO);
+                    commit(row(4, 2, 35, "acct-1"), job);
+                    fault.disarmAll();
+
+                    Assert.assertEquals(
+                            "every retry the budget allows must have met the fault",
+                            retryMax,
+                            fault.getAnchorRestoreOpenFailures()
+                    );
+                    Assert.assertEquals(
+                            "every faulted resume must have followed the correction's keys",
+                            retryMax,
+                            job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
+                    );
+                    Assert.assertEquals(retryMax, instance.getRefreshFaultCount());
+                    capture.drain();
+                    Assert.assertEquals(
+                            "every fault must have failed the keyed resume's anchor restore",
+                            retryMax,
+                            capture.countOccurrences("keyed=true, error=io.questdb.cairo.CairoException: ["
+                                    + PERSISTENT_ERRNO + "] could not open read-write")
+                    );
+                    // The rebuild consumed the late row, and nothing invalidated or stopped the view.
+                    assertQuery("SELECT view_status, invalidation_reason, checkpoint_recovery_phase, "
+                            + "last_processed_seqtxn FROM live_views()")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("view_status\tinvalidation_reason\tcheckpoint_recovery_phase\tlast_processed_seqtxn\n"
+                                    + "active\t\t\t" + (processedBefore + 1) + "\n");
+                    Assert.assertEquals(
+                            "the gate of each turn after a faulted one must have restored the runtime in place",
+                            retryMax - 1,
+                            capture.countOccurrences("live view restored its runtime from the checkpoint timeline "
+                                    + "[view=lv, cause=mid-drain refresh failure")
+                    );
+                    capture.assertLogged("live view refresh budget exhausted retrying a failed restore, "
+                            + "rebuilding from the applied base [view=lv, retryCount=" + retryMax);
+                    capture.assertLogged("live view recomputed window state from applied base "
+                            + "[view=lv, cause=timeline restore failed]");
+                    capture.assertNotLogged("live view refresh budget exhausted, invalidating");
+                    Assert.assertFalse("the rebuild must have settled the window-state debt", instance.isWindowStateDirty());
+                    Assert.assertEquals(0, instance.getFlushRetryCount());
+                    assertViewMatchesRecomputeIgnoringFaults();
+
+                    // In order on the corrected account and an untouched one, these fold onto the
+                    // accumulators the rebuild left the runtime holding.
+                    commitForwardRows(4, 12, job);
+                    assertViewMatchesRecomputeIgnoringFaults();
+                }
+
+                // The ladder the rebuild and the forward rows sealed is the one a restart
+                // restores from.
+                restartAndCommitForwardRows(4, 13);
+                assertRestoredFromTimeline("lv");
+                assertQuery("SELECT view_status, invalidation_reason, last_processed_seqtxn FROM live_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_status\tinvalidation_reason\tlast_processed_seqtxn\n"
+                                + "active\t\t" + (processedBefore + 3) + "\n");
+                assertViewMatchesRecompute();
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test

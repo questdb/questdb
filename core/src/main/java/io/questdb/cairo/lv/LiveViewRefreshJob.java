@@ -8066,7 +8066,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * A published splice or successful closing seal resolves the marker. Otherwise retire
      * the timeline, including an empty replay that cannot seal. An unreadable restore
      * retires the timeline and leaves the watermark unchanged for a later rebuild;
-     * a compatibility break records a pending invalidation.
+     * a compatibility break records a pending invalidation. A restore that fails on a fault
+     * a retry may get past ({@link #isTransientRestoreFailure}) keeps the timeline, leaves
+     * the window-state debt on the view and throws the fault to
+     * {@link #handleRefreshFailure}, so a later turn restores the runtime in place and
+     * replans the same repair.
      */
     private void replayFromAnchor(
             LiveViewInstance instance,
@@ -8343,7 +8347,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // did by the transplant below. Nothing marks the window state
                             // dirty here for the same reason: escalating a recoverable
                             // fault into a full recompute would be wrong when the runtime
-                            // this turn may leave inconsistent is not the primary.
+                            // this turn may leave inconsistent is not the primary. The one
+                            // exception is an anchor restore that fails on a fault a retry
+                            // may get past; see the catch around the restore below.
                             repairRuntime.reset();
                         } else if (!isRuntimeAnchorReused) {
                             // Drop pre-O3 drift before restoring the anchor root.
@@ -8364,40 +8370,73 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // adoptTruncatedHeadCheckpointBaseline.
                         final long rootRestoreStart = System.nanoTime();
                         final long anchorLvRowPosition;
-                        if (isKeyed) {
-                            // Only this correction's keys, into a runtime holding nothing.
-                            // A key the root does not name held no state at that boundary,
-                            // which is what a correction introducing a key looks like.
-                            anchorLvRowPosition = restoreAnchorRootKeys(
-                                    instance,
-                                    replayWindowFactory,
-                                    replayAnchorWindow,
-                                    anchorMaxTs,
-                                    anchorCheckpointId,
-                                    keyedReplay.getOutputKeys()
-                            );
-                        } else if (isRuntimeAnchorReused) {
-                            // The selected anchor is the root the current head
-                            // mirrors, this runtime is the one that froze it, and no
-                            // row has entered the window pipeline since. The live
-                            // maps and arenas therefore already are the anchor's
-                            // state, and the lifetime row counter is still the
-                            // position the root recorded. Avoid decoding the same
-                            // immutable pages to write that state back over itself.
-                            anchorLvRowPosition = instance.getLvRowsTotal();
-                            stats.inc(RUNTIME_ANCHOR_REUSE_COUNT);
-                            // No restore ran, so nothing stamped the baseline the freeze
-                            // or the closing seal reads. Stamp it here on the same terms the
-                            // restore takes: the provisional repair stamp.
-                            adoptRepairCheckpointBaseline(instance, windowFactory);
-                        } else {
-                            anchorLvRowPosition = restoreAnchorRoot(
-                                    instance,
-                                    windowFactory,
-                                    anchorMaxTs,
-                                    anchorCheckpointId,
-                                    true
-                            );
+                        try {
+                            if (isKeyed) {
+                                // Only this correction's keys, into a runtime holding nothing.
+                                // A key the root does not name held no state at that boundary,
+                                // which is what a correction introducing a key looks like.
+                                anchorLvRowPosition = restoreAnchorRootKeys(
+                                        instance,
+                                        replayWindowFactory,
+                                        replayAnchorWindow,
+                                        anchorMaxTs,
+                                        anchorCheckpointId,
+                                        keyedReplay.getOutputKeys()
+                                );
+                            } else if (isRuntimeAnchorReused) {
+                                // The selected anchor is the root the current head
+                                // mirrors, this runtime is the one that froze it, and no
+                                // row has entered the window pipeline since. The live
+                                // maps and arenas therefore already are the anchor's
+                                // state, and the lifetime row counter is still the
+                                // position the root recorded. Avoid decoding the same
+                                // immutable pages to write that state back over itself.
+                                anchorLvRowPosition = instance.getLvRowsTotal();
+                                stats.inc(RUNTIME_ANCHOR_REUSE_COUNT);
+                                // No restore ran, so nothing stamped the baseline the freeze
+                                // or the closing seal reads. Stamp it here on the same terms the
+                                // restore takes: the provisional repair stamp.
+                                adoptRepairCheckpointBaseline(instance, windowFactory);
+                            } else {
+                                anchorLvRowPosition = restoreAnchorRoot(
+                                        instance,
+                                        windowFactory,
+                                        anchorMaxTs,
+                                        anchorCheckpointId,
+                                        true
+                                );
+                            }
+                        } catch (CairoException fault) {
+                            // Both restores throw only a fault a retry may get past - EMFILE,
+                            // EIO, a refused allocation - which says nothing about the root, so
+                            // the timeline stays. Retiring it would leave the runtime's recovery
+                            // nothing to restore from, and the whole-view rebuild it would fall
+                            // back to is the one the restatement guard refuses over a base that
+                            // lost rows the view retains. The rethrow abandons the replay ahead
+                            // of its replacement commit, as a fault further on in the replay
+                            // does, and the cleanup below discards its capture and session.
+                            //
+                            // The failed restore leaves the runtime it was writing into
+                            // half-restored - the primary for a whole-range resume, the isolated
+                            // one for a keyed resume, whose primary may hold rows this turn's
+                            // drain fed - so the window-state debt goes on the view either way,
+                            // as after every failed restore. This turn's own field comes off, so
+                            // handleRefreshFailure charges the fault to the flush-retry count
+                            // and arms the back-off rather than recovering in this turn. The
+                            // gate of the turn after the back-off restores the runtime in place,
+                            // and its drain replans the same repair. A fault that outlasts the
+                            // budget has the view take the whole-view rebuild then
+                            // (rebuildAfterRestoreRetriesRanOut), as a restore that keeps
+                            // failing does.
+                            LOG.error().$("could not restore live view O3 resume anchor, retrying [view=")
+                                    .$(viewName)
+                                    .$(", anchorMaxTs=").$ts(anchorMaxTs)
+                                    .$(", anchorCheckpointId=").$(anchorCheckpointId)
+                                    .$(", keyed=").$(isKeyed)
+                                    .$(", error=").$((Throwable) fault).I$();
+                            markWindowStateDirty(instance);
+                            windowStateDirty = false;
+                            throw fault;
                         }
                         openSegmentRepairPhases.rootRestoreNanos += System.nanoTime() - rootRestoreStart;
                         if (anchorLvRowPosition == Numbers.LONG_NULL) {
@@ -8409,7 +8448,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // re-fires on a later refresh cycle and rebuilds against
                             // the now-retired timeline (one cycle of stale pre-O3
                             // rows in between). try-with-resources closes the cursor
-                            // on return.
+                            // on return. A fault a retry may get past does not reach
+                            // here; see the catch above.
                             retireCheckpointStateOnO3(instance, true);
                             return;
                         }
@@ -12398,21 +12438,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Restores the logical checkpoint root the repair plan chose as its resume
-     * anchor, identified by the timeline's composite {@code (maxTimestamp,
-     * checkpointId)} key. The caller has already cleared the per-function
-     * partition maps, so this writes the root's state into an empty runtime.
-     * <p>
-     * Selection and restore run under separate generation pins - the plan searched
-     * during planning, this restores at replay time - so the exact-key lookup here
-     * is what proves the boundary survived in between. Only this worker publishes
-     * for this view and it publishes nothing between the two, so a miss means the
-     * timeline is gone or unreadable rather than merely re-versioned.
-     *
-     * @return the root's effective {@code lvRowPosition}, or
-     * {@link Numbers#LONG_NULL} when the root could not be restored
-     */
-    /**
      * Restores one repair's key domain out of the anchor root and into the runtime the
      * keyed replay folds its rows into.
      * <p>
@@ -12420,10 +12445,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * behind as much as in what it reads. It stamps no incremental baseline: the runtime
      * it fills holds this correction's keys and nothing else, so a complete freeze of it
      * is bounded by the correction, and a baseline would only invite the freeze to image a
-     * difference against a root this runtime never stood on.
+     * difference against a root this runtime never stood on. It sorts a failure the way
+     * {@link #restoreAnchorRoot} does.
      *
      * @return the anchor's own live-view row position, or {@link Numbers#LONG_NULL} when
      * the root could not be read or its shape is one no key-scoped restore can serve
+     * @throws CairoException a fault a retry may get past ({@link #isTransientRestoreFailure}),
+     *                        which leaves the runtime holding part of the root's keys
      */
     private long restoreAnchorRootKeys(
             LiveViewInstance instance,
@@ -12465,6 +12493,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 reader.detach();
             }
         } catch (CairoException ce) {
+            if (isTransientRestoreFailure(ce)) {
+                // Says nothing about the root; the caller decides what the fault costs it.
+                throw ce;
+            }
             LOG.critical().$("could not restore live view O3 resume anchor by key [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", anchorMaxTs=").$ts(anchorMaxTs)
@@ -12481,6 +12513,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * Restores the logical checkpoint root the repair plan chose as its resume
+     * anchor, identified by the timeline's composite {@code (maxTimestamp,
+     * checkpointId)} key. The caller has already cleared the per-function
+     * partition maps, so this writes the root's state into an empty runtime.
+     * <p>
+     * Selection and restore run under separate generation pins - the plan searched
+     * during planning, this restores at replay time - so the exact-key lookup here
+     * is what proves the boundary survived in between. Only this worker publishes
+     * for this view and it publishes nothing between the two, so a miss means the
+     * timeline is gone or unreadable rather than merely re-versioned.
+     * <p>
+     * A failure that is a fault of the environment a retry may get past
+     * ({@link #isTransientRestoreFailure}) says nothing about the root, so it throws
+     * rather than returning the miss a caller may answer by retiring the timeline.
+     * Every other failure returns the miss.
+     *
+     * @return the root's effective {@code lvRowPosition}, or
+     * {@link Numbers#LONG_NULL} when the root could not be restored
+     * @throws CairoException a fault a retry may get past, which leaves the runtime
+     *                        holding part of the root's state
+     */
     private long restoreAnchorRoot(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
@@ -12507,6 +12561,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 reader.detach();
             }
         } catch (CairoException ce) {
+            if (isTransientRestoreFailure(ce)) {
+                // Says nothing about the root; the caller decides what the fault costs it.
+                throw ce;
+            }
             LOG.critical().$("could not restore live view O3 resume anchor [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", anchorMaxTs=").$ts(anchorMaxTs)
@@ -12563,13 +12621,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         clearPartitionMapsForRootRestore(windowFactory.getWindowFunctions());
-        final long rootRowPosition = restoreAnchorRoot(
-                instance,
-                windowFactory,
-                frontierTs,
-                timelineFrontierRoot.checkpointId,
-                false
-        );
+        final long rootRowPosition;
+        try {
+            rootRowPosition = restoreAnchorRoot(
+                    instance,
+                    windowFactory,
+                    frontierTs,
+                    timelineFrontierRoot.checkpointId,
+                    false
+            );
+        } catch (CairoException fault) {
+            // A fault a retry may get past. The union range the caller falls back to replaces
+            // the runtime whatever the restore left in it, as it does after a root this cannot
+            // read, so this declines the same way and the repair goes on in this turn.
+            LOG.error().$("could not restore live view runtime to the root at the frontier, repairing the union range [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", boundary=").$ts(frontierTs)
+                    .$(", checkpointId=").$(timelineFrontierRoot.checkpointId)
+                    .$(", error=").$((Throwable) fault).I$();
+            return false;
+        }
         if (rootRowPosition == Numbers.LONG_NULL) {
             return false;
         }
@@ -13395,10 +13466,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * flush-retry budget retry the restore in place, instead of falling back to the whole-view
      * rebuild: over a base that lost rows the view retains, {@link LiveViewRebuildRestatementGuard}
      * refuses that rebuild, and a rebuild that is not refused replaces the view's output where a
-     * retry restores it. A fault that outlasts the budget is not one a retry gets past after all,
-     * and the view takes the rebuild then ({@link #rebuildAfterRestoreRetriesRanOut}) rather than
-     * being invalidated. A breach of the view's own refresh memory limit still invalidates the
-     * view there, as every breach does.
+     * retry restores it. An out-of-order repair whose restore of the root it resumes from fails
+     * on such a fault hands it over the same way rather than retiring the timeline
+     * ({@link #replayFromAnchor}). A fault that outlasts the budget is not one a retry gets past
+     * after all, and the view takes the rebuild then ({@link #rebuildAfterRestoreRetriesRanOut})
+     * rather than being invalidated. A breach of the view's own refresh memory limit still
+     * invalidates the view there, as every breach does.
      * <p>
      * Every other failure still falls back to the rebuild at once: one that shows the timeline
      * cannot be restored from ({@link #isDefinitiveRestoreFailure}), and one that names no cause,
@@ -17255,10 +17328,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * would end the view durably on a fault the rebuild does not need to get past.
      * <p>
      * Takes only an ACTIVE view whose window-state debt stands. Every failed restore leaves it, at
-     * a restart and in each running recovery, and so does a whole-view rebuild that failed on such
-     * a fault, which gets one more attempt here. A fault in a turn that owes no recovery - a drain
-     * that fed nothing, or one whose recovery put the view back - goes to the invalidation as
-     * before.
+     * a restart, in each running recovery and in an out-of-order repair's restore of its anchor,
+     * and so does a whole-view rebuild that failed on such a fault, which gets one more attempt
+     * here. A fault in a turn that owes no recovery - a drain that fed nothing, or one whose
+     * recovery put the view back - goes to the invalidation as before.
      *
      * @return true when the rebuild healed the view, stopped it, or deferred on the base's apply,
      * or a cancellation ended it; false when the rebuild failed or did not run, and the caller

@@ -125,6 +125,9 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             2026-01-03T09:00:00.000000Z\tacct-1\t16.0\t1
             2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
             """;
+    // The line an out-of-order repair logs when the restore of the root it resumes from fails on
+    // a fault a retry may get past, and the repair hands the fault to the flush-retry accounting.
+    private static final String ANCHOR_RESTORE_RETRY_LINE = "could not restore live view O3 resume anchor, retrying [view=lv, ";
     // What the view holds once the late day-two row the parked-repair cases commit has been
     // repaired in. The correction re-accumulates day two alone - ANCHOR DAILY resets acct-1
     // at midnight - so the rows are the same whether or not the base still holds its oldest
@@ -2249,6 +2252,150 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             assertRestoredFromTimeline("lv");
             assertNoRefreshFaults("lv");
             assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+        });
+    }
+
+    @Test
+    public void testATransientAnchorRestoreFaultRetriesTheResumeOverTheDayTheBaseLost() throws Exception {
+        // A late day-three row whose repair resumes from the root at day three's first row, with
+        // the restore of that anchor failing once on an error a retry gets past. The repair used
+        // to retire the whole timeline on any failed anchor restore, after it had already wiped
+        // the runtime. The recovery of that runtime then found no timeline, fell back to the
+        // whole-view rebuild, and the guard refused it over the day the base lost: the view
+        // stopped, and every restart after it stopped again. The repair hands the fault to the
+        // flush-retry accounting instead, with the window-state debt standing and the timeline as
+        // it found it, and the turn after the back-off restores in place and resumes again.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            failAnchorRestoreOnceAndRetry(fault, 1);
+        });
+    }
+
+    @Test
+    public void testATransientAnchorRestoreFaultRetriesTheResumeOverTheDayTtlEvicted() throws Exception {
+        // testATransientAnchorRestoreFaultRetriesTheResumeOverTheDayTheBaseLost over a base that
+        // lost its oldest day to TTL rather than to DROP PARTITION. The TTL change moves the base's
+        // metadata version, which the repair meets ahead of its anchor restore, so the case owes a
+        // second refresh fault: the drift, which the view recovers from in place.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            // TTL measures a partition's age against the earlier of the table's newest row and
+            // the wall clock, so the clock moves past the fixture's last day first.
+            setCurrentMicros(ts("2026-01-05T00:00:00.000000Z"));
+            execute("ALTER TABLE tx SET TTL 1 DAY");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertQuery("SELECT min(created_at), count() FROM tx")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            min\tcount
+                            2026-01-02T09:00:00.000000Z\t4
+                            """);
+            assertViewRows(ALL_ROWS);
+            failAnchorRestoreOnceAndRetry(fault, 2);
+        });
+    }
+
+    @Test
+    public void testATransientAnchorRestoreFaultThatPersistsRebuildsTheViewOverACompleteBase() throws Exception {
+        // testATransientAnchorRestoreFaultThatPersistsStopsTheViewOverTheDayTheBaseLost over a base
+        // that still holds every row the view retains. Once the flush-retry budget runs out, the
+        // whole-view rebuild the view takes heals it, consuming the late row, rather than the view
+        // being invalidated on a fault the rebuild does not need to get past.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            final LiveViewInstance instance = instance("lv");
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            fault.armAnchorRestoreOpenUntilDisarmed(PERSISTENT_ERRNO);
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T09:05:00.000000Z', 'acct-1', 64.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            fault.disarmAll();
+
+            Assert.assertEquals(
+                    "every retry the budget allows must have met the fault",
+                    configuration.getLiveViewFlushRetryMax(),
+                    fault.getAnchorRestoreOpenFailures()
+            );
+            Assert.assertFalse("a restore fault that persists must not invalidate the view", instance.isInvalid());
+            Assert.assertFalse("the rebuild over a complete base must pass the guard", instance.isCheckpointRecoveryBlocked());
+            Assert.assertEquals("the rebuild must consume the late row", processedBefore + 1, instance.getLastProcessedSeqTxn());
+            capture.drain();
+            capture.assertLogged(RESTORE_RETRIES_EXHAUSTED_LINE);
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=" + RESTART_RESTORE_CAUSE + ']');
+            capture.assertNotLogged("live view refresh budget exhausted, invalidating");
+            assertLiveViewsReportsNoRecovery(instance);
+            assertViewRows(CORRECTED_DAY_THREE_ROWS);
+
+            shutdown();
+            restart();
+            assertLiveViewsReportsNoRecovery(instance("lv"));
+            assertNoRefreshFaults("lv");
+            assertViewRows(CORRECTED_DAY_THREE_ROWS);
+        });
+    }
+
+    @Test
+    public void testATransientAnchorRestoreFaultThatPersistsStopsTheViewOverTheDayTheBaseLost() throws Exception {
+        // testATransientAnchorRestoreFaultRetriesTheResumeOverTheDayTheBaseLost with a fault that
+        // never clears: every open of the timeline an anchor restore makes fails, while the
+        // recovery's restore and the seals open it unharmed. Each retry the back-off paces
+        // restores the runtime in place and meets the fault again in the repair, until the
+        // flush-retry budget runs out. The view then takes the whole-view rebuild, as a restore
+        // that keeps failing does, and the guard refuses it over the day the base lost: the view
+        // stops, keeping every row and the timeline the repair never retired. A restart once the
+        // fault clears restores the runtime from that timeline and repairs the late row.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            final long generationBefore = newestGeneration(instance);
+            final long resetsBefore = instance.getCheckpointTimelineResets();
+            fault.armAnchorRestoreOpenUntilDisarmed(PERSISTENT_ERRNO);
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T09:05:00.000000Z', 'acct-1', 64.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            fault.disarmAll();
+
+            Assert.assertFalse("a restore fault that persists must not invalidate the view", instance.isInvalid());
+            assertRebuildBlocked(instance, RESTART_RESTORE_CAUSE);
+            assertLiveViewsReportsTheBlock();
+            Assert.assertEquals(
+                    "every retry the budget allows must have met the fault",
+                    configuration.getLiveViewFlushRetryMax(),
+                    fault.getAnchorRestoreOpenFailures()
+            );
+            Assert.assertEquals(configuration.getLiveViewFlushRetryMax(), instance.getRefreshFaultCount());
+            Assert.assertEquals("the stop must keep the timeline", resetsBefore, instance.getCheckpointTimelineResets());
+            Assert.assertEquals("the stop must keep the generation it found", generationBefore, newestGeneration(instance));
+            Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+            capture.drain();
+            capture.assertLogged(RESTORE_RETRIES_EXHAUSTED_LINE);
+            capture.assertLogged("live view rebuild from the applied base refused");
+            capture.assertNotLogged("live view refresh budget exhausted, invalidating");
+            assertViewRows(ALL_ROWS);
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertLiveViewsReportsNoRecovery(instance("lv"));
+            assertNoRefreshFaults("lv");
+            Assert.assertEquals("the restart must repair the late row", processedBefore + 1, instance("lv").getLastProcessedSeqTxn());
+            assertViewRows(CORRECTED_DAY_THREE_ROWS);
         });
     }
 
@@ -4944,6 +5091,66 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
         assertViewRows(expectedViewRows);
         assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * Commits a late day-three row whose anchor restore fails once on an error a retry gets past,
+     * then an in-order row on top, and restarts. {@code refreshFaults} counts the anchor restore's
+     * fault, plus one for a base metadata change the repair meets first, when the case made one.
+     */
+    private void failAnchorRestoreOnceAndRetry(LiveViewMidDrainFault fault, int refreshFaults) throws Exception {
+        final LiveViewInstance instance = instance("lv");
+        final long processedBefore = instance.getLastProcessedSeqTxn();
+        final long resetsBefore = instance.getCheckpointTimelineResets();
+        fault.armAnchorRestoreOpen(TRANSIENT_ERRNO);
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T09:05:00.000000Z', 'acct-1', 64.0)");
+        drainWalQueue();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+        Assert.assertEquals("the anchor restore must have been failed once", 1, fault.getAnchorRestoreOpenFailures());
+        Assert.assertFalse(fault.isAnchorRestoreOpenArmed());
+        assertQuery("SELECT view_status, checkpoint_recovery_phase, last_processed_seqtxn FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tcheckpoint_recovery_phase\tlast_processed_seqtxn\n"
+                        + "active\t\t" + (processedBefore + 1) + "\n");
+        capture.drain();
+        capture.assertLogged("resumeFromAnchor=true");
+        capture.assertLogged(ANCHOR_RESTORE_RETRY_LINE);
+        capture.assertLogged(TRANSIENT_RESTORE_ERROR);
+        capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=" + MID_DRAIN_CAUSE);
+        capture.assertNotLogged("live view cannot restore its runtime from the checkpoint timeline");
+        capture.assertNotLogged("live view rebuild from the applied base refused");
+        capture.assertNotLogged("live view recomputed window state from applied base");
+        Assert.assertFalse(instance.isInvalid());
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        Assert.assertEquals("a fault a retry gets past must not retire the timeline", resetsBefore, instance.getCheckpointTimelineResets());
+        Assert.assertEquals("no whole-view rebuild may have been asked for", 0, instance.getCheckpointRebuildAttempts());
+        Assert.assertEquals(refreshFaults, instance.getRefreshFaultCount());
+        Assert.assertTrue("the retry must resume from the anchor", instance.getO3ResumeReplayRows() > 0);
+        Assert.assertFalse("the retry must have settled the window-state debt", instance.isWindowStateDirty());
+        Assert.assertEquals("the turn that repaired the late row must have ended the retry streak", 0, instance.getFlushRetryCount());
+        assertLiveViewsReportsNoRecovery(instance);
+        assertViewRows(CORRECTED_DAY_THREE_ROWS);
+
+        // The runtime the retry left carries acct-1's day three on from the late row.
+        final String correctedRowsAhead = CORRECTED_DAY_THREE_ROWS + "2026-01-03T10:00:00.000000Z\tacct-1\t144.0\t3\n";
+        execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+        drainWalQueue();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+        Assert.assertEquals(processedBefore + 2, instance.getLastProcessedSeqTxn());
+        Assert.assertEquals("the in-order commit must not fault", refreshFaults, instance.getRefreshFaultCount());
+        assertViewRows(correctedRowsAhead);
+
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        assertLiveViewsReportsNoRecovery(instance("lv"));
+        assertNoRefreshFaults("lv");
+        assertViewRows(correctedRowsAhead);
     }
 
     /**

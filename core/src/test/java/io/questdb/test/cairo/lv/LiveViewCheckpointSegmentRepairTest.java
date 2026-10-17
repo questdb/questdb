@@ -94,6 +94,8 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     private static final int ENTRY_ROOT_OFFSET = 3;
     private static final int ENTRY_ROOT_SEGMENT = 2;
     private static final int ENTRY_SIZE = 6;
+    // The errno a failed open of the timeline reports: EMFILE, a fault a retry may get past.
+    private static final int ERRNO_EMFILE = 24;
     private static final long FLUSH_EVERY_MICROS = 3_600_000_000L;
     // The firstLateRow, secondLateRow and tieCommit that most cases of
     // assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier pass. All three land around
@@ -744,6 +746,50 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         // root already holds the state the hand-off rewound to. The late commit's closed day
         // is repaired on its own, and the residual resumes from that root.
         assertCoalescedBackfillRepairsPerSegment(INDEXED_KEY, "", true);
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootFallBackToTheUnionRangeWhenTheFrontierRootFaults() throws Exception {
+        // The coalesced drain of testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreRepairedPerSegment,
+        // with the restore of the root at the frontier failing once on EMFILE, a fault a retry may
+        // get past. The segment loop cannot run over the runtime the drain advanced, so the repair
+        // declines it and takes the union range, which replaces that runtime and does not need
+        // the root at the frontier. The view matches its recompute once the refresh quiesces,
+        // and again after a restart restores it from the timeline.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            createBackfillView(INDEXED_KEY, "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(10, 1, "acct-1"), job);
+                final long segmentRepairsBefore = job.getStatsForTest().get(SEGMENT_REPAIR_COUNT);
+                commitDuringTheNextTurn(job, row(10, 2, "acct-2"), row(8, 3, "acct-1"), true);
+                fault.armFrontierRootRestoreOpen(ERRNO_EMFILE);
+                execute("INSERT INTO tx VALUES " + row(9, 3, "acct-2"));
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the frontier root's restore must have been failed once", 1, fault.getAnchorRestoreOpenFailures());
+                // The day-nine commit repairs its own closed day, as in the case this one extends.
+                // The pass that drains the coalesced pair declines its loop, so the day-eight
+                // correction is repaired by the union range rather than per segment.
+                Assert.assertEquals(
+                        "the loop must decline and leave the coalesced change set to the union range",
+                        1,
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT) - segmentRepairsBefore
+                );
+                assertViewMatchesRecompute();
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                assertRestoredFromTimeline("lv");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+                commit(row(10, 8, "acct-1") + ", " + row(10, 9, "acct-2"), job);
+                assertViewMatchesRecompute();
+            }
+        });
     }
 
     @Test

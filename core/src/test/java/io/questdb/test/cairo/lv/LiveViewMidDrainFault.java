@@ -39,6 +39,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -62,6 +63,13 @@ import java.util.concurrent.atomic.AtomicReference;
  * turn instead of falling back to the rebuild. {@link #armTimelineOpenUntilDisarmed} fails every
  * such open, not just the next one, until {@link #disarmAll()}: a timeline file the process can no
  * longer open for writing, which every restore and every seal meets.
+ * <p>
+ * {@link #armAnchorRestoreOpen} fails the same open, but only the one an out-of-order repair makes
+ * when it restores the root it resumes from: the open made while {@code replayFromAnchor} and
+ * {@code restoreAnchorRoot} or {@code restoreAnchorRootKeys} are on the stack. Every other
+ * restore, and every seal, opens the timeline unharmed. {@link #armAnchorRestoreOpenUntilDisarmed}
+ * fails every such open until {@link #disarmAll()}. {@link #armFrontierRootRestoreOpen} fails the
+ * open the same restore makes for a segment loop instead, from {@code restoreRuntimeAtFrontierRoot}.
  * <p>
  * {@link #armRuntimeRestore} fails nothing itself: it runs an action once, right before a
  * running recovery's restore from the timeline reads the view's table, so a case can stage what
@@ -88,6 +96,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * names the timestamp, value and key columns of another schema.
  */
 final class LiveViewMidDrainFault {
+    // The anchor restore opens the armed fault failed.
+    private final AtomicInteger anchorRestoreOpenFailures = new AtomicInteger();
     private final AtomicBoolean appliedScanArmed = new AtomicBoolean();
     // The file name, with its leading separator, of the base column armAppliedScan fails.
     private final String appliedScanFileName;
@@ -99,6 +109,11 @@ final class LiveViewMidDrainFault {
     private final AtomicBoolean fired = new AtomicBoolean();
     private final AtomicBoolean hasViewStateOpenFired = new AtomicBoolean();
     private final AtomicBoolean hasViewSymbolKeyOpenFired = new AtomicBoolean();
+    private final AtomicBoolean isAnchorRestoreOpenArmed = new AtomicBoolean();
+    // Set by a failed anchor restore open, until the errno read that reports anchorRestoreOpenErrno.
+    private final AtomicBoolean isAnchorRestoreOpenErrnoPending = new AtomicBoolean();
+    // Set by armAnchorRestoreOpenUntilDisarmed: the armed fault fails every anchor restore open, not one.
+    private final AtomicBoolean isAnchorRestoreOpenPersistent = new AtomicBoolean();
     // Set by a failed WAL read that reports readErrno, until the errno read that reports it.
     private final AtomicBoolean isReadErrnoPending = new AtomicBoolean();
     // Set by a failed timeline open that reports timelineOpenErrno, until the errno read that reports it.
@@ -118,6 +133,11 @@ final class LiveViewMidDrainFault {
     private final String viewSymbolKeyFileName;
     // The file name, with its leading separator, of the base WAL column arm fails.
     private final String walReadFileName;
+    // The refresh job method whose anchor restore the armed fault fails: replayFromAnchor or
+    // restoreRuntimeAtFrontierRoot.
+    private volatile String anchorRestoreCaller;
+    // The errno the failed anchor restore open reports.
+    private volatile int anchorRestoreOpenErrno;
     // The partition the open armAppliedScan fails must be in; null fails it in any partition.
     private volatile String appliedScanPartition;
     private volatile String baseDir;
@@ -150,6 +170,22 @@ final class LiveViewMidDrainFault {
         breachTracker = null;
         fired.set(false);
         countdown.set(skip);
+    }
+
+    /**
+     * Arms the failure of the next open of a live view's checkpoint timeline that an
+     * out-of-order repair makes to restore the root it resumes from, reporting {@code errno}.
+     */
+    void armAnchorRestoreOpen(int errno) {
+        armAnchorRestoreOpen("replayFromAnchor", errno, false);
+    }
+
+    /**
+     * Arms the open {@link #armAnchorRestoreOpen(int)} fails for every such open until
+     * {@link #disarmAll()}, each reporting {@code errno}.
+     */
+    void armAnchorRestoreOpenUntilDisarmed(int errno) {
+        armAnchorRestoreOpen("replayFromAnchor", errno, true);
     }
 
     void armAppliedScan() {
@@ -187,6 +223,14 @@ final class LiveViewMidDrainFault {
         Assert.assertTrue("the view must run under a refresh memory limit", tracker.getLimit() > 0);
         arm(skip);
         breachTracker = tracker;
+    }
+
+    /**
+     * Arms the failure of the next open of a live view's checkpoint timeline that the restore of
+     * the root at the runtime frontier makes ahead of a segment loop, reporting {@code errno}.
+     */
+    void armFrontierRootRestoreOpen(int errno) {
+        armAnchorRestoreOpen("restoreRuntimeAtFrontierRoot", errno, false);
     }
 
     void armTimelineOpen() {
@@ -259,12 +303,18 @@ final class LiveViewMidDrainFault {
         timelineOpenArmed.set(false);
         isTimelineOpenPersistent.set(false);
         isTimelineOpenErrnoPending.set(false);
+        isAnchorRestoreOpenArmed.set(false);
+        isAnchorRestoreOpenPersistent.set(false);
+        isAnchorRestoreOpenErrnoPending.set(false);
     }
 
     FilesFacade facade() {
         return new TestFilesFacadeImpl() {
             @Override
             public int errno() {
+                if (isAnchorRestoreOpenErrnoPending.compareAndSet(true, false)) {
+                    return anchorRestoreOpenErrno;
+                }
                 if (isTimelineOpenErrnoPending.compareAndSet(true, false)) {
                     return timelineOpenErrno;
                 }
@@ -329,6 +379,14 @@ final class LiveViewMidDrainFault {
 
             @Override
             public long openRW(LPSZ name, int opts) {
+                if (isAnchorRestoreOpenArmed.get()
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                        && isAnchorRestore(anchorRestoreCaller)
+                        && (isAnchorRestoreOpenPersistent.get() || isAnchorRestoreOpenArmed.compareAndSet(true, false))) {
+                    anchorRestoreOpenFailures.incrementAndGet();
+                    isAnchorRestoreOpenErrnoPending.set(true);
+                    return -1;
+                }
                 if (timelineOpenArmed.get()
                         && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
                         && (isTimelineOpenPersistent.get() || timelineOpenArmed.compareAndSet(true, false))) {
@@ -345,6 +403,10 @@ final class LiveViewMidDrainFault {
                 return super.openRW(name, opts);
             }
         };
+    }
+
+    int getAnchorRestoreOpenFailures() {
+        return anchorRestoreOpenFailures.get();
     }
 
     int getTimelineOpenFailures() {
@@ -365,6 +427,10 @@ final class LiveViewMidDrainFault {
 
     boolean hasViewSymbolKeyOpenFired() {
         return hasViewSymbolKeyOpenFired.get();
+    }
+
+    boolean isAnchorRestoreOpenArmed() {
+        return isAnchorRestoreOpenArmed.get();
     }
 
     boolean isTimelineOpenArmed() {
@@ -395,11 +461,30 @@ final class LiveViewMidDrainFault {
         throw new AssertionError("the view's tracker admitted a charge past its limit");
     }
 
+    // A restore of a timeline root by its exact key, the whole-runtime one or the key-scoped
+    // one, made from the refresh job method named caller.
+    private static boolean isAnchorRestore(String caller) {
+        final List<String> methods = StackWalker.getInstance().walk(frames -> frames
+                .filter(frame -> LiveViewRefreshJob.class.getName().equals(frame.getClassName()))
+                .map(StackWalker.StackFrame::getMethodName)
+                .toList());
+        return methods.contains(caller)
+                && (methods.contains("restoreAnchorRoot") || methods.contains("restoreAnchorRootKeys"));
+    }
+
     private static boolean isRuntimeRestore() {
         return StackWalker.getInstance().walk(frames -> frames.anyMatch(
                 frame -> LiveViewRefreshJob.class.getName().equals(frame.getClassName())
                         && "tryRestoreRuntimeFromTimeline".equals(frame.getMethodName())
         ));
+    }
+
+    // Sets the caller and the errno before it arms, so an open that sees the arm reads both.
+    private void armAnchorRestoreOpen(String caller, int errno, boolean isPersistent) {
+        anchorRestoreCaller = caller;
+        anchorRestoreOpenErrno = errno;
+        isAnchorRestoreOpenPersistent.set(isPersistent);
+        isAnchorRestoreOpenArmed.set(true);
     }
 
     // Read behind the armed check: armAppliedScan sets the partition before it arms.

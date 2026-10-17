@@ -1013,8 +1013,9 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         // A restart's replay meets a commit that is out of order within itself in the gap above
         // its root, and hands off to the out-of-order repair. The repair resumes from the anchor
         // root nearest the late row: it marks the window-state debt, sets the runtime aside and
-        // restores that root. The anchor's restore fails here - the failed open stands in for an
-        // IO error or a root it cannot read - and the repair absorbs the failure, retires the
+        // restores that root. The anchor's restore fails here on a root file that is gone - a
+        // failure no retry gets past, unlike EMFILE or EIO, which the repair hands to the
+        // flush-retry accounting instead - and the repair absorbs the failure, retires the
         // timeline and returns with the debt still standing, so the restore returns normally over
         // a runtime short of the late commit's rows. The restart must leave that debt standing:
         // the same turn's gate then rebuilds the view before anything drains. A restart that
@@ -1022,7 +1023,13 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         // gave up on, and committed acct-1's 10:00 row as 57.0 / 4 rather than 250.0 / 6.
         final AtomicBoolean isAnchorRestoreFaultArmed = new AtomicBoolean();
         final AtomicBoolean hasAnchorRestoreFaultFired = new AtomicBoolean();
+        final AtomicBoolean isErrnoPending = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return isErrnoPending.compareAndSet(true, false) ? CairoException.ERRNO_FILE_DOES_NOT_EXIST : super.errno();
+            }
+
             @Override
             public long openRO(LPSZ name) {
                 return isFailedAnchorRestoreOpen(name) ? -1 : super.openRO(name);
@@ -1034,13 +1041,14 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             }
 
             // Fails the first open under the view's checkpoint directory that the anchor's
-            // restore makes once armed.
+            // restore makes once armed, reporting a missing file.
             private boolean isFailedAnchorRestoreOpen(LPSZ name) {
                 if (isAnchorRestoreFaultArmed.get()
                         && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                         && isOnStack("restoreAnchorRoot")
                         && isAnchorRestoreFaultArmed.compareAndSet(true, false)) {
                     hasAnchorRestoreFaultFired.set(true);
+                    isErrnoPending.set(true);
                     return true;
                 }
                 return false;
@@ -1089,56 +1097,24 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         // restore in place. That retry replays the commit that is out of order within itself and
         // hands off to the out-of-order repair, which resumes from the anchor root: it marks the
         // debt, sets the runtime aside and restores that root. The anchor's restore fails once
-        // here, and the repair absorbs the failure, retires the timeline and returns with the debt
-        // standing, so the restore returns normally over a runtime short of the unsorted commit's
-        // rows. The gate's restore must leave that debt standing and fall back to the whole-view
-        // rebuild, as the restart's own attempt does through its gate. A restore that settled the
-        // debt on every return let the drain commit acct-1's 10:00 row through the runtime the
-        // repair gave up on, as 57.0 / 4 rather than 250.0 / 6.
+        // here on a root file that is gone, which no retry gets past, and the repair absorbs the
+        // failure, retires the timeline and returns with the debt standing, so the restore returns
+        // normally over a runtime short of the unsorted commit's rows. The gate's restore must
+        // leave that debt standing and fall back to the whole-view rebuild, as the restart's own
+        // attempt does through its gate. A restore that settled the debt on every return let the
+        // drain commit acct-1's 10:00 row through the runtime the repair gave up on, as 57.0 / 4
+        // rather than 250.0 / 6.
         final AtomicBoolean isRestartFaultArmed = new AtomicBoolean();
         final AtomicBoolean hasRestartFaultFired = new AtomicBoolean();
         final AtomicBoolean isAnchorFaultArmed = new AtomicBoolean();
         final AtomicBoolean hasAnchorFaultFired = new AtomicBoolean();
-        final AtomicBoolean isErrnoPending = new AtomicBoolean();
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public int errno() {
-                return isErrnoPending.compareAndSet(true, false) ? ERRNO_EMFILE : super.errno();
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                return isFailed(name) ? -1 : super.openRO(name);
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                return isFailed(name) ? -1 : super.openRW(name, opts);
-            }
-
-            // Fails the restart restore's first open of the timeline, then the first open under
-            // the view's checkpoint directory that a running restore's anchor restore makes.
-            private boolean isFailed(LPSZ name) {
-                if (isRestartFaultArmed.get()
-                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
-                        && isOnStack("tryRestoreFromTimeline")
-                        && isRestartFaultArmed.compareAndSet(true, false)) {
-                    hasRestartFaultFired.set(true);
-                    isErrnoPending.set(true);
-                    return true;
-                }
-                if (isAnchorFaultArmed.get()
-                        && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
-                        && isOnStack("restoreAnchorRoot")
-                        && isOnStack("tryRestoreRuntimeFromTimeline")
-                        && isAnchorFaultArmed.compareAndSet(true, false)) {
-                    hasAnchorFaultFired.set(true);
-                    isErrnoPending.set(true);
-                    return true;
-                }
-                return false;
-            }
-        };
+        final FilesFacade ff = newRestartThenGateAnchorRestoreFault(
+                isRestartFaultArmed,
+                hasRestartFaultFired,
+                isAnchorFaultArmed,
+                hasAnchorFaultFired,
+                CairoException.ERRNO_FILE_DOES_NOT_EXIST
+        );
         assertMemoryLeak(ff, () -> {
             commitOutOfOrderAboveTheAnchorRoot();
             execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + IN_ORDER_ROW_ABOVE_THE_O3_GAP);
@@ -1179,13 +1155,81 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     @Test
+    public void testARestartRestoreRetriedAtTheGateWhoseResumeAnchorFaultsOnceRetriesTheRestoreInPlace() throws Exception {
+        // testARestartRestoreRetriedAtTheGateWhoseResumeAnchorFailsRebuildsBeforeTheDrain with the
+        // anchor's restore failing on EMFILE, a fault a retry may get past, rather than on a root
+        // file that is gone. The repair keeps the timeline, leaves the window-state debt and throws
+        // the fault, which fails the gate's restore as a fault a retry may get past: the gate
+        // hands it to the flush-retry accounting rather than falling back to the whole-view
+        // rebuild, and the gate of the turn after the back-off restores in place, its repair
+        // resuming from the same anchor.
+        final AtomicBoolean isRestartFaultArmed = new AtomicBoolean();
+        final AtomicBoolean hasRestartFaultFired = new AtomicBoolean();
+        final AtomicBoolean isAnchorFaultArmed = new AtomicBoolean();
+        final AtomicBoolean hasAnchorFaultFired = new AtomicBoolean();
+        final FilesFacade ff = newRestartThenGateAnchorRestoreFault(
+                isRestartFaultArmed,
+                hasRestartFaultFired,
+                isAnchorFaultArmed,
+                hasAnchorFaultFired,
+                ERRNO_EMFILE
+        );
+        assertMemoryLeak(ff, () -> {
+            commitOutOfOrderAboveTheAnchorRoot();
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + IN_ORDER_ROW_ABOVE_THE_O3_GAP);
+            drainWalQueue();
+
+            shutdown();
+            engine.buildViewGraphs();
+            isRestartFaultArmed.set(true);
+            isAnchorFaultArmed.set(true);
+            final LiveViewInstance instance = instance("lv");
+            final long resetsBefore = instance.getCheckpointTimelineResets();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                runOnePass(job);
+                Assert.assertTrue("the restart's restore must have been failed", hasRestartFaultFired.get());
+                Assert.assertFalse("the restart's restore must not have reached the anchor", hasAnchorFaultFired.get());
+                Assert.assertTrue("the failed restart must leave the window-state debt", instance.isWindowStateDirty());
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertTrue("the gate's restore must have failed the anchor's restore", hasAnchorFaultFired.get());
+            assertViewRowsMatchRecompute(O3_GAP_THEN_IN_ORDER_ROW_OUTPUT);
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertEquals("the restart's and the anchor's are the two faults", 2, instance.getRefreshFaultCount());
+            Assert.assertEquals("a fault a retry gets past must not retire the timeline", resetsBefore, instance.getCheckpointTimelineResets());
+            Assert.assertEquals("no whole-view rebuild may have been asked for", 0, instance.getCheckpointRebuildAttempts());
+            Assert.assertEquals("the gate's retry must have restored in place", 1, instance.getCheckpointRuntimeRestores());
+            capture.drain();
+            capture.assertLogged("could not restore live view from checkpoint timeline, retrying [view=lv");
+            capture.assertLogged("resumeFromAnchor=true");
+            capture.assertLogged("could not restore live view O3 resume anchor, retrying [view=lv");
+            capture.assertLogged("live view could not restore its runtime from the checkpoint timeline, retrying [view=lv, "
+                    + "cause=mid-drain refresh failure");
+            // The retry's replay hands off to the repair again, which resumes from the same anchor.
+            capture.assertLogged("live view O3 resume replay completed [view=lv");
+            capture.assertNotLogged(RUNTIME_SET_ASIDE_REASON);
+            capture.assertNotLogged("live view recomputed window state from applied base");
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isInvalid());
+            assertNoRefreshFaults("lv");
+            assertViewRowsMatchRecompute(O3_GAP_THEN_IN_ORDER_ROW_OUTPUT);
+        });
+    }
+
+    @Test
     public void testAMidDrainRestoreWhoseResumeAnchorFailsRebuildsBeforeTheDrain() throws Exception {
         // A drain fails after it fed a row, and the running recovery restores the runtime from the
         // timeline. The restore's replay hands off to the out-of-order repair, which resumes from
         // the anchor root: it marks the window-state debt, sets the runtime aside and restores that
-        // root. The anchor's restore fails once here, and the repair absorbs the failure, retires
-        // the timeline and returns with the debt standing, so the restore returns normally over a
-        // runtime short of the unsorted commit's rows. The recovery must leave that debt standing
+        // root. The anchor's restore fails once here on a root file that is gone, which no retry
+        // gets past, and the repair absorbs the failure, retires the timeline and returns with the
+        // debt standing, so the restore returns normally over a runtime short of the unsorted
+        // commit's rows. The recovery must leave that debt standing
         // and fall back to the whole-view rebuild. A restore that settled the debt on every return
         // let the next turn's drain commit acct-1's 10:00 row through the runtime the repair gave
         // up on, as 57.0 / 4 rather than 250.0 / 6.
@@ -1194,7 +1238,13 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         final AtomicBoolean hasDrainFaultFired = new AtomicBoolean();
         final AtomicBoolean isAnchorFaultArmed = new AtomicBoolean();
         final AtomicBoolean hasAnchorFaultFired = new AtomicBoolean();
+        final AtomicBoolean isErrnoPending = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return isErrnoPending.compareAndSet(true, false) ? CairoException.ERRNO_FILE_DOES_NOT_EXIST : super.errno();
+            }
+
             @Override
             public long openRO(LPSZ name) {
                 return isFailedDayFourAmountRead(name, baseDir, isDrainFaultArmed, hasDrainFaultFired)
@@ -1207,7 +1257,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             }
 
             // Fails the first open under the view's checkpoint directory that a running
-            // restore's anchor restore makes once armed.
+            // restore's anchor restore makes once armed, reporting a missing file.
             private boolean isFailedAnchorRestoreOpen(LPSZ name) {
                 if (isAnchorFaultArmed.get()
                         && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
@@ -1215,6 +1265,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                         && isOnStack("tryRestoreRuntimeFromTimeline")
                         && isAnchorFaultArmed.compareAndSet(true, false)) {
                     hasAnchorFaultFired.set(true);
+                    isErrnoPending.set(true);
                     return true;
                 }
                 return false;
@@ -6555,6 +6606,61 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 frame -> LiveViewRefreshJob.class.getName().equals(frame.getClassName())
                         && methodName.equals(frame.getMethodName())
         ));
+    }
+
+    /**
+     * Fails the restart restore's first open of the timeline once {@code isRestartFaultArmed} is
+     * set, reporting EMFILE, then the first open under the view's checkpoint directory that a
+     * running restore's anchor restore makes once {@code isAnchorFaultArmed} is set, reporting
+     * {@code anchorErrno}.
+     */
+    private static FilesFacade newRestartThenGateAnchorRestoreFault(
+            AtomicBoolean isRestartFaultArmed,
+            AtomicBoolean hasRestartFaultFired,
+            AtomicBoolean isAnchorFaultArmed,
+            AtomicBoolean hasAnchorFaultFired,
+            int anchorErrno
+    ) {
+        // The errno the next errno() read reports, set by the open that failed; 0 when none.
+        final AtomicInteger pendingErrno = new AtomicInteger();
+        return new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                final int errno = pendingErrno.getAndSet(0);
+                return errno != 0 ? errno : super.errno();
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                return isFailed(name) ? -1 : super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                return isFailed(name) ? -1 : super.openRW(name, opts);
+            }
+
+            private boolean isFailed(LPSZ name) {
+                if (isRestartFaultArmed.get()
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                        && isOnStack("tryRestoreFromTimeline")
+                        && isRestartFaultArmed.compareAndSet(true, false)) {
+                    hasRestartFaultFired.set(true);
+                    pendingErrno.set(ERRNO_EMFILE);
+                    return true;
+                }
+                if (isAnchorFaultArmed.get()
+                        && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                        && isOnStack("restoreAnchorRoot")
+                        && isOnStack("tryRestoreRuntimeFromTimeline")
+                        && isAnchorFaultArmed.compareAndSet(true, false)) {
+                    hasAnchorFaultFired.set(true);
+                    pendingErrno.set(anchorErrno);
+                    return true;
+                }
+                return false;
+            }
+        };
     }
 
     /**
