@@ -20,11 +20,12 @@ to fix, or a finding from a review.
 3. Design the best root-cause change - argued correct for every input it
    reaches, alternatives weighed; no regressions, slowdowns, races or
    reinvented code - and the test plan that proves it, dimension by
-   dimension, per CLAUDE.md "Testing". When no change can be argued correct,
-   the item is blocked, not guessed at. An independent agent tries to break
-   both before any code changes. Only a flaw in the design sends the
-   plan back; the tests it finds missing join the plan, and other bugs it
-   finds become separate items or are reported.
+   dimension, per CLAUDE.md "Testing". A query with wrong results is fixed to
+   return the right ones, never rejected instead. When no change can be
+   argued correct, the item is blocked, not guessed at. An independent agent
+   tries to break both before any code changes. Only a flaw in the design
+   sends the plan back; the tests it finds missing join the plan, and other
+   bugs it finds become separate items or are reported.
 4. Write the failing tests first and build the change as designed; a design
    that turns out wrong goes back to step 3. Run the item's tests with
    coverage (`ci/diff_coverage.py`), read the lines, branches and conditions
@@ -368,6 +369,12 @@ from what it wrote in <state>/<ID>/; don't repeat its probes.]
 6. For BUILD and FIX: find the best change, not the first one that works.
    Weigh the real alternatives, such as another layer, and choose the one that:
    - is correct for every input it reaches, by the argument below;
+   - returns the right result for every query PostgreSQL or DuckDB answer,
+     allowing for QuestDB's documented differences such as NULL = NULL: the
+     right rows, never a new error. Rejecting such a query is not a fix for
+     its wrong results, even when the item suggests it or the code already
+     rejects similar queries; such a rejection is no precedent. If no change
+     can return the right rows, decide BLOCK;
    - closes every path to the item's problem, not just the one the item
      names; the same kind of bug in other code is a separate bug (step 9);
    - keeps every user of the changed code working: list the callers,
@@ -462,6 +469,9 @@ the proposal:
   after close?
 - Does it reimplement something the codebase already has?
 - Is a rejected or overlooked alternative better?
+- Does it reject a query that PostgreSQL or DuckDB answer, instead of
+  returning its right rows? An existing rejection of similar queries is no
+  precedent.
 - Does it change more than the item needs, such as fixing a separate
   pre-existing bug the item can do without?
 Then hold the test plan to CLAUDE.md "Testing":
@@ -481,7 +491,8 @@ or its tests. Label each problem:
 - REDESIGN: built as planned, the change would be wrong for this item: it
   breaks what works today, leaves the item's problem reachable, patches the
   symptom, adds avoidable hot-path cost or a race, reimplements existing
-  code, changes more than the item needs, or is clearly worse than an
+  code, changes more than the item needs, rejects a query PostgreSQL or
+  DuckDB answer instead of returning its rows, or is clearly worse than an
   alternative. Show how.
 - ADD: a gap in the test plan that the planned change would pass: a missing
   test, a dimension skipped for a wrong reason, or an expected result
