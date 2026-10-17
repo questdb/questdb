@@ -114,16 +114,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // and the oracle does not count it
     private static final Shape TWO_RIGHT_JOINS = new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} RIGHT JOIN xs x ON x.k = r.k WHERE {P}", false, false);
     // The ON clause of xs reads the outer key, and WHERE keys it on refunds, which the RIGHT join
-    // joins after xs, so the rewriter rejects the query whatever the filter, unless the correlated
-    // conjunct t.x = o.k keys it on trades.
-    private static final Shape SLAVE_KEY_READ_EARLIER = new Shape(
-            "{T} t JOIN xs x ON x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE r.k = {K} AND ({P})",
-            true,
-            false,
-            false,
-            false,
-            true
-    );
+    // joins after xs, so no row before the RIGHT join holds the key
+    private static final Shape SLAVE_KEY_READ_EARLIER = new Shape("{T} t JOIN xs x ON x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE r.k = {K} AND ({P})", true, false);
     // A FULL join whose ON clause reads the outer key on refunds also NULL-extends refunds, and no
     // filter on trades drops those rows, so the rewriter rejects every such query.
     private static final Shape[] SHAPES = {
@@ -171,8 +163,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private int nullRejectingCount;
     // queries with a valid filter that the rewriter rejected
     private int rejectedCount;
-    // queries of the SLAVE_KEY_READ_EARLIER shape with a valid filter that the rewriter rejected
-    private int slaveKeyReadEarlierRejectedCount;
+    // queries of the SLAVE_KEY_READ_EARLIER shape whose LATERAL rows were compared with the reference rows
+    private int slaveKeyReadEarlierComparedCount;
     // queries of the TWO_RIGHT_JOINS shape whose LATERAL rows were compared with the reference rows
     private int twoRightJoinsComparedCount;
     // queries whose filter is valid, so the reference ran and the query was checked against it
@@ -261,8 +253,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                 true,
                 false,
                 true,
-                hasLaterJoinAfterRepair,
-                false
+                hasLaterJoinAfterRepair
         );
     }
 
@@ -344,7 +335,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // per execution. The predicates are ANDed, so any one of them whose value makes it false on the
     // NULL-extended row drops that row, and the query fails only when none does.
     private static Verdict nullRejectionVerdict(Shape shape, boolean hasOr, boolean isOuterRefJoinKept, List<Predicate> predicates) {
-        if (hasOr || shape.hasKeyOnFullJoinedTable || shape.hasSlaveKeyReadEarlier) {
+        if (hasOr || shape.hasKeyOnFullJoinedTable) {
             return Verdict.UNPROVEN;
         }
         boolean isProvable = false;
@@ -617,6 +608,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             if (shape == TWO_RIGHT_JOINS) {
                 twoRightJoinsComparedCount++;
             }
+            if (shape == SLAVE_KEY_READ_EARLIER) {
+                slaveKeyReadEarlierComparedCount++;
+            }
             // the rewriter repairs the RIGHT join only when it cannot prove that the filter drops the
             // rows that the join NULL-extends, see LateralJoinRewriter.checkOuterJoinsAfterOuterRef()
             if (shape.hasLaterJoinAfterRepair && verdict == Verdict.UNPROVEN) {
@@ -641,9 +635,6 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                 failures.add("failed with [" + e.getPosition() + "] " + e.getFlyweightMessage() + bindSuffix + "\n    " + sql);
             } else {
                 rejectedCount++;
-                if (shape.hasSlaveKeyReadEarlier) {
-                    slaveKeyReadEarlierRejectedCount++;
-                }
                 if (isNullRejecting) {
                     failures.add("REJECTED although its filter drops every NULL-extended row, [" + e.getPosition() + "] "
                             + e.getFlyweightMessage() + bindSuffix + "\n    " + sql);
@@ -726,7 +717,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             comparedCount = 0;
             laterJoinRepairComparedCount = 0;
             rejectedCount = 0;
-            slaveKeyReadEarlierRejectedCount = 0;
+            slaveKeyReadEarlierComparedCount = 0;
             nullRejectingCount = 0;
             laterRuntimeVerdictCount = 0;
             mixedTypeVerdictCount = 0;
@@ -759,8 +750,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                     + " compared with two RIGHT joins, " + laterJoinRepairComparedCount
                     + " compared with a join after a repaired RIGHT join, " + mixedTypeVerdictCount + " proven by a computed column next to a runtime check, "
                     + nestedSubQueryComparedCount + " compared with a nested sub-query, " + whereKeyCorrelatedComparedCount
-                    + " compared with a WHERE key next to a correlated condition, " + slaveKeyReadEarlierRejectedCount
-                    + " rejected with the key on a table joined after an ON clause that reads the outer key";
+                    + " compared with a WHERE key next to a correlated condition, " + slaveKeyReadEarlierComparedCount
+                    + " compared with the key on a table joined after an ON clause that reads the outer key";
             LOG.info().$("lateral null rejection fuzz [queries=").$(queryCount).$(", valid=").$(validCount)
                     .$(", compared=").$(comparedCount).$(", rejected=").$(rejectedCount)
                     .$(", nullRejecting=").$(nullRejectingCount).$(", laterRuntimeVerdict=").$(laterRuntimeVerdictCount)
@@ -769,7 +760,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                     .$(", mixedTypeVerdict=").$(mixedTypeVerdictCount)
                     .$(", nestedSubQueryCompared=").$(nestedSubQueryComparedCount)
                     .$(", whereKeyCorrelatedCompared=").$(whereKeyCorrelatedComparedCount)
-                    .$(", slaveKeyReadEarlierRejected=").$(slaveKeyReadEarlierRejectedCount).I$();
+                    .$(", slaveKeyReadEarlierCompared=").$(slaveKeyReadEarlierComparedCount).I$();
             if (!failures.isEmpty()) {
                 Assert.fail(failures.size() + " of " + queryCount + " queries failed (" + counts + "):\n"
                         + String.join("\n", failures.subList(0, Math.min(20, failures.size()))));
@@ -798,8 +789,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // not show that the rewriter keeps it when it removes the outer-ref join.
             Assert.assertTrue("no query with a WHERE key next to a correlated condition compared: " + counts, whereKeyCorrelatedComparedCount > 0);
             // A generator that never keyed the outer row on a table joined after an ON clause that
-            // reads it would not show that the rewriter rejects such a query with its own error.
-            Assert.assertTrue("no query with the key on a table joined after an ON clause that reads the outer key rejected: " + counts, slaveKeyReadEarlierRejectedCount > 0);
+            // reads it would not show that such a query returns the rows of its body.
+            Assert.assertTrue("no query with the key on a table joined after an ON clause that reads the outer key compared: " + counts, slaveKeyReadEarlierComparedCount > 0);
         });
     }
 
@@ -906,19 +897,16 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     }
 
     // hasCorrelatedSlave: the slave of the RIGHT join is a correlated sub-query, see correlatedSlaveShape();
-    // hasLaterJoinAfterRepair: an INNER, LEFT or CROSS join follows that RIGHT join;
-    // hasSlaveKeyReadEarlier: WHERE keys the outer row on the slave of the RIGHT join, and an ON
-    // clause before that join reads the outer row, see SLAVE_KEY_READ_EARLIER
+    // hasLaterJoinAfterRepair: an INNER, LEFT or CROSS join follows that RIGHT join
     private record Shape(
             String body,
             boolean hasWhereKey,
             boolean hasKeyOnFullJoinedTable,
             boolean hasCorrelatedSlave,
-            boolean hasLaterJoinAfterRepair,
-            boolean hasSlaveKeyReadEarlier
+            boolean hasLaterJoinAfterRepair
     ) {
         Shape(String body, boolean hasWhereKey, boolean hasKeyOnFullJoinedTable) {
-            this(body, hasWhereKey, hasKeyOnFullJoinedTable, false, false, false);
+            this(body, hasWhereKey, hasKeyOnFullJoinedTable, false, false);
         }
     }
 }

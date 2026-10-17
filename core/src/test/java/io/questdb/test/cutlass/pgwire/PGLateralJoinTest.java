@@ -185,9 +185,10 @@ public class PGLateralJoinTest extends BasePGTest {
     }
 
     // A prepared statement whose LATERAL body reads o.x in c's ON clause and keys o.x in WHERE on b,
-    // which the RIGHT join after c joins, fails at the RIGHT join at each execution. Its parameter
-    // follows the RIGHT join, as the simple query mode inlines the value. The statement with the key
-    // on a returns the rows of DuckDB at each execution.
+    // which the RIGHT join after c joins, returns the rows of DuckDB, with IS NOT DISTINCT FROM for
+    // QuestDB's =, at each execution: o.x > 1 leaves the master side of the RIGHT join empty for
+    // o.x = 1, so b rows 21 and 23 come NULL-extended, and b.id > 0 keeps every b row. The statement
+    // with the key on a returns the rows of DuckDB at each execution too.
     @Test
     public void testLateralOuterConditionBeforeRightJoinKeyOnSlavePrepared() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -205,15 +206,8 @@ public class PGLateralJoinTest extends BasePGTest {
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
                 for (int i = 0; i < 2; i++) {
                     statement.setInt(1, 0);
-                    try (ResultSet ignore = statement.executeQuery()) {
-                        Assert.fail("expected the RIGHT join to fail");
-                    } catch (PSQLException e) {
-                        Assert.assertNotNull(e.getServerErrorMessage());
-                        Assert.assertEquals(
-                                "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query",
-                                e.getServerErrorMessage().getMessage()
-                        );
-                        Assert.assertEquals(sql.indexOf("RIGHT") + 1, e.getServerErrorMessage().getPosition());
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet("id[INTEGER],aid[INTEGER],sid[INTEGER]\n1,null,21\n1,null,23\n3,11,24\n", sink, rs);
                     }
                 }
             }

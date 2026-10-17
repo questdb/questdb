@@ -1466,10 +1466,10 @@ ORDER BY 1, 2, 3
 
 # ============================================================
 # Outer column in an ON clause before a RIGHT join, WHERE key on a later table
-# The ON clause of c_kc reads o.x. Where WHERE equates o.x to a column of a
-# table joined at or after the RIGHT join, QuestDB deliberately rejects the
-# query; DuckDB returns 1 NULL 21, 1 NULL 23 and 3 11 24 for the first one.
-# Where the key column is joined before the RIGHT join, both return the rows.
+# The ON clause of c_kc reads o.x, and WHERE equates o.x to a column of a
+# table joined at or after the RIGHT join, or before it. QuestDB's = matches
+# NULL to NULL, where DuckDB and PostgreSQL need IS NOT DISTINCT FROM; no
+# NULL key meets another NULL here, so plain = gives the same rows.
 # ============================================================
 
 statement ok
@@ -1484,7 +1484,7 @@ CREATE TABLE o2_kc (id INT, x INT, y INT)
 statement ok
 INSERT INTO o2_kc VALUES (1, 1, 1), (2, 3, 3), (3, 1, 5), (4, 3, 1)
 
-statement error
+query III nosort
 SELECT o.id, l.aid, l.sid
 FROM o_kc o
 JOIN LATERAL (
@@ -1496,8 +1496,9 @@ JOIN LATERAL (
 ) l
 ORDER BY 1, 2, 3
 ----
-db error: ERROR: outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query
-
+1 NULL 21
+1 NULL 23
+3 11 24
 
 query III nosort
 SELECT o.id, l.aid, l.sid

@@ -1442,10 +1442,6 @@ class LateralJoinRewriter implements Mutable {
     // terminateHere() moved into the outer-ref join's ON clause, ahead of the join. When that
     // depends on the type of a column, which only the code generator knows, the code generator
     // decides, with the checks of the conjuncts on columns of known type; see deferNullRejection().
-    //
-    // An ON clause before such a join that reads an outer-ref column whose inner column belongs to
-    // that join or a later one would read that later table after the rewrite, ahead of the join, so
-    // the join fails at its join keyword whatever WHERE holds.
     private IQueryModel checkOuterJoinsAfterOuterRef(
             IQueryModel level,
             int outerRefIndex,
@@ -1455,9 +1451,6 @@ class LateralJoinRewriter implements Mutable {
         IQueryModel alignedRightJoin = null;
         boolean isBranchDependent = false;
         boolean isOuterRowDependent = false;
-        // the last join index of an inner column that an ON clause before join i reads in place of
-        // an outer-ref column
-        int lastReadPartnerIndex = -1;
         for (int i = outerRefIndex + 1, n = joinModels.size(); i < n; i++) {
             final IQueryModel jm = joinModels.getQuick(i);
             final ExpressionNode criteria = jm.getJoinCriteria();
@@ -1494,9 +1487,6 @@ class LateralJoinRewriter implements Mutable {
                     isKeyOffMasterSide |= !isMasterSide;
                 }
                 final String error = hasAlignment || isBranchDependent ? CORRELATED_SUB_QUERY_ERROR : OUTER_COLUMN_ERROR;
-                if (lastReadPartnerIndex >= i) {
-                    throw SqlException.position(jm.getJoinKeywordPosition()).put(error);
-                }
                 // a WHERE conjunct that drops the rows the join NULL-extends on its master side
                 // leaves only matched rows, which satisfy the alignment equalities
                 final boolean isNullExtensionFiltered = (!isFull || !isKeyOffMasterSide)
@@ -1519,9 +1509,6 @@ class LateralJoinRewriter implements Mutable {
             }
             isBranchDependent |= hasAlignment;
             isOuterRowDependent |= hasAlignment || hasCorrelatedConjunct;
-            if (hasAlignment || hasCorrelatedConjunct) {
-                lastReadPartnerIndex = Math.max(lastReadPartnerIndex, lastOuterRefPartnerIndex(level, criteria, outerRefAlias));
-            }
         }
         return alignedRightJoin;
     }
@@ -3622,34 +3609,6 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return true;
-    }
-
-    // Returns the largest join index of the inner columns that outerToInnerAlias maps the outer-ref
-    // columns of the expression to, Integer.MAX_VALUE when one of them belongs to no join of the
-    // level, such as a column of a layer above, or -1 when the expression reads no outer-ref column
-    private int lastOuterRefPartnerIndex(IQueryModel level, ExpressionNode node, CharSequence outerRefAlias) {
-        if (node == null) {
-            return -1;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            if (!matchesOuterRefAlias(node.token, outerRefAlias)) {
-                return -1;
-            }
-            final CharSequence partner = lookupOuterRefAlias(node.token, outerRefAlias, outerToInnerAlias);
-            // the caller runs only when outerToInnerAlias maps every outer-ref column that an ON
-            // clause of the level reads, see isComplexChain()
-            assert partner != null;
-            final int index = resolveJoinModelIndex(level, partner);
-            return index < 0 ? Integer.MAX_VALUE : index;
-        }
-        int lastIndex = Math.max(
-                lastOuterRefPartnerIndex(level, node.lhs, outerRefAlias),
-                lastOuterRefPartnerIndex(level, node.rhs, outerRefAlias)
-        );
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            lastIndex = Math.max(lastIndex, lastOuterRefPartnerIndex(level, node.args.getQuick(i), outerRefAlias));
-        }
-        return lastIndex;
     }
 
     private ExpressionNode liftExpression(
