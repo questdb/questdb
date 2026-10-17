@@ -40,9 +40,10 @@ import org.jetbrains.annotations.Nullable;
 
 public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
     // Indexed the way TableUtils.toIndexKey lays a symbol table out: slot 0 is the null key, then
-    // key 0 and key 1. A BOOLEAN has no null, so getInt() answers 0 or 1 and nothing else; the null
-    // slot repeats "false" so the view agrees with Func.valueOf() below, which has always answered
-    // "false" for every key that is not 1. The two have to agree - a caller resolving keys off the
+    // key 0 and key 1. A BOOLEAN has no null, so getInt() answers 0 or 1 and nothing else. The null
+    // slot still has to hold null: a consumer that borrows this table mints VALUE_IS_NULL on its
+    // own - lag()/lead() do it for a missing neighbor - and resolves that key here. Func.valueOf()
+    // below answers the same way; the two have to agree, because a caller resolving keys off the
     // view compares them against what the function itself returns.
     private static final ObjList<CharSequence> SYMBOLS = new ObjList<>();
 
@@ -102,8 +103,9 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public boolean supportsKeyValueAccess() {
             // getInt() mints a key with one probe on the decoded scalar, never by hashing the row's
-            // text, and valueOf() resolves it by indexing symbols. A key consumer such as QWP egress
-            // should therefore encode each distinct value once instead of re-encoding it per row.
+            // text, and valueOf() resolves it with a switch on the key. A key consumer such as QWP
+            // egress should therefore encode each distinct value once instead of re-encoding it per
+            // row.
             return true;
         }
 
@@ -119,12 +121,16 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbolKey == 1 ? "true" : "false";
+            return switch (symbolKey) {
+                case 0 -> "false";
+                case 1 -> "true";
+                default -> null;
+            };
         }
     }
 
     static {
-        SYMBOLS.add("false");
+        SYMBOLS.add(null);
         SYMBOLS.add("false");
         SYMBOLS.add("true");
     }

@@ -150,9 +150,10 @@ public class LiveViewSymbolTableSourceTest extends AbstractCairoTest {
     public void testOverlayReportsLeadNullThroughContainsNullValue() throws Exception {
         // The committed disk symbol table has never seen a NULL (containsNullValue == false),
         // but the un-flushed lead does carry one. The overlay must OR the pinned slot's
-        // per-column lead-NULL flag into containsNullValue() so the interpreted symbol
-        // comparator (EqSymFunctionFactory) sees the RAM-only NULL; reporting the disk
-        // table's false would make a = b reject a (NULL,NULL) row and a != b admit it.
+        // per-column lead-NULL flag into containsNullValue() to preserve the StaticSymbolTable
+        // NULL-domain contract. This test checks that contract directly; public SQL coverage
+        // comes from keyed linear ASOF through SymbolToSymbolJoinKeyMapping. EqSymFunctionFactory
+        // compares NULL keys directly and does not consume this flag.
         assertMemoryLeak(() -> {
             final IntList tierTypes = tierSchema();
             try (

@@ -256,6 +256,13 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void cursorClosed() {
+            if (partitionByRecord != null) {
+                Function.cursorClosed(partitionByRecord.getFunctions());
+            }
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return PERCENT_RANK_CONST;
         }
@@ -355,6 +362,11 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             Misc.free(map);
             Misc.freeObjList(partitionByRecord.getFunctions());
             Misc.freeObjList(rankMaps);
+        }
+
+        @Override
+        public void cursorClosed() {
+            Function.cursorClosed(partitionByRecord.getFunctions());
         }
 
         @Override

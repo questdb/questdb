@@ -1220,6 +1220,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJoinSymbolTranslationCacheCapacity() {
+        return getDelegate().getSqlJoinSymbolTranslationCacheCapacity();
+    }
+
+    @Override
     public long getSqlLatestByRowCount() {
         return getDelegate().getSqlLatestByRowCount();
     }
@@ -1670,6 +1675,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isAllPartitionOperationsAllowed() {
+        return getDelegate().isAllPartitionOperationsAllowed();
+    }
+
+    @Override
     public boolean isCairoMetadataCacheSnapshotOrdered() {
         return getDelegate().isCairoMetadataCacheSnapshotOrdered();
     }
@@ -1802,6 +1812,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlJitDebugEnabled() {
         return getDelegate().isSqlJitDebugEnabled();
+    }
+
+    @Override
+    public boolean isSqlLatestByJitEnabled() {
+        return getDelegate().isSqlLatestByJitEnabled();
     }
 
     @Override

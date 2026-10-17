@@ -447,10 +447,6 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         public void cursorClosed() {
             super.cursorClosed();
             tsArg.cursorClosed();
-            ObjList<? extends Function> functions = partitionByRecord.getFunctions();
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                functions.getQuick(i).cursorClosed();
-            }
         }
 
         @Override

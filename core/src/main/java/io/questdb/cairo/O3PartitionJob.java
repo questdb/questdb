@@ -179,7 +179,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     final int origWriterIndex = tableWriterMetadata.getColumnMetadata(i).getOriginalWriterIndex();
                     int parquetIdx = parquetColIdToIdx.get(origWriterIndex);
-                    if (parquetIdx >= 0 && origWriterIndex != tableWriterMetadata.getColumnMetadata(i).getWriterIndex()) {
+                    // Every parquet writer stores the column under its original writer index,
+                    // so a type-converted column keeps matching by that index even after a
+                    // rewrite has already materialized the new type. Compare the stored type
+                    // as well, otherwise every O3 merge would rewrite the whole partition.
+                    if (parquetIdx >= 0
+                            && origWriterIndex != tableWriterMetadata.getColumnMetadata(i).getWriterIndex()
+                            && (parquetMeta.getColumnType(parquetIdx) & ~ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT)
+                            != tableWriterMetadata.getColumnType(i)) {
                         hasTypeConvertedColumns = true;
                     }
                     tableToParquetIdx.setQuick(i, parquetIdx);
@@ -611,8 +618,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         partitionDecoder,
                         tableWriterMetadata,
                         parquetColumns,
-                        rowGroupBuffers,
-                        isRewrite
+                        rowGroupBuffers
                 );
 
                 // Publish the new _pm last. In sync modes an incremental update
@@ -3549,8 +3555,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             ParquetPartitionDecoder partitionDecoder,
             TableRecordMetadata tableWriterMetadata,
             DirectIntList parquetColumns,
-            RowGroupBuffers rowGroupBuffers,
-            boolean isRewrite
+            RowGroupBuffers rowGroupBuffers
     ) {
         long parquetAddr = 0;
         long parquetMetaAddr = 0;
@@ -3610,7 +3615,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final ParquetMetaFileReader parquetMetadata = partitionDecoder.metadata();
 
                         int parquetColumnIndex = -1;
-                        final int writerIndex = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                        final int writerIndex = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
                         for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
                             if (parquetMetadata.getColumnId(idx) == writerIndex) {
                                 parquetColumnIndex = idx;
@@ -3633,11 +3638,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // update-in-place mode).
                         indexWriter.setPartitionContext(partitionTimestamp, srcNameTxn);
 
-                        // In rewrite mode all columns exist in the new parquet file
-                        // (the Rust encoder fills missing columns with NULLs),
-                        // so the index must cover all rows from row 0.
-                        final long columnTop = isRewrite ? 0 : tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
-                        if (columnTop > -1 && newPartitionSize > columnTop) {
+                        // The column is present in the parquet file (looked up above), and
+                        // the Rust updater zeros every file-level column_top in both rewrite
+                        // and in-place mode, so the index must cover all rows from row 0.
+                        // The column top in _cv may still be stale here: in-place mode only
+                        // zeros it when the partition update is committed, and an O3 merge
+                        // can place values below that old top.
+                        if (newPartitionSize > 0) {
                             parquetColumns.clear();
                             parquetColumns.add(parquetColumnIndex);
                             parquetColumns.add(ColumnType.SYMBOL);
@@ -3647,20 +3654,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
                                 assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
                                 final int rowGroupSize = (int) parquetMetadata.getRowGroupSize(rowGroupIndex);
-                                if (rowCount + rowGroupSize <= columnTop) {
-                                    rowCount += rowGroupSize;
-                                    continue;
-                                }
-
                                 partitionDecoder.decodeRowGroup(
                                         rowGroupBuffers,
                                         parquetColumns,
                                         rowGroupIndex,
-                                        (int) Math.max(0, columnTop - rowCount),
+                                        0,
                                         rowGroupSize
                                 );
 
-                                long rowId = Math.max(rowCount, columnTop);
+                                long rowId = rowCount;
                                 final long addr = rowGroupBuffers.getChunkDataPtr(0);
                                 final long size = rowGroupBuffers.getChunkDataSize(0);
                                 if (size == 0) {
@@ -3920,8 +3922,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     ctx.getPartitionDecoder(configuration),
                     metadata,
                     ctx.getParquetColumns(),
-                    ctx.getRowGroupBuffers(),
-                    true
+                    ctx.getRowGroupBuffers()
             );
 
             // Hand off to the consumer via the partition update sink. The

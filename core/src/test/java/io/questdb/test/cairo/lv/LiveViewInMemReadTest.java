@@ -352,9 +352,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv WHERE ts >= '2026-05-12T00:00:00.000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-12T00:00:00.000001Z\t4\t1\n" +
-                            "2026-05-12T00:00:00.000002Z\t9\t2\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-12T00:00:00.000001Z\t4\t1
+                            2026-05-12T00:00:00.000002Z\t9\t2
+                            """);
         });
     }
 
@@ -521,15 +523,20 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 // matching both proves a worker read past the one frame the whole-slot case
                 // handed it. rn=5 exists only in the tier.
                 assertLvQuery("SELECT * FROM lv WHERE g = 'bb'",
-                        "ts\tg\trn\n" +
-                                "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
-                                "2026-05-12T00:00:05.000000Z\tbb\t5\n");
+                        """
+                                ts\tg\trn
+                                2026-05-12T00:00:02.000000Z\tbb\t2
+                                2026-05-12T00:00:05.000000Z\tbb\t5
+                                """);
 
                 // 'cc' is lead-only AND in the second slot frame: the overlay is bound per
                 // cursor, not per frame, so it must resolve from any frame the cursor emits.
                 // A miss here reads as an empty result rather than a wrong one.
                 assertLvQuery("SELECT * FROM lv WHERE g = 'cc'",
-                        "ts\tg\trn\n2026-05-12T00:00:04.000000Z\tcc\t4\n");
+                        """
+                                ts\tg\trn
+                                2026-05-12T00:00:04.000000Z\tcc\t4
+                                """);
 
                 assertLvMatchesOracle("SELECT * FROM lv WHERE rn > 1",
                         "SELECT * FROM (SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE rn > 1");
@@ -563,9 +570,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // filtered rather than just appended the tier's rows.
             StringSink bb = new StringSink();
             printSql("SELECT * FROM lv WHERE g = 'bb'", bb);
-            Assert.assertEquals("ts\tg\trn\n" +
-                    "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
-                    "2026-05-12T00:00:05.000000Z\tbb\t5\n", bb.toString());
+            Assert.assertEquals("""
+                    ts\tg\trn
+                    2026-05-12T00:00:02.000000Z\tbb\t2
+                    2026-05-12T00:00:05.000000Z\tbb\t5
+                    """, bb.toString());
 
             // 'cc' is LEAD-ONLY: it was first interned by the refresh worker and is not
             // in the disk reader's symbol table at all. A filter worker resolves the
@@ -573,7 +582,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // bound no lead overlay returns nothing here rather than something wrong.
             StringSink cc = new StringSink();
             printSql("SELECT * FROM lv WHERE g = 'cc'", cc);
-            Assert.assertEquals("ts\tg\trn\n2026-05-12T00:00:04.000000Z\tcc\t4\n", cc.toString());
+            Assert.assertEquals("""
+                    ts\tg\trn
+                    2026-05-12T00:00:04.000000Z\tcc\t4
+                    """, cc.toString());
 
             // Differential oracle over the same shapes: a from-scratch recompute from base.
             assertLvMatchesOracle("SELECT * FROM lv WHERE rn > 1",
@@ -767,7 +779,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             StringSink sink = new StringSink();
             printSql("SELECT p.ts, p.id, lv.x FROM probe p ASOF JOIN lv", sink);
             Assert.assertEquals(
-                    "ts\tid\tx\n2026-05-12T00:00:06.000000Z\t1\t5\n",
+                    """
+                            ts\tid\tx
+                            2026-05-12T00:00:06.000000Z\t1\t5
+                            """,
                     sink.toString());
         });
     }
@@ -807,12 +822,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "RANGE FROM -2s TO 2s STEP 1s AS h " +
                     "ORDER BY sec_offs", sink);
             Assert.assertEquals(
-                    "sec_offs\tagg\n" +
-                            "-2\tnull\n" +
-                            "-1\t2\n" +
-                            "0\t3\n" +
-                            "1\t4\n" +
-                            "2\t5\n",
+                    """
+                            sec_offs\tagg
+                            -2\tnull
+                            -1\t2
+                            0\t3
+                            1\t4
+                            2\t5
+                            """,
                     sink.toString());
         });
     }
@@ -851,10 +868,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             StringSink sink = new StringSink();
             printSql(horizonSql, sink);
             Assert.assertEquals(
-                    "sec_offs\tagg\n" +
-                            "0\t3\n" +
-                            "1\t4\n" +
-                            "2\t5\n",
+                    """
+                            sec_offs\tagg
+                            0\t3
+                            1\t4
+                            2\t5
+                            """,
                     sink.toString());
         });
     }
@@ -880,7 +899,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             printSql("SELECT p.ts, sum(lv.x) AS agg FROM probe p " +
                     "WINDOW JOIN lv RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
                     "EXCLUDE PREVAILING ORDER BY p.ts", sink);
-            Assert.assertEquals("ts\tagg\n2023-11-14T22:13:25.000000Z\t28\n", sink.toString());
+            Assert.assertEquals("""
+                    ts\tagg
+                    2023-11-14T22:13:25.000000Z\t28
+                    """, sink.toString());
         });
     }
 
@@ -912,7 +934,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "WINDOW JOIN (SELECT * FROM lv WHERE ts >= '2026-05-12T00:00:02.000000Z') l " +
                     "RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
                     "EXCLUDE PREVAILING ORDER BY p.ts", sink);
-            Assert.assertEquals("ts\tagg\n2026-05-12T00:00:03.000000Z\t14\n", sink.toString());
+            Assert.assertEquals("""
+                    ts\tagg
+                    2026-05-12T00:00:03.000000Z\t14
+                    """, sink.toString());
         });
     }
 
@@ -944,7 +969,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             printSql("SELECT p.ts, sum(lv.x) AS agg FROM probe p " +
                     "WINDOW JOIN lv RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
                     "EXCLUDE PREVAILING ORDER BY p.ts", sink);
-            Assert.assertEquals("ts\tagg\n2026-05-12T00:00:03.000000Z\t15\n", sink.toString());
+            Assert.assertEquals("""
+                    ts\tagg
+                    2026-05-12T00:00:03.000000Z\t15
+                    """, sink.toString());
         });
     }
 
@@ -999,11 +1027,13 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "SELECT ts, b, a, rn FROM (SELECT ts, a, b, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
             StringSink sink = new StringSink();
             printSql("SELECT ts, b, a, rn FROM lv", sink);
-            Assert.assertEquals("ts\tb\ta\trn\n" +
-                    "2026-05-12T00:00:01.000000Z\t20\t10\t1\n" +
-                    "2026-05-12T00:00:02.000000Z\t21\t11\t2\n" +
-                    "2026-05-12T00:00:03.000000Z\t22\t12\t3\n" +
-                    "2026-05-12T00:00:04.000000Z\t23\t13\t4\n", sink.toString());
+            Assert.assertEquals("""
+                    ts\tb\ta\trn
+                    2026-05-12T00:00:01.000000Z\t20\t10\t1
+                    2026-05-12T00:00:02.000000Z\t21\t11\t2
+                    2026-05-12T00:00:03.000000Z\t22\t12\t3
+                    2026-05-12T00:00:04.000000Z\t23\t13\t4
+                    """, sink.toString());
         });
     }
 
@@ -1048,12 +1078,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // resolve it through the TIER column (2), not the output column (1).
             StringSink sink = new StringSink();
             printSql("SELECT ts, g FROM lv", sink);
-            Assert.assertEquals("ts\tg\n" +
-                    "2026-05-12T00:00:01.000000Z\taa\n" +
-                    "2026-05-12T00:00:02.000000Z\tbb\n" +
-                    "2026-05-12T00:00:03.000000Z\taa\n" +
-                    "2026-05-12T00:00:04.000000Z\tcc\n" +
-                    "2026-05-12T00:00:05.000000Z\tbb\n", sink.toString());
+            Assert.assertEquals("""
+                    ts\tg
+                    2026-05-12T00:00:01.000000Z\taa
+                    2026-05-12T00:00:02.000000Z\tbb
+                    2026-05-12T00:00:03.000000Z\taa
+                    2026-05-12T00:00:04.000000Z\tcc
+                    2026-05-12T00:00:05.000000Z\tbb
+                    """, sink.toString());
         });
     }
 
@@ -1080,28 +1112,37 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "SELECT ts, g FROM (SELECT ts, x, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE g = 'cc'");
             StringSink cc = new StringSink();
             printSql("SELECT ts, g FROM lv WHERE g = 'cc'", cc);
-            Assert.assertEquals("ts\tg\n2026-05-12T00:00:04.000000Z\tcc\n", cc.toString());
+            Assert.assertEquals("""
+                    ts\tg
+                    2026-05-12T00:00:04.000000Z\tcc
+                    """, cc.toString());
 
             // A committed symbol that re-occurs in the lead: one overlap row from disk
             // (rn=2) and one RAM-only lead row (rn=5), both under the same committed id.
             StringSink bb = new StringSink();
             printSql("SELECT ts, g FROM lv WHERE g = 'bb'", bb);
-            Assert.assertEquals("ts\tg\n" +
-                    "2026-05-12T00:00:02.000000Z\tbb\n" +
-                    "2026-05-12T00:00:05.000000Z\tbb\n", bb.toString());
+            Assert.assertEquals("""
+                    ts\tg
+                    2026-05-12T00:00:02.000000Z\tbb
+                    2026-05-12T00:00:05.000000Z\tbb
+                    """, bb.toString());
 
             // A symbol the lead never carries returns its overlap rows and nothing else.
             StringSink aa = new StringSink();
             printSql("SELECT ts, g FROM lv WHERE g = 'aa'", aa);
-            Assert.assertEquals("ts\tg\n" +
-                    "2026-05-12T00:00:01.000000Z\taa\n" +
-                    "2026-05-12T00:00:03.000000Z\taa\n", aa.toString());
+            Assert.assertEquals("""
+                    ts\tg
+                    2026-05-12T00:00:01.000000Z\taa
+                    2026-05-12T00:00:03.000000Z\taa
+                    """, aa.toString());
 
             // A value absent from both bands must not match a neighbouring column's
             // int read as a symbol id.
             StringSink none = new StringSink();
             printSql("SELECT ts, g FROM lv WHERE g = 'zz'", none);
-            Assert.assertEquals("ts\tg\n", none.toString());
+            Assert.assertEquals("""
+                    ts\tg
+                    """, none.toString());
         });
     }
 
@@ -1406,12 +1447,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             Assert.assertEquals("two un-flushed lead rows served from RAM", 2, desc.leadRowsServed);
             // The rows themselves, in full: the lead's 5 and 4 lead the disk scan's 3-2-1,
             // and nothing is duplicated across the boundary.
-            Assert.assertEquals("ts\tx\trn\n" +
-                    "2026-05-12T00:00:05.000000Z\t5\t5\n" +
-                    "2026-05-12T00:00:04.000000Z\t4\t4\n" +
-                    "2026-05-12T00:00:03.000000Z\t3\t3\n" +
-                    "2026-05-12T00:00:02.000000Z\t2\t2\n" +
-                    "2026-05-12T00:00:01.000000Z\t1\t1\n", desc.output);
+            Assert.assertEquals("""
+                    ts\tx\trn
+                    2026-05-12T00:00:05.000000Z\t5\t5
+                    2026-05-12T00:00:04.000000Z\t4\t4
+                    2026-05-12T00:00:03.000000Z\t3\t3
+                    2026-05-12T00:00:02.000000Z\t2\t2
+                    2026-05-12T00:00:01.000000Z\t1\t1
+                    """, desc.output);
             // The oracle projects the pass-through columns only. rn cannot appear in a
             // recompute that sorts differently: the optimiser pushes the ORDER BY under the
             // window, so row_number() OVER () numbers the DESCENDING rows and hands back
@@ -1437,7 +1480,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             Assert.assertEquals("two un-flushed lead rows served from RAM", 2, pruned.leadRowsServed);
             // Disk in full FIRST, then the lead appended - the opposite band order to the
             // descending arm above.
-            Assert.assertEquals("rn\n1\n2\n3\n4\n5\n", pruned.output);
+            Assert.assertEquals("""
+                    rn
+                    1
+                    2
+                    3
+                    4
+                    5
+                    """, pruned.output);
             assertLvMatchesOracle("SELECT rn FROM lv",
                     "SELECT rn FROM (SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
         });
@@ -1465,7 +1515,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // from its applied-prefix answer (3, 6 and 3).
             StringSink sink = new StringSink();
             printSql("SELECT max(rn), sum(x), count() FROM lv", sink);
-            Assert.assertEquals("max\tsum\tcount\n5\t15\t5\n", sink.toString());
+            Assert.assertEquals("""
+                    max\tsum\tcount
+                    5\t15\t5
+                    """, sink.toString());
         });
     }
 
@@ -1493,22 +1546,28 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                         + "disk band and lead-only's collapse into each other", leadStart < reader.size());
             }
             // The read itself: 5 applied rows plus the 2-row lead, each row once.
-            assertLvQuery("SELECT x FROM lv", "x\n1\n2\n3\n4\n5\n6\n7\n");
+            assertLvQuery("SELECT x FROM lv", """
+                    x
+                    1
+                    2
+                    3
+                    4
+                    5
+                    6
+                    7
+                    """);
         });
     }
 
     @Test
     public void testLeadNullSymbolEqualityAcrossOverlayColumns() throws Exception {
-        // A SYMBOL value that is NULL only in the un-flushed lead - the committed disk
-        // symbol table has never seen a NULL, so its containsNullValue() is false. The
-        // interpreted symbol comparator (EqSymFunctionFactory) short-circuits a NULL left
-        // key on the RIGHT table's containsNullValue(): if the overlay reports the disk
-        // table's false, a RAM-only (NULL,NULL) row is wrongly rejected by g = h and
-        // wrongly admitted by g != h. The overlay must OR the pinned slot's lead-NULL
-        // flag into containsNullValue() so the RAM-only NULL is visible to the comparator.
-        //
-        // JIT compares raw int keys (-1 == -1 matches) and so hides the defect; force the
-        // interpreted path the finding targets.
+        // A SYMBOL value is NULL only in the un-flushed lead; the committed disk symbol
+        // table has never seen a NULL. This test pins interpreted equality semantics across
+        // two overlay columns: EqSymFunctionFactory compares their translated int keys, so
+        // VALUE_IS_NULL must equal VALUE_IS_NULL and must not compare unequal. It does not
+        // consume StaticSymbolTable.containsNullValue(); the keyed linear ASOF test below
+        // separately covers that NULL-domain flag through SymbolToSymbolJoinKeyMapping.
+        // Disable JIT to keep the interpreted equality path covered as its own behavior.
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
         assertMemoryLeak(() -> {
             buildTwoSymbolFlushedPlusNullLead();
@@ -1524,16 +1583,21 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // the non-NULL lead row have g != h. The oracle reads the fully-applied base,
             // whose committed symbol table DOES contain the NULL, so it is the reference.
             assertLvMatchesOracle("SELECT ts FROM lv WHERE g = h", "SELECT ts FROM base WHERE g = h");
-            assertLvQuery("SELECT ts FROM lv WHERE g = h", "ts\n2026-05-12T00:00:04.000000Z\n");
+            assertLvQuery("SELECT ts FROM lv WHERE g = h", """
+                    ts
+                    2026-05-12T00:00:04.000000Z
+                    """);
 
             // g != h: the (NULL,NULL) row must be excluded (NULL != NULL is false).
             assertLvMatchesOracle("SELECT ts FROM lv WHERE g != h", "SELECT ts FROM base WHERE g != h");
             assertLvQuery("SELECT ts FROM lv WHERE g != h",
-                    "ts\n" +
-                            "2026-05-12T00:00:01.000000Z\n" +
-                            "2026-05-12T00:00:02.000000Z\n" +
-                            "2026-05-12T00:00:03.000000Z\n" +
-                            "2026-05-12T00:00:05.000000Z\n");
+                    """
+                            ts
+                            2026-05-12T00:00:01.000000Z
+                            2026-05-12T00:00:02.000000Z
+                            2026-05-12T00:00:03.000000Z
+                            2026-05-12T00:00:05.000000Z
+                            """);
         });
     }
 
@@ -1561,34 +1625,113 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Lead-only forward (timestamp pruned): the whole disk scan, then the lead.
             // Offsets landing inside the disk band, exactly on the band boundary (5), inside
             // the lead, and past the end.
-            assertLvQuery("SELECT rn FROM lv", "rn\n1\n2\n3\n4\n5\n6\n7\n");
-            assertLvQuery("SELECT rn FROM lv LIMIT 2,4", "rn\n3\n4\n");
-            assertLvQuery("SELECT rn FROM lv LIMIT 4,6", "rn\n5\n6\n");
-            assertLvQuery("SELECT rn FROM lv LIMIT 5,7", "rn\n6\n7\n");
-            assertLvQuery("SELECT rn FROM lv LIMIT 6,7", "rn\n7\n");
-            assertLvQuery("SELECT rn FROM lv LIMIT 7,9", "rn\n");
+            assertLvQuery("SELECT rn FROM lv", """
+                    rn
+                    1
+                    2
+                    3
+                    4
+                    5
+                    6
+                    7
+                    """);
+            assertLvQuery("SELECT rn FROM lv LIMIT 2,4", """
+                    rn
+                    3
+                    4
+                    """);
+            assertLvQuery("SELECT rn FROM lv LIMIT 4,6", """
+                    rn
+                    5
+                    6
+                    """);
+            assertLvQuery("SELECT rn FROM lv LIMIT 5,7", """
+                    rn
+                    6
+                    7
+                    """);
+            assertLvQuery("SELECT rn FROM lv LIMIT 6,7", """
+                    rn
+                    7
+                    """);
+            assertLvQuery("SELECT rn FROM lv LIMIT 7,9", """
+                    rn
+                    """);
             // A negative limit is an offset from the END, so it reads size() first - the
             // one place the mode-independent diskSize + leadRowCount sum has to be right.
-            assertLvQuery("SELECT rn FROM lv LIMIT -2", "rn\n6\n7\n");
-            assertLvQuery("SELECT rn FROM lv LIMIT -9", "rn\n1\n2\n3\n4\n5\n6\n7\n");
+            assertLvQuery("SELECT rn FROM lv LIMIT -2", """
+                    rn
+                    6
+                    7
+                    """);
+            assertLvQuery("SELECT rn FROM lv LIMIT -9", """
+                    rn
+                    1
+                    2
+                    3
+                    4
+                    5
+                    6
+                    7
+                    """);
 
             // Lead-only descending walks the same two bands in the OPPOSITE order, so an
             // offset of 2 lands on the first disk row rather than inside the lead.
-            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC", "x\n7\n6\n5\n4\n3\n2\n1\n");
-            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 2", "x\n7\n6\n");
-            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 1,3", "x\n6\n5\n");
-            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 2,5", "x\n5\n4\n3\n");
-            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 7,9", "x\n");
-            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT -2", "x\n2\n1\n");
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC", """
+                    x
+                    7
+                    6
+                    5
+                    4
+                    3
+                    2
+                    1
+                    """);
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 2", """
+                    x
+                    7
+                    6
+                    """);
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 1,3", """
+                    x
+                    6
+                    5
+                    """);
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 2,5", """
+                    x
+                    5
+                    4
+                    3
+                    """);
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 7,9", """
+                    x
+                    """);
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT -2", """
+                    x
+                    2
+                    1
+                    """);
 
             // The seam's own split still holds, as the control: it cuts disk at
             // diskSize - leadStart = 3 and serves the whole slot after it, so the same
             // offsets reach the same rows through entirely different arithmetic.
             Assert.assertEquals("a timestamp-bearing forward read must still seam",
                     LiveViewRecordCursor.ROUTING_SEAM, readInner("SELECT ts, x FROM lv").routingMode);
-            assertLvQuery("SELECT x FROM lv LIMIT 2,4", "x\n3\n4\n");
-            assertLvQuery("SELECT x FROM lv LIMIT 4,6", "x\n5\n6\n");
-            assertLvQuery("SELECT x FROM lv LIMIT -2", "x\n6\n7\n");
+            assertLvQuery("SELECT x FROM lv LIMIT 2,4", """
+                    x
+                    3
+                    4
+                    """);
+            assertLvQuery("SELECT x FROM lv LIMIT 4,6", """
+                    x
+                    5
+                    6
+                    """);
+            assertLvQuery("SELECT x FROM lv LIMIT -2", """
+                    x
+                    6
+                    7
+                    """);
 
             // The rows above cannot pin WHICH band the skip landed in: the fence makes the
             // slot's overlap hold the same values as disk, so a skip that walks into the
@@ -1602,13 +1745,21 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // RAM rather than 2.
             InnerRead fwd = readInnerAfterSkip("SELECT rn FROM lv", 4);
             Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, fwd.routingMode);
-            Assert.assertEquals("rn\n5\n6\n7\n", fwd.output);
+            Assert.assertEquals("""
+                    rn
+                    5
+                    6
+                    7
+                    """, fwd.output);
             Assert.assertEquals("the skip must stop inside the DISK band, so only the "
                     + "2 lead rows come from RAM", 2, fwd.inMemRowsServed);
 
             // A skip that spans the whole disk band lands inside the lead itself.
             InnerRead intoLead = readInnerAfterSkip("SELECT rn FROM lv", 6);
-            Assert.assertEquals("rn\n7\n", intoLead.output);
+            Assert.assertEquals("""
+                    rn
+                    7
+                    """, intoLead.output);
             Assert.assertEquals("one lead row left", 1, intoLead.inMemRowsServed);
 
             // Lead-only descending: the lead comes FIRST, so a skip of 1 leaves one lead
@@ -1617,22 +1768,26 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // where the query-level arms above see the outer projection's x alone.
             InnerRead desc = readInnerAfterSkip("SELECT x FROM lv ORDER BY ts DESC", 1);
             Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_DESC, desc.routingMode);
-            Assert.assertEquals("x\tts\n" +
-                    "6\t2023-11-14T22:13:25.000003Z\n" +
-                    "5\t2023-11-14T22:13:25.000002Z\n" +
-                    "4\t2023-11-14T22:13:25.000001Z\n" +
-                    "3\t2023-11-14T22:13:20.000003Z\n" +
-                    "2\t2023-11-14T22:13:20.000002Z\n" +
-                    "1\t2023-11-14T22:13:20.000001Z\n", desc.output);
+            Assert.assertEquals("""
+                    x\tts
+                    6\t2023-11-14T22:13:25.000003Z
+                    5\t2023-11-14T22:13:25.000002Z
+                    4\t2023-11-14T22:13:25.000001Z
+                    3\t2023-11-14T22:13:20.000003Z
+                    2\t2023-11-14T22:13:20.000002Z
+                    1\t2023-11-14T22:13:20.000001Z
+                    """, desc.output);
             Assert.assertEquals("one lead row left before disk takes over", 1, desc.inMemRowsServed);
 
             // A skip past the whole lead hands the remainder to the disk cursor.
             InnerRead descIntoDisk = readInnerAfterSkip("SELECT x FROM lv ORDER BY ts DESC", 3);
-            Assert.assertEquals("x\tts\n" +
-                    "4\t2023-11-14T22:13:25.000001Z\n" +
-                    "3\t2023-11-14T22:13:20.000003Z\n" +
-                    "2\t2023-11-14T22:13:20.000002Z\n" +
-                    "1\t2023-11-14T22:13:20.000001Z\n", descIntoDisk.output);
+            Assert.assertEquals("""
+                    x\tts
+                    4\t2023-11-14T22:13:25.000001Z
+                    3\t2023-11-14T22:13:20.000003Z
+                    2\t2023-11-14T22:13:20.000002Z
+                    1\t2023-11-14T22:13:20.000001Z
+                    """, descIntoDisk.output);
             Assert.assertEquals("the lead is fully skipped, so nothing comes from RAM",
                     0, descIntoDisk.inMemRowsServed);
         });
@@ -1653,17 +1808,21 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: true", "Row backward scan");
             assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC")
                     .timestampDesc("ts")
-                    .returns("ts\tx\n" +
-                            "2023-11-14T22:13:25.000002Z\t5\n" +
-                            "2023-11-14T22:13:25.000001Z\t4\n" +
-                            "2023-11-14T22:13:20.000003Z\t3\n");
+                    .returns("""
+                            ts\tx
+                            2023-11-14T22:13:25.000002Z\t5
+                            2023-11-14T22:13:25.000001Z\t4
+                            2023-11-14T22:13:20.000003Z\t3
+                            """);
             // The same read with LIMIT, the shape that pushes the limit into the
             // filter, still stops on the right rows.
             assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC LIMIT 2")
                     .timestampDesc("ts")
-                    .returns("ts\tx\n" +
-                            "2023-11-14T22:13:25.000002Z\t5\n" +
-                            "2023-11-14T22:13:25.000001Z\t4\n");
+                    .returns("""
+                            ts\tx
+                            2023-11-14T22:13:25.000002Z\t5
+                            2023-11-14T22:13:25.000001Z\t4
+                            """);
         });
     }
 
@@ -1697,21 +1856,25 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC")
                     .noLeakCheck()
                     .timestampDesc("ts")
-                    .returns("ts\tx\n" +
-                            "2023-11-14T22:13:25.000004Z\t7\n" +
-                            "2023-11-14T22:13:25.000003Z\t6\n" +
-                            "2023-11-14T22:13:25.000002Z\t5\n" +
-                            "2023-11-14T22:13:25.000001Z\t4\n" +
-                            "2023-11-14T22:13:20.000003Z\t3\n");
+                    .returns("""
+                            ts\tx
+                            2023-11-14T22:13:25.000004Z\t7
+                            2023-11-14T22:13:25.000003Z\t6
+                            2023-11-14T22:13:25.000002Z\t5
+                            2023-11-14T22:13:25.000001Z\t4
+                            2023-11-14T22:13:20.000003Z\t3
+                            """);
 
             // LIMIT pushed into the filter: it stops inside the lead band, which is the
             // half of the stream a disk-only read could not reach at all.
             assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC LIMIT 2")
                     .noLeakCheck()
                     .timestampDesc("ts")
-                    .returns("ts\tx\n" +
-                            "2023-11-14T22:13:25.000004Z\t7\n" +
-                            "2023-11-14T22:13:25.000003Z\t6\n");
+                    .returns("""
+                            ts\tx
+                            2023-11-14T22:13:25.000004Z\t7
+                            2023-11-14T22:13:25.000003Z\t6
+                            """);
 
             // A NEGATIVE limit is the shape where the requested frame order and the base's
             // own scan direction part company: the base scan is FORWARD and the async
@@ -1722,9 +1885,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\n" +
-                            "2023-11-14T22:13:25.000003Z\t6\n" +
-                            "2023-11-14T22:13:25.000004Z\t7\n");
+                    .returns("""
+                            ts\tx
+                            2023-11-14T22:13:25.000003Z\t6
+                            2023-11-14T22:13:25.000004Z\t7
+                            """);
         });
     }
 
@@ -1744,12 +1909,23 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             InnerRead fwd = readInner("SELECT rn FROM lv");
             Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, fwd.routingMode);
             Assert.assertEquals("no lead means no in-mem row is served", 0, fwd.inMemRowsServed);
-            Assert.assertEquals("rn\n1\n2\n3\n4\n5\n", fwd.output);
+            Assert.assertEquals("""
+                    rn
+                    1
+                    2
+                    3
+                    4
+                    5
+                    """, fwd.output);
 
             // ...and the skip walks the disk band alone, landing where an empty slot band
             // leaves nothing behind it.
             InnerRead skipped = readInnerAfterSkip("SELECT rn FROM lv", 3);
-            Assert.assertEquals("rn\n4\n5\n", skipped.output);
+            Assert.assertEquals("""
+                    rn
+                    4
+                    5
+                    """, skipped.output);
             Assert.assertEquals(0, skipped.inMemRowsServed);
 
             // Descending: the empty band must not stop the disk scan that follows it. The
@@ -1758,17 +1934,21 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             InnerRead desc = readInner("SELECT rn FROM lv ORDER BY ts DESC");
             Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_DESC, desc.routingMode);
             Assert.assertEquals(0, desc.inMemRowsServed);
-            Assert.assertEquals("rn\tts\n" +
-                    "5\t2023-11-14T22:13:25.000002Z\n" +
-                    "4\t2023-11-14T22:13:25.000001Z\n" +
-                    "3\t2023-11-14T22:13:20.000003Z\n" +
-                    "2\t2023-11-14T22:13:20.000002Z\n" +
-                    "1\t2023-11-14T22:13:20.000001Z\n", desc.output);
+            Assert.assertEquals("""
+                    rn\tts
+                    5\t2023-11-14T22:13:25.000002Z
+                    4\t2023-11-14T22:13:25.000001Z
+                    3\t2023-11-14T22:13:20.000003Z
+                    2\t2023-11-14T22:13:20.000002Z
+                    1\t2023-11-14T22:13:20.000001Z
+                    """, desc.output);
             InnerRead descSkipped = readInnerAfterSkip("SELECT rn FROM lv ORDER BY ts DESC", 2);
-            Assert.assertEquals("rn\tts\n" +
-                    "3\t2023-11-14T22:13:20.000003Z\n" +
-                    "2\t2023-11-14T22:13:20.000002Z\n" +
-                    "1\t2023-11-14T22:13:20.000001Z\n", descSkipped.output);
+            Assert.assertEquals("""
+                    rn\tts
+                    3\t2023-11-14T22:13:20.000003Z
+                    2\t2023-11-14T22:13:20.000002Z
+                    1\t2023-11-14T22:13:20.000001Z
+                    """, descSkipped.output);
         });
     }
 
@@ -1793,26 +1973,32 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // alone, and one that ignored the cut would drag disk's rows in too.
             Assert.assertEquals(2, fwd.inMemRowsServed);
             Assert.assertEquals(2, fwd.leadRowsServed);
-            Assert.assertEquals("ts\tx\trn\n" +
-                    "2026-05-12T00:00:04.000000Z\t4\t4\n" +
-                    "2026-05-12T00:00:05.000000Z\t5\t5\n", fwd.output);
+            Assert.assertEquals("""
+                    ts\tx\trn
+                    2026-05-12T00:00:04.000000Z\t4\t4
+                    2026-05-12T00:00:05.000000Z\t5\t5
+                    """, fwd.output);
 
             // The descending walk crosses the same boundary the other way.
             InnerRead desc = readInner("SELECT ts, x, rn FROM lv WHERE " + bothLeadRows + " ORDER BY ts DESC");
             Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_DESC, desc.routingMode);
             Assert.assertEquals(2, desc.leadRowsServed);
-            Assert.assertEquals("ts\tx\trn\n" +
-                    "2026-05-12T00:00:05.000000Z\t5\t5\n" +
-                    "2026-05-12T00:00:04.000000Z\t4\t4\n", desc.output);
+            Assert.assertEquals("""
+                    ts\tx\trn
+                    2026-05-12T00:00:05.000000Z\t5\t5
+                    2026-05-12T00:00:04.000000Z\t4\t4
+                    """, desc.output);
 
             // And a band per tier - one interval on disk, one in the lead - which is the
             // shape that looks like it covers the above and does not.
             InnerRead split = readInner("SELECT ts, x, rn FROM lv WHERE " +
                     "ts = '2026-05-12T00:00:02.000000Z' OR ts = '2026-05-12T00:00:05.000000Z'");
             Assert.assertEquals(1, split.leadRowsServed);
-            Assert.assertEquals("ts\tx\trn\n" +
-                    "2026-05-12T00:00:02.000000Z\t2\t2\n" +
-                    "2026-05-12T00:00:05.000000Z\t5\t5\n", split.output);
+            Assert.assertEquals("""
+                    ts\tx\trn
+                    2026-05-12T00:00:02.000000Z\t2\t2
+                    2026-05-12T00:00:05.000000Z\t5\t5
+                    """, split.output);
         });
     }
 
@@ -1827,21 +2013,52 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             // Bound above the whole lead: every lead row survives.
             assertLvQuery("SELECT x FROM lv WHERE ts <= '2023-11-14T22:13:25.000004Z'",
-                    "x\n1\n2\n3\n4\n5\n6\n7\n");
+                    """
+                            x
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            7
+                            """);
             // Bound INSIDE the lead: x = 6 is in, x = 7 is out. A cut that rounded either
             // way lands on a whole-band answer instead.
             assertLvQuery("SELECT x FROM lv WHERE ts <= '2023-11-14T22:13:25.000003Z'",
-                    "x\n1\n2\n3\n4\n5\n6\n");
+                    """
+                            x
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            """);
             // Bound below the lead: it drops out entirely, and disk still serves in full.
             assertLvQuery("SELECT x FROM lv WHERE ts <= '2023-11-14T22:13:25.000002Z'",
-                    "x\n1\n2\n3\n4\n5\n");
+                    """
+                            x
+                            1
+                            2
+                            3
+                            4
+                            5
+                            """);
             // The interval's ends are CLOSED, so a bound sitting exactly on a lead row's
             // timestamp includes that row. Asserted from below as well, since the two ends
             // come from different searches.
             assertLvQuery("SELECT x FROM lv WHERE ts >= '2023-11-14T22:13:25.000003Z'",
-                    "x\n6\n7\n");
+                    """
+                            x
+                            6
+                            7
+                            """);
             assertLvQuery("SELECT x FROM lv WHERE ts > '2023-11-14T22:13:25.000003Z'",
-                    "x\n7\n");
+                    """
+                            x
+                            7
+                            """);
         });
     }
 
@@ -1901,33 +2118,39 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x FROM lv WHERE ts > '2023-11-14T22:13:20.000002Z' AND x > 2")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns("ts\tx\n" +
-                            "2023-11-14T22:13:20.000003Z\t3\n" +
-                            "2023-11-14T22:13:25.000001Z\t4\n" +
-                            "2023-11-14T22:13:25.000002Z\t5\n" +
-                            "2023-11-14T22:13:25.000003Z\t6\n" +
-                            "2023-11-14T22:13:25.000004Z\t7\n");
+                    .returns("""
+                            ts\tx
+                            2023-11-14T22:13:20.000003Z\t3
+                            2023-11-14T22:13:25.000001Z\t4
+                            2023-11-14T22:13:25.000002Z\t5
+                            2023-11-14T22:13:25.000003Z\t6
+                            2023-11-14T22:13:25.000004Z\t7
+                            """);
 
             // The interval and the residual filter compose: the interval bounds the scan
             // and the slot's band, the filter runs over both tiers' frames.
             assertQuery("SELECT ts, x FROM lv WHERE ts <= '2023-11-14T22:13:25.000003Z' AND x % 2 = 0")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns("ts\tx\n" +
-                            "2023-11-14T22:13:20.000002Z\t2\n" +
-                            "2023-11-14T22:13:25.000001Z\t4\n" +
-                            "2023-11-14T22:13:25.000003Z\t6\n");
+                    .returns("""
+                            ts\tx
+                            2023-11-14T22:13:20.000002Z\t2
+                            2023-11-14T22:13:25.000001Z\t4
+                            2023-11-14T22:13:25.000003Z\t6
+                            """);
 
             // Descending, the dashboard's shape: the interval-cut lead band goes out first,
             // reversed, then the interval-filtered disk scan.
             assertQuery("SELECT ts, x FROM lv WHERE ts <= '2023-11-14T22:13:25.000003Z' AND x > 2 ORDER BY ts DESC")
                     .noLeakCheck()
                     .timestampDesc("ts")
-                    .returns("ts\tx\n" +
-                            "2023-11-14T22:13:25.000003Z\t6\n" +
-                            "2023-11-14T22:13:25.000002Z\t5\n" +
-                            "2023-11-14T22:13:25.000001Z\t4\n" +
-                            "2023-11-14T22:13:20.000003Z\t3\n");
+                    .returns("""
+                            ts\tx
+                            2023-11-14T22:13:25.000003Z\t6
+                            2023-11-14T22:13:25.000002Z\t5
+                            2023-11-14T22:13:25.000001Z\t4
+                            2023-11-14T22:13:20.000003Z\t3
+                            """);
         });
     }
 
@@ -1951,9 +2174,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x FROM lv WHERE ts >= '2023-11-14T22:13:25.000000Z' ORDER BY ts")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns("ts\tx\n" +
-                            "2023-11-14T22:13:25.000001Z\t4\n" +
-                            "2023-11-14T22:13:25.000002Z\t5\n");
+                    .returns("""
+                            ts\tx
+                            2023-11-14T22:13:25.000001Z\t4
+                            2023-11-14T22:13:25.000002Z\t5
+                            """);
         });
     }
 
@@ -1989,9 +2214,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT * FROM lv")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tg\trn\n" +
-                            "2026-05-12T00:00:00.000001Z\taa\t1\n" +
-                            "2026-05-12T00:00:00.000002Z\tbb\t2\n");
+                    .returns("""
+                            ts\tg\trn
+                            2026-05-12T00:00:00.000001Z\taa\t1
+                            2026-05-12T00:00:00.000002Z\tbb\t2
+                            """);
         });
     }
 
@@ -2027,9 +2254,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT * FROM lv")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tg\trn\n" +
-                            "2026-05-12T00:00:00.000002Z\tbb\t1\n" +
-                            "2026-05-12T00:00:00.000003Z\taa\t2\n");
+                    .returns("""
+                            ts\tg\trn
+                            2026-05-12T00:00:00.000002Z\tbb\t1
+                            2026-05-12T00:00:00.000003Z\taa\t2
+                            """);
         });
     }
 
@@ -2082,10 +2311,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, g, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tg\trn\n" +
-                            "2026-05-12T00:00:00.000000Z\tcc\t1\n" +
-                            "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
-                            "2026-05-12T00:00:03.000000Z\taa\t3\n");
+                    .returns("""
+                            ts\tg\trn
+                            2026-05-12T00:00:00.000000Z\tcc\t1
+                            2026-05-12T00:00:02.000000Z\tbb\t2
+                            2026-05-12T00:00:03.000000Z\taa\t3
+                            """);
         });
     }
 
@@ -2170,12 +2401,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x FROM lv")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\n" +
-                            "2023-11-14T22:13:20.000001Z\t1\n" +
-                            "2023-11-14T22:13:20.000002Z\t2\n" +
-                            "2023-11-14T22:13:20.000003Z\t3\n" +
-                            "2023-11-14T22:13:25.000001Z\t4\n" +
-                            "2023-11-14T22:13:25.000002Z\t5\n");
+                    .returns("""
+                            ts\tx
+                            2023-11-14T22:13:20.000001Z\t1
+                            2023-11-14T22:13:20.000002Z\t2
+                            2023-11-14T22:13:20.000003Z\t3
+                            2023-11-14T22:13:25.000001Z\t4
+                            2023-11-14T22:13:25.000002Z\t5
+                            """);
         });
     }
 
@@ -2291,13 +2524,15 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-12T00:00:00.000000Z\t99\t1\n" +
-                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
-                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
-                            "2026-05-12T00:00:03.000000Z\t3\t4\n" +
-                            "2026-05-12T00:00:04.000000Z\t4\t5\n" +
-                            "2026-05-12T00:00:05.000000Z\t5\t6\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-12T00:00:00.000000Z\t99\t1
+                            2026-05-12T00:00:01.000000Z\t1\t2
+                            2026-05-12T00:00:02.000000Z\t2\t3
+                            2026-05-12T00:00:03.000000Z\t3\t4
+                            2026-05-12T00:00:04.000000Z\t4\t5
+                            2026-05-12T00:00:05.000000Z\t5\t6
+                            """);
         });
     }
 
@@ -2376,13 +2611,15 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-12T00:00:00.000000Z\t99\t1\n" +
-                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
-                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
-                            "2026-05-12T00:00:03.000000Z\t3\t4\n" +
-                            "2026-05-12T00:00:04.000000Z\t4\t5\n" +
-                            "2026-05-12T00:00:04.000000Z\t6\t6\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-12T00:00:00.000000Z\t99\t1
+                            2026-05-12T00:00:01.000000Z\t1\t2
+                            2026-05-12T00:00:02.000000Z\t2\t3
+                            2026-05-12T00:00:03.000000Z\t3\t4
+                            2026-05-12T00:00:04.000000Z\t4\t5
+                            2026-05-12T00:00:04.000000Z\t6\t6
+                            """);
         });
     }
 
@@ -2647,7 +2884,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("n\n3\n");
+                    .returns("""
+                            n
+                            3
+                            """);
         });
     }
 
@@ -2750,7 +2990,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("n\n2\n");
+                    .returns("""
+                            n
+                            2
+                            """);
         });
     }
 
@@ -2817,12 +3060,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-12T00:00:00.000000Z\t4\t1\n" +
-                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
-                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
-                            "2026-05-12T00:00:03.000000Z\t3\t4\n" +
-                            "2026-05-12T00:00:04.000000Z\t5\t5\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-12T00:00:00.000000Z\t4\t1
+                            2026-05-12T00:00:01.000000Z\t1\t2
+                            2026-05-12T00:00:02.000000Z\t2\t3
+                            2026-05-12T00:00:03.000000Z\t3\t4
+                            2026-05-12T00:00:04.000000Z\t5\t5
+                            """);
         });
     }
 
@@ -2897,12 +3142,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-11T23:59:59.000000Z\t5\t1\n" +
-                            "2026-05-12T00:00:00.000000Z\t1\t2\n" +
-                            "2026-05-12T00:00:01.000000Z\t2\t3\n" +
-                            "2026-05-12T00:00:02.000000Z\t3\t4\n" +
-                            "2026-05-12T00:00:03.000000Z\t4\t5\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-11T23:59:59.000000Z\t5\t1
+                            2026-05-12T00:00:00.000000Z\t1\t2
+                            2026-05-12T00:00:01.000000Z\t2\t3
+                            2026-05-12T00:00:02.000000Z\t3\t4
+                            2026-05-12T00:00:03.000000Z\t4\t5
+                            """);
         });
     }
 
@@ -2953,11 +3200,13 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-12T00:00:00.000000Z\t4\t1\n" +
-                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
-                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
-                            "2026-05-12T00:00:03.000000Z\t3\t4\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-12T00:00:00.000000Z\t4\t1
+                            2026-05-12T00:00:01.000000Z\t1\t2
+                            2026-05-12T00:00:02.000000Z\t2\t3
+                            2026-05-12T00:00:03.000000Z\t3\t4
+                            """);
         });
     }
 
@@ -3106,10 +3355,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("sym\tval\tts\trn\n" +
-                            "a\t10.0\t2026-01-01T00:00:01.000000Z\t1\n" +
-                            "a\t999.0\t2026-01-01T00:00:02.000000Z\t2\n" +
-                            "a\t30.0\t2026-01-01T00:00:03.000000Z\t3\n");
+                    .returns("""
+                            sym\tval\tts\trn
+                            a\t10.0\t2026-01-01T00:00:01.000000Z\t1
+                            a\t999.0\t2026-01-01T00:00:02.000000Z\t2
+                            a\t30.0\t2026-01-01T00:00:03.000000Z\t3
+                            """);
         });
     }
 
@@ -3206,22 +3457,29 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "SELECT * FROM (SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE g = 'bb'");
             StringSink bb = new StringSink();
             printSql("SELECT * FROM lv WHERE g = 'bb'", bb);
-            Assert.assertEquals("ts\tg\trn\n" +
-                    "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
-                    "2026-05-12T00:00:05.000000Z\tbb\t5\n", bb.toString());
+            Assert.assertEquals("""
+                    ts\tg\trn
+                    2026-05-12T00:00:02.000000Z\tbb\t2
+                    2026-05-12T00:00:05.000000Z\tbb\t5
+                    """, bb.toString());
 
             // A lead-only symbol ('cc', first seen in the un-flushed lead) is returned
             // through the filter - the freshest match, correctly filtered.
             StringSink cc = new StringSink();
             printSql("SELECT * FROM lv WHERE g = 'cc'", cc);
-            Assert.assertEquals("ts\tg\trn\n2026-05-12T00:00:04.000000Z\tcc\t4\n", cc.toString());
+            Assert.assertEquals("""
+                    ts\tg\trn
+                    2026-05-12T00:00:04.000000Z\tcc\t4
+                    """, cc.toString());
 
             // A disk-only symbol ('aa', never in the lead) returns just its overlap rows.
             StringSink aa = new StringSink();
             printSql("SELECT * FROM lv WHERE g = 'aa'", aa);
-            Assert.assertEquals("ts\tg\trn\n" +
-                    "2026-05-12T00:00:01.000000Z\taa\t1\n" +
-                    "2026-05-12T00:00:03.000000Z\taa\t3\n", aa.toString());
+            Assert.assertEquals("""
+                    ts\tg\trn
+                    2026-05-12T00:00:01.000000Z\taa\t1
+                    2026-05-12T00:00:03.000000Z\taa\t3
+                    """, aa.toString());
         });
     }
 
@@ -3743,13 +4001,15 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // (rn=3) and the lead (rn=4) - in ts then rn order.
             StringSink out = new StringSink();
             printSql("SELECT * FROM lv", out);
-            Assert.assertEquals("ts\tx\trn\n" +
-                    "2026-05-12T00:00:01.000000Z\t1\t1\n" +
-                    "2026-05-12T00:00:02.000000Z\t2\t2\n" +
-                    "2026-05-12T00:00:03.000000Z\t3\t3\n" +
-                    "2026-05-12T00:00:03.000000Z\t4\t4\n" +
-                    "2026-05-12T00:00:10.000000Z\t5\t5\n" +
-                    "2026-05-12T00:00:11.000000Z\t6\t6\n", out.toString());
+            Assert.assertEquals("""
+                    ts\tx\trn
+                    2026-05-12T00:00:01.000000Z\t1\t1
+                    2026-05-12T00:00:02.000000Z\t2\t2
+                    2026-05-12T00:00:03.000000Z\t3\t3
+                    2026-05-12T00:00:03.000000Z\t4\t4
+                    2026-05-12T00:00:10.000000Z\t5\t5
+                    2026-05-12T00:00:11.000000Z\t6\t6
+                    """, out.toString());
         });
     }
 
@@ -3786,9 +4046,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             StringSink sink = new StringSink();
             printSql(sql, sink);
             Assert.assertEquals(
-                    "ts\tid\tx\n" +
-                            "2026-05-12T00:00:01.500000Z\t1\t1\n" +
-                            "2026-05-12T00:00:04.500000Z\t2\t4\n",
+                    """
+                            ts\tid\tx
+                            2026-05-12T00:00:01.500000Z\t1\t1
+                            2026-05-12T00:00:04.500000Z\t2\t4
+                            """,
                     sink.toString());
         });
     }
@@ -3823,10 +4085,46 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             StringSink sink = new StringSink();
             printSql(sql, sink);
             Assert.assertEquals(
-                    "ts\tid\tx\n" +
-                            "2026-05-12T00:00:00.500000Z\t1\tnull\n" +
-                            "2026-05-12T00:00:01.500000Z\t2\t1\n",
+                    """
+                            ts\tid\tx
+                            2026-05-12T00:00:00.500000Z\t1\tnull
+                            2026-05-12T00:00:01.500000Z\t2\t1
+                            """,
                     sink.toString());
+        });
+    }
+
+    @Test
+    public void testAsOfJoinLinearKeyedRhsMatchesLeadNullSymbol() throws Exception {
+        // This is public SQL coverage of LiveViewSymbolTable.containsNullValue():
+        // SymbolToSymbolJoinKeyMapping asks the RHS symbol table whether its key domain
+        // contains NULL before it maps a NULL probe key. Here only the live view's
+        // un-flushed lead contains NULL, while its committed disk symbol table reports
+        // false. The cc row is a preservation/translation control: it proves ordinary
+        // cross-table symbol translation still reaches the non-NULL lead row.
+        assertMemoryLeak(() -> {
+            buildTwoSymbolFlushedPlusNullLead();
+
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe (ts, id, g) VALUES " +
+                    "('2026-05-12T00:00:04.500000Z', 1, NULL), " +
+                    "('2026-05-12T00:00:05.500000Z', 2, 'cc')");
+            drainWalQueue();
+
+            final String sql = "SELECT /*+ asof_linear(p lv) */ p.id, p.g AS probe_g, lv.rn AS rhs_rn " +
+                    "FROM probe p ASOF JOIN lv ON (p.g = lv.g)";
+            // noLeakCheck must preserve the un-flushed lead while the combined result and
+            // plan assertion pins the record-cursor light join and its in-memory live-view RHS.
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Light", "LiveView", "inMemory: true")
+                    .returns("""
+                            id\tprobe_g\trhs_rn
+                            1\t\t4
+                            2\tcc\t5
+                            """);
         });
     }
 
@@ -3860,12 +4158,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             StringSink sink = new StringSink();
             printSql(sql, sink);
             Assert.assertEquals(
-                    "ts\tk\n" +
-                            "2026-05-12T00:00:01.000000Z\t93\n" +
-                            "2026-05-12T00:00:02.000000Z\t86\n" +
-                            "2026-05-12T00:00:03.000000Z\t79\n" +
-                            "2026-05-12T00:00:04.000000Z\t72\n" +
-                            "2026-05-12T00:00:05.000000Z\t65\n",
+                    """
+                            ts\tk
+                            2026-05-12T00:00:01.000000Z\t93
+                            2026-05-12T00:00:02.000000Z\t86
+                            2026-05-12T00:00:03.000000Z\t79
+                            2026-05-12T00:00:04.000000Z\t72
+                            2026-05-12T00:00:05.000000Z\t65
+                            """,
                     sink.toString());
         });
     }
@@ -3906,9 +4206,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             StringSink sink = new StringSink();
             printSql(asofSql, sink);
             Assert.assertEquals(
-                    "ts\tid\tx\n" +
-                            "2026-05-12T00:00:04.500000Z\t1\t4\n" +
-                            "2026-05-12T00:00:06.000000Z\t2\t5\n",
+                    """
+                            ts\tid\tx
+                            2026-05-12T00:00:04.500000Z\t1\t4
+                            2026-05-12T00:00:06.000000Z\t2\t5
+                            """,
                     sink.toString());
 
             // The flush moves those same rows from the lead band to disk. The answer must
@@ -3967,10 +4269,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             StringSink sink = new StringSink();
             printSql(ltSql, sink);
             Assert.assertEquals(
-                    "ts\tid\tx\n" +
-                            "2026-05-12T00:00:04.500000Z\t1\t4\n" +
-                            "2026-05-12T00:00:05.000000Z\t2\t4\n" +
-                            "2026-05-12T00:00:06.000000Z\t3\t5\n",
+                    """
+                            ts\tid\tx
+                            2026-05-12T00:00:04.500000Z\t1\t4
+                            2026-05-12T00:00:05.000000Z\t2\t4
+                            2026-05-12T00:00:06.000000Z\t3\t5
+                            """,
                     sink.toString());
 
             // The flush moves those same rows from the lead band to disk. The answer must not
@@ -4340,13 +4644,15 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-12T00:00:01.000000Z\t1\t1\n" +
-                            "2026-05-12T00:00:02.000000Z\t2\t2\n" +
-                            "2026-05-12T00:00:03.000000Z\t3\t3\n" +
-                            "2026-05-12T00:00:04.000000Z\t4\t4\n" +
-                            "2026-05-12T00:00:05.000000Z\t5\t5\n" +
-                            "2026-05-12T00:00:06.000000Z\t6\t6\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-12T00:00:01.000000Z\t1\t1
+                            2026-05-12T00:00:02.000000Z\t2\t2
+                            2026-05-12T00:00:03.000000Z\t3\t3
+                            2026-05-12T00:00:04.000000Z\t4\t4
+                            2026-05-12T00:00:05.000000Z\t5\t5
+                            2026-05-12T00:00:06.000000Z\t6\t6
+                            """);
         });
     }
 
@@ -4404,12 +4710,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-12T00:00:01.000000Z\t1\t1\n" +
-                            "2026-05-12T00:00:02.000000Z\t2\t2\n" +
-                            "2026-05-12T00:00:03.000000Z\t3\t3\n" +
-                            "2026-05-12T00:00:04.000000Z\t4\t4\n" +
-                            "2026-05-12T00:00:05.000000Z\t5\t5\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-12T00:00:01.000000Z\t1\t1
+                            2026-05-12T00:00:02.000000Z\t2\t2
+                            2026-05-12T00:00:03.000000Z\t3\t3
+                            2026-05-12T00:00:04.000000Z\t4\t4
+                            2026-05-12T00:00:05.000000Z\t5\t5
+                            """);
         });
     }
 
@@ -4444,9 +4752,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT * FROM lv_sym")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tg\trn\n" +
-                            "2026-05-12T00:00:01.000000Z\taa\t1\n" +
-                            "2026-05-12T00:00:02.000000Z\tbb\t2\n");
+                    .returns("""
+                            ts\tg\trn
+                            2026-05-12T00:00:01.000000Z\taa\t1
+                            2026-05-12T00:00:02.000000Z\tbb\t2
+                            """);
         });
     }
 
@@ -4603,11 +4913,13 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, g, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tg\trn\n" +
-                            "2026-05-12T00:00:00.000000Z\tdd\t1\n" +
-                            "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
-                            "2026-05-12T00:00:03.000000Z\taa\t3\n" +
-                            "2026-05-12T00:00:04.000000Z\tcc\t4\n");
+                    .returns("""
+                            ts\tg\trn
+                            2026-05-12T00:00:00.000000Z\tdd\t1
+                            2026-05-12T00:00:02.000000Z\tbb\t2
+                            2026-05-12T00:00:03.000000Z\taa\t3
+                            2026-05-12T00:00:04.000000Z\tcc\t4
+                            """);
         });
     }
 
@@ -4682,13 +4994,15 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-12T00:00:01.000000Z\t1\t1\n" +
-                            "2026-05-12T00:00:02.000000Z\t2\t2\n" +
-                            "2026-05-12T00:00:03.000000Z\t3\t3\n" +
-                            "2026-05-12T00:00:05.000000Z\t5\t4\n" +
-                            "2026-05-12T00:00:10.000000Z\t10\t5\n" +
-                            "2026-05-12T00:00:11.000000Z\t11\t6\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-12T00:00:01.000000Z\t1\t1
+                            2026-05-12T00:00:02.000000Z\t2\t2
+                            2026-05-12T00:00:03.000000Z\t3\t3
+                            2026-05-12T00:00:05.000000Z\t5\t4
+                            2026-05-12T00:00:10.000000Z\t10\t5
+                            2026-05-12T00:00:11.000000Z\t11\t6
+                            """);
         });
     }
 
@@ -4744,13 +5058,15 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-12T00:00:00.000000Z\t99\t1\n" +
-                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
-                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
-                            "2026-05-12T00:00:03.000000Z\t3\t4\n" +
-                            "2026-05-12T00:00:10.000000Z\t10\t5\n" +
-                            "2026-05-12T00:00:11.000000Z\t11\t6\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-12T00:00:00.000000Z\t99\t1
+                            2026-05-12T00:00:01.000000Z\t1\t2
+                            2026-05-12T00:00:02.000000Z\t2\t3
+                            2026-05-12T00:00:03.000000Z\t3\t4
+                            2026-05-12T00:00:10.000000Z\t10\t5
+                            2026-05-12T00:00:11.000000Z\t11\t6
+                            """);
         });
     }
 
@@ -4820,14 +5136,16 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tx\trn\n" +
-                            "2026-05-12T00:00:00.000000Z\t99\t1\n" +
-                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
-                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
-                            "2026-05-12T00:00:03.000000Z\t3\t4\n" +
-                            "2026-05-12T00:00:10.000000Z\t10\t5\n" +
-                            "2026-05-12T00:00:11.000000Z\t11\t6\n" +
-                            "2026-05-12T00:00:12.000000Z\t12\t7\n");
+                    .returns("""
+                            ts\tx\trn
+                            2026-05-12T00:00:00.000000Z\t99\t1
+                            2026-05-12T00:00:01.000000Z\t1\t2
+                            2026-05-12T00:00:02.000000Z\t2\t3
+                            2026-05-12T00:00:03.000000Z\t3\t4
+                            2026-05-12T00:00:10.000000Z\t10\t5
+                            2026-05-12T00:00:11.000000Z\t11\t6
+                            2026-05-12T00:00:12.000000Z\t12\t7
+                            """);
         });
     }
 
@@ -5135,8 +5453,8 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // Two-SYMBOL variant: 3 flushed rows (all g != h, no NULLs, so both committed symbol
     // tables report containsNullValue() == false) on disk, then a 2-row un-flushed lead
     // whose first row is (NULL, NULL) - a value that exists as a symbol NULL only in RAM -
-    // and whose second row is a non-NULL g != h pair. Exercises the interpreted symbol
-    // comparator against a lead-only NULL that the disk table cannot know about.
+    // and whose second row is a non-NULL g != h pair. Supplies the lead-only NULL for both
+    // interpreted SYMBOL equality semantics and keyed ASOF NULL-domain mapping coverage.
     private void buildTwoSymbolFlushedPlusNullLead() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, h SYMBOL, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);

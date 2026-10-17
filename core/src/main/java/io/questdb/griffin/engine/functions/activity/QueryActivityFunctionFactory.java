@@ -41,6 +41,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -55,6 +56,12 @@ import java.util.Objects;
 public class QueryActivityFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "query_activity()";
+
+    @Override
+    public int getExecutionRequirements() {
+        // authorizes the caller, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
 
     @Override
     public String getSignature() {

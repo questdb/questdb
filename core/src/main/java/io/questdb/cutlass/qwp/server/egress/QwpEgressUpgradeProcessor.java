@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -83,6 +84,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zstd;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
@@ -215,10 +217,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
+    private final HttpFullFatServerConfiguration httpConfiguration;
     private final int maxSqlRecompileAttempts;
     private final QwpEgressMetrics metrics;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
+    // builds the principal-qualified select cache key, see SelectCacheKey
+    private final StringSink scopedSelectCacheKeySink = new StringSink();
     /**
      * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
      * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP
@@ -236,6 +241,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             int sharedWorkerCount
     ) {
         this.engine = engine;
+        this.httpConfiguration = httpConfiguration;
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.metrics = engine.getMetrics().qwpEgressMetrics();
@@ -422,6 +428,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     @Override
+    public boolean isBrowserCredentialAccepted(HttpConnectionContext context) {
+        final HttpRequestHeader requestHeader = context.getRequestHeader();
+        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_ORIGIN))
+                && selectBrowserWebSocketProtocol(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL)) != null;
+    }
+
+    @Override
+    public boolean isCrossOriginBrowserUpgrade(HttpConnectionContext context) {
+        return QwpIngressHttpProcessor.isCrossOrigin(context.getRequestHeader(), isSecureConnection(context));
+    }
+
+    @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         LOG.info().$("Egress WebSocket connection closed [fd=").$(context.getFd()).I$();
         QwpEgressProcessorState state = LV.get(context);
@@ -452,7 +470,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         String validationError = QwpIngressHttpProcessor.validateHandshake(
                 context.getRequestHeader(),
-                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled
+                isSecureConnection(context),
+                httpConfiguration.getQwpBrowserAllowedOrigins()
         );
         if (validationError != null) {
             LOG.error().$("Egress WebSocket handshake validation failed [fd=").$(context.getFd())
@@ -509,9 +528,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
         byte[] sessionCookieValueBytes = QwpIngressHttpProcessor.getSessionCookieValueBytes(context);
+        boolean isQwpV1WebSocketProtocolSelected = selectBrowserWebSocketProtocol(
+                requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL)) != null;
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null, null,
-                sessionCookieValueBytes);
+                sessionCookieValueBytes, false, isQwpV1WebSocketProtocolSelected);
         // The server appends a SERVER_INFO WebSocket frame right after the 101
         // response bytes, in the same send buffer. Reserve an upper-bound for the
         // frame so a tiny send buffer that would fit the 101 response alone but
@@ -547,7 +568,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null, null,
-                sessionCookieValueBytes);
+                sessionCookieValueBytes, false, isQwpV1WebSocketProtocolSelected);
         // Append an unsolicited SERVER_INFO WebSocket frame to the same send
         // buffer. The client reads it as the first frame after the upgrade
         // handshake completes, which lets it route reads to primary vs replica
@@ -813,6 +834,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     /**
+     * Returns the subprotocol the 101 response names for a browser offer:
+     * questdb.qwp.v1 when offered, otherwise null. Egress does not negotiate
+     * durable ACK, so an offer of only questdb.qwp.durable-ack.v1 selects
+     * nothing. The credential gate accepts exactly the offers this selects.
+     */
+    private static Utf8Sequence selectBrowserWebSocketProtocol(Utf8Sequence offeredProtocols) {
+        return QwpIngressHttpProcessor.containsWebSocketProtocol(offeredProtocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1)
+                ? QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1
+                : null;
+    }
+
+    /**
      * Patches the WebSocket frame header into the reserved 10-byte prefix and
      * memmoves the QWP payload left if the actual header is shorter. Flushes
      * via {@link HttpRawSocket#send(int)}.
@@ -994,6 +1027,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long requestId
     ) throws Exception {
         final short type = cq.getType();
+        // rows_affected is an unsigned varint on the wire: a statement without a
+        // row count (DDL, parse-time-executed) reports 0, never a negative sentinel.
         long rowsAffected = 0;
         switch (type) {
             case CompiledQuery.INSERT:
@@ -1045,7 +1080,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // VACUUM, CHECKPOINT, BEGIN / COMMIT / ROLLBACK, DEALLOCATE,
                 // TABLE_RESUME / SUSPEND / SET_TYPE, CREATE/ALTER USER, etc.)
                 // need no further execute -- the compiler already did the work.
-                rowsAffected = cq.getAffectedRowsCount();
+                // They carry no row count.
                 break;
             }
         }
@@ -1324,8 +1359,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // present so factories compiled under different bind signatures
             // occupy different cache slots. A SQL-only key can otherwise
             // return a factory whose bind signature does not match the
-            // current request. Mirrors pgwire's TypesAndSelect design.
-            final CharSequence cacheKey = decoder.buildSelectCacheKey(state.getBindVariableService());
+            // current request. Mirrors pgwire's TypesAndSelect design. The principal's
+            // select cache scope qualifies the key, see SecurityContext.getSelectCacheScope().
+            final CharSequence cacheKey = SelectCacheKey.of(
+                    sqlCtx.getSecurityContext().getSelectCacheScope(),
+                    decoder.buildSelectCacheKey(state.getBindVariableService()),
+                    scopedSelectCacheKeySink
+            );
             short compiledQueryType = CompiledQuery.SELECT;
             boolean queryCacheable = true;
             for (int retries = 0; ; retries++) {
@@ -1524,6 +1564,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             default -> LOG.debug().$("Egress unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
         }
+    }
+
+    private boolean isSecureConnection(HttpConnectionContext context) {
+        return context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled;
     }
 
     private byte mapErrorStatusAndMark(Throwable e) {

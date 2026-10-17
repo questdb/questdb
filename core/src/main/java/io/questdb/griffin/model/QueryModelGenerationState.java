@@ -157,10 +157,14 @@ public final class QueryModelGenerationState implements Mutable {
         }
     }
 
-    private static void addColumns(ObjList<Object> edges, ObjList<QueryColumn> columns) {
+    private static boolean addColumns(ObjList<Object> edges, ObjList<QueryColumn> columns, ObjList<ExpressionNode> pending) {
+        boolean hasWindowSubQuery = false;
         for (int i = 0; i < columns.size(); i++) {
-            add(edges, columns.getQuick(i).getAst());
+            QueryColumn column = columns.getQuick(i);
+            add(edges, column.getAst());
+            hasWindowSubQuery |= column.isWindowExpression() && containsSubQuery(column.getAst(), pending);
         }
+        return hasWindowSubQuery;
     }
 
     private static void addExpressions(ObjList<Object> edges, ObjList<ExpressionNode> expressions) {
@@ -180,6 +184,24 @@ public final class QueryModelGenerationState implements Mutable {
             add(edges, window.getAnchorExpression());
             add(edges, window.getPendingSubsample());
         }
+    }
+
+    private static boolean containsSubQuery(ExpressionNode expression, ObjList<ExpressionNode> pending) {
+        pending.clear();
+        pending.add(expression);
+        while (pending.size() > 0) {
+            ExpressionNode node = pending.popLast();
+            if (node == null) {
+                continue;
+            }
+            if (node.queryModel != null) {
+                return true;
+            }
+            pending.add(node.lhs);
+            pending.add(node.rhs);
+            pending.addAll(node.args);
+        }
+        return false;
     }
 
     private static ExpressionNode copy(ExpressionNode node, IdentityHashMap<ExpressionNode, ExpressionNode> memo, ObjectPool<ExpressionNode> pool) {
@@ -208,6 +230,7 @@ public final class QueryModelGenerationState implements Mutable {
     private boolean discover(IQueryModel root) {
         boolean hasSharing = root instanceof QueryModelWrapper;
         ObjList<Object> pending = new ObjList<>();
+        ObjList<ExpressionNode> windowArguments = new ObjList<>();
         add(pending, root);
         while (pending.size() > 0) {
             Object node = pending.popLast();
@@ -230,8 +253,11 @@ public final class QueryModelGenerationState implements Mutable {
                     hasSharing |= child instanceof QueryModelWrapper;
                     add(edges, child);
                 }
-                addColumns(edges, model.getBottomUpColumns());
-                addColumns(edges, model.getTopDownColumns());
+                // Window generation may compile an argument once for its streaming probe and
+                // again for the cached layout. Restore sub-query predicates on the second pass
+                // just as we do for explicitly shared models.
+                hasSharing |= addColumns(edges, model.getBottomUpColumns(), windowArguments);
+                hasSharing |= addColumns(edges, model.getTopDownColumns(), windowArguments);
                 addExpressions(edges, model.getExpressionModels());
                 addExpressions(edges, model.getLatestBy());
                 addExpressions(edges, model.getOrderBy());

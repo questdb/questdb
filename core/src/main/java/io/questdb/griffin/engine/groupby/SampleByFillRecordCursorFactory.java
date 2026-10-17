@@ -931,6 +931,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     prevRecord = baseCursor.getRecordB();
                 }
                 long firstTs = baseRecord.getTimestamp(timestampIndex);
+                // TIMESTAMP(col) can designate a column that holds NULL, and the sort puts the bucket of the NULL
+                // first. A grid anchored at Long.MIN_VALUE would emit fill rows one stride at a time from there.
+                if (firstTs == Numbers.LONG_NULL) {
+                    throw CairoException.nonCritical().put("SAMPLE BY designated timestamp cannot be NULL");
+                }
                 final boolean currentBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
                 currentBucketTimestamp = currentBucketIsFirstTs ? firstTs : fromTs;
                 if (calendarOffset != 0 && fromTs == Numbers.LONG_NULL) {

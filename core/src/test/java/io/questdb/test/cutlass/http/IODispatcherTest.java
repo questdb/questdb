@@ -41,6 +41,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboardPoolV2;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -5848,6 +5849,345 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testSCPRangeNotSatisfiableSlowReader() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean hasStalled = new AtomicBoolean();
+            final String statusPrefix = "HTTP/1.1 416 ";
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public int sendRaw(long fd, long buffer, int bufferLen) {
+                    if (bufferLen >= statusPrefix.length()
+                            && Utf8s.equalsAscii(statusPrefix, buffer, buffer + statusPrefix.length())
+                            && hasStalled.compareAndSet(false, true)) {
+                        return 0;
+                    }
+                    return super.sendRaw(fd, buffer, bufferLen);
+                }
+            };
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, root, 1024, false, false);
+            final WorkerPool workerPool = new TestWorkerPool(1);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
+                    Path path = new Path().of(root).concat("questdb-range.txt")
+            ) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
+                writeAsciiFile(path, "0123456789".repeat(10), 122_299_092L);
+                try {
+                    workerPool.start(LOG);
+                    new SendAndReceiveRequestBuilder().executeMany(client -> {
+                        final String partialResponse = """
+                                HTTP/1.1 206 Partial content\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Content-Length: 1\r
+                                Content-Type: text/plain\r
+                                Accept-Ranges: bytes\r
+                                Content-Range: bytes 0-0/100\r
+                                ETag: "122299092"\r
+                                \r
+                                0""";
+                        // Reuse the connection so the first response clears the static file state.
+                        client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                        client.execute(rangeRequest("bytes=100-", null), """
+                                HTTP/1.1 416 Request range not satisfiable\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Transfer-Encoding: chunked\r
+                                Content-Type: text/plain; charset=utf-8\r
+                                Content-Range: bytes */100\r
+                                \r
+                                1f\r
+                                Request range not satisfiable\r
+                                \r
+                                00\r
+                                \r
+                                """);
+                        Assert.assertTrue("the 416 header send must stall", hasStalled.get());
+                        client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                    });
+                } finally {
+                    workerPool.halt();
+                    TestUtils.remove(path.$());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSCPRangeRequests() throws Exception {
+        assertMemoryLeak(() -> {
+            final String baseDir = root;
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
+            WorkerPool workerPool = new TestWorkerPool(2);
+            try (CairoEngine engine = new CairoEngine(configuration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
+                workerPool.start(LOG);
+
+                final String content = "0123456789".repeat(10);
+                try (Path path = new Path().of(baseDir).concat("questdb-range.txt")) {
+                    try {
+                        writeAsciiFile(path, content, 122299092L);
+
+                        final String partialHeader = """
+                                HTTP/1.1 206 Partial content\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                """;
+                        final String fullHeader = """
+                                HTTP/1.1 200 OK\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Content-Length: 100\r
+                                Content-Type: text/plain\r
+                                ETag: "122299092"\r
+                                \r
+                                """;
+
+                        // a single byte range is inclusive on both ends
+                        sendAndReceive(
+                                rangeRequest("bytes=0-0", null),
+                                partialHeader + """
+                                        Content-Length: 1\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-0/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0"""
+                        );
+
+                        // a range ending at the last byte returns the full file
+                        sendAndReceive(
+                                rangeRequest("bytes=0-99", null),
+                                partialHeader + """
+                                        Content-Length: 100\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        """ + content
+                        );
+
+                        // the processor clamps an end equal to the file length
+                        sendAndReceive(
+                                rangeRequest("bytes=0-100", null),
+                                partialHeader + """
+                                        Content-Length: 100\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        """ + content
+                        );
+
+                        // open range ends at the last byte of the file
+                        sendAndReceive(
+                                rangeRequest("bytes=95-", null),
+                                partialHeader + """
+                                        Content-Length: 5\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 95-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        56789"""
+                        );
+
+                        // end past the file is clamped
+                        sendAndReceive(
+                                rangeRequest("bytes=90-9999", null),
+                                partialHeader + """
+                                        Content-Length: 10\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 90-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0123456789"""
+                        );
+
+                        // start past the file is unsatisfiable
+                        sendAndReceive(
+                                rangeRequest("bytes=100-", null),
+                                """
+                                        HTTP/1.1 416 Request range not satisfiable\r
+                                        Server: questDB/1.0\r
+                                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                        Transfer-Encoding: chunked\r
+                                        Content-Type: text/plain; charset=utf-8\r
+                                        Content-Range: bytes */100\r
+                                        \r
+                                        1f\r
+                                        Request range not satisfiable\r
+                                        \r
+                                        00\r
+                                        \r
+                                        """
+                        );
+
+                        // the processor rejects descending bounds
+                        sendAndReceive(
+                                rangeRequest("bytes=5-3", null),
+                                """
+                                        HTTP/1.1 416 Request range not satisfiable\r
+                                        Server: questDB/1.0\r
+                                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                        Transfer-Encoding: chunked\r
+                                        Content-Type: text/plain; charset=utf-8\r
+                                        Content-Range: bytes */100\r
+                                        \r
+                                        1f\r
+                                        Request range not satisfiable\r
+                                        \r
+                                        00\r
+                                        \r
+                                        """
+                        );
+
+                        // matching If-Range keeps the range
+                        sendAndReceive(
+                                rangeRequest("bytes=0-0", "\"122299092\""),
+                                partialHeader + """
+                                        Content-Length: 1\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-0/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0"""
+                        );
+
+                        // stale If-Range falls back to the full file
+                        sendAndReceive(rangeRequest("bytes=0-0", "\"1\""), fullHeader + content);
+
+                        // Given different ETags with the same numeric value
+                        for (String ifRange : new String[]{"\"0122299092\"", "\"122299092L\""}) {
+                            // When the client requests a range with a different ETag
+                            final String request = rangeRequest("bytes=0-0", ifRange);
+
+                            // Then the server returns the full file
+                            sendAndReceive(request, fullHeader + content);
+                        }
+                    } finally {
+                        workerPool.halt();
+                        TestUtils.remove(path.$());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSCPResponsesResumeAfterPartialSends() throws Exception {
+        getSimpleTester().withForceSendFragmentationChunkSize(1).run(configuration, (_, _) -> {
+            try (Path path = new Path().of(root).concat("questdb-range.txt")) {
+                final String content = "0123456789".repeat(10);
+                writeAsciiFile(path, content, 122_299_092L);
+                // Read one byte at a time so the client cannot discard unexpected trailing bytes.
+                final NetworkFacade clientNetwork = new NetworkFacadeImpl() {
+                    @Override
+                    public int recvRaw(long fd, long buffer, int bufferLen) {
+                        return super.recvRaw(fd, buffer, Math.min(bufferLen, 1));
+                    }
+                };
+                new SendAndReceiveRequestBuilder().withNetworkFacade(clientNetwork).executeMany(client -> {
+                    final String responseHeaders = """
+                            Server: questDB/1.0\r
+                            Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                            """;
+                    final String textHeaders = """
+                            Transfer-Encoding: chunked\r
+                            Content-Type: text/plain; charset=utf-8\r
+                            """;
+                    final String rangeErrorBody = """
+                            \r
+                            1f\r
+                            Request range not satisfiable\r
+                            \r
+                            00\r
+                            \r
+                            """;
+
+                    // Header-only responses must resume even before the connection has file state.
+                    client.execute("""
+                            GET /?test=1 HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 301 Moved Permanently\r\n" + responseHeaders + """
+                            Location: /index.html?test=1\r
+                            \r
+                            \r
+                            """);
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            If-None-Match: "122299092"\r
+                            \r
+                            """, "HTTP/1.1 304 Not Modified\r\n" + responseHeaders + "\r\n");
+                    client.execute(
+                            rangeRequest("bytes=invalid", null),
+                            "HTTP/1.1 416 Request range not satisfiable\r\n" + responseHeaders + textHeaders + rangeErrorBody
+                    );
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            If-None-Match: "invalid"\r
+                            \r
+                            """, "HTTP/1.1 400 Bad request\r\n" + responseHeaders + textHeaders + """
+                            \r
+                            0d\r
+                            Bad request\r
+                            \r
+                            00\r
+                            \r
+                            """);
+                    client.execute("""
+                            GET /missing.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 404 Not Found\r\n" + responseHeaders + textHeaders + """
+                            \r
+                            0b\r
+                            Not Found\r
+                            \r
+                            00\r
+                            \r
+                            """);
+                    final String partialResponse = "HTTP/1.1 206 Partial content\r\n" + responseHeaders + """
+                            Content-Length: 1\r
+                            Content-Type: text/plain\r
+                            Accept-Ranges: bytes\r
+                            Content-Range: bytes 0-0/100\r
+                            ETag: "122299092"\r
+                            \r
+                            0""";
+                    client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                    client.execute(
+                            rangeRequest("bytes=100-", null),
+                            "HTTP/1.1 416 Request range not satisfiable\r\n" + responseHeaders + textHeaders
+                                    + "Content-Range: bytes */100\r\n" + rangeErrorBody
+                    );
+                    // File responses must still resume, and an error must not survive request reset.
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 200 OK\r\n" + responseHeaders + """
+                            Content-Length: 100\r
+                            Content-Type: text/plain\r
+                            ETag: "122299092"\r
+                            \r
+                            """ + content);
+                    client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                });
+            }
+        });
+    }
+
+    @Test
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
@@ -7410,6 +7750,17 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testUpdateFromViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // /exec compiles the UPDATE against the old view body. The view changes before the plan
+        // opens its cursor, so /exec compiles the statement again. It has to close the first plan,
+        // and the rows have to come from the new body.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = vw.v FROM vw WHERE upd.k = vw.k",
+                "[[1,110],[2,120],[3,130]]"
+        );
+    }
+
+    @Test
     public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
         importWithO3MaxLagAndMaxUncommittedRowsTableExists(true, false, PartitionBy.NONE, 180_000_000, 1, 300000000, 1000);
     }
@@ -7417,6 +7768,18 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
         importWithO3MaxLagAndMaxUncommittedRowsTableExists(true, true, PartitionBy.DAY, -1, -1, 300000000, 1000);
+    }
+
+    @Test
+    public void testUpdateWhereSubQueryOnViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // As testUpdateFromViewRedefinedDuringStatementClosesStalePlan, with the view read by a
+        // sub-query of the WHERE clause. The sub-query joins, so its plan holds native memory from
+        // the moment the compiler builds it, with or without JIT. The old view body yields no
+        // value above 100, which updates no row, and the new body updates all three.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = 1 WHERE w < (SELECT count() FROM vw JOIN src ON vw.k = src.k WHERE vw.v > 100)",
+                "[[1,1],[2,1],[3,1]]"
+        );
     }
 
     private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, String expectedResponseHeader) {
@@ -7476,6 +7839,14 @@ public class IODispatcherTest extends AbstractTest {
             }
             writer.commit();
         }
+    }
+
+    private static String rangeRequest(String range, String ifRange) {
+        return "GET /questdb-range.txt HTTP/1.1\r\n"
+                + "Host: localhost:9000\r\n"
+                + "Range: " + range + "\r\n"
+                + (ifRange == null ? "" : "If-Range: " + ifRange + "\r\n")
+                + "\r\n";
     }
 
     private static void sendAndReceive(String request, CharSequence response) {
@@ -7658,6 +8029,83 @@ public class IODispatcherTest extends AbstractTest {
             printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
             TestUtils.assertEquals("100\t1\n1\t2\n101\t1\n", sink);
         }
+    }
+
+    /**
+     * Sends {@code updateSql} to /exec while another session redefines the view it reads, between
+     * the statement's compile and its execution. /exec takes the writer of the statement's target
+     * only to execute a compiled plan, so the hook redefines the view the first time the request
+     * takes that writer. Nothing here waits on time: the hook returns once the concurrent
+     * {@code ALTER VIEW} has committed.
+     */
+    private void assertUpdateClosesStalePlanAfterViewRedefined(String updateSql, String expectedDataset) throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            // A WAL table refuses to read another table in an UPDATE when the statement compiles.
+            engine.execute("CREATE TABLE src (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            engine.execute("CREATE TABLE upd (ts TIMESTAMP, k INT, w INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            engine.execute(
+                    """
+                            INSERT INTO src VALUES
+                            ('2024-01-01T00:00:00', 1, 10),
+                            ('2024-01-02T00:00:00', 2, 20),
+                            ('2024-01-03T00:00:00', 3, 30)
+                            """,
+                    sqlExecutionContext
+            );
+            engine.execute(
+                    """
+                            INSERT INTO upd VALUES
+                            ('2024-01-01T00:00:00', 1, 0),
+                            ('2024-01-02T00:00:00', 2, 0),
+                            ('2024-01-03T00:00:00', 3, 0)
+                            """,
+                    sqlExecutionContext
+            );
+            engine.execute("CREATE VIEW vw AS (SELECT k, v FROM src)", sqlExecutionContext);
+
+            final AtomicInteger writerGetCount = new AtomicInteger();
+            final AtomicReference<Throwable> alterViewFailure = new AtomicReference<>();
+            engine.setPoolListener((factoryType, _, tableToken, event, _, _) -> {
+                if (factoryType == PoolListener.SRC_WRITER
+                        && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
+                        && tableToken != null
+                        && "upd".equals(tableToken.getTableName())
+                        && writerGetCount.incrementAndGet() == 1) {
+                    final Thread alterViewThread = new Thread(() -> {
+                        try (SqlExecutionContext alterViewContext = TestUtils.createSqlExecutionCtx(engine)) {
+                            engine.execute("ALTER VIEW vw AS (SELECT k, v + 100 AS v FROM src)", alterViewContext);
+                        } catch (Throwable th) {
+                            alterViewFailure.set(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    alterViewThread.start();
+                    try {
+                        alterViewThread.join();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        alterViewFailure.compareAndSet(null, e);
+                    }
+                }
+            });
+            try {
+                testHttpClient.assertGet("/exec", "{\"dml\":\"OK\",\"updated\":3}", updateSql);
+            } finally {
+                engine.setPoolListener(null);
+            }
+            if (alterViewFailure.get() != null) {
+                throw new AssertionError("concurrent ALTER VIEW failed", alterViewFailure.get());
+            }
+            // The stale plan took the writer once and the recompiled plan took it once more.
+            Assert.assertEquals(2, writerGetCount.get());
+            testHttpClient.assertGet(
+                    "/exec",
+                    "{\"query\":\"SELECT k, w FROM upd\",\"columns\":[{\"name\":\"k\",\"type\":\"INT\"},{\"name\":\"w\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":"
+                            + expectedDataset + ",\"count\":3}",
+                    "SELECT k, w FROM upd"
+            );
+        });
     }
 
     @NotNull
@@ -8249,6 +8697,20 @@ public class IODispatcherTest extends AbstractTest {
                 Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    private void writeAsciiFile(Path path, String content, long lastModified) {
+        final int len = content.length();
+        final long fd = Files.openAppend(path.$());
+        final long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Utf8s.strCpyAscii(content, len, buf);
+            Assert.assertEquals(len, Files.append(fd, buf, len));
+        } finally {
+            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+            TestFilesFacadeImpl.INSTANCE.close(fd);
+        }
+        Files.setLastModified(path.$(), lastModified);
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
