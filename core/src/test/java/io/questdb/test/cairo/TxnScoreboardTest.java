@@ -81,7 +81,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             for (int i = 127; i < 130; i++) {
                 try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(i)) {
                     for (int j = 1; j < 88; j++) {
-                        scoreboard.acquireTxn(i - j, i * j);
+                        scoreboard.acquireTxn(i - j, i * j, i * j);
                         Assert.assertFalse(scoreboard.isTxnAvailable(i * j));
                         Assert.assertEquals(1, scoreboard.getActiveReaderCount(i * j));
                         Assert.assertFalse(scoreboard.isRangeAvailable(i * j, i * (j + 1)));
@@ -104,12 +104,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     public void testCannotLockTwice() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard txnScoreboard = newTxnScoreboard()) {
-                Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1));
-                Assume.assumeFalse(txnScoreboard.acquireTxn(0, 1));
+                Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1, 1));
+                Assume.assumeFalse(txnScoreboard.acquireTxn(0, 1, 1));
 
-                Assume.assumeTrue(txnScoreboard.acquireTxn(1, 1));
+                Assume.assumeTrue(txnScoreboard.acquireTxn(1, 1, 1));
                 txnScoreboard.releaseTxn(0, 1);
-                Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1));
+                Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1, 1));
             }
             scoreboardPoolFactory.clear();
         });
@@ -121,17 +121,17 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         ff = new TestFilesFacadeImpl();
         try (TxnScoreboard txnScoreboard = newTxnScoreboard()) {
             // Thread A (reader) - grabs read permit
-            Assert.assertTrue(txnScoreboard.acquireTxn(0, lastCommittedTxn));
+            Assert.assertTrue(txnScoreboard.acquireTxn(0, lastCommittedTxn, lastCommittedTxn));
             // Thread B (reader) - lags behind and grabs read permit for the previous transaction. Acquire rejected
-            Assert.assertFalse(txnScoreboard.acquireTxn(1, lastCommittedTxn - 1));
+            Assert.assertFalse(txnScoreboard.acquireTxn(1, lastCommittedTxn - 1, lastCommittedTxn - 1));
             // Thread B (reader) - grabs read permit
-            txnScoreboard.acquireTxn(1, lastCommittedTxn);
+            txnScoreboard.acquireTxn(1, lastCommittedTxn, lastCommittedTxn);
             // txngetMin(scoreboard) equals to 2 and will stay so
             Assert.assertTrue(txnScoreboard.isTxnAvailable(lastCommittedTxn - 1));
             Assert.assertFalse(txnScoreboard.isTxnAvailable(lastCommittedTxn));
 
             // Thread C (writer) - checkScoreboardHasReadersBeforeLastCommittedTxn
-            txnScoreboard.acquireTxn(2, lastCommittedTxn + 1);
+            txnScoreboard.acquireTxn(2, lastCommittedTxn + 1, lastCommittedTxn + 1);
             txnScoreboard.releaseTxn(2, lastCommittedTxn + 1);
             // The assertion fails while there are readers
             Assert.assertEquals(lastCommittedTxn, getMin(txnScoreboard));
@@ -143,7 +143,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard scoreboard = newTxnScoreboard()) {
                 for (int i = 0; i < 1500; i++) {
-                    scoreboard.acquireTxn(0, i);
+                    scoreboard.acquireTxn(0, i, i);
                     scoreboard.releaseTxn(0, i);
                 }
                 assertScoreboardMinOrNoLocks(scoreboard);
@@ -163,7 +163,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard scoreboard = newTxnScoreboard()) {
                 for (int i = 0; i < 1500; i++) {
-                    scoreboard.acquireTxn(0, i);
+                    scoreboard.acquireTxn(0, i, i);
                     scoreboard.releaseTxn(0, i);
                 }
                 assertScoreboardMinOrNoLocks(scoreboard);
@@ -173,7 +173,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try (TxnScoreboard scoreboard2 = newTxnScoreboard()) {
                 Assert.assertTrue(getMin(scoreboard2) <= 0);
                 for (int i = 0; i < 10; i++) {
-                    scoreboard2.acquireTxn(0, i);
+                    scoreboard2.acquireTxn(0, i, i);
                     scoreboard2.releaseTxn(0, i);
                 }
 
@@ -193,11 +193,11 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard scoreboard = newTxnScoreboard()) {
                 for (int i = 0; i < 1024; i++) {
-                    Assert.assertTrue(scoreboard.acquireTxn(0, i));
+                    Assert.assertTrue(scoreboard.acquireTxn(0, i, i));
                     scoreboard.releaseTxn(0, i);
                 }
                 for (int i = 1024; i < 1500; i++) {
-                    Assert.assertTrue(scoreboard.acquireTxn(0, i));
+                    Assert.assertTrue(scoreboard.acquireTxn(0, i, i));
                     scoreboard.releaseTxn(0, i);
                 }
                 assertScoreboardMinOrNoLocks(scoreboard);
@@ -206,7 +206,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 try (TxnScoreboard scoreboard2 = newTxnScoreboard()) {
                     assertScoreboardMinOrNoLocks(scoreboard2);
                     for (int i = 1500; i < 3000; i++) {
-                        scoreboard2.acquireTxn(0, i);
+                        scoreboard2.acquireTxn(0, i, i);
                         scoreboard2.releaseTxn(0, i);
                     }
 
@@ -224,7 +224,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try (final TxnScoreboard rootBoard = newTxnScoreboard()) {
                 try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
                     for (int i = 0; i < 1500; i++) {
-                        scoreboard.acquireTxn(0, i);
+                        scoreboard.acquireTxn(0, i, i);
                         scoreboard.releaseTxn(0, i);
                     }
                     assertScoreboardMinOrNoLocks(scoreboard);
@@ -234,7 +234,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 try (final TxnScoreboard scoreboard2 = newTxnScoreboard()) {
                     assertScoreboardMinOrNoLocks(scoreboard2);
                     for (int i = 1500; i < 3000; i++) {
-                        scoreboard2.acquireTxn(0, i);
+                        scoreboard2.acquireTxn(0, i, i);
                         scoreboard2.releaseTxn(0, i);
                     }
                     assertScoreboardMinOrNoLocks(scoreboard2);
@@ -253,17 +253,17 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     final TxnScoreboard scoreboard = newTxnScoreboard()
             ) {
                 assertScoreboardMinOrNoLocks(scoreboard);
-                Assert.assertTrue(scoreboard.acquireTxn(0, 2048));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 2048, 2048));
                 Assert.assertEquals(2048, getMin(scoreboard));
                 scoreboard.releaseTxn(0, 2048);
                 assertScoreboardMinOrNoLocks(scoreboard);
 
-                Assert.assertTrue(scoreboard.acquireTxn(0, 10000L));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10000L, 10000L));
                 scoreboard.releaseTxn(0, 10000L);
                 assertScoreboardMinOrNoLocks(scoreboard);
 
 
-                Assert.assertFalse(scoreboard.acquireTxn(0, 4095));
+                Assert.assertFalse(scoreboard.acquireTxn(0, 4095, 4095));
             }
             scoreboardPoolFactory.clear();
         });
@@ -283,16 +283,17 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
                 assertScoreboardMinOrNoLocks(scoreboard);
-                Assert.assertTrue(scoreboard.acquireTxn(0, 1));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 1, 10));
                 Assert.assertEquals(1, getMin(scoreboard));
 
                 // Don't release the older txn.
-                Assert.assertTrue(scoreboard.acquireTxn(1, 2));
+                Assert.assertTrue(scoreboard.acquireTxn(1, 2, 20));
                 scoreboard.releaseTxn(1, 2);
                 Assert.assertEquals(1, getMin(scoreboard));
 
                 // acquireTxn() would have failed here, but we can use incrementTxn()
-                Assert.assertTrue(scoreboard.incrementTxn(2, 1));
+                Assert.assertTrue(scoreboard.incrementTxn(2, 1, 10));
+                Assert.assertEquals(10, scoreboard.getMinSeqTxn(2, 20));
                 scoreboard.releaseTxn(2, 1);
                 Assert.assertEquals(1, getMin(scoreboard));
 
@@ -301,6 +302,67 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 assertScoreboardMinOrNoLocks(scoreboard);
             }
             scoreboardPoolFactory.clear();
+        });
+    }
+
+    @Test
+    public void testMinSeqTxnHandlesSlotReuse() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(2)) {
+                Assert.assertTrue(scoreboard.acquireTxn(0, 1, 10));
+                Assert.assertEquals(10, scoreboard.getMinSeqTxn(1, 20));
+                scoreboard.releaseTxn(0, 1);
+
+                Assert.assertTrue(scoreboard.acquireTxn(0, 2, 20));
+                Assert.assertEquals(20, scoreboard.getMinSeqTxn(2, 30));
+                scoreboard.releaseTxn(0, 2);
+            }
+        });
+    }
+
+    @Test
+    public void testMinSeqTxnRejectsLateOldTableTxn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertEquals(100, scoreboard.getMinSeqTxn(12, 120));
+                Assert.assertFalse(scoreboard.acquireTxn(1, 11, 110));
+                Assert.assertEquals(100, scoreboard.getMinSeqTxn(12, 120));
+                Assert.assertEquals(TxnScoreboard.UNKNOWN_SEQ_TXN, scoreboard.getMinSeqTxn(11, 90));
+                scoreboard.releaseTxn(0, 10);
+            }
+        });
+    }
+
+    @Test
+    public void testMinSeqTxnSealsEmptyScoreboard() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(2)) {
+                Assert.assertEquals(100, scoreboard.getMinSeqTxn(10, 100));
+                Assert.assertFalse(scoreboard.acquireTxn(0, 9, 90));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertEquals(100, scoreboard.getMinSeqTxn(10, 100));
+                scoreboard.releaseTxn(0, 10);
+            }
+        });
+    }
+
+    @Test
+    public void testMinSeqTxnUsesActiveValuesAndBlocksUnknownValues() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 90));
+                Assert.assertTrue(scoreboard.acquireTxn(1, 11, 100));
+                Assert.assertEquals(90, scoreboard.getMinSeqTxn(12, 120));
+
+                scoreboard.releaseTxn(0, 10);
+                Assert.assertEquals(100, scoreboard.getMinSeqTxn(12, 120));
+
+                scoreboard.releaseTxn(1, 11);
+                Assert.assertTrue(scoreboard.acquireTxn(0, 12, TxnScoreboard.UNKNOWN_SEQ_TXN));
+                Assert.assertEquals(TxnScoreboard.UNKNOWN_SEQ_TXN, scoreboard.getMinSeqTxn(12, 120));
+                scoreboard.releaseTxn(0, 12);
+            }
         });
     }
 
@@ -323,8 +385,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         barrier.await();
                         for (int s = 0; s < 100; s++) {
                             try {
-                                if (scoreboard.acquireTxn(id, txn + (long) s * entryCount)) {
-                                    scoreboard.releaseTxn(id, txn + (long) s * entryCount);
+                                final long tableTxn = txn + (long) s * entryCount;
+                                if (scoreboard.acquireTxn(id, tableTxn, tableTxn)) {
+                                    scoreboard.releaseTxn(id, tableTxn);
                                     Os.pause();
                                 }
                             } catch (CairoException e) {
@@ -367,7 +430,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 Thread reader = new Thread(() -> {
                     try {
                         barrier.await();
-                        if (scoreboard.acquireTxn(id, txn)) {
+                        if (scoreboard.acquireTxn(id, txn, txn)) {
                             long activeReaderCount = getActiveReaderCount(scoreboard, txn);
                             if (activeReaderCount > readers || activeReaderCount < 1) {
                                 LOG.errorW()
@@ -434,12 +497,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TxnScoreboard scoreboard2 = newTxnScoreboard()) {
                 try (TxnScoreboard scoreboard1 = newTxnScoreboard()) {
-                    scoreboard1.acquireTxn(0, 67);
-                    scoreboard1.acquireTxn(1, 68);
-                    scoreboard1.acquireTxn(2, 68);
-                    scoreboard1.acquireTxn(3, 69);
-                    scoreboard1.acquireTxn(4, 70);
-                    scoreboard1.acquireTxn(5, 71);
+                    scoreboard1.acquireTxn(0, 67, 67);
+                    scoreboard1.acquireTxn(1, 68, 68);
+                    scoreboard1.acquireTxn(2, 68, 68);
+                    scoreboard1.acquireTxn(3, 69, 69);
+                    scoreboard1.acquireTxn(4, 70, 70);
+                    scoreboard1.acquireTxn(5, 71, 71);
                     Assert.assertEquals(67, getMin(scoreboard1));
 
                     scoreboard1.releaseTxn(1, 68);
@@ -460,9 +523,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     scoreboard1.releaseTxn(4, 70);
 
                     assertScoreboardMinOrNoLocks(scoreboard1);
-                    scoreboard1.acquireTxn(0, 72);
+                    scoreboard1.acquireTxn(0, 72, 72);
                 }
-                scoreboard2.acquireTxn(0, 72);
+                scoreboard2.acquireTxn(0, 72, 72);
                 Assert.assertFalse(scoreboard2.isTxnAvailable(72));
 
                 scoreboard2.releaseTxn(0, 72);
@@ -477,9 +540,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     public void testWideRange() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
-                scoreboard.acquireTxn(0, 15);
+                scoreboard.acquireTxn(0, 15, 15);
                 scoreboard.releaseTxn(0, 15);
-                scoreboard.acquireTxn(0, 900992);
+                scoreboard.acquireTxn(0, 900992, 900992);
                 Assert.assertFalse(scoreboard.isTxnAvailable(900992));
             }
             scoreboardPoolFactory.clear();
@@ -558,7 +621,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 barrier.await();
                 long t;
                 while ((t = txn) < iterations) {
-                    if (scoreboard.acquireTxn(id, t)) {
+                    if (scoreboard.acquireTxn(id, t, t)) {
                         long writerMinLoc = writerMin;
                         long activeReaderCount = getActiveReaderCount(scoreboard, t);
                         if (activeReaderCount > readers + 1 || activeReaderCount < 1) {

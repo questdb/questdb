@@ -289,6 +289,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     compiled.init(null, sqlExecutionContext);
                     compiled.evaluate(outIntervals);
                     if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
+                        if (outIntervals.size() == divider) {
+                            // Subtracting an empty range preserves the accumulated set.
+                            negatedNothing(outIntervals, divider, firstFuncApplied);
+                            continue;
+                        }
                         IntervalUtils.invert(outIntervals, divider);
                     }
                 }

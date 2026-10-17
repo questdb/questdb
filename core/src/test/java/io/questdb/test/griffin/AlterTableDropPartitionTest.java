@@ -1241,6 +1241,36 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForceDropMinimum() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2020-01-01T00:05'),
+                        ('2020-01-02T00:05'),
+                        ('2020-01-02T12:00'),
+                        ('2020-01-03T00:05')
+                    """);
+
+            // Leave two partitions so reading the wrong minimum can silently skip the new oldest day.
+            execute("ALTER TABLE x FORCE DROP PARTITION LIST '2020-01-01'");
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(2, reader.getPartitionCount());
+                Assert.assertEquals("2020-01-02T00:05:00.000000Z", Micros.toUSecString(reader.getMinTimestamp()));
+            }
+            assertQuery("SELECT ts FROM x WHERE ts IN '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts
+                            2020-01-02T00:05:00.000000Z
+                            2020-01-02T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testForceDropPartitionExpectDrop() throws Exception {
         createXAndAssertException("alter table x force partition list '2022-02-04';", 20, "'drop' expected");
     }

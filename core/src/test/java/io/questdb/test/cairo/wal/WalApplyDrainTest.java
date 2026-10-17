@@ -97,9 +97,10 @@ public class WalApplyDrainTest extends AbstractCairoTest {
                         public void commitWalInsertTransactions(
                                 Path walPath,
                                 long seqTxn,
-                                TableWriterPressureControl pressureControl
+                                TableWriterPressureControl pressureControl,
+                                long txnCommitTimestamp
                         ) {
-                            super.commitWalInsertTransactions(walPath, seqTxn, pressureControl);
+                            super.commitWalInsertTransactions(walPath, seqTxn, pressureControl, txnCommitTimestamp);
                             // Publish once, after a WAL transaction is committed, so the command sits
                             // on the async queue until the apply loop's end-of-batch drain runs. The
                             // apply loop never ticks mid-batch, so nothing else can drain it first.

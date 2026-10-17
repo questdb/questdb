@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -93,6 +94,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
     private final UninitializedPageFrame uninitializedFrame = new UninitializedPageFrame();
+    private int baseRowFrameIndex = -1;
+    private long baseRowLo;
     private int frameCount = 0;
     private TablePageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
@@ -230,7 +233,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         this.pageFrameMaxRows = pageFrameMaxRows;
         this.workerCount = workerCount;
         final ColumnMapping mapping = frameCursor.getColumnMapping();
-        frameAddressCache.of(metadata, mapping, frameCursor.isExternal());
+        frameAddressCache.of(metadata, frameCursor);
         columnIndexes.clear();
         for (int i = 0, n = mapping.getColumnCount(); i < n; i++) {
             columnIndexes.add(mapping.getColumnIndex(i));
@@ -241,6 +244,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         populatePartitionTimestamps(frameCursor, partitionTimestamps, partitionCeilings);
+        baseRowFrameIndex = -1;
         isFrameCacheBuilt = false;
         toTop();
         return this;
@@ -323,6 +327,23 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         ensurePartitionOpened(partitionIndex);
         frameMemoryPool.navigateTo(frameIndex, frameMemoryRecord);
         frameMemoryRecord.setRowIndex(rowIndex);
+    }
+
+    @Override
+    public boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
+        final int frameIndex = timeFrame.getFrameIndex();
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        int rowIndex = frameMemory.getSourceRowResolver().find(timestamp, sourceRowRef);
+        if (rowIndex < 0 && sourceRowRef >= 0) {
+            rowIndex = resolveBaseRow(frameIndex, sourceRowRef);
+        }
+        if (rowIndex < 0) {
+            return false;
+        }
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryRecord.init(frameMemory);
+        frameMemoryRecord.setRowIndex(rowIndex);
+        return true;
     }
 
     @Override
@@ -511,8 +532,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         frameRowCounts.reopen();
         frameRowCounts.clear();
 
-        if (frameCursor.hasIntervalFilter()) {
-            // Interval filtering makes frame counts unpredictable from metadata.
+        if (frameCursor.hasIntervalFilter() || tableReader.hasAnyDelta()) {
+            // Interval filters and delta merges make logical frame counts unpredictable from base metadata.
             // Fall back to eager enumeration of all page frames.
             buildFrameCacheEagerly();
         } else {
@@ -613,6 +634,32 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         int expectedEnd = (partitionIndex + 1 < partitionCount) ? partitionFirstFrame.getQuick(partitionIndex + 1) : frameCount;
         assert globalFrame == expectedEnd : "frame count mismatch for partition " + partitionIndex + ": expected " + expectedEnd + " but got " + globalFrame;
         partitionOpened.set(partitionIndex);
+    }
+
+    private int resolveBaseRow(int frameIndex, long baseRow) {
+        if (baseRowFrameIndex != frameIndex) {
+            final int partitionIndex = framePartitionIndexes.get(frameIndex);
+            // Unmodified windows omit the frame's state pointer but still share the reader's Delta snapshot.
+            final long partitionState = tableReader.getOrOpenPartitionFrameState(partitionIndex);
+            long frameBaseLo = -1;
+            if (partitionState != 0) {
+                final int window = frameAddressCache.getParquetRowGroup(frameIndex);
+                if (!PartitionFrameState.requiresMaterialization(partitionState, window)) {
+                    // Within an unmodified window, logical and physical offsets agree, including split frames.
+                    frameBaseLo = frameAddressCache.getParquetRowGroupLo(frameIndex);
+                    for (int i = 0; i < window; i++) {
+                        frameBaseLo += PartitionFrameState.getBaseRowCount(partitionState, i);
+                    }
+                }
+            }
+            baseRowLo = frameBaseLo;
+            baseRowFrameIndex = frameIndex;
+        }
+        if (baseRowLo < 0) {
+            return -1;
+        }
+        final long row = baseRow - baseRowLo;
+        return row >= 0 && row < frameRowCounts.get(frameIndex) ? (int) row : -1;
     }
 
     // maxTimestampHi is used to handle split partitions correctly as ceil method

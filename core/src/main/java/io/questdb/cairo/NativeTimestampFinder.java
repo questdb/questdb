@@ -32,8 +32,8 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 
 public class NativeTimestampFinder implements TimestampFinder, Mutable {
     private MemoryR column;
-    private long maxTimestampApprox;
-    private long minTimestampApprox;
+    private long maxTimestampUpperBound;
+    private long minTimestampLowerBound;
     private TableReader reader;
     private long rowCount;
     private int timestampColumnOffset;
@@ -45,6 +45,43 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     }
 
     @Override
+    public long countBefore(long timestamp) {
+        return countBefore(timestamp, 0, rowCount - 1);
+    }
+
+    @Override
+    public long countBefore(long timestamp, long rowLo, long rowHi) {
+        if (rowLo > rowHi) {
+            return rowLo;
+        }
+        // The first row is at or after the bound, e.g. an interval that covers
+        // the whole partition: skip the binary search.
+        if (rowCount == 0 || timestamp == Long.MIN_VALUE || minTimestampExact() >= timestamp) {
+            return 0;
+        }
+        return findTimestamp(timestamp - 1, rowLo, rowHi) + 1;
+    }
+
+    @Override
+    public long countThrough(long timestamp) {
+        return countThrough(timestamp, 0, rowCount - 1);
+    }
+
+    @Override
+    public long countThrough(long timestamp, long rowLo, long rowHi) {
+        if (rowLo > rowHi) {
+            return rowLo;
+        }
+        if (rowCount == 0) {
+            return 0;
+        }
+        // The last row is at or before the bound: skip the binary search.
+        if (maxTimestampExact() <= timestamp) {
+            return rowCount;
+        }
+        return findTimestamp(timestamp, rowLo, rowHi) + 1;
+    }
+
     public long findTimestamp(long value, long rowLo, long rowHi) {
         long idx = Vect.binarySearch64Bit(column.getPageAddress(0), value, rowLo, rowHi, BIN_SEARCH_SCAN_DOWN);
         if (idx < 0) {
@@ -54,21 +91,19 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     }
 
     @Override
-    public long maxTimestampApproxFromMetadata() {
-        return maxTimestampApprox;
+    public long maxTimestampUpperBound() {
+        return maxTimestampUpperBound;
     }
 
-    @Override
     public long maxTimestampExact() {
         return column.getLong((rowCount - 1) * 8);
     }
 
     @Override
-    public long minTimestampApproxFromMetadata() {
-        return minTimestampApprox;
+    public long minTimestampLowerBound() {
+        return minTimestampLowerBound;
     }
 
-    @Override
     public long minTimestampExact() {
         return column.getLong(0);
     }
@@ -77,17 +112,18 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
         this.timestampColumnOffset = TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), timestampIndex);
         this.reader = reader;
         this.rowCount = rowCount;
-        this.minTimestampApprox = reader.getPartitionMinTimestampFromMetadata(partitionIndex);
-        this.maxTimestampApprox = reader.getPartitionMaxTimestampFromMetadata(partitionIndex);
+        this.minTimestampLowerBound = reader.getPartitionMinTimestampFromMetadata(partitionIndex);
+        this.maxTimestampUpperBound = reader.getPartitionMaxTimestampFromMetadata(partitionIndex);
         return this;
     }
 
     @Override
     public void prepare() {
-        this.column = reader.getColumn(timestampColumnOffset);
+        if (rowCount > 0) {
+            this.column = reader.getColumn(timestampColumnOffset);
+        }
     }
 
-    @Override
     public long timestampAt(long rowIndex) {
         return column.getLong(rowIndex * 8);
     }

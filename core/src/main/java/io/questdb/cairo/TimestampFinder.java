@@ -24,82 +24,65 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.Vect;
-
 /**
- * Interface for efficiently searching and accessing timestamp values within QuestDB table partitions.
+ * Counts timestamp values within a table partition.
  *
- * <p>This interface provides methods for binary searching timestamp values and retrieving min/max
- * timestamps both from partition metadata (approximate) and actual column data (exact). It is primarily
- * used by QuestDB's time interval intrinsics to quickly locate relevant data ranges without scanning
- * entire partitions.</p>
- *
- * <p>Implementations must support binary search operations on timestamp columns with scan direction
- * {@link io.questdb.std.Vect#BIN_SEARCH_SCAN_DOWN}, returning positive indices that represent the
- * position of values equal to or less than the search target.</p>
+ * <p>The returned counts use the finder's global partition-relative coordinate
+ * space. A physical base finder returns physical row counts; a composite finder
+ * may return logical base-plus-delta counts in the same coordinate space used by
+ * partition frames.</p>
  */
 public interface TimestampFinder {
 
     /**
-     * Performs search on timestamp column. Effectively, the search is the same as
-     * calling {@link Vect#binarySearch64Bit(long, long, long, long, int)} on the partition slice,
-     * but the returned result is always positive.
-     * <p>
-     * The scan direction is {@link Vect#BIN_SEARCH_SCAN_DOWN}.
-     *
-     * @param value timestamp value to find, the found value is equal or less than this value
-     * @param rowLo row low index for the search boundary, inclusive
-     * @param rowHi row high index for the search boundary, inclusive
-     * @return search result
+     * Counts rows whose timestamp is strictly less than {@code timestamp}.
      */
-    long findTimestamp(long value, long rowLo, long rowHi);
+    long countBefore(long timestamp);
 
     /**
-     * Max partition timestamp that can be determined from partition metadata, without having to read the
-     * timestamp column data.
-     *
-     * @return max timestamp as inferred from partition name and metadata
+     * Counts rows before {@code timestamp}, using inclusive search bounds in this
+     * finder's coordinate space. The caller guarantees the count is between
+     * {@code rowLo} and {@code rowHi + 1}; the result remains partition-relative.
+     * Composite finders may ignore the bounds rather than pass logical row
+     * positions to a physical base finder.
      */
-    long maxTimestampApproxFromMetadata();
+    default long countBefore(long timestamp, long rowLo, long rowHi) {
+        return countBefore(timestamp);
+    }
 
     /**
-     * Max partition timestamp as read from the timestamp column data. This method must only be called after
-     * prepare() was invoked.
-     *
-     * @return max timestamp value from timestamp column
-     * @see #prepare()
+     * Counts rows whose timestamp is less than or equal to {@code timestamp}.
      */
-    long maxTimestampExact();
+    long countThrough(long timestamp);
 
     /**
-     * Min partition timestamp that can be determined from partition metadata, without having to read the
-     * timestamp column data.
-     *
-     * @return min timestamp as inferred from partition name and metadata
+     * Counts rows through {@code timestamp}, with the same search-bound contract
+     * as {@link #countBefore(long, long, long)}.
      */
-    long minTimestampApproxFromMetadata();
+    default long countThrough(long timestamp, long rowLo, long rowHi) {
+        return countThrough(timestamp);
+    }
 
     /**
-     * Min partition timestamp as read from the timestamp column data. This method must only be called after
-     * prepare() was invoked.
+     * Conservative upper bound for the partition's maximum timestamp, without
+     * reading timestamp column data. The returned value must not be less than
+     * the exact maximum.
      *
-     * @return min timestamp value from timestamp column
-     * @see #prepare()
+     * @return upper bound for the maximum timestamp
      */
-    long minTimestampExact();
+    long maxTimestampUpperBound();
 
     /**
-     * Ensures timestamp column is ready to be read. Must be called before accessing exact timestamp methods
-     * or retrieving timestamp values at specific row indices.
+     * Conservative lower bound for the partition's minimum timestamp, without
+     * reading timestamp column data. The returned value must not be greater
+     * than the exact minimum.
+     *
+     * @return lower bound for the minimum timestamp
+     */
+    long minTimestampLowerBound();
+
+    /**
+     * Prepares the currently bound partition for exact counts.
      */
     void prepare();
-
-    /**
-     * Retrieves the timestamp value at the specified row index within the partition.
-     *
-     * @param rowIndex the row index to get the timestamp from
-     * @return timestamp value at the given row index
-     * @see #prepare()
-     */
-    long timestampAt(long rowIndex);
 }

@@ -67,8 +67,7 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
     }
 
     /**
-     * Gets the bitmap index reader for the specified column in the current frame (partition).
-     * This method enables efficient symbol-based lookups in ASOF JOIN operations.
+     * Returns the index reader for the current frame's partition.
      * <p>
      * Not available on concurrent implementation.
      *
@@ -150,6 +149,13 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      * @param rowIndex   row index within the frame
      */
     void recordAt(Record record, int frameIndex, long rowIndex);
+
+    /**
+     * Positions a data record from the current index cursor's timestamp and SourceRowRef.
+     */
+    default boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * This sets the record to the given row index, without changing frame ID of the record. Given rowIndex

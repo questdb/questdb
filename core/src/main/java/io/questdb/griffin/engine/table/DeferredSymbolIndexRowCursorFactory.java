@@ -68,7 +68,13 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
 
         return pageFrame
                 .getIndexReader(columnIndex, indexDirection)
-                .getCursor(TableUtils.toIndexKey(symbolKey), pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(
+                        TableUtils.toIndexKey(symbolKey),
+                        pageFrame.getPartitionLo(),
+                        pageFrame.getPartitionHi() - 1,
+                        null,
+                        pageFrameMemory.getSourceRowResolver()
+                );
     }
 
     @Override

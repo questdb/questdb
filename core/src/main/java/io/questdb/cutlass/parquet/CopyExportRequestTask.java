@@ -400,6 +400,18 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.writeCallback = writeCallback;
     }
 
+    // The zero-copy paths hand raw page addresses to the streaming writer. A custom
+    // (Delta) frame has none, so reading it would export wrong rows or abort the JVM.
+    // Callers route such cursors row by row; this catches a path that does not.
+    static void checkRawPageFrame(PageFrame frame) {
+        if (frame.getPartitionFrameState() != 0) {
+            throw CairoException.critical(0)
+                    .put("parquet export cannot read a custom page frame [partitionIndex=")
+                    .put(frame.getPartitionIndex())
+                    .put(']');
+        }
+    }
+
     protected static void parseBloomFilterColumnIndexes(CharSequence columns, RecordMetadata meta, DirectIntList indexes, int bloomFilterColumnsPosition) {
         int start = 0;
         int len = columns.length();
@@ -783,6 +795,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         public void writePageFrame(PageFrameCursor frameCursor, PageFrame frame) throws Exception {
             assert streamWriter != -1 && writeCallback != null;
+            checkRawPageFrame(frame);
             if (frame.getFormat() == PartitionFormat.NATIVE) {
                 columnData.clear();
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();

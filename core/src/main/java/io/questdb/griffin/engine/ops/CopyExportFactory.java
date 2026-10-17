@@ -33,8 +33,10 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -127,6 +129,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
                         int tablePartitionBy = meta.getPartitionBy();
                         if (tablePartitionBy != partitionBy) {
+                            this.selectText = this.tableName;
+                        }
+                    }
+                } else {
+                    try (TableReader reader = executionContext.getCairoEngine().getReader(tableToken)) {
+                        if (hasDeltaActivePartition(reader.getTxFile())) {
+                            this.partitionBy = reader.getPartitionedBy();
                             this.selectText = this.tableName;
                         }
                     }
@@ -304,6 +313,15 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Copy");
+    }
+
+    private static boolean hasDeltaActivePartition(TxReader txFile) {
+        for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+            if (txFile.isPartitionDeltaActive(i)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void of(

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 
@@ -121,6 +122,13 @@ public interface PageFrameMemory {
      * Returns row ID offset used to compute real row IDs.
      */
     long getRowIdOffset();
+
+    /**
+     * Returns the source-row resolver for the current decoded frame.
+     */
+    default IndexReader.SourceRowResolver getSourceRowResolver() {
+        return IndexReader.SourceRowResolver.NONE;
+    }
 
     /**
      * Returns the source column type tag for a type-cast column, or -1 if

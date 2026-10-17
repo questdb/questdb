@@ -24,52 +24,9 @@
 
 package io.questdb.cairo.idx;
 
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.str.Utf8Sequence;
 
-public interface CoveringRowCursor extends RowCursor {
-
-    ArrayView getCoveredArray(int includeIdx, int columnType);
-
-    BinarySequence getCoveredBin(int includeIdx);
-
-    long getCoveredBinLen(int includeIdx);
-
-    byte getCoveredByte(int includeIdx);
-
-    double getCoveredDouble(int includeIdx);
-
-    float getCoveredFloat(int includeIdx);
-
-    int getCoveredInt(int includeIdx);
-
-    long getCoveredLong(int includeIdx);
-
-    long getCoveredLong128Hi(int includeIdx);
-
-    long getCoveredLong128Lo(int includeIdx);
-
-    long getCoveredLong256_0(int includeIdx);
-
-    long getCoveredLong256_1(int includeIdx);
-
-    long getCoveredLong256_2(int includeIdx);
-
-    long getCoveredLong256_3(int includeIdx);
-
-    short getCoveredShort(int includeIdx);
-
-    CharSequence getCoveredStrA(int includeIdx);
-
-    CharSequence getCoveredStrB(int includeIdx);
-
-    Utf8Sequence getCoveredVarcharA(int includeIdx);
-
-    Utf8Sequence getCoveredVarcharB(int includeIdx);
-
-    boolean isCoveredAvailable(int includeIdx);
+public interface CoveringRowCursor extends RowCursor, CoveringIndexCursor {
 
     long seekToLast();
 }

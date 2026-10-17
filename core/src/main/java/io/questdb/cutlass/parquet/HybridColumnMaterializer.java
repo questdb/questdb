@@ -192,6 +192,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
      * @return number of rows in this frame
      */
     public long buildColumnDataFromPageFrame(PageFrameCursor cursor, PageFrame frame, DirectLongList columnData) {
+        CopyExportRequestTask.checkRawPageFrame(frame);
         final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
         populatePageFrameRecord(frame);
         materializeComputedColumns(frameRowCount);
@@ -657,8 +658,12 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 dataBuf.putLong(iv.getHi());
             }
             case ColumnType.ARRAY -> ArrayTypeDriver.appendValue(auxBuf, dataBuf, record.getArray(col, columnType));
-            // determineExportMode() routes queries with BINARY columns to TEMP_TABLE
-            // mode, so this method never encounters BINARY.
+            // Native layout: one aux offset per row, pointing at [length][bytes] in data.
+            // A zero-copy export over custom (Delta) frames falls back here with BINARY.
+            case ColumnType.BINARY -> {
+                auxBuf.putLong(dataBuf.getAppendOffset());
+                dataBuf.putBin(record.getBin(col));
+            }
             default ->
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(columnType));
         }

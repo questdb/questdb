@@ -440,7 +440,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.of(base.getMetadata(), frameCursor);
 
             id = ID_SEQ.incrementAndGet();
             resetCancellation();
