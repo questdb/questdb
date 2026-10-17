@@ -94,6 +94,7 @@ import org.junit.Test;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -7872,6 +7873,19 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshSurvivesO3AppendAtSplitParentMaxTimestamp() throws Exception {
+        // The refresh pins its base reader before an O3 split. An O3 row at the parent's max timestamp
+        // must not be appended in place over the parent's tail, which the pinned reader still reads.
+        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+    }
+
+    @Test
+    public void testRefreshSurvivesO3AppendAtSplitParentMaxTimestampDedup() throws Exception {
+        // the O3 row is not a duplicate, its s differs
+        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
+    }
+
+    @Test
     public void testResumeSuspendMatView() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -10359,6 +10373,77 @@ public class MatViewTest extends AbstractCairoTest {
                 .expectSize()
                 .noLeakCheck()
                 .returns(expected);
+    }
+
+    private void assertRefreshSurvivesSplitParentTailAppend(String baseTableDdl) throws Exception {
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            execute(baseTableDdl);
+            execute(
+                    """
+                            CREATE MATERIALIZED VIEW base_1h AS
+                            SELECT count() c, sum(CASE WHEN s LIKE 'value%' THEN 1 ELSE 0 END) matched, ts
+                            FROM base SAMPLE BY 1h
+                            """
+            );
+            execute("INSERT INTO base SELECT 'value-' || x, timestamp_sequence('2020-02-03', 60_000_000L) FROM long_sequence(100)");
+            drainQueues();
+
+            final AtomicBoolean hasMutatedBase = new AtomicBoolean();
+            final AtomicReference<Throwable> hookFailure = new AtomicReference<>();
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1)) {
+                job.setOnBaseReaderSnapshotForTesting(() -> {
+                    try {
+                        Assert.assertFalse(hasMutatedBase.getAndSet(true));
+                        final long parentNameTxn;
+                        try (TableReader reader = getReader("base")) {
+                            parentNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                        }
+                        // split the partition after 01:19 (row 80 of 100)
+                        execute("INSERT INTO base VALUES ('split', '2020-02-03T01:19:30')");
+                        drainWalQueue();
+                        // O3 row at exactly the parent's max lands in the parent; its string is
+                        // shorter than the one it would overwrite
+                        execute("INSERT INTO base VALUES ('X', '2020-02-03T01:19')");
+                        drainWalQueue();
+                        try (TableReader reader = getReader("base")) {
+                            // the pinned refresh reader forces the parent's last row and the new
+                            // row into a second split instead of an in-place append or a full copy
+                            Assert.assertEquals(3, reader.getPartitionCount());
+                            Assert.assertEquals(79, reader.getPartitionRowCountFromMetadata(0));
+                            Assert.assertEquals(2, reader.getPartitionRowCountFromMetadata(1));
+                            Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                        }
+                    } catch (Throwable th) {
+                        hookFailure.set(th);
+                    }
+                });
+                engine.getMatViewStateStore().enqueueFullRefresh(engine.verifyTableName("base_1h"));
+                drainMatViewQueue(job);
+            }
+            if (hookFailure.get() != null) {
+                throw new AssertionError("test hook failure", hookFailure.get());
+            }
+            Assert.assertTrue(hasMutatedBase.get());
+            drainQueues();
+
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            base_1h\tvalid\t
+                            """);
+            assertQuery("base_1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            c\tmatched\tts
+                            60\t60\t2020-02-03T00:00:00.000000Z
+                            42\t40\t2020-02-03T01:00:00.000000Z
+                            """);
+        });
     }
 
     private String copySql(int from, int count) {

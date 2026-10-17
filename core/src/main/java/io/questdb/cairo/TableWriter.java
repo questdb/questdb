@@ -2800,6 +2800,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.isPartitionReadOnly(partitionIndex);
     }
 
+    /**
+     * An O3 split shrinks the parent's row count but leaves the moved rows in its column files.
+     * Returns true while a reader locked in [parentNameTxn, splitNameTxn] can still read them,
+     * so the parent's tail must not be written in place.
+     */
+    public boolean isPartitionTailPinnedByReaders(long partitionTimestamp) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        assert partitionIndex > -1 : "partition does not exist [timestamp=" + partitionTimestamp + ']';
+        if (partitionIndex + 1 >= txWriter.getPartitionCount()) {
+            return false;
+        }
+        final long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex + 1);
+        if (txWriter.getLogicalPartitionTimestamp(partitionTimestamp) != txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp)) {
+            return false;
+        }
+        final long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        final long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1) + 1;
+        // O3 tasks plan before o3ConsumePartitionUpdateSink() registers this commit's splits. A split
+        // from the commit in flight would let isRangeAvailable() raise the scoreboard max past the
+        // committed txn and stall new readers until the commit lands.
+        assert toTxn <= txWriter.getTxn() : "split partition from the commit in flight [toTxn=" + toTxn + ", txn=" + txWriter.getTxn() + ']';
+        return !txnScoreboard.isRangeAvailable(fromTxn, toTxn);
+    }
+
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
     }
@@ -3051,6 +3075,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public void notifyPartitionAppend(long partitionTimestamp, long partitionNameTxn, long fromRow) {
+        engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, partitionTimestamp, partitionNameTxn, fromRow);
+    }
+
     public void o3BumpErrorCount(boolean oom) {
         o3ErrorCount.incrementAndGet();
         if (oom) {
@@ -3233,6 +3261,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
         rowAction = ROW_ACTION_OPEN_PARTITION;
+        // The append horizon must not outlive the partitions. processWalCommitBlock() does not
+        // open a partition on an empty table, and processO3Block() only raises partitionTimestampHi
+        // (Math.max), so a stale value from a later partition would survive a block commit into an
+        // earlier one. finishO3Commit() re-syncs a native last partition by reopening it, but not a
+        // parquet one, and the next processWalCommit() then asserts that partitionTimestampHi and
+        // maxTimestamp resolve to the same partition. Same reset as the replace-commit truncate.
+        partitionTimestampHi = Long.MIN_VALUE;
+        lastPartitionTimestamp = Long.MIN_VALUE;
 
         closeActivePartition(false);
         processPartitionRemoveCandidates();

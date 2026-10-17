@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
@@ -64,12 +65,14 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.QueryAssertion;
+import io.questdb.test.cairo.TestTableReaderRecord;
 import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -81,6 +84,9 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -96,6 +102,11 @@ public class FuzzRunner {
     private static final int MAX_COVERED_KEYS_CHECKED = 32;
     protected static final StringSink sink = new StringSink();
     private static final long OPEN_RETRY_TIMEOUT_MILLIS = 10_000;
+    private static final Map<TableReader, ReaderSnapshot> READER_SNAPSHOTS = Collections.synchronizedMap(new IdentityHashMap<>());
+    // the largest local row id stands for the partition size line of a snapshot
+    private static final long ROW_ID_PARTITION_SIZE = Rows.toLocalRowID(-1L);
+    private static final int SNAPSHOT_SAMPLE_ROWS = 16;
+    private static final int SNAPSHOT_TAIL_ROWS = 16;
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     protected int initialRowCount;
     protected int partitionCount;
@@ -154,6 +165,7 @@ public class FuzzRunner {
     }
 
     public void after() {
+        READER_SNAPSHOTS.clear();
         if (this.s0 != 0 || this.s1 != 0) {
             LOG.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
             System.out.printf("random seeds: %dL, %dL%n", s0, s1);
@@ -252,6 +264,11 @@ public class FuzzRunner {
         TableWriter writer = TestUtils.getWriter(engine, tableName);
         TableReader rdr1 = getReader(tableName);
         TableReader rdr2 = getReader(tableName);
+        snapshotReader(rdr1);
+        snapshotReader(rdr2);
+        // Half of the runs reload the readers after every commit, so a reader often holds the txn right
+        // before a commit. The other half keep the 25% rate, under which readers hold old txns longer.
+        final double reloadProbability = reloadRnd.nextBoolean() ? 0.25 : 1.0;
 
         calculateReplaceRanges(transactions);
 
@@ -292,6 +309,8 @@ public class FuzzRunner {
                         writer = TestUtils.getWriter(engine, tableName);
                         rdr1 = getReader(tableName);
                         rdr2 = getReader(tableName);
+                        snapshotReader(rdr1);
+                        snapshotReader(rdr2);
                     } else {
                         if (transaction.rollback) {
                             writer.rollback();
@@ -342,14 +361,24 @@ public class FuzzRunner {
                 }
 
                 try {
-                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
+                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, reloadProbability);
                 } catch (CairoException | CairoError e) {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
                         LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
+                        READER_SNAPSHOTS.remove(rdr1);
+                        READER_SNAPSHOTS.remove(rdr2);
                         rdr1 = Misc.free(rdr1);
                         rdr2 = Misc.free(rdr2);
+                        // A failed goActive() leaves the reader half-reloaded: readTxnSlow() already advanced
+                        // its txn and applyTransition() its metadata version, so the next reload() takes the
+                        // fast path and never rebuilds the symbol map readers that reshuffleSymbolMapReaders()
+                        // or reloadSymbolMapCounts() left freed or unmapped. ReaderPool.get0() disposes such a
+                        // reader when goActive() fails under the pool; this harness drives goActive() itself,
+                        // so close() would hand the torn instance straight back to the next getReader().
+                        // Drop the idle pooled readers so getReader() opens fresh ones.
+                        engine.releaseInactive();
                         rdr1 = getReader(tableName);
                         rdr2 = getReader(tableName);
                     } else {
@@ -818,6 +847,39 @@ public class FuzzRunner {
         this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
     }
 
+    // A reader must return the same rows for as long as it holds its txn. Takes a snapshot when the reader has none.
+    private static void checkReaderSnapshot(TableReader reader) {
+        final ReaderSnapshot snapshot = READER_SNAPSHOTS.get(reader);
+        if (snapshot == null || snapshot.txn() != reader.getTxn() || !snapshot.dirName().equals(reader.getTableToken().getDirName())) {
+            snapshotReader(reader);
+            return;
+        }
+        final String rows = printReaderRows(reader, snapshot.rowIds());
+        if (!snapshot.rows().equals(rows)) {
+            Assert.fail("reader rows changed while the reader held its txn [table=" + reader.getTableToken()
+                    + ", txn=" + reader.getTxn() + "]\nexpected:\n" + snapshot.rows() + "\nactual:\n" + rows);
+        }
+    }
+
+    private static String printReaderRows(TableReader reader, LongList rowIds) {
+        final StringSink rows = new StringSink();
+        final TestTableReaderRecord record = new TestTableReaderRecord();
+        record.of(reader);
+        for (int i = 0, n = rowIds.size(); i < n; i++) {
+            final long rowId = rowIds.getQuick(i);
+            final int partitionIndex = Rows.toPartitionIndex(rowId);
+            final long row = Rows.toLocalRowID(rowId);
+            if (row == ROW_ID_PARTITION_SIZE) {
+                rows.put("partition ").put(partitionIndex).put(" size ").put(reader.openPartition(partitionIndex)).put('\n');
+                continue;
+            }
+            record.jumpTo(partitionIndex, row);
+            rows.put(partitionIndex).put(':').put(row).put('\t');
+            CursorPrinter.println(record, reader.getMetadata(), rows);
+        }
+        return rows.toString();
+    }
+
     private static void reloadPartitions(TableReader rdr1) {
         if (rdr1.isActive()) {
             LOG.info().$("reloading partitions [table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
@@ -828,18 +890,51 @@ public class FuzzRunner {
     }
 
     private static void reloadReader(Rnd reloadRnd, @Nullable TableReader reader, CharSequence rdrId) {
+        if (reader != null && reader.isActive()) {
+            checkReaderSnapshot(reader);
+        }
         if (reloadRnd.nextBoolean()) {
             if (reader != null && reader.isActive()) {
                 reloadPartitions(reader);
                 LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(reader.getTableToken()).$(", txn=").$(reader.getTxn()).I$();
+                READER_SNAPSHOTS.remove(reader);
                 reader.goPassive();
             }
 
-            if (reloadRnd.nextBoolean() && reader != null && reader.isActive()) {
+            if (reloadRnd.nextBoolean() && reader != null && !reader.isActive()) {
                 reader.goActive();
                 LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(reader.getTableToken()).$(", txn=").$(reader.getTxn()).I$();
+                snapshotReader(reader);
             }
         }
+    }
+
+    // Records each native partition's size, its first row, a sample of rows seeded by the txn, and its tail,
+    // where in-place appends write. It skips parquet partitions because the test record reads native columns only.
+    private static void snapshotReader(@Nullable TableReader reader) {
+        if (reader == null || !reader.isActive()) {
+            return;
+        }
+        final LongList rowIds = new LongList();
+        final Rnd rnd = new Rnd(reader.getTxn(), reader.getTableToken().getTableId());
+        for (int partitionIndex = 0, n = reader.getPartitionCount(); partitionIndex < n; partitionIndex++) {
+            final long size = reader.openPartition(partitionIndex);
+            if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+                continue;
+            }
+            rowIds.add(Rows.toRowID(partitionIndex, ROW_ID_PARTITION_SIZE));
+            final long tailLo = Math.max(0, size - SNAPSHOT_TAIL_ROWS);
+            if (tailLo > 0) {
+                rowIds.add(Rows.toRowID(partitionIndex, 0));
+                for (int i = 0; i < SNAPSHOT_SAMPLE_ROWS; i++) {
+                    rowIds.add(Rows.toRowID(partitionIndex, rnd.nextLong(tailLo)));
+                }
+            }
+            for (long row = tailLo; row < size; row++) {
+                rowIds.add(Rows.toRowID(partitionIndex, row));
+            }
+        }
+        READER_SNAPSHOTS.put(reader, new ReaderSnapshot(reader.getTableToken().getDirName(), reader.getTxn(), rowIds, printReaderRows(reader, rowIds)));
     }
 
     private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
@@ -1405,6 +1500,8 @@ public class FuzzRunner {
              TableReader rdr1 = getReaderWithRetries(tableName, null);
              TableReader rdr2 = getReaderWithRetries(tableName, null)
         ) {
+            snapshotReader(rdr1);
+            snapshotReader(rdr2);
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             while (walApplyJob.run() || checkWalTransactionsJob.run()) {
                 forceReleaseTableWriter(applyRnd);
@@ -1815,5 +1912,8 @@ public class FuzzRunner {
                 Misc.freeObjListAndClear(fuzzTransactions.get(i));
             }
         }
+    }
+
+    private record ReaderSnapshot(String dirName, long txn, LongList rowIds, String rows) {
     }
 }
