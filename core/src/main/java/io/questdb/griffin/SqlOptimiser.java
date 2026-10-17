@@ -803,6 +803,30 @@ public class SqlOptimiser implements Mutable {
         return viewNameExpr != null && TableUtils.getTableFunctionView(viewNameExpr, executionContext).isDependency(tableToken);
     }
 
+    // rewriteSampleBy treats a literal as the sampled timestamp when it is the spelling it
+    // chose for the bucket (timestampColumn) or another spelling of the same column: the
+    // timestamp qualified with the FROM model's alias or table name, or the bare name when
+    // the FROM has a single join model. Without the qualified match, SELECT t.ts AS x, ts AS b
+    // keeps t.ts as a raw group-by key next to the bucket. A bare name in a join is left
+    // alone: it stays a missing token, and rewriteSelectClause0 resolves it against every
+    // join model, sub-queries included, reporting "Ambiguous column" as it does on master.
+    private static boolean isSampleByTimestampLiteral(
+            CharSequence token,
+            CharSequence timestampColumn,
+            CharSequence sourceTimestamp,
+            IQueryModel fromModel
+    ) {
+        if (Chars.equalsIgnoreCase(token, timestampColumn)) {
+            return true;
+        }
+        if (!isDesignatedTimestampReference(token, sourceTimestamp, fromModel)) {
+            return false;
+        }
+        // isDesignatedTimestampReference accepts the bare name regardless of join
+        // ambiguity; only the qualified spelling names the sampled side on its own.
+        return Chars.indexOfLastUnquoted(token, '.') > -1 || fromModel.getJoinModels().size() == 1;
+    }
+
     /**
      * Reports whether every bound in a timestamp predicate is known at parse time, so that
      * analyzeAndOffset() can bake the calendar offset into the interval bounds. A bind variable or a
@@ -5398,13 +5422,15 @@ public class SqlOptimiser implements Mutable {
     private void fixTimestampAndCollectMissingTokens(
             ExpressionNode node,
             CharSequence timestampColumn,
+            CharSequence sourceTimestamp,
+            IQueryModel fromModel,
             CharSequence timestampAlias,
             CharSequenceHashSet missingTokens
     ) {
         sqlNodeStack.clear();
         while (node != null) {
             if (node.type == LITERAL) {
-                if (Chars.equalsIgnoreCase(node.token, timestampColumn)) {
+                if (isSampleByTimestampLiteral(node.token, timestampColumn, sourceTimestamp, fromModel)) {
                     node.token = timestampAlias;
                 } else {
                     missingTokens.add(node.token);
@@ -10870,7 +10896,7 @@ public class SqlOptimiser implements Mutable {
                                     // also check all literals that refer timestamp column, except the one
                                     // with our chosen timestamp alias
                                     (timestampAlias != null && qc.getAst().type == LITERAL
-                                            && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
+                                            && isSampleByTimestampLiteral(qc.getAst().token, timestampColumn, timestamp.token, nested)
                                             && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias))
                     ) {
                         model.removeColumn(i);
@@ -11001,6 +11027,11 @@ public class SqlOptimiser implements Mutable {
                 nested.setFillTo(hasSubDayTimezoneWrap && sampleByTo != null
                         ? createToUtcCall(sampleByTo, sampleByTimezoneName) : sampleByTo);
                 nested.setFillStride(sampleBy);
+                // SqlCodeGenerator.generateFill locates the bucket key by this node's identity
+                // instead of guessing from column names: a user column such as first(ts) AS ts
+                // carries the timestamp's name but is not the bucket, and rewriteSelectClause0
+                // may rename the bucket's alias when an aggregate claims it first (#7838).
+                nested.setFillBucketKey(tsFloorFunc);
                 nested.setFillTimezoneName(hasFillFastPathTz ? sampleByTimezoneName : null);
                 nested.setFillValues(sampleByFill);
                 // Propagate offset to the fill cursor only when the sampler grid
@@ -11029,7 +11060,7 @@ public class SqlOptimiser implements Mutable {
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
                     tempCharSequenceHashSet.clear();
                     for (int i = 0, n = tempColumns.size(); i < n; i++) {
-                        fixTimestampAndCollectMissingTokens(tempColumns.get(i).getAst(), timestampColumn, timestampAlias, tempCharSequenceHashSet);
+                        fixTimestampAndCollectMissingTokens(tempColumns.get(i).getAst(), timestampColumn, timestamp.token, nested, timestampAlias, tempCharSequenceHashSet);
                     }
                     for (int i = 0, size = tempCharSequenceHashSet.size(); i < size; i++) {
                         final CharSequence dependentToken = tempCharSequenceHashSet.get(i);

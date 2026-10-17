@@ -6,6 +6,7 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
@@ -88,6 +89,1065 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketBeforeQualifiedFloorKey() throws Exception {
+        // The table-qualified user floor stays a second TIMESTAMP group-by key after the
+        // bucket; the fill must key on the bucket and keep the 02:00 gap row.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT ts, timestamp_floor('1d', t.ts) AS d, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\td\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketCastToLongUnderTimestampName() throws Exception {
+        // rewriteSampleBy moves the cast to a wrapper above the group-by; the LONG column
+        // named ts must not be taken for the bucket.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT ts::LONG AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tv
+                            1704067200000000\t1.0
+                            1704070800000000\t2.0
+                            1704074400000000\tnull
+                            1704078000000000\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenTimestampNamedLikeAggregate() throws Exception {
+        // The designated timestamp is named max, so max(v) carries the same token and
+        // rewriteSampleBy puts its bucket on the explicit GROUP BY list. The aggregate
+        // column surfaces as max1 because of the pre-existing alias de-duplication; the
+        // test pins the gap row, not that name.
+        assertMemoryLeak(() -> {
+            createTimestampNamedMaxTable();
+            assertQuery("SELECT max, max(v) FROM m SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("max")
+                    .returns("""
+                            max\tmax1
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenFirstTimestampAliasedAsTimestamp() throws Exception {
+        // first(ts) AS ts takes the timestamp's name, so rewriteSampleBy names the bucket key
+        // ts1. generateFill must fill by the recorded bucket, not by the TIMESTAMP column
+        // that merely carries the name ts (#7838).
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT first(ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            \tnull
+                            2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenOtherTimestampAliasedAsTimestamp() throws Exception {
+        // generateFill used to take first(ets) AS ts for the bucket and emit a 9-row cross
+        // product, even with assertions enabled (#7838).
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT first(ets) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T05:00:00.000000Z\t1.0
+                            2024-01-01T04:00:00.000000Z\t2.0
+                            \tnull
+                            2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenQualifiedFloorAliasedAsTimestamp() throws Exception {
+        // The table-qualified user floor stays a second group-by key named ts; generateFill
+        // used to take it for the bucket and drop the 02:00 gap row (#7838).
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT timestamp_floor('1d', t.ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T00:00:00.000000Z\t2.0
+                            2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T00:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenBareTimestampPrecedesQualifiedTimestamp() throws Exception {
+        // rewriteSampleBy used to keep t.ts as a raw group-by key beside the bucket b, and
+        // the fill cross-joined every raw timestamp with every bucket (16 rows).
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT ts AS b, t.ts AS x, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            b\tx\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenQualifiedAndBareTimestampUnaliased() throws Exception {
+        // t.ts takes the alias ts and the bare ts becomes ts1, the bucket. Both columns
+        // must carry the bucket; master filled along the raw t.ts instead.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT t.ts, ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts1")
+                    .returns("""
+                            ts\tts1\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenQualifiedTimestampPrecedesBareTimestamp() throws Exception {
+        // Master dropped the fill for this column order and returned 4 unfilled raw rows;
+        // the previous revision of this branch returned a 16-row keyed fill. x is a copy
+        // of the bucket, so the answer equals SELECT ts AS x, ts AS b.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+            assertQuery("SELECT T.TS AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenSubQueryAliasQualifiesTimestamp() throws Exception {
+        // Guard: rewriteSampleBy exits to the legacy path over a sub-query for any literal or
+        // function column when the fill is not NONE or FROM-TO is present; s.ts must keep resolving there.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT s.ts AS x, ts AS b, avg(val) AS v FROM (SELECT * FROM t) s SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("x")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenTableAliasQualifiesTimestamp() throws Exception {
+        // isDesignatedTimestampReference resolves the qualifier against the FROM model's
+        // alias, quoted or not.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT a.ts AS x, ts AS b, avg(val) AS v FROM t a SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+            assertQuery("SELECT \"a\".ts AS x, ts AS b, avg(val) AS v FROM t \"a\" SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketKeyRenamedByAggregateAlias() throws Exception {
+        // The emitted avg(val) aggregate claims the alias avg first, so the group-by model
+        // renames the bucket key to avg1. The 02:00 gap row proves generateFill found the
+        // renamed bucket. The column surfaces as avg1 instead of avg: that naming comes from
+        // the pre-existing key rename, not from fill, and this test does not endorse it.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1
+                            2.0\t2024-01-01T00:00:00.000000Z
+                            4.0\t2024-01-01T01:00:00.000000Z
+                            7.0\t2024-01-01T03:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketKeyWithoutAliasCollision() throws Exception {
+        // Control for the chained-rename tests: the user floor over ets is aliased zz, so
+        // only the bucket is renamed (avg to avg1) and nothing collides with avg1. The
+        // fill keys on the bucket and treats the user floor as a second key: 4 buckets x
+        // the keys seen, with the real rows first under ORDER BY v and the gap rows after.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('1h', ets, null, '00:00', null) AS zz FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tzz
+                            2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            6.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z
+                            8.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T03:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T03:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T03:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T03:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            null\t2024-01-01T03:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketRenameKeepsConcatKey() throws Exception {
+        // avg(val) claims the alias avg, so the group-by model renames the bucket key to
+        // avg1 and then the concat key avg1 to avg11. The fill must stay on the bucket and
+        // key on the STRING column: every bucket gets a row per key, and the 02:00 gap
+        // gets both keys. The headers come from the alias de-duplication and this test
+        // does not endorse them.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, concat(k, 'x') AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2024-01-01T00:00:00.000000Z\tax
+                            4.0\t2024-01-01T01:00:00.000000Z\tbx
+                            6.0\t2024-01-01T03:00:00.000000Z\tax
+                            8.0\t2024-01-01T03:00:00.000000Z\tbx
+                            null\t2024-01-01T00:00:00.000000Z\tbx
+                            null\t2024-01-01T01:00:00.000000Z\tax
+                            null\t2024-01-01T02:00:00.000000Z\tax
+                            null\t2024-01-01T02:00:00.000000Z\tbx
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketRenameKeepsStringKey() throws Exception {
+        // max(val) claims the alias max (the designated timestamp's own name), so the
+        // bucket key max is renamed max1 and the STRING key max1 is renamed max11. The
+        // fill must stay on the TIMESTAMP bucket and key on the STRING column. The row
+        // order follows the ORDER BY that rewriteSampleBy adds, which here resolves to the
+        // aggregate rather than the bucket; the headers come from the alias de-duplication.
+        // This test pins the rows, not the order's origin or the names.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tm2 (val DOUBLE, ets TIMESTAMP, max TIMESTAMP) TIMESTAMP(max) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tm2 VALUES
+                        (1.0, '2024-01-01T05:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                        (3.0, '2024-01-01T02:00:00.000000Z', '2024-01-01T03:00:00.000000Z')""");
+            assertQuery("SELECT max(val) * 2 AS v, max, ets::string AS max1 FROM tm2 SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tmax1\tmax11
+                            2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            6.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T03:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketRenameKeepsTwoArgFloorKey() throws Exception {
+        // The user key is a TIMESTAMP, a 2-argument timestamp_floor over ets with a 2h
+        // stride, aliased avg1 and renamed avg11 behind the renamed bucket avg1. The fill
+        // must stay on the bucket: 4 buckets x 2 keys, real rows first under ORDER BY v.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor('2h', ets) AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            7.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T03:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketRenameKeepsUpperCaseAliasKey() throws Exception {
+        // Same as the 2h user floor shape, with the user alias written AVG1. Alias
+        // collisions are case-insensitive, so the key is renamed AVG11 and the rows are
+        // identical to the lower-case spelling.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS AVG1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tAVG11
+                            2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            7.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T03:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketRenameKeepsUserFloorKey() throws Exception {
+        // The user key has the exact shape of the bucket key, a 5-argument
+        // timestamp_floor_utc, over ets instead of ts, and is TIMESTAMP-typed. It is
+        // aliased avg1 and renamed avg11 behind the renamed bucket avg1. The plan pins
+        // that the fill sorts on the bucket avg1 and keys on avg11; filling along ets
+        // would invent 2024-01-01T02:00 to 05:00 "buckets" and lose the real 02:00 gap.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('1h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v]
+                                VirtualRecord
+                                  functions: [avg*2,avg1,avg11]
+                                    Sample By Fill
+                                      stride: '1h'
+                                      fill: null
+                                        Encode sort light
+                                          keys: [avg1]
+                                            Async Group By workers: 1
+                                              keys: [avg1,avg11]
+                                              keyFunctions: [timestamp_floor_utc('1h',ts),timestamp_floor_utc('1h',ets)]
+                                              values: [avg(val)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            6.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z
+                            8.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T03:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T03:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T03:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T03:00:00.000000Z\t2024-01-01T05:00:00.000000Z
+                            null\t2024-01-01T03:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketRenameOnEmptyTable() throws Exception {
+        // The bucket lookup runs at compile time, so the chained-rename shape must compile
+        // and return only the header when the table holds no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ets TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, concat(k, 'x') AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketRenameTwiceWhenKeyPrecedesBucket() throws Exception {
+        // The concat key is listed first and takes avg1, then avg(val) takes avg, so the
+        // bucket itself is renamed to the next free sequence number, avg2. The rows are
+        // those of the forward column order with the columns reordered.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT concat(k, 'x') AS avg1, avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            avg1\tv\tavg2
+                            ax\t2.0\t2024-01-01T00:00:00.000000Z
+                            bx\t4.0\t2024-01-01T01:00:00.000000Z
+                            ax\t6.0\t2024-01-01T03:00:00.000000Z
+                            bx\t8.0\t2024-01-01T03:00:00.000000Z
+                            bx\tnull\t2024-01-01T00:00:00.000000Z
+                            ax\tnull\t2024-01-01T01:00:00.000000Z
+                            ax\tnull\t2024-01-01T02:00:00.000000Z
+                            bx\tnull\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketRenameUnderOuterProjection() throws Exception {
+        // A plain SELECT * above the filled sub-query. The bucket must resolve on the
+        // inner group-by and the outer projection must pass the inner rows through.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT * FROM (SELECT avg(val) * 2 AS v, ts AS avg, concat(k, 'x') AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v)")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2024-01-01T00:00:00.000000Z\tax
+                            4.0\t2024-01-01T01:00:00.000000Z\tbx
+                            6.0\t2024-01-01T03:00:00.000000Z\tax
+                            8.0\t2024-01-01T03:00:00.000000Z\tbx
+                            null\t2024-01-01T00:00:00.000000Z\tbx
+                            null\t2024-01-01T01:00:00.000000Z\tax
+                            null\t2024-01-01T02:00:00.000000Z\tax
+                            null\t2024-01-01T02:00:00.000000Z\tbx
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketRenameWithTwoAggregates() throws Exception {
+        // Two aggregates are emitted, avg and sum; only avg collides with the bucket's
+        // alias. The extra aggregate must not change which column the fill keys on.
+        // Every bucket holds one row per key, so v and w agree row by row.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, sum(val) * 2 AS w, ts AS avg, concat(k, 'x') AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tw\tavg1\tavg11
+                            2.0\t2.0\t2024-01-01T00:00:00.000000Z\tax
+                            4.0\t4.0\t2024-01-01T01:00:00.000000Z\tbx
+                            6.0\t6.0\t2024-01-01T03:00:00.000000Z\tax
+                            8.0\t8.0\t2024-01-01T03:00:00.000000Z\tbx
+                            null\tnull\t2024-01-01T00:00:00.000000Z\tbx
+                            null\tnull\t2024-01-01T01:00:00.000000Z\tax
+                            null\tnull\t2024-01-01T02:00:00.000000Z\tax
+                            null\tnull\t2024-01-01T02:00:00.000000Z\tbx
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullFromToBucketRenameKeepsUserFloorKey() throws Exception {
+        // FROM/TO pads the grid to 00:00 through 05:00 (6 buckets) around the renamed
+        // bucket avg1, with the 2h user floor over ets as the second key avg11.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T06:00:00.000000Z' FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            7.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T03:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T04:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T04:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T05:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T05:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullTimeZoneBucketRenameKeepsUserFloorKey() throws Exception {
+        // Asia/Kathmandu is +05:45, so the hourly buckets sit at :15 UTC. The renamed
+        // bucket avg1 must carry that grid while the 2h user floor avg11 stays on the
+        // plain UTC grid.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Asia/Kathmandu' ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2023-12-31T23:15:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T01:15:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            6.0\t2024-01-01T02:15:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            8.0\t2024-01-01T03:15:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2023-12-31T23:15:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T00:15:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T00:15:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T01:15:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T02:15:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            null\t2024-01-01T03:15:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillValueBucketRenameKeepsUserFloorKey() throws Exception {
+        // FILL(42) variant of the 2h user floor shape: gap rows carry 42 * 2 = 84.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FILL(42) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            7.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            84.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            84.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            84.0\t2024-01-01T02:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            84.0\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            84.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullFromToBucketWhenFirstTimestampAliasedAsTimestamp() throws Exception {
+        // Same shape as the first(ts) AS ts case, with FROM/TO padding the range.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT first(ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T06:00:00Z' FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            \tnull
+                            2024-01-01T03:00:00.000000Z\t3.5
+                            \tnull
+                            \tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullJoinBucketWhenFirstTimestampAliasedAsTimestamp() throws Exception {
+        // Same shape as the first(ts) AS ts case, over a join with table-qualified columns.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT first(t.ts) AS ts, avg(t.val) AS v FROM t JOIN (SELECT DISTINCT k FROM t) u ON t.k = u.k SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            \tnull
+                            2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullKeyedBucketWhenMaxTimestampAliasedAsTimestamp() throws Exception {
+        // Keyed variant: max(ts) AS ts must not be taken for the bucket.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT max(ts) AS ts, k, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tk\tv
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            \tb\tnull
+                            2024-01-01T01:15:00.000000Z\tb\t2.0
+                            \ta\tnull
+                            \ta\tnull
+                            \tb\tnull
+                            2024-01-01T03:00:00.000000Z\ta\t3.0
+                            2024-01-01T03:30:00.000000Z\tb\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullKeyedBucketWhenQualifiedTimestampSelected() throws Exception {
+        // With a user key k, the fill must key on (bucket, k) only; t.ts must not add a
+        // third, raw key.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT t.ts AS x, ts AS b, k, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tk\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\ta\t1.0
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tb\tnull
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\tb\t2.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\ta\tnull
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\ta\tnull
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tb\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\ta\t3.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\tb\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenJoinedTableHasNoTimestampName() throws Exception {
+        // w carries no ts, so the bare ts is the chosen bucket spelling and t.ts is a
+        // qualified copy of it; the join-ambiguity guard must reject neither.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            execute("CREATE TABLE w (k SYMBOL, wv DOUBLE)");
+            execute("INSERT INTO w VALUES ('a', 10.0), ('b', 20.0)");
+            assertQuery("SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t JOIN w ON (k) SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevBucketWhenQualifiedTimestampPrecedesBareTimestamp() throws Exception {
+        // The gap row carries the bucket in both x and b and the previous value in v.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullFromToBucketWhenQualifiedTimestampPrecedesBareTimestamp() throws Exception {
+        // FROM/TO pads the range to 04:00; the padded buckets copy into x as well.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00Z' FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            2024-01-01T04:00:00.000000Z\t2024-01-01T04:00:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketCopyUnderOuterFilter() throws Exception {
+        // x equals b on every row, filled or not; master kept the raw t.ts in x and the
+        // filter dropped the 01:15 and 03:30 rows.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT * FROM (SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)) WHERE x = b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNoneTwiceRejectedBeforeOwnershipCheck() throws Exception {
+        // An all-NONE fill list carries no ownership signal on the group-by model, so
+        // generateFill runs its FILL(NONE) validation before the ownership check. This
+        // keeps FILL(NONE, NONE) rejected on the fast path, like the legacy path does.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT ts, avg(val) AS a, sum(val) AS s FROM t SAMPLE BY 1h FILL(NONE, NONE)")
+                    .noLeakCheck()
+                    .fails(65, "FILL(NONE) cannot be combined with other fill values");
+        });
+    }
+
+    @Test
+    public void testFillNullOuterAggregateAndFloorDoesNotRefill() throws Exception {
+        // The outer GROUP BY aggregates the inner bucket under the timestamp's own name
+        // and floors it again; neither output column is a bucket this group-by owns.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT max(ts) AS ts, timestamp_floor('2h', ts) AS b, avg(v) AS v
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    ORDER BY b""")
+                    .timestamp("b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tb\tv
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.5
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterBucketShapedFloorDoesNotRefill() throws Exception {
+        // The outer key has the exact shape of the optimizer's own bucket key
+        // (5-argument timestamp_floor_utc) and even reuses the alias ts. Only the
+        // ownership signal that rewriteSelectClause0 maintains tells generateFill
+        // that the inner fill is not this group-by's.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT timestamp_floor_utc('2h', ts, null, '00:00', null) AS ts, avg(v) AS v
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.5
+                            2024-01-01T02:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterBucketShapedFloorSameStrideDoesNotRefill() throws Exception {
+        // Same shape with the inner bucket's own stride, so the outer key is structurally
+        // identical to the node that rewriteSampleBy recorded. Only node identity tells
+        // the two apart: a structural match would hand the inner fill to the outer
+        // GROUP BY and re-insert the filtered 02:00 gap row.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT timestamp_floor_utc('1h', ts, null, '00:00', null) AS ts, count() AS c
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    WHERE v > 1.5
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterFilteredGroupByDoesNotRefill() throws Exception {
+        // The filter removes the inner 02:00 gap row; a leaked outer fill re-inserted it.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT ts, count() AS c
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    WHERE v > 1.5
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterGroupByDoesNotRefill() throws Exception {
+        // An outer GROUP BY over a SAMPLE BY ... FILL sub-query must not re-apply the
+        // inner fill. SqlOptimiser.rewriteSelectClause0 exposes the fill only on the
+        // group-by whose own base model carries it, and generateFill returns the plain
+        // group-by factory when that list is empty. Before, generateFill walked into
+        // the inner model, found its fill, matched the outer ts by name and stacked a
+        // second Sample By Fill on the outer GROUP BY (16 rows instead of 4).
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT v, max(ts) AS ts
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    GROUP BY v
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [ts]
+                                GroupBy vectorized: false
+                                  keys: [v]
+                                  values: [max(ts)]
+                                    Sample By Fill
+                                      stride: '1h'
+                                      fill: null
+                                        Encode sort light
+                                          keys: [ts]
+                                            Async Group By workers: 1
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                              values: [avg(val)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            v\tts
+                            1.0\t2024-01-01T00:00:00.000000Z
+                            2.0\t2024-01-01T01:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z
+                            3.5\t2024-01-01T03:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillValueOuterGroupByOverFromToDoesNotRefill() throws Exception {
+        // A leaked outer fill emitted every FROM-TO bucket with rows = 42, the inner
+        // fill constant, instead of the single bucket the filter leaves.
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.FROM_TO_DDL);
+            assertQuery("""
+                    SELECT ts, count(*) rows
+                    FROM (SELECT ts, avg(x) a, x FROM fromto SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42))
+                    WHERE a > 400
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\trows
+                            2018-01-09T00:00:00.000000Z\t80
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterGroupByOverJoinFillDoesNotRefill() throws Exception {
+        // With a JOIN the fill parameters sit two models below the inner group-by
+        // (GROUP BY, CHOOSE, base). The downward walk still reaches them from the
+        // outer GROUP BY; the ownership check must keep the outer query empty-handed.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT ts, count() AS c
+                    FROM (
+                        SELECT t.ts, avg(t.val) AS v
+                        FROM t JOIN (SELECT DISTINCT k FROM t) u ON t.k = u.k
+                        SAMPLE BY 1h FILL(NULL)
+                    )
+                    WHERE v > 1.5
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterGroupByOverKeyedFillDoesNotRefill() throws Exception {
+        // The inner keyed fill emits one row per (bucket, key): 4 buckets x 2 keys.
+        // The filter keeps the four real rows; a leaked outer fill would add a 02:00
+        // row. Expected counts: 00:00 has a, 01:00 has b, 03:00 has a and b.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT ts, count() AS c
+                    FROM (SELECT k, ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    WHERE v > 0
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterGroupByOverWrappedFillDoesNotRefill() throws Exception {
+        // A SELECT * wrapper with the filter sits between the outer GROUP BY and the
+        // filled sub-query. The per-model fill list does not depend on the chain.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT ts, count() AS c
+                    FROM (
+                        SELECT * FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                        WHERE v > 1.5
+                    )
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterProjectionKeepsInnerFill() throws Exception {
+        // A plain projection over the filled sub-query is not a group-by; the inner
+        // fill must still emit the 02:00 gap row and the outer must not add a second one.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT d, ts, v
+                    FROM (SELECT ts, timestamp_floor('1d', t.ts) AS d, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            d\tts\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterTimestampFloorDoesNotRefill() throws Exception {
+        // The outer key is a 2-argument timestamp_floor, not the rewrite's bucket key;
+        // the outer query owns no fill and must not re-insert a 01:00 row.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT timestamp_floor('2h', ts) AS ts, avg(v) AS v
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.5
+                            2024-01-01T02:00:00.000000Z\t3.5
                             """);
         });
     }
@@ -2242,5 +3302,29 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             1970-01-02T00:00:00.000000Z\t10.0
                             """);
         });
+    }
+
+    // Fixture for the #7838 bucket shapes: ets is a second TIMESTAMP column whose values
+    // differ from ts, and 02:00 is the only gap in the 1h grid. SampleByFillPrevTest and
+    // SampleByTest share it.
+    static void createBucketAliasTable() throws SqlException {
+        execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ets TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t VALUES
+                    ('a', 1.0, '2024-01-01T05:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-01T04:00:00.000000Z', '2024-01-01T01:15:00.000000Z'),
+                    ('a', 3.0, '2024-01-01T03:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
+                    ('b', 4.0, '2024-01-01T02:00:00.000000Z', '2024-01-01T03:30:00.000000Z')""");
+    }
+
+    // Fixture whose designated timestamp is named max, so max(v) carries the same token
+    // and rewriteSampleBy puts its bucket on the explicit GROUP BY list.
+    static void createTimestampNamedMaxTable() throws SqlException {
+        execute("CREATE TABLE m (v DOUBLE, max TIMESTAMP) TIMESTAMP(max) PARTITION BY DAY");
+        execute("""
+                INSERT INTO m VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-01T01:15:00.000000Z'),
+                    (3.0, '2024-01-01T03:00:00.000000Z')""");
     }
 }
