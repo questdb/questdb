@@ -1271,6 +1271,31 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // A FULL join to the correlated sub-query, keyed on a TIMESTAMP_NS or string column against an
+    // outer column of another type, with a condition next to the WHERE key that reads the outer
+    // column. With a same-typed key the query fails at the FULL join, so it fails there with a
+    // mixed-type key too.
+    @Test
+    public void testLateralCorrelatedFullJoinSubQueryWhereKeyRetypedKeyFails() throws Exception {
+        assertMemoryLeak(() -> {
+            final String error = "correlated sub-query at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query";
+            createRetypedKeyTables();
+            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, ts FROM b WHERE ts = o.ts) s ON a.ts = s.k WHERE a.ts = o.ts AND a.y < o.ts + 1) l ORDER BY 1, 2, 3";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("FULL"), error);
+            execute("DROP TABLE o");
+            execute("DROP TABLE a");
+            execute("DROP TABLE b");
+
+            createRetypedStringKeyTables("VARCHAR", "SYMBOL");
+            final String stringSql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, s FROM b WHERE s = o.s) s ON a.s = s.k WHERE a.s = o.s AND a.y < o.s) l ORDER BY 1, 2, 3";
+            assertQuery(stringSql)
+                    .noLeakCheck()
+                    .fails(stringSql.indexOf("FULL"), error);
+        });
+    }
+
     // WHERE a.id > 0 drops the rows in which the FULL join NULL-extends a, per outer row too, so
     // the decorrelated query is exact.
     @Test
@@ -2657,6 +2682,125 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\taid\tsid
                             1\t10\t21
                             """);
+        });
+    }
+
+    // o.ts is TIMESTAMP and a.ts TIMESTAMP_NS, and a condition next to the WHERE key reads o.ts. See
+    // createRetypedKeyTables() for the rows of s and a per outer row. a.y < o.ts + 1 (2us for o row 1)
+    // keeps a row 10 of a rows 10 and 12, and drops a row 11 of o row 2 (7us against 6us); the NULL
+    // o.ts of o row 3 makes it false. a.y > o.ts + 1 keeps a row 12 for o row 1 and a row 11 for o
+    // row 2. With the key on s.k, b row 20 joins a row 10, and b row 25 joins a row 14, which
+    // a.y < o.ts + 1 keeps but s.k = o.ts drops. No b row that the RIGHT join NULL-extends passes
+    // a condition that compares a NULL a.y.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyRetypedKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createRetypedKeyTables();
+            final String rightJoin = "FROM a RIGHT JOIN (SELECT id, k, ts FROM b WHERE ts = o.ts) s ON a.ts = s.k";
+            final String[][] cases = {
+                    {
+                            "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid " + rightJoin + " WHERE a.ts = o.ts AND a.y < o.ts + 1) l ORDER BY 1, 2, 3",
+                            "id\taid\tsid\n1\t10\t20\n"
+                    },
+                    {
+                            "SELECT o.id, l.aid, l.sid FROM o LEFT JOIN LATERAL (SELECT a.id aid, s.id sid " + rightJoin + " WHERE a.ts = o.ts AND a.y < o.ts + 1) l ORDER BY 1, 2, 3",
+                            "id\taid\tsid\n1\t10\t20\n2\tnull\tnull\n3\tnull\tnull\n"
+                    },
+                    {
+                            "SELECT o.id, l.n FROM o JOIN LATERAL (SELECT count(*) n " + rightJoin + " WHERE a.ts = o.ts AND a.y < o.ts + 1) l ORDER BY 1",
+                            "id\tn\n1\t1\n2\t0\n3\t0\n"
+                    },
+                    {
+                            "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid " + rightJoin + " WHERE a.ts = o.ts AND a.y > o.ts + 1) l ORDER BY 1, 2, 3",
+                            "id\taid\tsid\n1\t12\t20\n2\t11\t23\n"
+                    },
+                    {
+                            "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid " + rightJoin + " WHERE s.k = o.ts AND a.y < o.ts + 1) l ORDER BY 1, 2, 3",
+                            "id\taid\tsid\n1\t10\t20\n"
+                    },
+            };
+            for (String[] c : cases) {
+                assertQuery(c[0])
+                        .noLeakCheck()
+                        .returns(c[1]);
+            }
+        });
+    }
+
+    // testLateralCorrelatedRightJoinSubQueryWhereKeyRetypedKey() with the types swapped: o.ts is
+    // TIMESTAMP_NS and a.ts TIMESTAMP, so o.ts + 1 adds a nanosecond. Per outer row, s holds b rows
+    // 20 and 21 for o row 1 (1us), b row 23 for o row 2 (5us), and b rows 22 and 24 for the NULL
+    // o.ts of o row 3. b row 20 joins a rows 10 and 12, of which only a row 10 (1us) is below
+    // 1.000001us; a row 11 (6us) of o row 2 is not below 5.000001us.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyRetypedKeyWidened() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, ts TIMESTAMP_NS)");
+            execute("CREATE TABLE a (id INT, ts TIMESTAMP, y TIMESTAMP)");
+            execute("CREATE TABLE b (id INT, k TIMESTAMP, ts TIMESTAMP_NS)");
+            execute("INSERT INTO o VALUES (1, '2024-01-01T00:00:00.000001000Z'), (2, '2024-01-01T00:00:00.000005000Z'), (3, NULL)");
+            execute("""
+                    INSERT INTO a VALUES
+                    (10, '2024-01-01T00:00:00.000001Z', '2024-01-01T00:00:00.000001Z'),
+                    (11, '2024-01-01T00:00:00.000005Z', '2024-01-01T00:00:00.000006Z'),
+                    (12, '2024-01-01T00:00:00.000001Z', '2024-01-01T00:00:00.000002Z'),
+                    (13, NULL, NULL)
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                    (20, '2024-01-01T00:00:00.000001Z', '2024-01-01T00:00:00.000001000Z'),
+                    (21, '2024-01-01T00:00:00.000009Z', '2024-01-01T00:00:00.000001000Z'),
+                    (22, NULL, NULL),
+                    (23, '2024-01-01T00:00:00.000005Z', '2024-01-01T00:00:00.000005000Z'),
+                    (24, '2024-01-01T00:00:00.000007Z', NULL)
+                    """);
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k, ts FROM b WHERE ts = o.ts) s ON a.ts = s.k WHERE a.ts = o.ts AND a.y < o.ts + 1) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t20
+                            """);
+        });
+    }
+
+    // Each ordered pair of SYMBOL, VARCHAR and STRING as the outer and the inner key type, with a
+    // condition next to the WHERE key that reads o.s. Per outer row, s holds b rows 20 and 21 for
+    // 'b', b row 23 for 'e', and b rows 22 and 24 for the NULL o.s, as = matches NULL to NULL. b row
+    // 20 joins a rows 10 and 12, of which only a row 10 has a.y < 'b'; a row 11 of 'e' has a.y 'z',
+    // and a.y < NULL is false. DuckDB, with IS NOT DISTINCT FROM for =, returns 1 10 20, the rows of
+    // the same-typed key.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyRetypedStringKey() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] pairs = {
+                    {"VARCHAR", "SYMBOL"},
+                    {"SYMBOL", "VARCHAR"},
+                    {"STRING", "SYMBOL"},
+                    {"SYMBOL", "STRING"},
+                    {"VARCHAR", "STRING"},
+                    {"STRING", "VARCHAR"},
+            };
+            final String body = "(SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k, s FROM b WHERE s = o.s) s ON a.s = s.k WHERE a.s = o.s AND a.y < o.s) l ORDER BY 1, 2, 3";
+            for (String[] pair : pairs) {
+                createRetypedStringKeyTables(pair[0], pair[1]);
+                assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL " + body)
+                        .noLeakCheck()
+                        .returns("""
+                                id\taid\tsid
+                                1\t10\t20
+                                """);
+                assertQuery("SELECT o.id, l.aid, l.sid FROM o LEFT JOIN LATERAL " + body)
+                        .noLeakCheck()
+                        .returns("""
+                                id\taid\tsid
+                                1\t10\t20
+                                2\tnull\tnull
+                                3\tnull\tnull
+                                """);
+                execute("DROP TABLE o");
+                execute("DROP TABLE a");
+                execute("DROP TABLE b");
+            }
         });
     }
 
@@ -4107,6 +4251,340 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // c's ON clause reads o.id, which no WHERE key maps to an inner column, so the outer-ref join stays
+    // ahead of the RIGHT or FULL join, and WHERE keys o.x on b, the slave of that join, or on a later
+    // table. A filter after the join drops the rows that it NULL-extends, so the rewriter moves the
+    // WHERE conjuncts that read b or a later table from the ON clause of the outer-ref join back into
+    // WHERE, where they run after the join. Per outer row, o.id > 1 leaves the master side empty for o
+    // row 1, a row 12 of the NULL o.x matches no b row, and a row 11 of o.x = 3 matches b row 24, so
+    // DuckDB, with IS NOT DISTINCT FROM for =, returns 3 11 24 for each form of the key. On a.x < b.k,
+    // a row 10 matches b row 24 instead. With c.sid = a.id + 10 + o.id, a row 10 of o row 1 matches b
+    // rows 21 and 23. The FULL join keeps a row 12 of the NULL o.x, whose NULL b.k matches o.x. Each
+    // query compiles twice, after the query that fails because no filter drops those rows. A b row
+    // with a NULL k then matches a row 12 of the NULL o.x.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejecting() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            final String outerColumnError = "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query";
+            final String item = "a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL";
+            final String noNullRejection = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x) l ORDER BY 1, 2, 3";
+            for (int i = 0; i < 2; i++) {
+                assertQuery(noNullRejection)
+                        .noLeakCheck()
+                        .fails(noNullRejection.indexOf("RIGHT"), outerColumnError);
+            }
+            final String itemRows = """
+                    id\taid\tsid
+                    3\t11\t24
+                    """;
+            final String[][] cases = {
+                    {item, itemRows},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k + 0 = o.x AND a.id IS NOT NULL", itemRows},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k >= o.x AND a.id IS NOT NULL", itemRows},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE coalesce(b.k, -1) = o.x AND a.id IS NOT NULL", itemRows},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k BETWEEN o.x AND o.x + 1 AND a.id IS NOT NULL", itemRows},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k IN (o.x, 99) AND a.id IS NOT NULL", itemRows},
+                    // k only b has
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE k = o.x AND a.id IS NOT NULL", itemRows},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND b.x = o.x AND a.id IS NOT NULL", itemRows},
+                    // the key on an INNER or a LEFT join after the RIGHT join, or on a second RIGHT join
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k JOIN b b2 ON b2.id = b.id WHERE b2.k = o.x AND a.id IS NOT NULL", itemRows},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k LEFT JOIN b b2 ON b2.id = b.id WHERE b2.k = o.x AND a.id IS NOT NULL", itemRows},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k RIGHT JOIN b b2 ON b2.id = b.id WHERE b2.k = o.x AND a.id IS NOT NULL", itemRows},
+                    // two conjuncts that read no b column stay ahead of the RIGHT join, where a.id > o.id + 8
+                    // drops a row 11 of o row 3, and a.id > o.id + 7 keeps it
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x >= o.x - 2 AND a.id > o.id + 8 AND a.id IS NOT NULL", "id\taid\tsid\n"},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x >= o.x - 2 AND a.id > o.id + 7 AND a.id IS NOT NULL", itemRows},
+                    // a conjunct that moves drops the NULL-extended rows
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x < b.k + o.x", itemRows},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x < b.k WHERE b.k = o.x AND a.id IS NOT NULL", """
+                            id\taid\tsid
+                            3\t10\t24
+                            """},
+                    {"a JOIN c ON c.sid = a.id + 10 + o.id RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL", """
+                            id\taid\tsid
+                            1\t10\t21
+                            1\t10\t23
+                            """},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 FULL JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL", """
+                            id\taid\tsid
+                            2\t12\tnull
+                            3\t11\t24
+                            """},
+            };
+            for (String[] c : cases) {
+                final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM " + c[0] + ") l ORDER BY 1, 2, 3";
+                for (int i = 0; i < 2; i++) {
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(c[1]);
+                }
+            }
+            assertLateralMatchesPerOuterRow("a JOIN c ON c.sid = a.id + 11 AND {I} > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = {X} AND a.id IS NOT NULL");
+            assertLateralMatchesPerOuterRow("a JOIN c ON c.sid = a.id + 10 + {I} RIGHT JOIN b ON a.x = b.k WHERE b.k = {X} AND a.id IS NOT NULL");
+            assertLateralMatchesPerOuterRow("a JOIN c ON c.sid = a.id + 11 AND {I} > 1 FULL JOIN b ON a.x = b.k WHERE b.k = {X} AND a.id IS NOT NULL");
+
+            // a.x >= o.x - 2 reads no b column, so it stays in the ON clause of the outer-ref join and
+            // filters ahead of the RIGHT join, and only b.k = o.x runs after it
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x >= o.x - 2 AND a.id IS NOT NULL) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(
+                            "Filter filter: (a.id!=null and b.k=__qdb_outer_ref__0.__qdb_outer_ref__0_x)",
+                            "Hash Right Outer Join Light",
+                            "Filter filter: a.x>=__qdb_outer_ref__0.__qdb_outer_ref__0_x-2"
+                    )
+                    .returns(itemRows);
+
+            execute("INSERT INTO b VALUES (25, NULL, NULL)");
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM " + item + ") l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            2\t12\t25
+                            3\t11\t24
+                            """);
+            assertLateralMatchesPerOuterRow("a JOIN c ON c.sid = a.id + 11 AND {I} > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = {X} AND a.id IS NOT NULL");
+        });
+    }
+
+    // The query of testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejecting() with a.id >= $1,
+    // which drops the rows that the RIGHT join NULL-extends while $1 is not NULL: with 5 it returns
+    // the rows of DuckDB, and with NULL the execution fails at $1.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id >= $1) l ORDER BY 1, 2, 3";
+            final String rows = "id\taid\tsid\n3\t11\t24\n";
+            final ObjList<BindVarTuple> binds = new ObjList<>();
+            binds.add(BindVarTuple.ok("5", rows, bindVariableService -> bindVariableService.setInt(0, 5)));
+            binds.add(BindVarTuple.fails(
+                    "NULL",
+                    sql.indexOf("$1"),
+                    "is not supported in a correlated lateral sub-query when this value is NULL",
+                    bindVariableService -> bindVariableService.setInt(0, Numbers.INT_NULL)
+            ));
+            binds.add(BindVarTuple.ok("5 again", rows, bindVariableService -> bindVariableService.setInt(0, 5)));
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .assertBinds(binds);
+            bindVariableService.clear();
+        });
+    }
+
+    // The query of testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejecting() in a LEFT or
+    // CROSS JOIN LATERAL, a lower-case CTE, a count(*) body, a wrapped body, a body with ORDER BY and
+    // LIMIT, a LATERAL two levels below o, EXPLAIN and a view, with the rows of DuckDB. The plan runs
+    // b.k = o.x after the RIGHT join, next to a.id IS NOT NULL. With VARCHAR and SYMBOL keys the
+    // query returns the same rows, and on empty tables no rows.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingContexts() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            final String body = "(SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL) l";
+            final String rows = """
+                    id\taid\tsid
+                    3\t11\t24
+                    """;
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o LEFT JOIN LATERAL " + body + " ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tsid
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            3\t11\t24
+                            """);
+            final String[] queries = {
+                    "SELECT o.id, l.aid, l.sid FROM o CROSS JOIN LATERAL " + body + " ORDER BY 1, 2, 3",
+                    "with q as (select o.id, l.aid, l.sid from o join lateral (select a.id aid, b.id sid from a join c on c.sid = a.id + 11 and o.id > 1 right join b on a.x = b.k where b.k = o.x and a.id is not null) l) select * from q order by 1, 2, 3",
+                    "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT * FROM (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL)) l ORDER BY 1, 2, 3",
+                    "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT m.aid, m.sid FROM long_sequence(1) q JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL) m) l ORDER BY 1, 2, 3",
+            };
+            for (String sql : queries) {
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(rows);
+            }
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL ORDER BY b.id LIMIT 1) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns(rows);
+            assertQuery("SELECT o.id, l.n FROM o JOIN LATERAL (SELECT count(*) n FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL) l ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tn
+                            1\t0
+                            2\t0
+                            3\t1
+                            """);
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL " + body)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join
+                                  condition: l.__qdb_outer_ref__0_id=o.id and l.__qdb_outer_ref__0_x=o.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: o
+                                    Hash
+                                        SelectedRecord
+                                            Filter filter: (a.id!=null and b.k=__qdb_outer_ref__0.__qdb_outer_ref__0_x)
+                                                Hash Right Outer Join Light
+                                                  condition: b.k=a.x
+                                                    Filter filter: c.sid=a.id+11
+                                                        Cross Join
+                                                            Cross Join
+                                                                Async JIT Filter workers: 1
+                                                                  filter: id!=null
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: a
+                                                                Async JIT Group By workers: 1
+                                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_x]
+                                                                  filter: 1<id
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: o
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: c
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: b
+                            """);
+            execute("CREATE VIEW v AS (SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL " + body + ")");
+            assertQuery("SELECT * FROM v ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(rows);
+
+            for (String type : new String[]{"VARCHAR", "SYMBOL"}) {
+                execute("CREATE TABLE ot AS (SELECT id, x::" + type + " x FROM o)");
+                execute("CREATE TABLE at AS (SELECT id, x::" + type + " x FROM a)");
+                execute("CREATE TABLE bt AS (SELECT id, k::" + type + " k, x::" + type + " x FROM b)");
+                assertQuery("SELECT o.id, l.aid, l.sid FROM ot o JOIN LATERAL (SELECT a.id aid, b.id sid FROM at a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN bt b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL) l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(rows);
+                execute("DROP TABLE ot");
+                execute("DROP TABLE at");
+                execute("DROP TABLE bt");
+            }
+
+            execute("TRUNCATE TABLE a");
+            execute("TRUNCATE TABLE b");
+            execute("TRUNCATE TABLE c");
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL " + body + " ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("id\taid\tsid\n");
+        });
+    }
+
+    // o.ts is TIMESTAMP and s.ts TIMESTAMP_NS. c's ON clause reads o.ts, which WHERE keys on s, the
+    // slave of the RIGHT join, and a.ts < o.ts + 1 adds a microsecond to o.ts, where s.ts + 1 would add
+    // a nanosecond, so the rewriter keeps the outer-ref join ahead of the RIGHT join; see
+    // testLateralWhereKeyAndCorrelatedComparisonRetypedKey().
+    // Per outer row, a.ts < o.ts + 1 keeps a row 10 (1.5us) for o row 1 (1us), which matches s row 20,
+    // and a rows 10 and 11 (5.5us) for o row 2 (5us), of which a row 11 matches s row 21, at 5us. On
+    // a nanosecond, a.ts < o.ts + 1 would keep neither of these rows. The plan runs s.ts = o.ts after
+    // the RIGHT join and a.ts < o.ts + 1 on the outer-ref join ahead of it.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveRetypedKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, ts TIMESTAMP)");
+            execute("CREATE TABLE a (id INT, x INT, ts TIMESTAMP_NS)");
+            execute("CREATE TABLE c (id INT, sid INT)");
+            execute("CREATE TABLE s (id INT, k INT, ts TIMESTAMP_NS)");
+            execute("INSERT INTO o VALUES (1, '2024-01-01T00:00:00.000001Z'), (2, '2024-01-01T00:00:00.000005Z')");
+            execute("INSERT INTO a VALUES (10, 1, '2024-01-01T00:00:00.000001500Z'), (11, 2, '2024-01-01T00:00:00.000005500Z')");
+            execute("INSERT INTO c VALUES (100, 21), (101, 22)");
+            execute("INSERT INTO s VALUES (20, 1, '2024-01-01T00:00:00.000001000Z'), (21, 2, '2024-01-01T00:00:00.000005000Z')");
+            final String body = "SELECT a.id aid, s.id sid FROM a JOIN c ON c.sid = a.id + 11 AND {T} > '2024-01-01'::timestamp RIGHT JOIN s ON a.x = s.k WHERE s.ts = {T} AND a.ts < {T} + 1 AND a.id IS NOT NULL";
+            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (" + body.replace("{T}", "o.ts") + ") l ORDER BY 1, 2, 3";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(
+                            "Filter filter: (a.id!=null and __qdb_outer_ref__0.__qdb_outer_ref__0_ts=s.ts)",
+                            "Hash Right Outer Join Light",
+                            "Filter filter: a.ts<__qdb_outer_ref__0.__qdb_outer_ref__0_ts+1"
+                    )
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t20
+                            2\t11\t21
+                            """);
+            assertSqlCursors(
+                    "SELECT * FROM (SELECT 1 id, aid, sid FROM (" + body.replace("{T}", "'2024-01-01T00:00:00.000001Z'::timestamp")
+                            + ") UNION ALL SELECT 2 id, aid, sid FROM (" + body.replace("{T}", "'2024-01-01T00:00:00.000005Z'::timestamp")
+                            + ")) ORDER BY 1, 2, 3",
+                    sql
+            );
+        });
+    }
+
+    // A UNION ALL, EXCEPT or INTERSECT body keeps the outer-ref join, and the body of
+    // testLateralOuterConditionBeforeRightJoinKeyOnSlaveInUnionFails() with a.id IS NOT NULL drops the
+    // rows that the RIGHT join NULL-extends. The rewriter moves b.k = o.x after the RIGHT join, and
+    // the query returns the rows of DuckDB in a JOIN or LEFT JOIN LATERAL, with the RIGHT join in the
+    // first or the second branch, and the body run once per outer row.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveInUnionNullRejecting() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            final String rightBranch = "SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND {X} > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = {X} AND a.id IS NOT NULL";
+            final String plainBranch = "SELECT a.id aid, -1 sid FROM a WHERE a.x = {X}";
+            final String unionRows = """
+                    id\taid\tsid
+                    1\t0\t-1
+                    1\t10\t-1
+                    2\t12\t-1
+                    3\t11\t-1
+                    3\t11\t24
+                    """;
+            final String union = rightBranch + " UNION ALL " + plainBranch;
+            final String[] bodies = {union, plainBranch + " UNION ALL " + rightBranch};
+            for (String body : bodies) {
+                final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (" + body.replace("{X}", "o.x") + ") l ORDER BY 1, 2, 3";
+                for (int i = 0; i < 2; i++) {
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(unionRows);
+                }
+            }
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o LEFT JOIN LATERAL (" + union.replace("{X}", "o.x") + ") l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns(unionRows);
+            assertSqlCursors(
+                    "SELECT * FROM (SELECT 1 id, aid, sid FROM (" + union.replace("{X}", "1")
+                            + ") UNION ALL SELECT 2 id, aid, sid FROM (" + union.replace("{X}", "NULL::int")
+                            + ") UNION ALL SELECT 3 id, aid, sid FROM (" + union.replace("{X}", "3")
+                            + ")) ORDER BY 1, 2, 3",
+                    "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (" + union.replace("{X}", "o.x") + ") l ORDER BY 1, 2, 3"
+            );
+            final String itemRows = """
+                    id\taid\tsid
+                    3\t11\t24
+                    """;
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (" + (rightBranch + " EXCEPT " + plainBranch).replace("{X}", "o.x") + ") l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(itemRows);
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (" + (rightBranch + " INTERSECT SELECT a.id, 24 FROM a WHERE a.x = {X}").replace("{X}", "o.x") + ") l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(itemRows);
+        });
+    }
+
     // c's ON clause reads o.x, and WHERE keys o.x on b, which a SPLICE, ASOF or INNER join joins after
     // c. The SPLICE join needs a master with random access, which no join provides, so the joins
     // written before it run after it, here and per outer row alike, and the rewritten ON clause reads
@@ -4425,6 +4903,72 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // testLateralWhereKeyAndCorrelatedComparisonRetypedKey() over a computed master column: the
+    // sub-query casts a.ts, which is TIMESTAMP_NS already, to TIMESTAMP_NS. o.ts is TIMESTAMP, so
+    // o.ts + 1 adds a microsecond per outer row, as the body run once per outer row with o.ts as a
+    // TIMESTAMP literal shows: a.y < o.ts + 1 keeps a row 10 (1.5us < 2us) for o row 1, and
+    // a.y > o.ts + 1 and a.y BETWEEN o.ts + 1 AND o.ts + 10 keep a row 11 (7us, against 6us and
+    // 15us) for o row 2. The NULL o.ts of o row 3 matches no row. On a.ts + 1, which adds a
+    // nanosecond, each comparison keeps other rows.
+    @Test
+    public void testLateralWhereKeyAndCorrelatedComparisonRetypedKeyComputedMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            createRetypedKeyComparisonTables();
+            final String[][] cases = {
+                    {"a.y < o.ts + 1", "id\taid\n1\t10\n"},
+                    {"a.y > o.ts + 1", "id\taid\n2\t11\n"},
+                    {"a.y BETWEEN o.ts + 1 AND o.ts + 10", "id\taid\n2\t11\n"},
+            };
+            for (String[] c : cases) {
+                assertQuery("SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM (SELECT id, ts::timestamp_ns ts, y FROM a) a WHERE a.ts = o.ts AND " + c[0] + ") l ORDER BY 1, 2")
+                        .noLeakCheck()
+                        .returns(c[1]);
+            }
+        });
+    }
+
+    // The comparisons of testLateralWhereKeyAndCorrelatedComparisonRetypedKeyComputedMaster() on a
+    // UNION ALL of a, whose second branch is empty, joined to t by id. Per outer row, with o.ts as a
+    // TIMESTAMP literal, a.y < o.ts + 1 keeps a row 10 for o row 1, and a.y > o.ts + 1 and
+    // a.y BETWEEN o.ts + 1 AND o.ts + 10 keep a row 11 for o row 2, each joined to the t row of its id.
+    @Test
+    public void testLateralWhereKeyAndCorrelatedComparisonRetypedKeyJoinedUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            createRetypedKeyComparisonTables();
+            final String[][] cases = {
+                    {"a.y < o.ts + 1", "id\taid\ttid\n1\t10\t10\n"},
+                    {"a.y > o.ts + 1", "id\taid\ttid\n2\t11\t11\n"},
+                    {"a.y BETWEEN o.ts + 1 AND o.ts + 10", "id\taid\ttid\n2\t11\t11\n"},
+            };
+            for (String[] c : cases) {
+                assertQuery("SELECT o.id, l.aid, l.tid FROM o JOIN LATERAL (SELECT a.id aid, t.id tid FROM t JOIN (SELECT * FROM a UNION ALL SELECT * FROM a WHERE id < 0) a ON a.id = t.id WHERE a.ts = o.ts AND " + c[0] + ") l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .returns(c[1]);
+            }
+        });
+    }
+
+    // The outer column is computed: o.ts cast to TIMESTAMP_NS, keyed to the TIMESTAMP a2.ts, so
+    // o.ts + 1 adds a nanosecond. Per outer row, with o.ts as a TIMESTAMP_NS literal,
+    // a.y <= o.ts + 1 keeps a2 row 13 (5us <= 5.000001us) for o row 2 but not a2 row 12
+    // (2us > 1.000001us) for o row 1, and a.y > o.ts + 1 keeps a2 row 12 only. On a.ts + 1, which
+    // adds a microsecond, each comparison keeps other rows.
+    @Test
+    public void testLateralWhereKeyAndCorrelatedComparisonRetypedKeyComputedOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            createRetypedKeyComparisonTables();
+            final String[][] cases = {
+                    {"a.y <= o.ts + 1", "id\taid\n2\t13\n"},
+                    {"a.y > o.ts + 1", "id\taid\n1\t12\n"},
+            };
+            for (String[] c : cases) {
+                assertQuery("SELECT o.id, l.aid FROM (SELECT id, ts::timestamp_ns ts FROM o) o JOIN LATERAL (SELECT a.id aid FROM a2 a WHERE a.ts = o.ts AND " + c[0] + ") l ORDER BY 1, 2")
+                        .noLeakCheck()
+                        .returns(c[1]);
+            }
+        });
+    }
+
     // Per outer row, ORDER BY a.id LIMIT 1 picks a row 10, not row 0, for o.x = 1, as a.id > o.x
     // drops row 0 first.
     @Test
@@ -4670,6 +5214,69 @@ public class LateralJoinTest extends AbstractCairoTest {
                         3\t11
                         """
         );
+    }
+
+    // The WHERE key reads bk, an alias of b.k that only the layer above the joins has, and the joins
+    // compare c.id with o.x. Per outer row, a rows 10, 11 and 12 match c rows 100, 101 and 103 by
+    // c.sid = a.id + 11, and a row 10 matches b rows 21 and 23, a row 11 b row 24 by a.x = b.k.
+    // c.id > o.x + 98 keeps c rows 100, 101 and 103 for o.x = 1, and c row 103 only for o.x = 3,
+    // whose a row 12 matches no b row, so bk = o.x keeps the two rows of a row 10 for o row 1.
+    // DuckDB, with IS NOT DISTINCT FROM for =, returns 1 10 1 twice.
+    @Test
+    public void testLateralWhereKeyOnUpperLayerAliasAndCorrelatedCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            assertQuery("SELECT o.id, l.aid, l.bk FROM o JOIN LATERAL (SELECT * FROM (SELECT a.id aid, b.k bk FROM a JOIN c ON c.sid = a.id + 11 JOIN b ON a.x = b.k WHERE c.id > o.x + 98) WHERE bk = o.x) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tbk
+                            1\t10\t1
+                            1\t10\t1
+                            """);
+        });
+    }
+
+    // The query of testLateralWhereKeyOnUpperLayerAliasAndCorrelatedCondition() with the alias sid,
+    // which c has as a column too. The WHERE key still reads b.k through the alias, so DuckDB, with
+    // IS NOT DISTINCT FROM for =, returns 1 10 1 twice, and LEFT JOIN LATERAL adds o rows 2 and 3
+    // with no row of the body.
+    @Test
+    public void testLateralWhereKeyOnUpperLayerAliasNamedLikeJoinColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            final String body = "(SELECT * FROM (SELECT a.id aid, b.k sid FROM a JOIN c ON c.sid = a.id + 11 JOIN b ON a.x = b.k WHERE c.id > o.x + 98) WHERE sid = o.x) l ORDER BY 1, 2, 3";
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL " + body)
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t1
+                            1\t10\t1
+                            """);
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o LEFT JOIN LATERAL " + body)
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t1
+                            1\t10\t1
+                            2\tnull\tnull
+                            3\tnull\tnull
+                            """);
+        });
+    }
+
+    // c's ON clause reads o.x before a RIGHT join, and the WHERE key of the layer above reads sid, an
+    // alias of b.k, the slave of that join, which c has as a column too. With the alias bk the query
+    // fails at the RIGHT join, see testLateralOuterConditionBeforeRightJoinKeyOnSlaveFails(), so it
+    // fails there with the alias sid too.
+    @Test
+    public void testLateralWhereKeyOnUpperLayerAliasNamedLikeJoinColumnBeforeRightJoinFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT * FROM (SELECT a.id aid, b.k sid FROM a JOIN c ON c.sid = a.id + 11 AND o.x > 1 RIGHT JOIN b ON a.x = b.k WHERE a.id IS NOT NULL) WHERE sid = o.x) l ORDER BY 1, 2, 3";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
     }
 
     // Both equalities read o.x: a.x = o.x and a.id = o.x. Per outer row, only a row 1 has both
@@ -19176,17 +19783,17 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Compares the LATERAL query over o, whose body reads o.x as {X}, with the body run once per
-    // outer row, with the o.x of that row as a constant
+    // Compares the LATERAL query over o, whose body reads o.x as {X} and o.id as {I}, with the body run
+    // once per outer row, with the o.x and o.id of that row as constants
     private void assertLateralMatchesPerOuterRow(String body) throws Exception {
         final String select = "SELECT a.id aid, b.id sid FROM ";
         assertSqlCursors(
                 "SELECT * FROM ("
-                        + "SELECT 1 id, a.id aid, b.id sid FROM " + body.replace("{X}", "1") + " UNION ALL "
-                        + "SELECT 2 id, a.id aid, b.id sid FROM " + body.replace("{X}", "NULL::int") + " UNION ALL "
-                        + "SELECT 3 id, a.id aid, b.id sid FROM " + body.replace("{X}", "3")
+                        + "SELECT 1 id, a.id aid, b.id sid FROM " + body.replace("{X}", "1").replace("{I}", "1") + " UNION ALL "
+                        + "SELECT 2 id, a.id aid, b.id sid FROM " + body.replace("{X}", "NULL::int").replace("{I}", "2") + " UNION ALL "
+                        + "SELECT 3 id, a.id aid, b.id sid FROM " + body.replace("{X}", "3").replace("{I}", "3")
                         + ") ORDER BY 1, 2, 3",
-                "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (" + select + body.replace("{X}", "o.x") + ") l ORDER BY 1, 2, 3"
+                "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (" + select + body.replace("{X}", "o.x").replace("{I}", "o.id") + ") l ORDER BY 1, 2, 3"
         );
     }
 
@@ -19324,6 +19931,73 @@ public class LateralJoinTest extends AbstractCairoTest {
         execute("INSERT INTO o VALUES (1, 1), (2, NULL), (3, 3)");
         execute("INSERT INTO a VALUES (10, 1)");
         execute("INSERT INTO b VALUES (20, 5, 1), (21, 1, 1), (22, 7, NULL), (23, 1, NULL)");
+    }
+
+    // o.ts is TIMESTAMP, a.ts and a.y are TIMESTAMP_NS, which equal a TIMESTAMP at the same instant.
+    // t holds the ids of a. a2.ts and a2.y are TIMESTAMP. o.ts selects a row 10 and a2 row 12 for
+    // o row 1 (1us), a row 11 and a2 row 13 for o row 2 (5us), and no row for the NULL o.ts of o
+    // row 3.
+    private void createRetypedKeyComparisonTables() throws Exception {
+        execute("CREATE TABLE o (id INT, ts TIMESTAMP)");
+        execute("CREATE TABLE a (id INT, ts TIMESTAMP_NS, y TIMESTAMP_NS)");
+        execute("CREATE TABLE t (id INT)");
+        execute("CREATE TABLE a2 (id INT, ts TIMESTAMP, y TIMESTAMP)");
+        execute("INSERT INTO o VALUES (1, '2024-01-01T00:00:00.000001Z'), (2, '2024-01-01T00:00:00.000005Z'), (3, NULL)");
+        execute("""
+                INSERT INTO a VALUES
+                (10, '2024-01-01T00:00:00.000001000Z', '2024-01-01T00:00:00.000001500Z'),
+                (11, '2024-01-01T00:00:00.000005000Z', '2024-01-01T00:00:00.000007000Z')
+                """);
+        execute("INSERT INTO t VALUES (10), (11)");
+        execute("""
+                INSERT INTO a2 VALUES
+                (12, '2024-01-01T00:00:00.000001Z', '2024-01-01T00:00:00.000002Z'),
+                (13, '2024-01-01T00:00:00.000005Z', '2024-01-01T00:00:00.000005Z')
+                """);
+    }
+
+    // o.ts is TIMESTAMP, a.ts, a.y and b.k are TIMESTAMP_NS. s = (SELECT id, k, ts FROM b WHERE
+    // ts = o.ts) holds b rows 20, 21 and 25 for o row 1 (1us), b row 23 for o row 2 (5us), and b
+    // rows 22 and 24 for the NULL o.ts of o row 3, as = matches NULL to NULL. On a.ts = s.k, b row
+    // 20 (1000ns) matches a rows 10 and 12, b row 25 (1500ns) a row 14, b row 23 (5000ns) a row 11,
+    // and b row 22 (NULL) a row 13; b rows 21 and 24 match no a row. a row 15 (5001ns) equals no
+    // outer value.
+    private void createRetypedKeyTables() throws Exception {
+        execute("CREATE TABLE o (id INT, ts TIMESTAMP)");
+        execute("CREATE TABLE a (id INT, ts TIMESTAMP_NS, y TIMESTAMP_NS)");
+        execute("CREATE TABLE b (id INT, k TIMESTAMP_NS, ts TIMESTAMP)");
+        execute("INSERT INTO o VALUES (1, '2024-01-01T00:00:00.000001Z'), (2, '2024-01-01T00:00:00.000005Z'), (3, NULL)");
+        execute("""
+                INSERT INTO a VALUES
+                (10, '2024-01-01T00:00:00.000001000Z', '2024-01-01T00:00:00.000001500Z'),
+                (11, '2024-01-01T00:00:00.000005000Z', '2024-01-01T00:00:00.000007000Z'),
+                (12, '2024-01-01T00:00:00.000001000Z', '2024-01-01T00:00:00.000003000Z'),
+                (13, NULL, NULL),
+                (14, '2024-01-01T00:00:00.000001500Z', '2024-01-01T00:00:00.000001500Z'),
+                (15, '2024-01-01T00:00:00.000005001Z', '2024-01-01T00:00:00.000005001Z')
+                """);
+        execute("""
+                INSERT INTO b VALUES
+                (20, '2024-01-01T00:00:00.000001000Z', '2024-01-01T00:00:00.000001Z'),
+                (21, '2024-01-01T00:00:00.000009000Z', '2024-01-01T00:00:00.000001Z'),
+                (22, NULL, NULL),
+                (23, '2024-01-01T00:00:00.000005000Z', '2024-01-01T00:00:00.000005Z'),
+                (24, '2024-01-01T00:00:00.000000500Z', NULL),
+                (25, '2024-01-01T00:00:00.000001500Z', '2024-01-01T00:00:00.000001Z')
+                """);
+    }
+
+    // o.s and b.s have the outer key type, a.s and b.k the inner key type, a.y is VARCHAR. s =
+    // (SELECT id, k, s FROM b WHERE s = o.s) holds b rows 20 and 21 for 'b', b row 23 for 'e', and
+    // b rows 22 and 24 for the NULL o.s. On a.s = s.k, b row 20 matches a rows 10 and 12, b row 23
+    // a row 11 and b row 22 a row 13.
+    private void createRetypedStringKeyTables(String outerType, String innerType) throws Exception {
+        execute("CREATE TABLE o (id INT, s " + outerType + ")");
+        execute("CREATE TABLE a (id INT, s " + innerType + ", y VARCHAR)");
+        execute("CREATE TABLE b (id INT, k " + innerType + ", s " + outerType + ")");
+        execute("INSERT INTO o VALUES (1, 'b'), (2, 'e'), (3, NULL)");
+        execute("INSERT INTO a VALUES (10, 'b', 'a'), (11, 'e', 'z'), (12, 'b', 'c'), (13, NULL, NULL)");
+        execute("INSERT INTO b VALUES (20, 'b', 'b'), (21, 'i', 'b'), (22, NULL, NULL), (23, 'e', 'e'), (24, 'a', NULL)");
     }
 
     // createCorrelatedRightJoinTables() with NULL keys and ids. The NULL k of order 3 matches the

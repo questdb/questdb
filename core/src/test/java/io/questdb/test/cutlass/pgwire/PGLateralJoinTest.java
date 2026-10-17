@@ -229,6 +229,70 @@ public class PGLateralJoinTest extends BasePGTest {
         });
     }
 
+    // A prepared statement whose LATERAL body reads o.id in c's ON clause, which keeps the outer-ref
+    // join ahead of the RIGHT join, and keys o.x in WHERE on b, which that join joins, next to a filter
+    // that drops the rows that the join NULL-extends. Each statement returns the rows of DuckDB at each
+    // execution: the body, the body in the first branch of a UNION ALL, and the body with a.id >= ?,
+    // which with 5 keeps a row 11.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingPrepared() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                createKeyAndComparisonTables(statement);
+            }
+            final String header = "id[INTEGER],aid[INTEGER],sid[INTEGER]\n";
+            final String[][] cases = {
+                    {"SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL) l ORDER BY 1, 2, 3",
+                            header + "3,11,24\n"},
+                    {"SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.x > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL UNION ALL SELECT a.id, -1 FROM a WHERE a.x = o.x) l ORDER BY 1, 2, 3",
+                            header + "1,0,-1\n1,10,-1\n2,12,-1\n3,11,-1\n3,11,24\n"},
+            };
+            for (String[] c : cases) {
+                try (PreparedStatement statement = connection.prepareStatement(c[0])) {
+                    for (int i = 0; i < 2; i++) {
+                        try (ResultSet rs = statement.executeQuery()) {
+                            assertResultSet(c[1], sink, rs);
+                        }
+                    }
+                }
+            }
+            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id >= ?) l ORDER BY 1, 2, 3";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setInt(1, 5);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header + "3,11,24\n", sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
+    // The statement of testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingPrepared() with
+    // a.id >= ?, which drops the rows that the RIGHT join NULL-extends only while ? is not NULL: with
+    // NULL each execution fails at ?, and with 5 the next one returns 3 11 24. The simple query mode
+    // sends NULL as a constant, which the rewriter decides on when it compiles the query, so only the
+    // extended modes run.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingNullValue() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                createKeyAndComparisonTables(statement);
+            }
+            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id >= ?) l ORDER BY 1, 2, 3";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setNull(1, Types.INTEGER);
+                    assertNullValueError(statement, sql.indexOf('?') + 1);
+                }
+                statement.setInt(1, 5);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet("id[INTEGER],aid[INTEGER],sid[INTEGER]\n3,11,24\n", sink, rs);
+                }
+            }
+        });
+    }
+
     // Executes the statement, which must fail with the NULL value error at the 1-based position
     private static void assertNullValueError(PreparedStatement statement, int position) throws SQLException {
         try (ResultSet ignore = statement.executeQuery()) {
@@ -251,6 +315,18 @@ public class PGLateralJoinTest extends BasePGTest {
         } else {
             statement.setLong(index + 1, second);
         }
+    }
+
+    // The tables of LateralJoinTest.createKeyAndComparisonTables()
+    private static void createKeyAndComparisonTables(Statement statement) throws SQLException {
+        statement.execute("CREATE TABLE o (id INT, x INT)");
+        statement.execute("CREATE TABLE a (id INT, x INT)");
+        statement.execute("CREATE TABLE b (id INT, k INT, x INT)");
+        statement.execute("CREATE TABLE c (id INT, sid INT)");
+        statement.execute("INSERT INTO o VALUES (1, 1), (2, NULL), (3, 3)");
+        statement.execute("INSERT INTO a VALUES (10, 1), (11, 3), (12, NULL), (0, 1)");
+        statement.execute("INSERT INTO b VALUES (20, 5, 1), (21, 1, 1), (22, 7, NULL), (23, 1, NULL), (24, 3, 3)");
+        statement.execute("INSERT INTO c VALUES (100, 21), (101, 22), (102, 20), (103, 23), (104, 99)");
     }
 
     // Three orders with the keys 1 to 3, and three refunds, one per key

@@ -1547,3 +1547,78 @@ ORDER BY 1, 2, 3
 ----
 1 10 21
 1 10 23
+
+# ============================================================
+# Outer column in an ON clause before a RIGHT join, WHERE key on its slave
+# The ON clause of c_kc reads o.id, which no WHERE key equates to an inner
+# column, or the body is a UNION ALL, and a.id IS NOT NULL drops the rows
+# that the RIGHT join NULL-extends. QuestDB runs the WHERE key after the
+# RIGHT join. For the UNION ALL, QuestDB's = matches the NULL o.x to a row
+# 12, which DuckDB returns only with IS NOT DISTINCT FROM. DuckDB does not
+# run the FULL join form ("Unsupported join type for flattening correlated
+# subquery"), so LateralJoinTest covers it.
+# ============================================================
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND o.id > 1
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE b.k = o.x AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+3 11 24
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND o.x > 1
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE b.k = o.x AND a.id IS NOT NULL
+    UNION ALL
+    SELECT a.id, -1 FROM a_kc a WHERE a.x = o.x
+) l
+ORDER BY 1, 2, 3
+----
+1 0 -1
+1 10 -1
+2 12 -1
+3 11 -1
+3 11 24
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 10 + o.id
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE b.k = o.x AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+1 10 21
+1 10 23
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND o.id > 1
+    RIGHT JOIN b_kc b ON a.x = b.k
+    JOIN b_kc b2 ON b2.id = b.id
+    WHERE b2.k = o.x AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+3 11 24
