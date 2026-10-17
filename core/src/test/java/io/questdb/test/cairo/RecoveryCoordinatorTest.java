@@ -942,6 +942,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     final Map<String, byte[]> started = readTableFiles(tt, true);
                     final List<String> lost = bytesLostAtPowerLoss(crashFf, tt, started);
                     crashFf.powerLoss();
+                    // A power loss runs no clean close. Close the sequencers before the rollback, which undoes the
+                    // close's txnlog flush; after it, the flush would go through a handle the rollback made stale.
+                    engine.releaseInactiveTableSequencers();
                     crashFf.crash(engine.getConfiguration().getDbRoot());
                     lost.addAll(changedPrefixes(started, readTableFiles(tt, true)));
                     if (!lost.isEmpty()) {
@@ -1864,6 +1867,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 engine.releaseAllWalWriters();
+                // A power loss runs no clean close. Close the sequencers before the rollback, which undoes the close's
+                // txnlog flush; after it, the flush would go through a handle the rollback made stale.
+                engine.releaseInactiveTableSequencers();
                 crashFf.crash(engine.getConfiguration().getDbRoot());
                 Assert.assertEquals("sequencer files after a power loss", sequencerFiles, listSequencerFiles(tt));
 
@@ -2695,6 +2701,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                         }
                         continue;
                     }
+                    // A power loss runs no clean close. Close the sequencers before the rollback, which undoes the
+                    // close's txnlog flush; after it, the flush would go through a handle the rollback made stale.
+                    engine.releaseInactiveTableSequencers();
                     crashFf.crash(engine.getConfiguration().getDbRoot());
                     final long rowsAfterPowerLoss = rowCount(converted);
                     if (rowsAfterPowerLoss != 7) {

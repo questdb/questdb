@@ -406,6 +406,9 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
          * ({@code writerTxn < seqTxn} for a txn the rolled-back WAL no longer has).
          */
         private void recoverAfterPowerLoss(TableToken tt) {
+            // A power loss runs no clean close. Close the sequencers before the rollback, which undoes the close's
+            // txnlog flush; after it, the flush would go through a handle the rollback made stale.
+            engine.releaseInactiveTableSequencers();
             ff.crash(engine.getConfiguration().getDbRoot());
             if (engine.getTableSequencerAPI().isSuspended(tt)) {
                 engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();

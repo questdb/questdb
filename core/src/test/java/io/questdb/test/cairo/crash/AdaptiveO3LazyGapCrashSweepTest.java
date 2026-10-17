@@ -282,6 +282,9 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
                     engine.releaseCrashOrphanedWalWriters();
                     engine.releaseAllWalWriters();
                     engine.releaseAllViewWalWriters();
+                    // A power loss runs no clean close. Close the sequencers before the rollback, which undoes the
+                    // close's txnlog flush; after it, the flush would go through a handle the rollback made stale.
+                    engine.releaseInactiveTableSequencers();
                     crashFf.crash(engine.getConfiguration().getDbRoot());
                     engine.getTableSequencerAPI().purgeTxnTracker(tt.getDirName());
                     engine.getTableSequencerAPI().releaseAll();

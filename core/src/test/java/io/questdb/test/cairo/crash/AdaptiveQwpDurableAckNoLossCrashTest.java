@@ -402,6 +402,9 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
         // released before the rollback.
         engine.releaseAllReaders();
         engine.releaseAllWriters();
+        // A power loss runs no clean close. Close the sequencers before the rollback, which undoes the close's txnlog
+        // flush; after it, the flush would go through a handle the rollback made stale.
+        engine.releaseInactiveTableSequencers();
         crashFf.crash(engine.getConfiguration().getDbRoot());
         if (engine.getTableSequencerAPI().isSuspended(tt)) {
             engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
