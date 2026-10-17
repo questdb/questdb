@@ -26,11 +26,11 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -43,6 +43,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -301,7 +302,6 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         }
                         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
                         final StringSink expected = new StringSink();
-                        final StringSink actual = new StringSink();
                         for (String query : queries) {
                             for (boolean isParallel : new boolean[]{false, true}) {
                                 setBindVariables(bindVariableService, values[0]);
@@ -312,12 +312,21 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                                             isParallel ? AsyncHorizonJoinProjectionRecordCursorFactory.class : HorizonJoinProjectionRecordCursorFactory.class,
                                             query
                                     );
+                                    assertDesignatedTimestamp(factory, "ts");
                                     for (String[] value : values) {
                                         sqlExecutionContext.setParallelHorizonJoinEnabled(false);
                                         TestUtils.printSql(engine, sqlExecutionContext, inlineBindVariables(query, value), expected);
                                         setBindVariables(bindVariableService, value);
-                                        printRows(factory, sqlExecutionContext, actual);
-                                        TestUtils.assertEquals(query + " " + String.join(", ", value), expected, actual);
+                                        try {
+                                            // Every query has a left-hand filter, so the projection
+                                            // doesn't know its size.
+                                            new QueryAssertion(engine, factory)
+                                                    .withContext(sqlExecutionContext)
+                                                    .noRandomAccess()
+                                                    .returns(expected);
+                                        } catch (AssertionError e) {
+                                            throw new AssertionError(query + " " + String.join(", ", value), e);
+                                        }
                                     }
                                 }
                             }
@@ -385,15 +394,25 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                             final int threadId = i;
                             final Rnd threadRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
                             new Thread(() -> {
-                                final StringSink actual = new StringSink();
                                 // Each thread compiles and runs against a context of its own.
                                 try (SqlExecutionContextImpl threadContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                                     threadContext.setParallelHorizonJoinEnabled(true);
                                     TestUtils.await(barrier);
                                     for (int j = 0; j < iterationCount; j++) {
                                         final int q = threadRnd.nextInt(queries.length);
-                                        TestUtils.printSql(engine, threadContext, queries[q], actual);
-                                        TestUtils.assertEquals(queries[q], expected.getQuick(q), actual);
+                                        try (RecordCursorFactory factory = engine.select(queries[q], threadContext)) {
+                                            // The shapes differ in random access and in whether they
+                                            // report a size, so the assertion takes random access from
+                                            // each factory and allows an unknown size. It still checks
+                                            // a reported size against the row count.
+                                            new QueryAssertion(engine, factory)
+                                                    .withContext(threadContext)
+                                                    .inferRandomAccess()
+                                                    .sizeMayVary()
+                                                    .returns(expected.getQuick(q));
+                                        } catch (AssertionError e) {
+                                            throw new AssertionError(queries[q], e);
+                                        }
                                     }
                                 } catch (Throwable th) {
                                     errors.put(threadId, th);
@@ -848,6 +867,17 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 + (keyed ? " ON (t.sym = " + alias + ".sym)" : "");
     }
 
+    // Pins the designated timestamp through the factory's metadata, without opening a cursor. In
+    // external-factory mode, QueryAssertion's timestamp check reads the factory's first cursor and
+    // checks only the timestamp order, so the row comparison would start at the second cursor.
+    private static void assertDesignatedTimestamp(RecordCursorFactory factory, String column) {
+        final RecordMetadata metadata = factory.getMetadata();
+        final int columnIndex = metadata.getColumnIndexQuiet(column);
+        Assert.assertTrue("column not found: " + column, columnIndex > -1);
+        Assert.assertEquals("designated timestamp index", columnIndex, metadata.getTimestampIndex());
+        Assert.assertEquals("scan direction", RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
+    }
+
     private static void assertNoThreadErrors(ConcurrentHashMap<Integer, Throwable> errors) {
         if (!errors.isEmpty()) {
             for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
@@ -870,13 +900,26 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertQueriesMatch(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String query, String referenceQuery) throws SqlException {
-        final StringSink actual = new StringSink();
-        TestUtils.printSql(engine, sqlExecutionContext, query, actual);
+    private static void assertQueriesMatch(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            String referenceQuery,
+            boolean isProjection,
+            boolean isSizeKnown
+    ) throws Exception {
         final StringSink expected = new StringSink();
         TestUtils.printSql(engine, sqlExecutionContext, referenceQuery, expected);
-        try {
-            TestUtils.assertEquals(expected, actual);
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+            final QueryAssertion assertion = new QueryAssertion(engine, factory)
+                    .withContext(sqlExecutionContext)
+                    .expectSize(isSizeKnown);
+            if (isProjection) {
+                // The projection keeps the left-hand designated timestamp and has no random access.
+                assertDesignatedTimestamp(factory, "trade_ts");
+                assertion.noRandomAccess();
+            }
+            assertion.returns(expected);
         } catch (AssertionError e) {
             LOG.error().$("HORIZON JOIN query: ").$(query).$();
             LOG.error().$("Reference query: ").$(referenceQuery).$();
@@ -973,13 +1016,6 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 .replace("$2", values[1])
                 .replace("$3", "'" + values[2] + "'")
                 .replace("$4", values[3]);
-    }
-
-    private static void printRows(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, StringSink sink) throws SqlException {
-        sink.clear();
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            CursorPrinter.println(cursor, factory.getMetadata(), sink);
-        }
     }
 
     private static String projectionReference(
@@ -1382,8 +1418,10 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                             engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
                         }
                         assertProjectionFactory(engine, sqlExecutionContext, rowsQuery);
-                        assertQueriesMatch(engine, sqlExecutionContext, rowsQuery, rowsReference);
-                        assertQueriesMatch(engine, sqlExecutionContext, aggregateQuery, aggregateReference);
+                        // The projection knows its size only without a left-hand filter; the sort
+                        // of the aggregation always does.
+                        assertQueriesMatch(engine, sqlExecutionContext, rowsQuery, rowsReference, true, filter == null);
+                        assertQueriesMatch(engine, sqlExecutionContext, aggregateQuery, aggregateReference, false, true);
                     },
                     configuration,
                     LOG
@@ -1614,7 +1652,8 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                             }
                         }
                         assertProjectionFactory(engine, sqlExecutionContext, rowsQuery);
-                        assertQueriesMatch(engine, sqlExecutionContext, rowsQuery, rowsReference);
+                        // The projection knows its size only without a left-hand filter.
+                        assertQueriesMatch(engine, sqlExecutionContext, rowsQuery, rowsReference, true, filter == null);
                     },
                     configuration,
                     LOG

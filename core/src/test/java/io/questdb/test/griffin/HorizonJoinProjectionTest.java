@@ -126,7 +126,12 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                             SELECT t.sym, count() AS n FROM TaqTrade t
                             HORIZON JOIN TaqQuote q ON (sym) LIST (1s, 5s) AS h
                         ) ORDER BY n
-                        """).expectSize().returns("n\n2\n4\n6\n");
+                        """).expectSize().returns("""
+                        n
+                        2
+                        4
+                        6
+                        """);
                 assertQuery("""
                         SELECT count() FROM (
                             SELECT t.sym, h.offset, avg(q.bid) FROM TaqTrade t
@@ -152,7 +157,11 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                 assertQuery("""
                         SELECT alloc(1024) AS n FROM TaqTrade t
                         HORIZON JOIN TaqQuote q ON (sym) LIST (1s, 5s) AS h LIMIT 2
-                        """).noRandomAccess().sizeMayVary().returns("n\n42\n42\n");
+                        """).noRandomAccess().sizeMayVary().returns("""
+                        n
+                        42
+                        42
+                        """);
                 assertQuery("""
                         SELECT count() FROM (
                             SELECT 1 AS n FROM TaqTrade t
@@ -177,7 +186,11 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                     assertQuery("SELECT offset / 1_000_000 AS seconds, count() AS n FROM ("
                             + projection + " FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (1s, 5s) AS h"
                             + groupBy + ") GROUP BY seconds ORDER BY seconds")
-                            .expectSize().returns("seconds\tn\n1\t3\n5\t3\n");
+                            .expectSize().returns("""
+                                    seconds\tn
+                                    1\t3
+                                    5\t3
+                                    """);
                 }
             }
         });
@@ -226,13 +239,23 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                             HORIZON JOIN TaqQuote q ON (t.sym = q.sym)
                             HORIZON JOIN TaqQuote r ON (t.sym = r.sym) LIST (1s, 5s) AS h
                         ) GROUP BY s ORDER BY s
-                        """).expectSize().returns("s\tn\ttotal\n\t4\tnull\nA\t6\t164.0\nB\t2\t92.0\n");
+                        """).expectSize().returns("""
+                        s\tn\ttotal
+                        \t4\tnull
+                        A\t6\t164.0
+                        B\t2\t92.0
+                        """);
                 assertQuery("""
                         SELECT s, count() AS n FROM (
                             SELECT q.sym AS s FROM TaqTrade t
                             HORIZON JOIN TaqQuote q ON (sym) LIST (1s, 5s) AS h
                         ) GROUP BY s ORDER BY s
-                        """).expectSize().returns("s\tn\n\t4\nA\t6\nB\t2\n");
+                        """).expectSize().returns("""
+                        s\tn
+                        \t4
+                        A\t6
+                        B\t2
+                        """);
             }
         });
     }
@@ -655,7 +678,11 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                     assertQuery("SELECT offset / 1_000_000 AS seconds, count() AS n FROM (SELECT "
                             + projection + " FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (1s, 5s) AS h)"
                             + " GROUP BY seconds ORDER BY seconds")
-                            .expectSize().returns("seconds\tn\n1\t6\n5\t6\n");
+                            .expectSize().returns("""
+                                    seconds\tn
+                                    1\t6
+                                    5\t6
+                                    """);
                     assertQuery("SELECT count() FROM (SELECT " + projection
                             + " FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (1s, 5s) AS h)")
                             .noRandomAccess().expectSize().returns("count\n12\n");
@@ -981,7 +1008,11 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         TestFaultFunctionFactory.disarm();
                     }
                     new QueryAssertion(engine, factory).withContext(sqlExecutionContext)
-                            .noRandomAccess().sizeMayVary().returns("n\tis_ok\n42\ttrue\n42\ttrue\n");
+                            .noRandomAccess().sizeMayVary().returns("""
+                                    n\tis_ok
+                                    42\ttrue
+                                    42\ttrue
+                                    """);
                 }
             }
         });
@@ -1463,7 +1494,17 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                     .mutateWith("INSERT INTO quotes VALUES (2, 'missing', 42, 5)")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("k\tbid\n1\tnull\n2\tnull\n3\tnull\n", "k\tbid\n1\tnull\n2\t42\n3\tnull\n");
+                    .returns("""
+                            k\tbid
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            """, """
+                            k\tbid
+                            1\tnull
+                            2\t42
+                            3\tnull
+                            """);
             execute("DROP TABLE trades");
             execute("DROP TABLE quotes");
         }
@@ -1626,7 +1667,15 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                 }
                 assertQuery("SELECT isParquet FROM table_partitions('quotes')")
                         .noRandomAccess().expectSize()
-                        .returns(isParquet ? "isParquet\ntrue\nfalse\n" : "isParquet\nfalse\nfalse\n");
+                        .returns(isParquet ? """
+                                isParquet
+                                true
+                                false
+                                """ : """
+                                isParquet
+                                false
+                                false
+                                """);
                 for (boolean isParallel : MODES) {
                     sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
                     assertQuery(sql).noRandomAccess().expectSize()
@@ -1878,7 +1927,12 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                             HORIZON JOIN TaqQuote q ON (sym) RANGE FROM -3s TO 1s STEP 2s AS h
                             WHERE concat(t.sym, '') = 'A'
                         ) GROUP BY seconds ORDER BY seconds
-                        """).expectSize().returns("seconds\tn\tmatches\n-3\t3\t0\n-1\t3\t1\n1\t3\t3\n");
+                        """).expectSize().returns("""
+                        seconds\tn\tmatches
+                        -3\t3\t0
+                        -1\t3\t1
+                        1\t3\t3
+                        """);
             }
         });
     }
@@ -1949,7 +2003,11 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         assertQuery("SELECT offset / " + divisor + " AS seconds, count() AS n, sum(bid) AS total FROM ("
                                 + "SELECT h.offset, q.bid FROM " + trades + " t HORIZON JOIN " + quotes
                                 + " q ON (sym) LIST (1s, 5s) AS h) GROUP BY seconds ORDER BY seconds")
-                                .expectSize().returns("seconds\tn\ttotal\n1\t6\t56.0\n5\t6\t64.0\n");
+                                .expectSize().returns("""
+                                        seconds\tn\ttotal
+                                        1\t6\t56.0
+                                        5\t6\t64.0
+                                        """);
                     }
                 }
                 // The horizon timestamp keeps the master's precision.
@@ -2321,7 +2379,12 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                             HORIZON JOIN TaqQuote q ON (sym) LIST (1s, 5s) AS h
                         ) GROUP BY s, description, label ORDER BY s
                         """).expectSize().withPlanContaining(projectionPlan(isParallel, 2))
-                        .returns("s\tdescription\tlabel\tn\n\t\t\t4\nA\tA\tA\t8\nB\tB\tB\t2\n");
+                        .returns("""
+                                s\tdescription\tlabel\tn
+                                \t\t\t4
+                                A\tA\tA\t8
+                                B\tB\tB\t2
+                                """);
                 assertQuery("""
                         SELECT t.ts, t.sym, h.offset, q.bid FROM TaqTrade t
                         HORIZON JOIN TaqQuote q ON (sym) LIST (-1s, 0s, 1s) AS h
@@ -2388,11 +2451,20 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                 // The same days fit a microsecond master.
                 assertQuery("SELECT offset / 86_400_000_000 AS days, count() AS n FROM ("
                         + micros + "-60000d TO 60000d STEP 50000d AS h) GROUP BY days ORDER BY days")
-                        .expectSize().returns("days\tn\n-60000\t6\n-10000\t6\n40000\t6\n");
+                        .expectSize().returns("""
+                                days\tn
+                                -60000\t6
+                                -10000\t6
+                                40000\t6
+                                """);
                 // So does the widest span, exactly Long.MAX_VALUE.
                 assertQuery("SELECT offset AS micros, count() AS n, count(bid) AS matches FROM ("
                         + micros + "-4611686018427387904U TO 4611686018427387903U STEP 9223372036854775807U AS h) GROUP BY micros ORDER BY micros")
-                        .expectSize().returns("micros\tn\tmatches\n-4611686018427387904\t6\t0\n4611686018427387903\t6\t4\n");
+                        .expectSize().returns("""
+                                micros\tn\tmatches
+                                -4611686018427387904\t6\t0
+                                4611686018427387903\t6\t4
+                                """);
             }
         });
     }

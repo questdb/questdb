@@ -8366,7 +8366,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // factory constructor adopts them, this catch owns their rollback.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
             // A projection evaluates its output expressions on the thread that reads the rows, so
-            // only the master filter has to be safe to run on workers, as for an aggregation.
+            // only the master filter and the right-hand filters have to be safe to run on workers.
             final boolean isProjection = horizonContext.isProjection();
             if (executionContext.isParallelHorizonJoinEnabled()) {
                 // !supportsPageFrameCursor(): prefer the runtime-const gate's direct page-frame

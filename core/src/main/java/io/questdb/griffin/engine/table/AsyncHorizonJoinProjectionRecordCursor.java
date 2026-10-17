@@ -337,6 +337,10 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
         isAllFramesActive = true;
     }
 
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
+    }
+
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
             final AsyncHorizonJoinProjectionAtom atom = frameSequence.getAtom();
@@ -362,10 +366,6 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
             }
             isSlaveTimeFrameCacheBuilt = true;
         }
-    }
-
-    private CairoException buildInterruptionException() {
-        return frameSequence.buildInterruptionException();
     }
 
     private void calculateSizeNoFilter(Counter counter) {

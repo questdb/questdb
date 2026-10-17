@@ -9608,9 +9608,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select(sql)) {
             TestUtils.assertFactoryInTree(factory, factoryClass, sql);
         }
-        assertQuery(sql)
-                .noLeakCheck()
-                .fails(0, "horizon timestamp overflow [timestamp=253402300799999999, offset=9000000000000000000]");
+        final CairoException e = Assert.assertThrows(CairoException.class, () -> assertExceptionNoLeakCheck(sql));
+        Assert.assertFalse(e.isCritical());
+        Assert.assertEquals(0, e.getPosition());
+        TestUtils.assertEquals(
+                "horizon timestamp overflow [timestamp=253402300799999999, offset=9000000000000000000]",
+                e.getFlyweightMessage()
+        );
     }
 
     private void assertHorizonJoinTypeMismatch(String masterKeyType, String slaveKeyType) throws Exception {

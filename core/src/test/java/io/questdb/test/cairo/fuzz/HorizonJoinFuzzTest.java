@@ -445,7 +445,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
             CharSequence[][] perSlaveColumns,
             CharSequence horizonClause,
             long[] offsetsMicros
-    ) throws SqlException {
+    ) throws Exception {
         final int slaveCount = perSlaveColumns.length;
         // The multi-slave tables always come in two or more.
         final boolean isMulti = slaveCount > 1;
@@ -499,7 +499,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         }
         sink.put(") ORDER BY id, h_offset");
         final String rowsReference = sink.toString();
-        assertQueriesMatch(rowsQuery, rowsReference);
+        assertQueriesMatch(rowsQuery, rowsReference, false);
 
         // The markout shape of the report: aggregate the projection in an outer query.
         sink.clear();
@@ -529,7 +529,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         if (isGroupBySym) {
             sink.put(", sym");
         }
-        assertQueriesMatch(sink.toString(), fusedQuery);
+        assertQueriesMatch(sink.toString(), fusedQuery, true);
     }
 
     private void assertMultiFuzzExecute(
@@ -626,13 +626,18 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void assertQueriesMatch(String query, String referenceQuery) throws SqlException {
-        final StringSink actualSink = new StringSink();
-        printSql(query, actualSink);
+    private void assertQueriesMatch(String query, String referenceQuery, boolean isSortedAggregation) throws Exception {
         final StringSink expectedSink = new StringSink();
         printSql(referenceQuery, expectedSink);
         try {
-            TestUtils.assertEquals(expectedSink, actualSink);
+            if (isSortedAggregation) {
+                // The sort materializes the aggregated rows, so the cursor has random access and a size.
+                assertQuery(query).expectSize().returns(expectedSink);
+            } else {
+                // The projection has no random access. It knows its size only for some of the
+                // generated left-hand filters and limits.
+                assertQuery(query).noRandomAccess().sizeMayVary().returns(expectedSink);
+            }
         } catch (AssertionError e) {
             LOG.error().$("HORIZON JOIN projection query: ").$(query).$();
             LOG.error().$("Reference query: ").$(referenceQuery).$();

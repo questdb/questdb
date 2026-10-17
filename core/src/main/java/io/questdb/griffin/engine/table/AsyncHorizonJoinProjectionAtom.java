@@ -318,7 +318,12 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
      * long {@code ((p - lo) * offsetCount + k) * slaveCount}. A position is an index into
      * {@code filteredRows} when the master is filtered and a frame row index otherwise.
      * <p>
-     * The tuples arrive in horizon timestamp order, so each slave is scanned forward once per call.
+     * The tuples arrive in horizon timestamp order, so each slave's ASOF lookup resumes from the
+     * previous position within a call. A keyed or filtered slave then scans backward for the row
+     * that matches the key or passes the filter, and a keyed slave in forward scan mode may first
+     * scan forward to the ASOF position, see
+     * {@link HorizonJoinTimeFrameHelper#findKeyedAsOfMatch} and
+     * {@link HorizonJoinTimeFrameHelper#findNotKeyedAsOfMatch}.
      */
     public void match(
             int slotId,
