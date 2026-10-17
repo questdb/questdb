@@ -240,9 +240,11 @@ public final class ScalarSubQueryUtils {
                 final char value = record.getChar(0);
                 yield value == 0 ? Numbers.LONG_NULL : SqlUtil.implicitCastCharAsType(value, driver.getTimestampType());
             }
-            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> readLongValue(record, ColumnType.tagOf(columnType));
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG ->
+                    readLongValue(record, ColumnType.tagOf(columnType));
             case ColumnType.NULL -> Numbers.LONG_NULL;
-            default -> throw CairoException.critical(0).put("unsupported scalar sub-query bound type: ").put(ColumnType.nameOf(columnType));
+            default ->
+                    throw CairoException.critical(0).put("unsupported scalar sub-query bound type: ").put(ColumnType.nameOf(columnType));
         };
     }
 }

@@ -502,6 +502,15 @@ public final class LogicalPlans {
     }
 
     /**
+     * True when the join runs its first input first. Join ordering leads with another input only when the join
+     * designates no timestamp or no part of the query requires it, and a join that leads with another input designates
+     * no timestamp.
+     */
+    public static boolean isFirstInputLeading(JoinPlan join) {
+        return orderedSteps(join).getQuick(0) == join.getInputs().getQuick(0);
+    }
+
+    /**
      * A dateadd unit literal that adds the same duration to every timestamp. Months and years clamp the day of
      * month, so January 29, 30 and 31 plus one month all land on the last day of February.
      */
@@ -511,15 +520,6 @@ public final class LogicalPlans {
             case 'n', 'u', 'U', 'T', 's', 'm', 'h', 'H', 'd', 'w' -> true;
             default -> false;
         };
-    }
-
-    /**
-     * True when the join runs its first input first. Join ordering leads with another input only when the join
-     * designates no timestamp or no part of the query requires it, and a join that leads with another input designates
-     * no timestamp.
-     */
-    public static boolean isFirstInputLeading(JoinPlan join) {
-        return orderedSteps(join).getQuick(0) == join.getInputs().getQuick(0);
     }
 
     /**
@@ -1120,12 +1120,14 @@ public final class LogicalPlans {
                     isStable(filter.getPredicate()) ? stability(filter.getChild(), isParallelGroupByEnabled, readColumnIds) : 0;
             case ProjectPlan project -> areStable(project.getExpressions(), project.getOutput(), 0, readColumnIds)
                     ? stability(project.getChild(), isParallelGroupByEnabled, readColumnIds) : 0;
-            case SortPlan sort -> sort.isMarkoutHorizon() ? 0 : stability(sort.getChild(), isParallelGroupByEnabled, readColumnIds);
+            case SortPlan sort ->
+                    sort.isMarkoutHorizon() ? 0 : stability(sort.getChild(), isParallelGroupByEnabled, readColumnIds);
             case LimitPlan limit -> isStable(limit.getLo()) && isStable(limit.getHi())
                     && stability(limit.getChild(), isParallelGroupByEnabled, readColumnIds) == SEQUENCE_STABLE ? SEQUENCE_STABLE : 0;
             case AggregatePlan aggregate -> groupingStability(aggregate, isParallelGroupByEnabled, readColumnIds);
             case WindowPlan window -> windowStability(window, isParallelGroupByEnabled, readColumnIds);
-            case DistinctPlan distinct -> stability(distinct.getChild(), isParallelGroupByEnabled, readColumnIds) & RESULT_STABLE;
+            case DistinctPlan distinct ->
+                    stability(distinct.getChild(), isParallelGroupByEnabled, readColumnIds) & RESULT_STABLE;
             case SetOperationPlan operation -> stability(operation.getLeft(), isParallelGroupByEnabled, readColumnIds)
                     & stability(operation.getRight(), isParallelGroupByEnabled, readColumnIds);
             default -> 0;

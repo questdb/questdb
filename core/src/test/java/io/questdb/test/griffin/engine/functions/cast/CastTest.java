@@ -5224,7 +5224,7 @@ public class CastTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("""
                             b
-
+                            
                             """);
         });
     }

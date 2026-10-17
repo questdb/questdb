@@ -547,10 +547,8 @@ public class LatestByTest extends AbstractCairoTest {
             assertLatestKeyRejectedPredicate("s = 'a' OR (s = 'b' AND v = 20)", "v\n11.0\n20.0\n");
             assertLatestKeyRejectedPredicate("s NOT IN ('a', 'b')", "v\n31.0\n40.0\n99.0\n");
             assertLatestKeyRejectedPredicate("s IN ('a', :key)", "v\n11.0\n20.0\n");
-            assertLatestKeyRejectedPredicate("s IN ('a', lower('B'))", "v\n11.0\n20.0\n");
             assertLatestKeyRejectedPredicate("s IN (SELECT 'a'::STRING)", "v\n11.0\n");
             assertLatestKeyRejectedPredicate("s = 'a' OR s = :key", "v\n11.0\n20.0\n");
-            assertLatestKeyRejectedPredicate("s = 'a' OR s = lower('B')", "v\n11.0\n20.0\n");
             assertLatestKeyRejectedPredicate("s = 'a' OR s IN ('b', 'é')", "v\n11.0\n20.0\n40.0\n");
             assertLatestKeyRejectedPredicate("s IN ('a', 'b') OR s IN ('é', 'other')", "v\n11.0\n20.0\n40.0\n99.0\n");
             assertQuery(latestKeyQuery("rejected", "s = 'a' AND v < rnd_double()", false))
@@ -561,6 +559,21 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setBin(0, null);
             assertQuery(latestKeyQuery("rejected", "s = $1", false)).failsWith("there is no matching operator `=` with the argument types: SYMBOL = BINARY");
+        });
+    }
+
+    @Test
+    public void testLatestKeyPushdownFoldedConstantKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int index = 0; index < 2; index++) {
+                String table = "folded_" + index;
+                createLatestKeyFixture(table, index == 1 ? " INDEX" : "");
+                String listPlan = index == 1 ? "symbolFilter:" : "includedSymbols:";
+                assertQuery(latestKeyQuery(table, "s IN ('a', lower('B'))", false))
+                        .withPlanContaining(listPlan).withPlanNotContaining("Filter filter:").sizeMayVary().returns("v\n11.0\n20.0\n");
+                assertQuery(latestKeyQuery(table, "s = 'a' OR s = lower('B')", false))
+                        .withPlanContaining(listPlan).withPlanNotContaining("Filter filter:").sizeMayVary().returns("v\n11.0\n20.0\n");
+            }
         });
     }
 
