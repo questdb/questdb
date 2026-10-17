@@ -3261,6 +3261,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
         rowAction = ROW_ACTION_OPEN_PARTITION;
+        // The append horizon must not outlive the partitions. processWalCommitBlock() does not
+        // open a partition on an empty table, and processO3Block() only raises partitionTimestampHi
+        // (Math.max), so a stale value from a later partition would survive a block commit into an
+        // earlier one. finishO3Commit() re-syncs a native last partition by reopening it, but not a
+        // parquet one, and the next processWalCommit() then asserts that partitionTimestampHi and
+        // maxTimestamp resolve to the same partition. Same reset as the replace-commit truncate.
+        partitionTimestampHi = Long.MIN_VALUE;
+        lastPartitionTimestamp = Long.MIN_VALUE;
 
         closeActivePartition(false);
         processPartitionRemoveCandidates();
