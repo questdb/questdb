@@ -69,6 +69,10 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
+
 public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     private static final String SELECT = "select p.country, year(r.reading_ts) yr, month(r.reading_ts) mo, "
             + "sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, "
@@ -442,9 +446,11 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     " FROM p LEFT JOIN b ON p.id = b.id AND ",
                     " FROM b RIGHT JOIN p ON p.id = b.id AND "
             };
-            // Each ON condition only compares columns and constants, so it costs about as much on a
-            // build row as the hash insert it spares, and keeps the fused plan whatever the sizes.
-            // IS NULL and IS NOT NULL parse as a comparison with a NULL constant.
+            // Each ON condition only compares columns, constants and the text that a cast computes
+            // from a fixed-size column, so it costs about as much on a build row as the hash insert
+            // it spares, and keeps the fused plan whatever the sizes. A comparison of two arrays
+            // counts as one of two texts does. IS NULL and IS NOT NULL parse as a comparison with a
+            // NULL constant.
             final String[][] cases = {
                     {"b.vc = 'xa'", "buildOnFilter: vc='xa'", """
                             k\tc\tm\ts
@@ -467,6 +473,16 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             2\t2\t1\t40.0
                             """},
                     {"b.vc < 'y' AND NOT b.v > 25", "buildOnFilter: (vc<'y' and not (25<v))", """
+                            k\tc\tm\ts
+                            1\t2\t1\t10.0
+                            2\t2\t0\tnull
+                            """},
+                    {"b.arr = b.arr2", "buildOnFilter: arr=arr2", """
+                            k\tc\tm\ts
+                            1\t2\t2\t40.0
+                            2\t2\t0\tnull
+                            """},
+                    {"b.v::VARCHAR = '10.0'", "buildOnFilter: v::varchar='10.0'", """
                             k\tc\tm\ts
                             1\t2\t1\t10.0
                             2\t2\t0\tnull
@@ -510,7 +526,12 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     // match, so a build table larger than the probe table keeps the ordinary plan
                     // for a condition that does more than compare columns and constants: a regular
                     // expression, LIKE, IN, a function or a cast, alone or next to a comparison.
-                    for (String on : new String[]{"b.vc ~ 'x'", "b.vc LIKE 'x%'", "b.vc IN ('xa', 'xc')", "upper(b.vc) LIKE 'X%'"}) {
+                    // The text that a cast computes from a fixed-size column counts as a
+                    // variable-size column once something other than a comparison reads it.
+                    for (String on : new String[]{
+                            "b.vc ~ 'x'", "b.vc LIKE 'x%'", "b.vc IN ('xa', 'xc')", "upper(b.vc) LIKE 'X%'",
+                            "b.v::VARCHAR ~ '^[13]'"
+                    }) {
                         assertQuery(select + from + on + " ORDER BY k")
                                 .withContext(context)
                                 .noLeakCheck()
@@ -3440,7 +3461,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
      */
     private void createVariableSizeOnFilterTables() throws Exception {
         execute("CREATE TABLE p (id INT, k INT)");
-        execute("CREATE TABLE b (id INT, v DOUBLE, vc VARCHAR, str STRING, arr DOUBLE[])");
+        execute("CREATE TABLE b (id INT, v DOUBLE, vc VARCHAR, str STRING, arr DOUBLE[], arr2 DOUBLE[])");
         execute("""
                 INSERT INTO p VALUES
                     (1, 1),
@@ -3450,12 +3471,12 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 """);
         execute("""
                 INSERT INTO b VALUES
-                    (1, 10.0, 'xa', 'sa', ARRAY[1.0]),
-                    (1, 20.0, 'yb', 'sb', ARRAY[2.0]),
-                    (2, 30.0, 'xc', NULL, ARRAY[3.0]),
-                    (3, 40.0, NULL, 'sa', NULL),
-                    (5, 50.0, 'xe', 'sa', ARRAY[5.0]),
-                    (6, 60.0, 'xf', 'sb', ARRAY[6.0])
+                    (1, 10.0, 'xa', 'sa', ARRAY[1.0], ARRAY[1.0]),
+                    (1, 20.0, 'yb', 'sb', ARRAY[2.0], ARRAY[9.0]),
+                    (2, 30.0, 'xc', NULL, ARRAY[3.0], ARRAY[3.0]),
+                    (3, 40.0, NULL, 'sa', NULL, ARRAY[4.0]),
+                    (5, 50.0, 'xe', 'sa', ARRAY[5.0], ARRAY[5.0]),
+                    (6, 60.0, 'xf', 'sb', ARRAY[6.0], ARRAY[6.0])
                 """);
     }
 
@@ -3519,14 +3540,6 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         return context;
     }
 
-    private static AsyncHashJoinGroupByRecordCursorFactory fused(RecordCursorFactory factory) {
-        while (factory != null && !(factory instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
-            factory = factory.getBaseFactory();
-        }
-        Assert.assertNotNull(factory);
-        return (AsyncHashJoinGroupByRecordCursorFactory) factory;
-    }
-
     // Runs the factory once and returns the rows that its execution built, from either orientation.
     private static long builtRows(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
         try (RecordCursor cursor = factory.getCursor(context)) {
@@ -3567,20 +3580,6 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             return result(factory, context) + result(factory, context);
         } catch (CairoException | ImplicitCastException e) {
             return "error: " + e.getFlyweightMessage();
-        }
-    }
-
-    private static String plan(RecordCursorFactory factory, SqlExecutionContext context) {
-        TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, context);
-        return sink.getSink().toString();
-    }
-
-    private static String result(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(context)) {
-            StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
-            return sink.toString();
         }
     }
 }

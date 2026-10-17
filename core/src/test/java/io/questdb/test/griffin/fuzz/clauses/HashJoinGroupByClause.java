@@ -75,9 +75,11 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * reads: aggregate arguments, grouping keys and post-join filters. The build's own filters - its
  * scan's WHERE filter, which an INNER join's single-side WHERE predicate becomes, and an outer
  * join's ON predicate over the build alone - run over the build's page frames before the heap
- * copies a row, so they may read a build column of any type, and such an ON predicate over a
- * STRING or VARCHAR column of the build keeps the ordinary plan only when it does more than compare
- * columns, constants and bind variables and the build table holds more rows than the probe table.
+ * copies a row, so they may read a build column of any type. Such an ON predicate keeps the
+ * ordinary plan when the build table holds more rows than the probe table and the predicate
+ * either reads a variable-size column of the build and does more than compare columns, constants
+ * and bind variables, or passes a STRING, VARCHAR, BINARY or ARRAY value that it computes from a
+ * build column to anything but a comparison.
  * The rest of the queries reach the features the fused planner has to turn down, each of which keeps the ordinary plan
  * in both arms of the fused axis: a constant WHERE conjunct, SAMPLE BY with FILL, a
  * {@code LIMIT} sub-query, {@code LATEST ON} on a table input, a cross-input WHERE predicate, an ON predicate over the preserved side
@@ -215,11 +217,13 @@ public final class HashJoinGroupByClause {
             appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(SYMBOL_KEY));
         }
         if (rnd.nextInt(4) == 0) {
-            // An ON predicate over the build keeps the fused plan, unless it reads a STRING or
-            // VARCHAR column of the build, does more than compare columns, constants and bind
-            // variables, and the build table holds more rows than the probe table. One over the
-            // preserved side of an outer join never does, so an outer join puts it on the build
-            // three times in four. An INNER join moves it into the WHERE clause either way.
+            // An ON predicate over the build keeps the fused plan, unless the build table holds
+            // more rows than the probe table and the predicate either reads a variable-size
+            // column of the build and does more than compare columns, constants and bind
+            // variables, or passes a STRING, VARCHAR, BINARY or ARRAY value that it computes from
+            // a build column to anything but a comparison. One over the preserved side of an
+            // outer join never does, so an outer join puts it on the build three times in four.
+            // An INNER join moves it into the WHERE clause either way.
             final boolean isOnBuild = rnd.nextInt(4) != 0;
             final boolean isLeft = isRightJoin ? isOnBuild : isLeftJoin ? !isOnBuild : rnd.nextBoolean();
             sql.put(" AND (").put(predicate(rnd, isLeft ? l : r, isLeft ? LEFT_ALIAS : RIGHT_ALIAS, ctx)).put(')');

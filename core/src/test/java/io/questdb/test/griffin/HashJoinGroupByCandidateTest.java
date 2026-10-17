@@ -710,6 +710,9 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             execute("ALTER TABLE p ADD COLUMN tag STRING");
             execute("ALTER TABLE p ADD COLUMN bin BINARY");
             execute("ALTER TABLE p ADD COLUMN arr DOUBLE[]");
+            execute("ALTER TABLE p ADD COLUMN bin2 BINARY");
+            execute("ALTER TABLE p ADD COLUMN arr2 DOUBLE[]");
+            execute("ALTER TABLE p ADD COLUMN ts TIMESTAMP");
             // p, the build of both outer joins, holds two rows and r, the probe, one.
             execute("INSERT INTO p (plant_id, country, installed_kwp, name, tag) VALUES (1, 'x', 5, 'x', 't'), (2, 'y', 7, 'y', 's')");
             execute("INSERT INTO r (plant_id, reading_ts, energy_kwh) VALUES (1, '2020-01-01', 10)");
@@ -721,8 +724,27 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             // ON conditions on the build alone that read a column the row heap cannot copy, by
             // itself or inside a function, and do more than compare columns, constants and bind
             // variables. One expensive operand of AND or OR, on either side, makes the whole
-            // condition expensive, and so does a function call on either side of a comparison.
+            // condition expensive, and so does a function call on either side of a comparison,
+            // as in lower(p.country) = p.name. A STRING, VARCHAR, BINARY or ARRAY value that a
+            // function or a cast computes from a fixed-size or SYMBOL column makes a condition
+            // expensive when something other than a comparison reads it: a regular expression,
+            // LIKE, IN or a function call, at any depth, an argument of a function with more
+            // than two of them included.
             final String[] expensiveConditions = {
+                    "lower(p.country) ~ 'x'",
+                    "p.country::VARCHAR ~ 'x'",
+                    "p.country::VARCHAR ~ $1",
+                    "p.installed_kwp::VARCHAR ~ '5'",
+                    "lower(p.country) LIKE '%x%'",
+                    "lower(p.country) IN ('x', 'y')",
+                    "length(lower(p.country)) > 0",
+                    "concat('a', 'b', p.country) ~ 'x'",
+                    "coalesce(length(lower(p.country)), 0, 1) > 0",
+                    "CASE WHEN p.installed_kwp > 0 THEN length(lower(p.country)) ELSE 0 END > 1",
+                    "p.installed_kwp > 0 AND lower(p.country) ~ 'x'",
+                    "(p.installed_kwp > 0 OR p.country::VARCHAR LIKE 'x%')",
+                    "NOT lower(p.country) ~ 'x'",
+                    "lower(p.country) = p.name",
                     "p.name ~ 'x'",
                     "NOT p.name ~ 'x'",
                     "p.name LIKE 'x%'",
@@ -737,8 +759,8 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     "(p.name ~ 'x') = true"
             };
             // ON conditions that combine with AND, OR and NOT only comparisons of columns,
-            // constants and bind variables. IS NULL and IS NOT NULL parse as a comparison with a
-            // NULL constant.
+            // constants and bind variables, ARRAY and BINARY columns included. IS NULL and IS NOT
+            // NULL parse as a comparison with a NULL constant.
             final String[] cheapConditions = {
                     "p.name = 'x'",
                     "p.tag = 't'",
@@ -749,24 +771,66 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     "p.name = $1",
                     "p.name = p.tag",
                     "p.installed_kwp > 0 AND p.tag = 't'",
-                    "NOT (p.name < 'm' OR p.name >= 'x')"
+                    "NOT (p.name < 'm' OR p.name >= 'x')",
+                    "p.arr = p.arr2",
+                    "p.arr != p.arr2",
+                    "p.bin = p.bin2",
+                    "(p.bin <> p.bin2 OR p.installed_kwp > 0)"
+            };
+            // ON conditions that read fixed-size and SYMBOL columns, and pass a variable-size
+            // value that they compute from them, if any, only to comparisons, with a constant, a
+            // bind variable or another such value. Any function or operator may take a fixed-size
+            // value that they compute, as in abs(p.installed_kwp + 1) > 0, an argument of a
+            // function with more than two of them included. A SYMBOL operator matches the pattern
+            // against the symbol table's values once, not against each row's text.
+            final String[] fixedSizeConditions = {
+                    "p.installed_kwp > 0",
+                    "p.installed_kwp + 1 > 0",
+                    "abs(p.installed_kwp + 1) > 0",
+                    "p.installed_kwp + 1 + 2 > 0",
+                    "coalesce(p.installed_kwp + 1, 0, 1) > 0",
+                    "p.country ~ 'x'",
+                    "p.country LIKE 'x%'",
+                    "lower(p.country) = 'x'",
+                    "lower(p.country) = $1",
+                    "lower(p.country) = upper(p.country)",
+                    "coalesce(p.country, 'z') = 'x'",
+                    "p.country::VARCHAR = 'x'",
+                    "p.installed_kwp::STRING <> '5'",
+                    "to_str(p.ts, 'yyyy') = '2020'",
+                    "concat(p.country, '_') = 'x_'",
+                    "CASE WHEN p.installed_kwp > 0 THEN 'a' ELSE 'b' END = 'a'",
+                    "p.installed_kwp > 0 AND lower(p.country) = 'x'",
+                    "NOT (lower(p.country) = 'x' OR p.country::VARCHAR < 'm')"
             };
             for (String from : froms) {
                 // The fused plan would run the condition on each build row, and the ordinary plan
                 // runs it only on the pairs whose keys match, so a build table with more rows than
-                // the probe table keeps the ordinary plan for an expensive condition. A comparison
-                // costs about as much as the hash insert it spares, so it stays a candidate.
+                // the probe table keeps the ordinary plan for an expensive condition. Any other
+                // condition costs about as much as the hash insert it spares, so it stays a
+                // candidate.
                 for (String condition : expensiveConditions) {
                     assertCandidate(from + condition, false);
                 }
                 for (String condition : cheapConditions) {
                     assertCandidate(from + condition, true);
                 }
-                // The rule follows the types of the columns a condition reads: a condition over
-                // fixed-size columns stays a candidate, a text cast of one included.
-                assertCandidate(from + "p.installed_kwp > 0", true);
-                assertCandidate(from + "p.country ~ 'x'", true);
-                assertCandidate(from + "p.country::VARCHAR ~ 'x'", true);
+                for (String condition : fixedSizeConditions) {
+                    assertCandidate(from + condition, true);
+                }
+            }
+            // Such a candidate does not presize its key table, and the check of its condition
+            // reads none of the condition's columns as a payload.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String from : froms) {
+                    for (String condition : fixedSizeConditions) {
+                        final HashJoinGroupByCandidate candidate = candidate(compiler, from + condition);
+                        Assert.assertNotNull(condition, candidate);
+                        Assert.assertNotNull(condition, candidate.getBuildOnFilter());
+                        Assert.assertFalse(condition, candidate.isKeyCapacityPresized());
+                        Assert.assertEquals(condition, 0, candidate.getRequiredBuildColumns().size());
+                    }
+                }
             }
             // The build scan's own WHERE clause runs on each build row in both plans, and an INNER
             // join has no ON condition on the build: the optimizer moves the conjunct into the WHERE

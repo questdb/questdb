@@ -47,6 +47,7 @@ import org.junit.Test;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.choice;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.findChoice;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.ordinary;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 /**
  * An INNER join whose input scans a timestamp interval compiles both orientations under a
@@ -418,14 +419,6 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             lines.put(sink.getLine(i)).put('\n');
         }
         return lines.toString();
-    }
-
-    private static String result(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(context)) {
-            StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
-            return sink.toString();
-        }
     }
 
     /**

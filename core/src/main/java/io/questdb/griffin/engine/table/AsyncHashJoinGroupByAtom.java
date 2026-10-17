@@ -953,10 +953,11 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
      * builds the table that the primary probes, which held at least as many rows at compile time.
      * The planner presizes its key table only when the two tables held equal rows, and this rule
      * then checks the alternate as it checks the primary. An outer join's ON condition on the
-     * build alone that reads a variable-size column, and does more than compare columns, constants
-     * and bind variables, takes the fused plan only under the presize condition, since the build
-     * runs it on every build row, so the new compile also returns such a query to the ordinary
-     * plan.</li>
+     * build alone that reads a variable-size column, and does more than compare columns,
+     * constants and bind variables, takes the fused plan only under the presize condition, since
+     * the build runs it on every build row, and so does one that passes a STRING, VARCHAR, BINARY
+     * or ARRAY value that it computes from a build column to anything but a comparison, so the
+     * new compile also returns such a query to the ordinary plan.</li>
      * <li>A RIGHT join keeps the ordinary plan when its build table holds more rows than the bound
      * allows, and an execution holds the build table to the same bound.</li>
      * </ul>

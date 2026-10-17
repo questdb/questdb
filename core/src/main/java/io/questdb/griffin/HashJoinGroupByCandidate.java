@@ -168,8 +168,10 @@ public final class HashJoinGroupByCandidate {
      * keeps the compile-time choice; see {@link io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom}.
      * An outer join's ON condition on the build alone that reads a build column outside
      * {@link #isSupportedValueType(int)}, and does more than compare columns, constants and bind
-     * variables, qualifies only where this holds, so the same recompile returns such a query to
-     * the ordinary plan; see analyse().
+     * variables, qualifies only where this holds, and so does one that passes a STRING, VARCHAR,
+     * BINARY or ARRAY value that it computes from a build column to anything but a comparison, as
+     * {@code lower(sym) ~ 'x'} does, so the same recompile returns such a query to the ordinary
+     * plan; see analyse().
      */
     public boolean isKeyCapacityPresized() {
         return isKeyCapacityPresized;
@@ -430,19 +432,40 @@ public final class HashJoinGroupByCandidate {
             // more than the hash insert it spares: a regular expression over 500-character texts
             // ran up to 29 times slower fused, with a 250k-row build and a 1k-row probe. So such a
             // condition qualifies only when the probe table holds at least as many rows as the
-            // build table, which keeps the fused plan's evaluations within the probe's rows whatever
-            // the condition costs. This is the presize condition, so the check that each execution
-            // makes for it asks the holder of a reused factory to compile the query again, into the
-            // ordinary plan, once the build table holds more than twice the probe table's rows.
-            // isCheapShaped() exempts a condition that only compares columns, constants and bind
-            // variables: such a comparison costs about as much per build row as a condition over
-            // fixed-size columns, a selective one spares hash inserts, and the ordinary plan hashes
-            // every build row on one thread. A comparison that passes most build rows spares none,
-            // and with a serial build and a small probe it ran up to 1.4 times slower fused, as a
-            // condition over fixed-size columns does; with a parallel build it ran faster. The
-            // build scan's own WHERE filter runs over every build row in both plans, so it does not
-            // depend on the sizes.
-            if (analyzer.hasVarSizeBuildOnColumn && !isCheapShaped(analyzer.buildOnFilter) && !isKeyCapacityPresized) {
+            // build table, which keeps the fused plan's evaluations within the probe table's rows
+            // whatever the condition costs. This is the presize condition, so the check that each
+            // execution makes for it asks the holder of a reused factory to compile the query
+            // again, into the ordinary plan, once the build table holds more than twice the probe
+            // table's rows. isCheapShaped() exempts a condition that only compares columns,
+            // constants and bind variables: such a comparison costs about as much per build row as
+            // a condition over fixed-size columns, a selective one spares hash inserts, and the
+            // ordinary plan hashes every build row on one thread. A comparison that passes most
+            // build rows spares none, and with a serial build and a small probe it ran up to 1.4
+            // times slower fused, as a condition over fixed-size columns does; with a parallel
+            // build it ran faster. With a serial build and a small probe, VARCHAR comparisons that
+            // isCheapShaped() accepts ran 1.3 to 1.7 times slower fused, and b.arr != b.arr2 over
+            // 2-element arrays, which passes every row, 1.9 times with a 250k-row build. A
+            // comparison of two long values that match reads both to their ends, and the exemption
+            // takes that cost as well: equal 1,000-element arrays ran up to 35 times slower fused
+            // with a 250k-row build, and equal 8,000-byte VARCHAR values up to 25 times with a
+            // 50k-row build. A variable-size value that a function or a cast computes from
+            // fixed-size or SYMBOL columns, such as lower(sym) or v::VARCHAR, counts as a
+            // variable-size column only when something other than a comparison takes it: a regular
+            // expression, LIKE, IN or a function call. A regular expression over the text that
+            // lower() or a cast to VARCHAR made from 500-character symbols ran up to 26 times
+            // slower fused. A comparison with a constant of a text that such a function or cast
+            // computes from 1-character symbols, or that to_str() or CASE computes, ran 1.8 to 11
+            // times faster fused with a 1M-row parallel build and a 1k-row probe, and between 1.8
+            // times faster and 1.7 times slower with a 250k-row serial build. Computing such a
+            // value costs per row in proportion to its length, and the exemption of its comparisons
+            // takes that cost as well: with 500-character symbols, lower(sym) = 'x',
+            // sym::VARCHAR = 'x' and concat(sym, '_') = 'x_' ran 9 to 20 times slower fused with a
+            // 250k-row serial build and a 1k-row probe, and between 1.5 times faster and 1.9 times
+            // slower with a 1M-row parallel build. A SYMBOL operator such as sym ~ 'x' reads no
+            // such value: it matches the pattern against the symbol table's values once, not
+            // against each row. The build scan's own WHERE filter runs over every build row in both
+            // plans, so it does not depend on the sizes.
+            if (!isKeyCapacityPresized && analyzer.isExpensiveBuildOnFilter()) {
                 return null;
             }
             return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0), isKeyCapacityPresized,
@@ -514,6 +537,24 @@ public final class HashJoinGroupByCandidate {
     }
 
     /**
+     * True when the resolved node is, or holds, a literal, which resolution turns into a column.
+     */
+    private static boolean hasColumn(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL || hasColumn(node.lhs) || hasColumn(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasColumn(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Mirrors generateFill(): the first fill stride on the nested chain wraps the GROUP BY, or
      * fails compilation, unless its value list is empty or a lone NONE.
      */
@@ -526,6 +567,16 @@ public final class HashJoinGroupByCandidate {
             }
         }
         return false;
+    }
+
+    /**
+     * True when the node is AND, OR, NOT or a comparison that isComparison() accepts: an operation
+     * that returns BOOLEAN whatever the types of its operands.
+     */
+    private static boolean isBooleanOperation(ExpressionNode node) {
+        final CharSequence token = node.token;
+        return node.type == ExpressionNode.OPERATION && (SqlKeywords.isAndKeyword(token) || SqlKeywords.isOrKeyword(token)
+                || SqlKeywords.isNotKeyword(token) || isComparison(token));
     }
 
     /**
@@ -548,8 +599,7 @@ public final class HashJoinGroupByCandidate {
         if (SqlKeywords.isNotKeyword(token)) {
             return node.paramCount == 1 && isCheapShaped(node.rhs);
         }
-        if (node.paramCount != 2 || !(Chars.equals(token, "=") || Chars.equals(token, "!=") || Chars.equals(token, "<>")
-                || Chars.equals(token, "<") || Chars.equals(token, "<=") || Chars.equals(token, ">") || Chars.equals(token, ">="))) {
+        if (node.paramCount != 2 || !isComparison(token)) {
             return false;
         }
         final ExpressionNode lhs = node.lhs;
@@ -557,6 +607,15 @@ public final class HashJoinGroupByCandidate {
         return lhs != null && rhs != null
                 && (lhs.type == ExpressionNode.LITERAL || lhs.type == ExpressionNode.CONSTANT || lhs.type == ExpressionNode.BIND_VARIABLE)
                 && (rhs.type == ExpressionNode.LITERAL || rhs.type == ExpressionNode.CONSTANT || rhs.type == ExpressionNode.BIND_VARIABLE);
+    }
+
+    /**
+     * True when the token is one of the comparisons {@code =}, {@code !=}, {@code <>}, {@code <},
+     * {@code <=}, {@code >} and {@code >=}.
+     */
+    private static boolean isComparison(CharSequence token) {
+        return Chars.equals(token, "=") || Chars.equals(token, "!=") || Chars.equals(token, "<>")
+                || Chars.equals(token, "<") || Chars.equals(token, "<=") || Chars.equals(token, ">") || Chars.equals(token, ">=");
     }
 
     private static boolean isParallelSafe(Function function) {
@@ -861,6 +920,43 @@ public final class HashJoinGroupByCandidate {
             return FrozenHashJoinBuild.getRowSize(requiredBuildColumns.size() > 0);
         }
 
+        /**
+         * Whether a function or an operator in the resolved node takes as an argument a STRING,
+         * VARCHAR, BINARY or ARRAY value that a function or an operator computes from a column, as
+         * in lower(sym) ~ 'x', sym::VARCHAR LIKE 'x%' or length(lower(sym)) > 0. Such a function
+         * or operator reads the value on each row, as a regular expression over a variable-size
+         * column does. The nodes that isBooleanOperation() accepts, AND, OR, NOT and the
+         * comparisons, do not count: the rule treats a comparison of such a value, as in
+         * lower(sym) = 'x', as cheap, as isCheapShaped() treats a comparison of a variable-size
+         * column, and takes the per-row cost of computing the value; see analyse().
+         * A column is no such value: column() notes a variable-size one. isArgument tells whether
+         * a function or an operator that counts takes the node as an argument. The check parses
+         * only such an argument, and only one that reads a column, so it takes a copy that
+         * nothing else parses: FunctionParser regroups the constants of the tree it parses.
+         */
+        private boolean hasVarSizeArgument(ExpressionNode node, boolean isArgument) throws SqlException {
+            if (node == null || node.type == ExpressionNode.LITERAL) {
+                return false;
+            }
+            final boolean isBooleanOperation = isBooleanOperation(node);
+            if (isArgument && !isBooleanOperation && hasColumn(node)) {
+                try (Function function = parser.parseFunction(node, metadata, executionContext)) {
+                    if (ColumnType.isVarSize(function.getType())) {
+                        return true;
+                    }
+                }
+            }
+            if (hasVarSizeArgument(node.lhs, !isBooleanOperation) || hasVarSizeArgument(node.rhs, !isBooleanOperation)) {
+                return true;
+            }
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                if (hasVarSizeArgument(node.args.getQuick(i), !isBooleanOperation)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private boolean isBindVariableTypeDefined(CharSequence token) {
             final BindVariableService bindVariables = executionContext.getBindVariableService();
             if (bindVariables == null || token.length() < 2) {
@@ -880,6 +976,19 @@ public final class HashJoinGroupByCandidate {
             // FunctionParser refines exactly the types ColumnType.isUndefined() accepts, which includes
             // the weak-dimension arrays that PG Parse defines for array parameters.
             return variable != null && !ColumnType.isUndefined(variable.getType());
+        }
+
+        /**
+         * Whether the ON condition on the build alone can cost far more on a build row than the
+         * hash insert it spares, so that it qualifies only when the probe table holds at least as
+         * many rows as the build table; see analyse(). Such a condition fails isCheapShaped(), and
+         * it reads a variable-size column, or it passes a variable-size value that it computes
+         * from a column to anything but a comparison; see hasVarSizeArgument(). A condition that
+         * passes isCheapShaped() calls no function, so it computes no such value.
+         */
+        private boolean isExpensiveBuildOnFilter() throws SqlException {
+            return resolvedBuildOnFilter != null && !isCheapShaped(resolvedBuildOnFilter)
+                    && (hasVarSizeBuildOnColumn || hasVarSizeArgument(resolveFrameFilter(buildOnFilter, join, -1), false));
         }
 
         private ExpressionNode resolve(ExpressionNode node, IQueryModel model, int source, int depth) {

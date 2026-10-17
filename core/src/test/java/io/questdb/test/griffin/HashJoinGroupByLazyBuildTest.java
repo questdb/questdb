@@ -38,10 +38,8 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
-import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTag;
@@ -65,6 +63,9 @@ import java.util.List;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.choice;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 /**
  * A fused hash join GROUP BY builds its hash table on the first demand for a row, never when its
@@ -548,22 +549,8 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
                 """, context);
     }
 
-    private static AsyncHashJoinGroupByRecordCursorFactory fused(RecordCursorFactory factory) {
-        while (factory != null && !(factory instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
-            factory = factory.getBaseFactory();
-        }
-        Assert.assertNotNull(factory);
-        return (AsyncHashJoinGroupByRecordCursorFactory) factory;
-    }
-
     private static String healthy(String shape) {
         return shape.replace("{W}", "").replace("{A}", "");
-    }
-
-    private static String plan(RecordCursorFactory factory, SqlExecutionContext context) {
-        TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, context);
-        return sink.getSink().toString();
     }
 
     private static String poisoned(String shape) {
@@ -582,14 +569,6 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
         }
         Collections.sort(rows);
         return rows;
-    }
-
-    private static String result(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(context)) {
-            StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
-            return sink.toString();
-        }
     }
 
     // The query's rows under the ordinary hash join plan, sorted.

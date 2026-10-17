@@ -223,19 +223,19 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
     }
 
     // As above, but both tables key their rows by 36-char texts. lpad() with a '0' fill returns a
-    // STRING, so the key is a STRING despite the test names, and would decode to an 8-byte offset and
-    // 76 bytes of length and UTF-16 chars a row, about 92 bytes a Parquet row with the DOUBLE payload.
+    // STRING, so the key is a STRING, and would decode to an 8-byte offset and 76 bytes of length
+    // and UTF-16 chars a row, about 92 bytes a Parquet row with the DOUBLE payload.
     // A reader never decodes the key, which the key table holds, so the Parquet rows decode to their
     // 8-byte payload alone, which a slot's share of the cache, 50 bytes a Parquet row, holds. The build
     // keeps row ids, as the ratios ask, and each of the nine slots decodes the payload of every row
     // group once, within the cache between them.
     @Test
-    public void testParquetBuildPayloadWithinCacheSizeForVarcharKeyedMixedBuildWithLegacyWorkers() throws Exception {
+    public void testParquetBuildPayloadWithinCacheSizeForStringKeyedMixedBuildWithLegacyWorkers() throws Exception {
         assertParquetBuildPayloadDecode(false, true, true, true);
     }
 
     @Test
-    public void testParquetBuildPayloadWithinCacheSizeForVarcharKeyedMixedBuildWithLegacyWorkersAndParallelBuild() throws Exception {
+    public void testParquetBuildPayloadWithinCacheSizeForStringKeyedMixedBuildWithLegacyWorkersAndParallelBuild() throws Exception {
         assertParquetBuildPayloadDecode(true, true, true, true);
     }
 
@@ -723,7 +723,7 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         }
     }
 
-    private void assertParquetBuildPayloadDecode(boolean isParallelBuild, boolean isCopyFitting, boolean isMixed, boolean isVarcharKeyed) throws Exception {
+    private void assertParquetBuildPayloadDecode(boolean isParallelBuild, boolean isCopyFitting, boolean isMixed, boolean isStringKeyed) throws Exception {
         // pb holds 100_000 rows in two days of Parquet row groups of 2_000 rows, 50 row groups, and
         // more rows in its native last partition: one, or 100_000 for a mixed build. A reader decodes
         // the DOUBLE payload alone, 8 bytes a row, and not the key, so for an INT key the decode cache
@@ -733,11 +733,11 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         final long nativeRows = isMixed ? 100_000 : 1;
         final long buildRows = 100_000 + nativeRows;
         final long decodedBuildSize = 100_000 * Double.BYTES;
-        final long cacheSize = isVarcharKeyed ? 100_000 * 200 : 2 * decodedBuildSize;
+        final long cacheSize = isStringKeyed ? 100_000 * 200 : 2 * decodedBuildSize;
         final int workerCount = isMixed ? 8 : 4;
-        final String buildKey = isVarcharKeyed ? "lpad(x::VARCHAR, 36, '0')" : "x::INT";
-        final String nativeBuildKey = isVarcharKeyed ? "lpad((100_000 + x)::VARCHAR, 36, '0')" : "(100_000 + x)::INT";
-        final String probeKey = isVarcharKeyed ? "lpad(((x * 7_919) % 100_000 + 1)::VARCHAR, 36, '0')" : "((x * 7_919) % 100_000 + 1)::INT";
+        final String buildKey = isStringKeyed ? "lpad(x::VARCHAR, 36, '0')" : "x::INT";
+        final String nativeBuildKey = isStringKeyed ? "lpad((100_000 + x)::VARCHAR, 36, '0')" : "(100_000 + x)::INT";
+        final String probeKey = isStringKeyed ? "lpad(((x * 7_919) % 100_000 + 1)::VARCHAR, 36, '0')" : "((x * 7_919) % 100_000 + 1)::INT";
         // Without the copy, each of the slots, one per worker and the owner's, caches the Parquet
         // row groups it decodes within its share of the cache, but no less than a quarter of it.
         final int slotCount = workerCount + 1;
@@ -751,7 +751,7 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         final long decodedBound = isCopied ? cacheSize : slotCount * Math.min(readerShare, decodedBuildSize);
         // For an INT key, a share holds less than a decoded build, so without the copy the readers
         // decode row groups again. For the STRING key, a share holds a decoded build.
-        Assert.assertEquals(!isVarcharKeyed, readerShare < decodedBuildSize);
+        Assert.assertEquals(!isStringKeyed, readerShare < decodedBuildSize);
         // Every worker must hold a probe frame at once, and the gated owner publishes no frame past
         // a full queue, so the queue needs a frame per worker.
         setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, workerCount);
