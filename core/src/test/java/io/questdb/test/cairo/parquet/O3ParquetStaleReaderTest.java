@@ -24,11 +24,19 @@
 
 package io.questdb.test.cairo.parquet;
 
+import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3CopyJob;
+import io.questdb.cairo.O3OpenColumnJob;
+import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -52,6 +60,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
@@ -3866,35 +3875,59 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             final long txnBefore = getTableTxn("pt");
             final String fullScanSql = "SELECT s, v, ts FROM pt WHERE ts IN '2024-01-01'";
             final String rowsBefore = symRowsText(false, row -> row.day.equals("2024-01-01"), SYM_ROW_BY_TS, SYM_BASE_ROWS);
-            final String pendingPurgeSql = "SELECT column_name, column_version FROM '"
-                    + configuration.getSystemTableNamePrefix() + "column_versions_purge_log' WHERE completed = NULL";
-            final long purgeTasksBefore = engine.getMessageBus().getColumnPurgePubSeq().current();
-            try (RecordCursorFactory factory = select(fullScanSql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final WorkerPool pool = new TestWorkerPool(2);
-                try {
-                    // the pool runs the O3 partition jobs of the commit, and a purge job
-                    WorkerPoolUtils.setupWriterJobs(pool, engine);
-                    pool.start(LOG);
-                    execute(symRowsInsert(SYM_APPEND_ROWS));
-                    drainWalQueue();
-                } finally {
-                    pool.halt();
-                }
-                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
-                Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
-                Assert.assertEquals(purgeTasksBefore + 1, engine.getMessageBus().getColumnPurgePubSeq().current());
-                assertStaleCursor("pinned full scan", rowsBefore, factory, cursor);
-                // the pool's purge job may have taken the task, this one finds it in the queue otherwise
-                try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+            final MessageBus messageBus = engine.getMessageBus();
+            final long purgeTasksBefore = messageBus.getColumnPurgePubSeq().current();
+            // the frozen clock keeps a taken purge task waiting for its retry delay until the test advances it
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-01-10T00:00:00.000000Z"));
+            // the constructor replays and truncates the purge log the setup left behind
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                try (RecordCursorFactory factory = select(fullScanSql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final WorkerPool pool = new TestWorkerPool(2);
+                    try {
+                        // the pool runs the O3 jobs of the commit and the test's purge job, which takes the
+                        // task but cannot purge it before the test advances the clock
+                        pool.assign(new O3PartitionPurgeJob(engine));
+                        pool.assign(purgeJob);
+                        pool.assign(new ColumnIndexerJob(messageBus));
+                        pool.assign(new O3PartitionJob(messageBus));
+                        pool.assign(new O3OpenColumnJob(messageBus));
+                        pool.assign(new O3CopyJob(messageBus));
+                        pool.assign(new ColumnTaskJob(messageBus));
+                        pool.start(LOG);
+                        execute(symRowsInsert(SYM_APPEND_ROWS));
+                        drainWalQueue();
+                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                        while (messageBus.getColumnPurgeSubSeq().current() < purgeTasksBefore + 1) {
+                            Assert.assertTrue("the purge job in the pool did not take the task", System.nanoTime() < deadline);
+                            Os.pause();
+                        }
+                    } finally {
+                        pool.halt();
+                    }
+                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+                    Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
+                    Assert.assertEquals(purgeTasksBefore + 1, messageBus.getColumnPurgePubSeq().current());
+                    Assert.assertEquals(purgeTasksBefore + 1, messageBus.getColumnPurgeSubSeq().current());
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    assertStaleCursor("pinned full scan", rowsBefore, factory, cursor);
                     purgeJob.run();
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    setCurrentMicros(currentMicros + configuration.getColumnPurgeRetryDelay());
+                    purgeJob.run();
+                    Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                    assertQuery("SELECT column_name, column_version, partition_timestamp, completed FROM '" + purgeJob.getLogTableName() + "'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    column_name\tcolumn_version\tpartition_timestamp\tcompleted
+                                    s\t-1\t2024-01-01T00:00:00.000000Z\t2024-01-10T00:00:00.000010Z
+                                    """);
+                    assertOnlyIndexVersion("pinned", "INDEX", 0, "s", txnBefore);
+                    cursor.toTop();
+                    assertStaleCursor("pinned full scan after the purge", rowsBefore, factory, cursor);
                 }
-                assertQuery(pendingPurgeSql)
-                        .noLeakCheck()
-                        .returns("column_name\tcolumn_version\n");
-                assertOnlyIndexVersion("pinned", "INDEX", 0, "s", txnBefore);
-                cursor.toTop();
-                assertStaleCursor("pinned full scan after the purge", rowsBefore, factory, cursor);
             }
+            setCurrentMicros(-1);
             assertOnlyIndexVersion("after the purge", "INDEX", 0, "s", txnBefore);
             assertReattachedRows("after the purge", false, SYM_APPEND_ROWS);
         });

@@ -3715,7 +3715,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
-                assertIncompletePurgeLogRows(purgeJob, 0);
+                assertPurgeLogRows(purgeJob, 0, 0);
             }
             for (int i = 0; i < 5; i++) {
                 final TreeSet<String> expectedFiles = new TreeSet<>(Arrays.asList(listingsBefore[i].split(" ")));
@@ -3750,7 +3750,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             engine.releaseInactive();
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
-                assertIncompletePurgeLogRows(purgeJob, 0);
+                assertPurgeLogRows(purgeJob, 0, 0);
             }
             Assert.assertEquals(withoutFilesOfInstanceNone(before, "s"), listFiles(defaultDir("pt")));
             Assert.assertEquals(0, getColumnNameTxnOfDefault("pt", "s"));
@@ -3821,7 +3821,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
      * the old instance of sym in the purge log, and replays the task in a new purge job, after
      * {@code beforeReplay} when not null. Asserts that the replay removes every file of the old instance,
      * named with its column name txn in each partition, but {@code leftoverFiles}, and keeps the other
-     * files, that the purge log holds no incomplete task, and the rows of 'A' in {@code liveColumn}
+     * files, that the new job leaves the purge log empty, and the rows of 'A' in {@code liveColumn}
      * through its index and through a filter that reads no index, or the rows 1 and 4 when no live
      * column is given. Returns the files of the old instance in each partition directory, space-separated.
      */
@@ -3863,7 +3863,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         }
         try (ColumnPurgeJob purgeJob = createPurgeJob()) {
             Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
-            assertIncompletePurgeLogRows(purgeJob, 0);
+            assertPurgeLogRows(purgeJob, 0, 0);
         }
         for (int i = 0; i < dirs.length; i++) {
             final TreeSet<String> expectedFiles = new TreeSet<>(Arrays.asList(listingsBefore[i].split(" ")));
