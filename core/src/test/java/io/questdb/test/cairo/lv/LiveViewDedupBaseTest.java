@@ -583,7 +583,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
-                        e.getMessage().contains("incremental snapshot is not supported")
+                        e.getMessage().contains("live view PARTITION BY key 'u' has unsupported type UUID; cast it to SYMBOL or STRING")
                 );
             }
             Assert.assertNull(
