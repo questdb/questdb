@@ -1529,6 +1529,9 @@ public class FuzzRunner {
     }
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
+        // the drain loop runs a timing-dependent number of times: a copy keeps its draws off applyRnd,
+        // so that the seeded draws after the drain replay from the printed seeds
+        final Rnd drainRnd = new Rnd(applyRnd.getSeed0(), applyRnd.getSeed1());
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
              TableReader rdr1 = getReaderWithRetries(tableName, null);
@@ -1536,8 +1539,8 @@ public class FuzzRunner {
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             while (walApplyJob.run() || checkWalTransactionsJob.run()) {
-                forceReleaseTableWriter(applyRnd);
-                purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
+                forceReleaseTableWriter(drainRnd);
+                purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, 0.25);
             }
         }
     }
