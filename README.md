@@ -79,6 +79,9 @@ the Docker image above.
 For the full walkthrough, start with the
 [quick start guide](https://questdb.com/docs/getting-started/quick-start/).
 
+For high availability, tiered storage and enterprise security,
+[start a free QuestDB Enterprise trial](https://questdb.com/enterprise/trial/).
+
 <p>&nbsp;</p>
 
 <div align="center">
