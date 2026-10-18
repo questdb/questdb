@@ -273,10 +273,11 @@ public final class HashJoinGroupByClause {
         // table master gets a SAMPLE BY.
         if (l.isTable && rnd.nextInt(7) == 0) {
             // The optimiser rewrites SAMPLE BY aligned to calendar into a GROUP BY, which fuses
-            // unless it fills. A RIGHT JOIN null-extends l.ts; the NULL-timestamp group comes
-            // out ahead of the filled grid.
+            // unless it fills. A RIGHT JOIN null-extends l.ts, and a filled SAMPLE BY fails on a
+            // NULL designated timestamp ("SAMPLE BY designated timestamp cannot be NULL"), so
+            // only INNER and LEFT joins get a FILL.
             sql.put(" SAMPLE BY ").put(SAMPLE_BY_INTERVALS[rnd.nextInt(SAMPLE_BY_INTERVALS.length)]);
-            if (rnd.nextInt(3) == 0) {
+            if (!isRightJoin && rnd.nextInt(3) == 0) {
                 appendFill(sql, rnd, aggCount);
             }
             // ALIGN TO FIRST OBSERVATION skips the rewrite and needs l.ts in order, which a

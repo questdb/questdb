@@ -1298,12 +1298,12 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillOnOuterJoinPassesNullTimestampRowsThrough() throws Exception {
+    public void testFillOnOuterJoinNullTimestampFails() throws Exception {
         // A RIGHT or FULL join null-extends l.ts, the timestamp SAMPLE BY buckets on. The fill
         // cursor used to fail with the critical "data row timestamp null precedes next bucket".
-        // The NULL-timestamp groups now pass through ahead of the grid, as they appear without
-        // FILL, and the grid, the fill keys and FILL(PREV) cover the timestamped rows alone:
-        // key r only occurs with a NULL timestamp and gets no fill rows, key p occurs in both.
+        // It now fails with a non-critical error that names the NULL. Without FILL, the
+        // NULL-timestamp group comes out ahead of the grid, and a FROM-TO interval on l.ts
+        // drops the NULL-timestamp rows, so FILL works there.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE c (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE d (k INT, s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1331,102 +1331,22 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T00:00:00.000000Z\t1\t10.0
                             2024-01-01T03:00:00.000000Z\t1\t20.0
                             """);
-            assertQuery("SELECT l.ts, count() c, sum(r.v) v" + rightJoin + " SAMPLE BY 1h FILL(NULL)")
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            ts\tc\tv
-                            \t2\t70.0
-                            2024-01-01T00:00:00.000000Z\t1\t10.0
-                            2024-01-01T01:00:00.000000Z\tnull\tnull
-                            2024-01-01T02:00:00.000000Z\tnull\tnull
-                            2024-01-01T03:00:00.000000Z\t1\t20.0
-                            """);
-            assertQuery("SELECT l.ts, count() c, sum(r.v) v" + rightJoin + " SAMPLE BY 1h FILL(PREV)")
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            ts\tc\tv
-                            \t2\t70.0
-                            2024-01-01T00:00:00.000000Z\t1\t10.0
-                            2024-01-01T01:00:00.000000Z\t1\t10.0
-                            2024-01-01T02:00:00.000000Z\t1\t10.0
-                            2024-01-01T03:00:00.000000Z\t1\t20.0
-                            """);
-            assertQuery("SELECT l.ts, count() c, sum(r.v) v" + rightJoin + " SAMPLE BY 1h FILL(0, 0)")
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            ts\tc\tv
-                            \t2\t70.0
-                            2024-01-01T00:00:00.000000Z\t1\t10.0
-                            2024-01-01T01:00:00.000000Z\t0\t0.0
-                            2024-01-01T02:00:00.000000Z\t0\t0.0
-                            2024-01-01T03:00:00.000000Z\t1\t20.0
-                            """);
+
+            final String error = "SAMPLE BY designated timestamp cannot be NULL";
+            for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0, 0)"}) {
+                assertQuery("SELECT l.ts, count() c, sum(r.v) v" + rightJoin + " SAMPLE BY 1h " + fill)
+                        .failsWith(error);
+                assertQuery("SELECT l.ts, r.s, count() c, sum(r.v) v" + rightJoin + " SAMPLE BY 1h " + fill + " ORDER BY l.ts, r.s")
+                        .failsWith(error);
+                assertQuery("SELECT l.ts, count() c, sum(r.v) v" + rightJoin + " WHERE l.ts IS NULL SAMPLE BY 1h " + fill)
+                        .failsWith(error);
+            }
             assertQuery("SELECT l.ts, count() c, sum(r.v) v FROM c l FULL JOIN d r ON l.k = r.k SAMPLE BY 1h FILL(NULL)")
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            ts\tc\tv
-                            \t2\t70.0
-                            2024-01-01T00:00:00.000000Z\t1\t10.0
-                            2024-01-01T01:00:00.000000Z\t1\tnull
-                            2024-01-01T02:00:00.000000Z\tnull\tnull
-                            2024-01-01T03:00:00.000000Z\t1\t20.0
-                            """);
-
-            assertQuery("SELECT l.ts, r.s, count() c, sum(r.v) v" + rightJoin + " SAMPLE BY 1h FILL(NULL) ORDER BY l.ts, r.s")
-                    .timestamp("ts")
-                    .returns("""
-                            ts\ts\tc\tv
-                            \tp\t1\t30.0
-                            \tr\t1\t40.0
-                            2024-01-01T00:00:00.000000Z\tp\t1\t10.0
-                            2024-01-01T00:00:00.000000Z\tq\tnull\tnull
-                            2024-01-01T01:00:00.000000Z\tp\tnull\tnull
-                            2024-01-01T01:00:00.000000Z\tq\tnull\tnull
-                            2024-01-01T02:00:00.000000Z\tp\tnull\tnull
-                            2024-01-01T02:00:00.000000Z\tq\tnull\tnull
-                            2024-01-01T03:00:00.000000Z\tp\tnull\tnull
-                            2024-01-01T03:00:00.000000Z\tq\t1\t20.0
-                            """);
-            assertQuery("SELECT l.ts, r.s, count() c, sum(r.v) v" + rightJoin + " SAMPLE BY 1h FILL(PREV) ORDER BY l.ts, r.s")
-                    .timestamp("ts")
-                    .returns("""
-                            ts\ts\tc\tv
-                            \tp\t1\t30.0
-                            \tr\t1\t40.0
-                            2024-01-01T00:00:00.000000Z\tp\t1\t10.0
-                            2024-01-01T00:00:00.000000Z\tq\tnull\tnull
-                            2024-01-01T01:00:00.000000Z\tp\t1\t10.0
-                            2024-01-01T01:00:00.000000Z\tq\tnull\tnull
-                            2024-01-01T02:00:00.000000Z\tp\t1\t10.0
-                            2024-01-01T02:00:00.000000Z\tq\tnull\tnull
-                            2024-01-01T03:00:00.000000Z\tp\t1\t10.0
-                            2024-01-01T03:00:00.000000Z\tq\t1\t20.0
-                            """);
-
-            // the grid anchors on the first timestamped row with an offset or a time zone as well
+                    .failsWith(error);
             assertQuery("SELECT l.ts, count() c, sum(r.v) v" + rightJoin + " SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '00:15'")
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            ts\tc\tv
-                            \t2\t70.0
-                            2023-12-31T23:15:00.000000Z\t1\t10.0
-                            2024-01-01T00:15:00.000000Z\tnull\tnull
-                            2024-01-01T01:15:00.000000Z\tnull\tnull
-                            2024-01-01T02:15:00.000000Z\t1\t20.0
-                            """);
+                    .failsWith(error);
             assertQuery("SELECT l.ts, count() c, sum(r.v) v" + rightJoin + " SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            ts\tc\tv
-                            \t2\t70.0
-                            2023-12-31T23:00:00.000000Z\t2\t30.0
-                            """);
+                    .failsWith(error);
 
             // FROM-TO filters on l.ts, which excludes the NULL-timestamp rows
             assertQuery("SELECT l.ts, count() c, sum(r.v) v" + rightJoin + " SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00' FILL(NULL)")
@@ -1439,22 +1359,6 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tnull\tnull
                             2024-01-01T03:00:00.000000Z\t1\t20.0
                             2024-01-01T04:00:00.000000Z\tnull\tnull
-                            """);
-
-            // no timestamped rows at all: the NULL-timestamp groups and no grid
-            assertQuery("SELECT l.ts, count() c, sum(r.v) v" + rightJoin + " WHERE l.ts IS NULL SAMPLE BY 1h FILL(NULL)")
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            ts\tc\tv
-                            \t2\t70.0
-                            """);
-            assertQuery("SELECT l.ts, r.s, count() c, sum(r.v) v" + rightJoin + " WHERE l.ts IS NULL SAMPLE BY 1h FILL(PREV) ORDER BY l.ts, r.s")
-                    .timestamp("ts")
-                    .returns("""
-                            ts\ts\tc\tv
-                            \tp\t1\t30.0
-                            \tr\t1\t40.0
                             """);
         });
     }
