@@ -32,12 +32,13 @@ import java.time.temporal.ChronoUnit;
  * two ways and the corrections matter, because they were the stated reason durable ack is
  * defaulted off:
  * <ul>
- *   <li>{@code cursorSendLoopForTest()} DOES exist and is public
- *       ({@code QwpWebSocketSender:1879}), so the send loop's counters ARE reachable.</li>
- *   <li>The LOCAL tier is accepted by the client ({@code Sender:3808} allows
- *       {@code [on, off, local, replicated, local,replicated]}) AND granted by an OSS server:
- *       {@code LocalDurableAckRegistry} is the OSS default, its {@code isEnabled()} is true and
- *       {@code isTierAvailable(LOCAL)} is true. Only REPLICATED is enterprise-only.</li>
+ *   <li>{@code QwpWebSocketSender.cursorSendLoopForTest()} DOES exist and is public, so the send
+ *       loop's counters ARE reachable.</li>
+ *   <li>The LOCAL tier is accepted by the client ({@code Sender} allows
+ *       {@code [on, off, local, replicated, local,replicated]}) AND granted by an OSS server whose
+ *       resolved commit mode is ADAPTIVE and whose durability is not fenced:
+ *       {@code LocalDurableAckRegistry} is the OSS default, and its {@code isEnabled()} and
+ *       {@code isTierSetAvailable(LOCAL)} are true only then. Only REPLICATED is enterprise-only.</li>
  * </ul>
  * What remains TRUE, and is the real constraint: {@code getLocalDurableTableWatermark()} is
  * documented to stay EMPTY in local-only mode ("the local acks feed the trim watermarks directly
@@ -83,9 +84,9 @@ public class QwpCrashIngestClient {
         // THE DEFAULT IS STILL off, BUT NOT FOR THE REASON PREVIOUSLY RECORDED HERE. The old
         // comment claimed an OSS server refuses the upgrade outright when durable ack is
         // requested. That is FALSE as of client 1.3.10-SNAPSHOT / this server: the OSS default
-        // registry is LocalDurableAckRegistry, which reports isEnabled()=true and
-        // isTierAvailable(LOCAL)=true, so `local` is granted out of the box. Only `replicated`
-        // is enterprise-only.
+        // registry is LocalDurableAckRegistry, which grants `local` when the server's resolved
+        // commit mode is ADAPTIVE and its durability is not fenced (isEnabled() and
+        // isTierSetAvailable(LOCAL) are true only then). Only `replicated` is enterprise-only.
         //
         // It stays off because this arm's oracle does not yet USE the acks: the watermark below
         // is polled from the server's wal_tables(), so requesting the tier would add frames
@@ -173,8 +174,9 @@ public class QwpCrashIngestClient {
             return;
         }
 
-        // Whether the LOCAL durable-ack tier was requested. Granted by an OSS server out of the
-        // box (LocalDurableAckRegistry is the default); only `replicated` is enterprise-only.
+        // Whether the LOCAL durable-ack tier was requested. An OSS server grants it in ADAPTIVE
+        // mode while its durability is not fenced (LocalDurableAckRegistry is the default); only
+        // `replicated` is enterprise-only.
         final boolean localTier = ackTier.contains("local");
         boolean ackPremiseChecked = false;
 

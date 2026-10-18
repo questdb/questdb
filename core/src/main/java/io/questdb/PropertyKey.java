@@ -50,8 +50,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_COMMIT_WRITEBACK_DRAIN("cairo.wal.commit.writeback.drain"),
     CAIRO_ADAPTIVE_EPOCH_INTERVAL("cairo.adaptive.epoch.interval"),
     CAIRO_ADAPTIVE_EPOCH_MAX_ROWS("cairo.adaptive.epoch.max.rows"),
-    // Test-oriented only: not on the documented server property surface, so it is kept out of `show
-    // parameters` and server.conf.
     CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE("cairo.adaptive.epoch.flush.on.close"),
     CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW("cairo.adaptive.commit.group.window"),
     CAIRO_CREATE_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
