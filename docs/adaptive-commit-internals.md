@@ -422,8 +422,8 @@ pool's.
 the log. A task a save point still holds (`ColumnPurgeOperator.isLastPurgeHeldByEpoch`) is written back to the
 truncated log at its original timestamp and queued for the running job, which retries it until the pins move. A log
 row whose update is past the table's committed txn (a recovery rewind to a save point before the update, or a power
-loss outside `adaptive`) names the version the table uses now: in every mode it is neither deleted nor retried, and
-the replay of the update queues its own purge.
+loss outside `adaptive`) names the version the table uses now: in every mode it is neither deleted nor retried. A
+WAL replay of the update, if any, queues its own purge; without one, as on a non-WAL table, the version stays live.
 
 **The partition purge after a restart.** After a failed flush and a restart, the page cache can hold a `_txn` (in
 `sync`) or a save point header (in `adaptive`) that the device never got, and a purge that trusts it can remove the

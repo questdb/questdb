@@ -305,7 +305,8 @@ public class ColumnPurgeOperator implements Closeable {
                 }
                 // A logged update past the committed txn did not survive the stop: a power loss outside adaptive,
                 // or a recovery rewind to a save point before it, dropped it. The version the row names is the
-                // one the table uses now, and a replay of the update queues its own purge.
+                // one the table uses now. A WAL replay of the update, if any, queues its own purge; without one,
+                // as on a non-WAL table, the version stays live.
                 if (scoreboardUseMode == ScoreboardUseMode.STARTUP_ONLY && task.getUpdateTxn() > txReader.getTxn()) {
                     LOG.info().$("cannot purge, update is past the committed txn [path=").$(path.trimTo(pathTableLen))
                             .$(", updateTxn=").$(task.getUpdateTxn())

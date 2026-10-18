@@ -373,6 +373,10 @@ Found while this mode was built, not yet filed:
   durable. On a table nobody writes after the restart, the old versions stay on the disk until a writer opens it: its
   next write, or in `adaptive` its idle save point (section 9) if its two save points differ. Before, a purge after a
   failed flush and a restart could remove the version the table on the disk still named.
+- **The column purge at start** no longer deletes a column version for a purge log row whose update is past the
+  table's committed txn, in every mode. After a power loss in `nosync` or `async`, the log can keep the row of an
+  UPDATE whose `_txn` never reached the disk, and the version that row names is the one the table still uses. The
+  start now leaves that version alone. Before, it could delete a column version the table still used.
 - **A QuestDB Enterprise backup restore** flushes each restored table before it marks the table as restored, in
   every mode, about 11 ms per table (section 9). Before, a restore resumed after a power loss could skip a table
   whose files never reached the disk.
