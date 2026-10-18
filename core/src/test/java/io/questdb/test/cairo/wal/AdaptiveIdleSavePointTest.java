@@ -801,6 +801,83 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStartupColumnPurgeKeepsTwoHeldTasksApart() throws Exception {
+        // The startup purge groups log rows into tasks by their timestamp. It writes each held task back at its own
+        // original timestamp, so every later start reads the two tasks again instead of merging them into one.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            startClock();
+            try {
+                final TableToken tt = createDays("t", false);
+                final ObjList<String> left = columnFiles(tt);
+                tick(INTERVAL_MS);
+                execute("UPDATE t SET v = 9 WHERE ts < '2024-01-02'");
+                execute("UPDATE t SET v = 8 WHERE ts >= '2024-01-03'");
+                drainWalQueue();
+                final String logTable;
+                try (ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(engine)) {
+                    columnPurgeJob.run();
+                    logTable = columnPurgeJob.getLogTableName();
+                }
+                final String openTasksSql = "SELECT count_distinct(ts) tasks, count() - count(completed) open FROM '" + logTable + "'";
+                // No leak check: its engine.clear() would drop the table's txn tracker, which holds the pins.
+                assertQuery(openTasksSql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                tasks\topen
+                                2\t2
+                                """);
+                final StringSink failures = new StringSink();
+                for (int restart = 1; restart <= 3; restart++) {
+                    try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
+                        Assert.assertEquals("restart " + restart + ", tasks kept for a retry", 2, job.getOutstandingPurgeTasks());
+                    }
+                    checkOnDisk(failures, "restart " + restart, tt, left, true);
+                    assertQuery(openTasksSql)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    tasks\topen
+                                    2\t2
+                                    """);
+                }
+                try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
+                    idlePass(INTERVAL_MS / 2, null);
+                    idlePass(INTERVAL_MS / 2, null);
+                    final SeqTxnTracker tracker = tracker(tt);
+                    Assert.assertEquals("idle spell over", tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                    tick(INTERVAL_MS);
+                    job.run();
+                    checkOnDisk(failures, "retry, both save points past the updates", tt, left, false);
+                    Assert.assertEquals("retry, tasks kept for a retry", 0, job.getOutstandingPurgeTasks());
+                }
+                assertQuery(openTasksSql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                tasks\topen
+                                2\t0
+                                """);
+                Assert.assertEquals("", failures.toString());
+            } finally {
+                setCurrentMicros(-1);
+            }
+            assertQuery("SELECT sum(v) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            36
+                            """);
+        });
+    }
+
+    @Test
     public void testStartupColumnPurgeKeepsVersionNamedBySavePoint() throws Exception {
         // The column purge at server start skips the reader check, so the save point check alone keeps the column
         // version an UPDATE left while the older save point still names it. The startup purge then truncates its

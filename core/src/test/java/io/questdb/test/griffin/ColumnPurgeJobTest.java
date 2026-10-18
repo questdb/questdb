@@ -35,6 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Micros;
@@ -54,6 +55,7 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @RunWith(Parameterized.class)
 public class ColumnPurgeJobTest extends AbstractCairoTest {
@@ -458,6 +460,75 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .timestamp("ts")
                         .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeDropsFailedDeleteAfterRestart() throws Exception {
+        // The startup purge keeps only a task a save point holds. A task left unfinished by a failed delete goes with
+        // the log truncate, as it always has: its file stays on disk until VACUUM TABLE.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            final String failingFile = "1970-01-03.1" + Files.SEPARATOR + "str.i";
+            final AtomicBoolean failRemove = new AtomicBoolean();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public boolean removeQuiet(LPSZ name) {
+                    if (Utf8s.endsWithAscii(name, failingFile) && failRemove.compareAndSet(true, false)) {
+                        return false;
+                    }
+                    return super.removeQuiet(name);
+                }
+            };
+
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("CREATE TABLE up_part_o3 AS" +
+                        " (SELECT timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1_000_000L)::" + timestampType.getTypeName() + " ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " FROM long_sequence(5)), INDEX(sym2)" +
+                        " TIMESTAMP(ts) PARTITION BY DAY");
+
+                execute("INSERT INTO up_part_o3 " +
+                        " SELECT timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1_000_000L) ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " FROM long_sequence(3)");
+
+                try (TableReader rdr = getReader("up_part_o3")) {
+                    update("UPDATE up_part_o3 SET x = 100, str = 'abcd', sym2 = 'EE' WHERE ts >= '1970-01-03'");
+
+                    runPurgeJob(purgeJob);
+                    rdr.openPartition(0);
+                }
+            }
+
+            try (Path path = new Path()) {
+                final String[] partitions = new String[]{"1970-01-03.1", "1970-01-04.1", "1970-01-05"};
+                assertFilesExist(partitions, path, "up_part_o3", "", true);
+
+                failRemove.set(true);
+                final String purgeLogTableName;
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    Assert.assertFalse("startup purge tried the delete", failRemove.get());
+                    Assert.assertEquals("tasks kept for a retry", 0, purgeJob.getOutstandingPurgeTasks());
+                    purgeLogTableName = purgeJob.getLogTableName();
+                }
+
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("up_part_o3")).concat(failingFile).$();
+                Assert.assertTrue(Utf8s.toString(path), TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+                assertFilesExist(new String[]{"1970-01-04.1", "1970-01-05"}, path, "up_part_o3", "", false);
+
+                assertQuery(purgeLogTableName)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
             }
         });
     }
