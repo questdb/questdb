@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -215,9 +216,13 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             }
 
 
+            // Under adaptive the save points still name the versions the UPDATE of up_part_o3_2 left, one task per
+            // column, so the startup purge keeps those tasks: it writes them back to the truncated log and queues
+            // them for the running job.
+            final int heldTaskCount = engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE ? 3 : 0;
             String purgeLogTableName;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(heldTaskCount, purgeJob.getOutstandingPurgeTasks());
                 purgeLogTableName = purgeJob.getLogTableName();
             }
 
@@ -234,11 +239,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                             1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE
                             """, timestampType.getTypeName()));
 
-            // cleaned everything, table is truncated
-            assertQuery(purgeLogTableName)
+            // the log is truncated, apart from the held tasks
+            assertQuery("SELECT count_distinct(column_name) columns, count(completed) completed FROM '" + purgeLogTableName + "'")
                     .noLeakCheck()
-                    .timestamp("ts")
-                    .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("columns\tcompleted\n" + heldTaskCount + "\t0\n");
 
             // Check logging is ok. This test reproduces logging failure because of exception in the middle of logging.
             // The result can be that this loop never finishes.

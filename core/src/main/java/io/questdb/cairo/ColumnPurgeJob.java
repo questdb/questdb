@@ -41,6 +41,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.WeakMutableObjectPool;
@@ -231,6 +232,9 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         long microTime = clock.getTicks();
+        // Tasks a save point still holds. The log truncate below would forget them, so they are written back to
+        // the log and retried by the running job.
+        final ObjList<ColumnPurgeRetryTask> heldTasks = new ObjList<>();
         try {
             assert recordCursorFactory.supportsUpdateRowId(tableToken);
             int count = 0;
@@ -260,7 +264,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     if (ts != lastTs || task == null) {
                         if (task != null) {
                             if (taskInitialized) {
-                                columnPurgeOperator.purge(task);
+                                if (!columnPurgeOperator.purge(task) && columnPurgeOperator.isLastPurgeHeldByEpoch()) {
+                                    heldTasks.add(task);
+                                    task = taskPool.pop();
+                                }
                                 taskInitialized = false;
                             }
                         } else {
@@ -311,6 +318,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                 retryDelay,
                                 microTime
                         );
+                        task.timestamp = ts;
                     }
                     long columnVersion = rec.getLong(COLUMN_VERSION_COLUMN);
                     long partitionTs = task.getTimestampTypeDriver().fromMicros(rec.getLong(PARTITION_TIMESTAMP_COLUMN));
@@ -318,10 +326,11 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     task.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
                 }
                 if (task != null) {
-                    if (taskInitialized) {
-                        columnPurgeOperator.purge(task);
+                    if (taskInitialized && !columnPurgeOperator.purge(task) && columnPurgeOperator.isLastPurgeHeldByEpoch()) {
+                        heldTasks.add(task);
+                    } else {
+                        taskPool.push(task);
                     }
-                    taskPool.push(task);
                 }
             }
 
@@ -330,16 +339,24 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             }
 
             if (writer != null) {
+                boolean truncated = false;
                 try {
                     writer.truncate();
+                    truncated = true;
                 } catch (Throwable th) {
                     LOG.error().$("failed to truncate column version purge log table").$(th).$();
+                }
+                if (truncated) {
+                    retryHeldTasks(heldTasks);
                 }
             }
         } catch (SqlException e) {
             LOG.error().$("failed to reload column version purge tasks").$((Throwable) e).$();
         } finally {
             Misc.free(recordCursorFactory);
+            for (int i = 0, n = heldTasks.size(); i < n; i++) {
+                taskPool.push(heldTasks.getQuick(i));
+            }
         }
     }
 
@@ -364,6 +381,34 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             }
         }
         return useful;
+    }
+
+    // Writes the held tasks back to the truncated log at their original timestamps, which keeps them unique and in
+    // order, and queues them for the running job. The tasks the queue takes leave the list.
+    private void retryHeldTasks(ObjList<ColumnPurgeRetryTask> heldTasks) {
+        final int taskCount = heldTasks.size();
+        if (taskCount == 0) {
+            return;
+        }
+        final long now = clock.getTicks();
+        for (int i = 0; i < taskCount; i++) {
+            final ColumnPurgeRetryTask task = heldTasks.getQuick(i);
+            task.retryDelay = retryDelay;
+            task.nextRunTimestamp = now + retryDelay;
+            saveToStorage(task);
+        }
+        commit();
+        if (writer == null) {
+            // The log lost the rows, so the running job could not mark them completed.
+            LOG.error().$("could not keep column versions a save point holds, VACUUM TABLE removes them once the save points move on [taskCount=")
+                    .$(taskCount).I$();
+            return;
+        }
+        for (int i = 0; i < taskCount; i++) {
+            retryQueue.add(heldTasks.getQuick(i));
+        }
+        heldTasks.clear();
+        LOG.info().$("column versions a save point holds, retrying [taskCount=").$(taskCount).I$();
     }
 
     private void saveToStorage(ColumnPurgeRetryTask cleanTask) {

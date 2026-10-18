@@ -418,6 +418,13 @@ purge and the posting purge retry until the pins move. The writer's close (secti
 newest save point, which leaves the two generations apart; the idle save point is the purge job's, not the writer
 pool's.
 
+**The column purge at start.** `ColumnPurgeJob` replays its log at start without the reader check, then truncates
+the log. A task a save point still holds (`ColumnPurgeOperator.isLastPurgeHeldByEpoch`) is written back to the
+truncated log at its original timestamp and queued for the running job, which retries it until the pins move. A log
+row whose update is past the table's committed txn (a recovery rewind to a save point before the update, or a power
+loss outside `adaptive`) names the version the table uses now: in every mode it is neither deleted nor retried, and
+the replay of the update queues its own purge.
+
 **The partition purge after a restart.** After a failed flush and a restart, the page cache can hold a `_txn` (in
 `sync`) or a save point header (in `adaptive`) that the device never got, and a purge that trusts it can remove the
 partition version the state on the device still names. So in `sync`, and for WAL tables in `adaptive`,

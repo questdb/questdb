@@ -59,6 +59,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final SealedPostingFileScanProbe sealedPostingFileScanProbe = new SealedPostingFileScanProbe();
     private final String updateCompleteColumnName;
     private final int updateCompleteColumnWriterIndex;
+    private boolean lastPurgeHeldByEpoch;
     private long longBytes;
     private int pathTableLen;
     private long purgeLogPartitionFd = -1;
@@ -118,6 +119,13 @@ public class ColumnPurgeOperator implements Closeable {
         closePurgeLogCompleteFile();
         Misc.free(path);
         txnScoreboard = Misc.free(txnScoreboard);
+    }
+
+    /**
+     * True when the last purge left a version because a save point still names it ({@link #isVersionHeldByEpoch}).
+     */
+    public boolean isLastPurgeHeldByEpoch() {
+        return lastPurgeHeldByEpoch;
     }
 
     public boolean purge(@NotNull ColumnPurgeTask task) {
@@ -312,6 +320,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean purge0(ColumnPurgeTask task) {
+        lastPurgeHeldByEpoch = false;
         try {
             setTablePath(task.getTableToken());
             final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
@@ -419,11 +428,14 @@ public class ColumnPurgeOperator implements Closeable {
                         // it is what the next recovery restores. Purging a version it names would leave
                         // recovery restoring a _txn/_cv whose column files are gone, and the writer reopen would
                         // fail ("SymbolMap does not exist") and suspend the table.
-                        if (engine.getCheckpointStatus().isInProgress()
-                                || isVersionHeldByEpoch(columnVersion, task)
+                        final boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
+                        final boolean heldByEpoch = !checkpointInProgress && isVersionHeldByEpoch(columnVersion, task);
+                        if (checkpointInProgress
+                                || heldByEpoch
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
                             // Reader lock still exists
                             allDone = false;
+                            lastPurgeHeldByEpoch |= heldByEpoch;
                             LOG.debug().$("cannot purge, version is in use [path=").$(path).I$();
                             continue;
                         } else {

@@ -803,7 +803,8 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     @Test
     public void testStartupColumnPurgeKeepsVersionNamedBySavePoint() throws Exception {
         // The column purge at server start skips the reader check, so the save point check alone keeps the column
-        // version an UPDATE left while the older save point still names it.
+        // version an UPDATE left while the older save point still names it. The startup purge then truncates its
+        // log, so it writes the held task back, and the running job removes the files once the save points move on.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
         assertMemoryLeak(() -> {
@@ -831,23 +832,38 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
                 final StringSink failures = new StringSink();
                 checkOnDisk(failures, "logged for purge", tt, left, true);
                 // A new job runs the logged purge in the startup mode, then truncates the log.
-                try (ColumnPurgeJob ignore = new ColumnPurgeJob(engine)) {
+                try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
                     checkOnDisk(failures, "startup purge, the older save point names it", tt, left, true);
+                    Assert.assertEquals("startup purge, tasks kept for a retry", 1, job.getOutstandingPurgeTasks());
+                    assertQuery("SELECT count() FROM '" + logTable + "' WHERE completed = null")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count
+                                    1
+                                    """);
+                    tick(INTERVAL_MS / 10);
+                    job.run();
+                    checkOnDisk(failures, "retry, the older save point names it", tt, left, true);
+                    Assert.assertEquals("retry, tasks kept for a retry", 1, job.getOutstandingPurgeTasks());
+                    idlePass(INTERVAL_MS / 2, null);
+                    idlePass(INTERVAL_MS / 2, null);
+                    final SeqTxnTracker tracker = tracker(tt);
+                    Assert.assertEquals("idle spell over", tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                    tick(INTERVAL_MS);
+                    job.run();
+                    checkOnDisk(failures, "retry, both save points past the update", tt, left, false);
+                    Assert.assertEquals("retry, tasks kept for a retry", 0, job.getOutstandingPurgeTasks());
                 }
-                assertQuery("SELECT count() FROM '" + logTable + "'")
+                assertQuery("SELECT count(), count(completed) FROM '" + logTable + "'")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
                         .returns("""
-                                count
-                                0
+                                count\tcount1
+                                1\t1
                                 """);
-                idlePass(INTERVAL_MS / 2, null);
-                idlePass(INTERVAL_MS / 2, null);
-                final SeqTxnTracker tracker = tracker(tt);
-                Assert.assertEquals("idle spell over", tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
-                execute("VACUUM TABLE t");
-                checkOnDisk(failures, "vacuum, both save points past the update", tt, left, false);
                 Assert.assertEquals("", failures.toString());
             } finally {
                 setCurrentMicros(-1);
