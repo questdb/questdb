@@ -40,6 +40,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.test.cairo.crash.AbstractCrashConsistencyTest;
@@ -52,7 +53,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -537,6 +544,41 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
     }
 
     @Test
+    public void testFencedSequencerCloseDoesNotFlushTheLogV1() throws Exception {
+        // NOSYNC flushes the V1 log only at a clean sequencer close. Once that flush has failed, a later one can return
+        // 0 over the pages the kernel dropped, and marking the log flushed would let the next open trust its tail. The
+        // fence outlives the sequencer, so a reopened sequencer must neither flush the log at close nor move the hint.
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
+        final FailingSeqFdatasyncFacade ff = new FailingSeqFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            setCommitMode(new String[]{"nosync", "0"});
+            final SeqTxnTracker tracker = createTable("x");
+            final TableToken tt = engine.verifyTableName("x");
+            final TableSequencerAPI sequencers = engine.getTableSequencerAPI();
+            execute("INSERT INTO x VALUES (1, 1)");
+            ff.failNextSequencerFdatasync();
+            Assert.assertTrue("test setup: the sequencer must close", sequencers.releaseInactive());
+            Assert.assertTrue("test setup: the clean close must have flushed the log", ff.injected);
+            Assert.assertTrue("a failed close flush must fence the table", tracker.isDurableFrontierFenced());
+
+            // The insert reopens the sequencer and appends a record past the hint.
+            execute("INSERT INTO x VALUES (2, 2)");
+            Assert.assertSame(tracker, sequencers.getTxnTracker(tt));
+            Assert.assertEquals(2, sequencers.lastTxn(tt));
+            final long hint = readSequencerLogHint(tt);
+            Assert.assertNotEquals("test setup: the header alone must not skip the flush", 3, hint);
+            ff.reset();
+            Assert.assertTrue("test setup: the reopened sequencer must close", sequencers.releaseInactive());
+            Assert.assertEquals(
+                    "a fenced log must not be flushed at close",
+                    0,
+                    ff.count(p -> p.endsWith(WalUtils.TXNLOG_FILE_NAME))
+            );
+            Assert.assertEquals("a fenced log must not be marked flushed at close", hint, readSequencerLogHint(tt));
+        });
+    }
+
+    @Test
     public void testPeerCommitAfterFailedInlineSequencerBarrierDoesNotAdvanceFrontier() throws Exception {
         assertPeerBarrierAfterFailedSequencerBarrierDoesNotAdvanceFrontier(0);
     }
@@ -997,6 +1039,18 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
 
     private static WalFdatasyncFacade ffOf() {
         return (WalFdatasyncFacade) ff;
+    }
+
+    private static long readSequencerLogHint(TableToken tt) throws IOException {
+        final String dbRoot = engine.getConfiguration().getDbRoot().toString();
+        try (FileChannel channel = FileChannel.open(
+                Paths.get(dbRoot, tt.getDirName(), WalUtils.SEQ_DIR, WalUtils.TXNLOG_FILE_NAME),
+                StandardOpenOption.READ
+        )) {
+            final ByteBuffer buf = ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+            channel.read(buf, TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64);
+            return buf.getLong(0);
+        }
     }
 
     private static void recoverAndApply(TableToken tt) {
