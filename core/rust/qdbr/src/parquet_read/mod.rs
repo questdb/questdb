@@ -2162,6 +2162,31 @@ mod tests {
     }
 
     #[test]
+    fn row_group_column_has_no_nulls_reads_chunk_null_count() -> ParquetResult<()> {
+        let values: Vec<i64> = (100..110).collect();
+        let with_nulls: Vec<i16> = (0..10).map(|i| i % 2).collect();
+        let buf = gen_nullable_i64_parquet(&values, &with_nulls)?;
+        assert!(!read_decoder(&buf)?.row_group_column_has_no_nulls(0, 0)?);
+
+        let buf = gen_nullable_i64_parquet(&values, &[1; 10])?;
+        assert!(read_decoder(&buf)?.row_group_column_has_no_nulls(0, 0)?);
+
+        for null_count in [None, Some(-1i64), Some(i64::MIN)] {
+            let mut decoder = read_decoder(&buf)?;
+            override_null_count(&mut decoder, null_count);
+            assert!(
+                !decoder.row_group_column_has_no_nulls(0, 0)?,
+                "an unknown null count must not read as null-free [null_count={null_count:?}]"
+            );
+        }
+
+        let decoder = read_decoder(&buf)?;
+        assert!(decoder.row_group_column_has_no_nulls(1, 0).is_err());
+        assert!(decoder.row_group_column_has_no_nulls(0, 1).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn bloom_probe_declines_structurally_invalid_bitset() -> ParquetResult<()> {
         use crate::parquet_read::ColumnFilterValues;
         use parquet2::schema::types::PhysicalType;

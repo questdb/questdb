@@ -222,7 +222,7 @@ final class UpdateBinder implements Mutable {
                     .put(" [view=").put(token.getTableName()).put(']');
         }
         try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token, source.getMetadataVersion())) {
-            final ScanPlan scan = binder.bindScan(source, tableName, metadata);
+            final ScanPlan scan = binder.bindScan(source, tableName, metadata.getTableToken(), metadata.getMetadataVersion(), metadata);
             if (!executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(scan.getTableToken())) {
                 scan.markWalClientUpdate();
             } else {

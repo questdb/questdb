@@ -156,6 +156,14 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     @Nullable
     PageFrame next(long skipTarget);
 
+    /**
+     * Lets each page frame the cursor computes from here on hold up to {@code maxRows} rows, until {@code of()} binds
+     * the cursor to a read again. A cursor that does not split partition frames by row count ignores it.
+     */
+    default void setPageFrameMaxRows(int maxRows) {
+        // no-op by default
+    }
+
     default void releaseOpenPartitions() {
         // no-op by default
     }

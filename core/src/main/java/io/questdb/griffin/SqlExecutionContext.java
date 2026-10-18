@@ -384,14 +384,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     /**
-     * Whether {@link #getReader} serves the table at a transaction this context fixed; the compiler keeps such a
-     * reader at that transaction.
-     */
-    default boolean isReaderPinned(TableToken tableToken) {
-        return false;
-    }
-
-    /**
      * A table-name function or a SHOW statement in a view reads the object it names through that
      * view, not as the caller, when the view's definition names the object, see
      * {@link TableFunctionView#isDependency(TableToken)}. Any other object, such as one a caller

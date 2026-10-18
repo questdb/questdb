@@ -52,8 +52,8 @@ public final class PreparedFunctions implements Mutable {
     private final ObjList<Entry> prepared = new ObjList<>();
     private final ResourceScope resources = new ResourceScope();
 
-    public PreparedFunctions(int maxRetainedEntries) {
-        this.entries = new ObjectPool<>(Entry::new, 4, maxRetainedEntries);
+    public PreparedFunctions(int minRetainedEntries) {
+        this.entries = new ObjectPool<>(Entry::new, 4, minRetainedEntries);
     }
 
     /**

@@ -303,6 +303,16 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     long preComputedStateSize();
 
     /**
+     * The number of rows the cursor returns, after the row {@link #hasNext()} returned last, that come from the same
+     * row of its innermost master: the cursor at the bottom of the master inputs of its joins. A cursor whose rows are
+     * their own master rows returns 0; one that cannot tell without reading those rows returns -1, the default.
+     * {@link #skipRows(Counter, long)} skips exactly those rows without positioning any record.
+     */
+    default long remainingMasterRowCount() {
+        return -1;
+    }
+
+    /**
      * Declares which projected column indexes the parent cursor will read during forward
      * iteration (via {@link #getRecord()}); columns accessed only via
      * {@link #recordAt(Record, long)} may be omitted. Null restores the default of

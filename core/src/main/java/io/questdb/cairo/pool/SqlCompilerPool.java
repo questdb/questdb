@@ -38,6 +38,8 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
@@ -45,6 +47,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> {
+    private static final Log LOG = LogFactory.getLog(SqlCompilerPool.class);
     // The table tokens below are fake, only needed to satisfy the contract of the base class.
     // These tokens do not represent real tables, so they should never be used in that context.
     // Should be used only as a key for pool entries, and should stay internal to the pool.
@@ -59,21 +62,16 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     private final Rnd rnd = new Rnd();
 
     public SqlCompilerPool(CairoEngine engine) {
-        // Passing zero as TTL, because SqlCompiler instances are expected to be returned to the pool immediately
-        // after usage. The `releaseInactive()` method is also overridden to return with hardcoded 'false' for the
-        // same reason. It is not meant to be called.
-        super(engine.getConfiguration(), (engine.getConfiguration().getSqlCompilerPoolCapacity() / engine.getConfiguration().getPoolSegmentSize()) + 1, 0L);
+        super(
+                engine.getConfiguration(),
+                (engine.getConfiguration().getSqlCompilerPoolCapacity() / engine.getConfiguration().getPoolSegmentSize()) + 1,
+                engine.getConfiguration().getInactiveReaderTTL()
+        );
         this.engine = engine;
     }
 
     public C get() {
         return super.get(getRandToken());
-    }
-
-    @Override
-    public boolean releaseInactive() {
-        // noop, should not be used
-        return false;
     }
 
     private TableToken getRandToken() {
@@ -95,6 +93,17 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
                 entry,
                 index
         );
+    }
+
+    @Override
+    protected boolean releaseIdleTenant(long thread, Entry<C> entry, int index) {
+        try {
+            entry.getTenant(index).releaseRetainedCapacity();
+            return false;
+        } catch (Throwable th) {
+            LOG.error().$("could not trim idle compiler, closing it [error=").$(th).I$();
+            return super.releaseIdleTenant(thread, entry, index);
+        }
     }
 
     public static class C implements SqlCompiler, PoolTenant<C> {
@@ -227,6 +236,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
 
         @Override
         public void refresh(ResourcePoolSupervisor<C> supervisor) {
+        }
+
+        @Override
+        public void releaseRetainedCapacity() {
+            delegate.releaseRetainedCapacity();
         }
 
         @Override

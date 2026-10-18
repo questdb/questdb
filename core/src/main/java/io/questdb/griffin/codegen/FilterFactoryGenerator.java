@@ -40,6 +40,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.FunctionInstantiator;
+import io.questdb.griffin.PlanTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -294,14 +295,15 @@ final class FilterFactoryGenerator {
 
     /**
      * Wraps the filter of a LATEST BY scan in a {@link LatestByCompiledFilter}, which adopts it, when the JIT compiles
-     * the predicate over the reader's columns; otherwise returns the filter.
+     * the predicate over the columns of {@code table}; otherwise returns the filter. A reader of the table serves the
+     * serializer's symbol tables while it serializes the predicate.
      */
     Function compileLatestBy(
             Function filter,
             BoundExpression predicate,
             OutputSchema input,
             RecordMetadata metadata,
-            TableReader reader,
+            PlanTable table,
             IntList columnIndexes,
             boolean isUpdate,
             SqlExecutionContext executionContext
@@ -316,9 +318,12 @@ final class FilterFactoryGenerator {
         try {
             Throwable cleanupFailure = null;
             try {
-                jitIRSerializer.of(jitIRMem, executionContext, metadata, input, readerSymbolTables.of(reader, columnIndexes), bindVarFunctions);
-                final int jitOptions = jitIRSerializer.serialize(predicate,
-                        executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR, enableJitDebug, enableJitNullChecks);
+                final int jitOptions;
+                try (TableReader reader = executionContext.getReader(table.getTableToken(), table.getMetadataVersion())) {
+                    jitIRSerializer.of(jitIRMem, executionContext, metadata, input, readerSymbolTables.of(reader, columnIndexes), bindVarFunctions);
+                    jitOptions = jitIRSerializer.serialize(predicate,
+                            executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR, enableJitDebug, enableJitNullChecks);
+                }
                 compiledFilter = new CompiledFilter();
                 compiledFilter.compile(jitIRMem, jitOptions);
             } catch (Throwable th) {

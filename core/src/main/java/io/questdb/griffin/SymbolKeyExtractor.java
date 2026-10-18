@@ -50,8 +50,6 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.SingleCharCharSequence;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 
 /**
  * Symbol key intrinsics of one native scan occurrence: the included and excluded key sets of a
@@ -260,8 +258,7 @@ public final class SymbolKeyExtractor implements Mutable {
 
     /**
      * The UTF-16 text a STRING, VARCHAR, SYMBOL or integer constant matches a SYMBOL by, the decimal text of an
-     * integer as {@code =} formats it; null for a NULL value or any other type. A non-ASCII VARCHAR decodes, and an
-     * integer formats, into {@code sink}.
+     * integer as {@code =} formats it; null for a NULL value or any other type. An integer formats into {@code sink}.
      */
     private static CharSequence textOf(BoundExpression value, StringSink sink) {
         final ConstantExpression constant = (ConstantExpression) value;
@@ -275,18 +272,7 @@ public final class SymbolKeyExtractor implements Mutable {
             sink.put(key);
             return sink;
         }
-        return switch (type) {
-            case ColumnType.STRING, ColumnType.SYMBOL -> constant.getStrValue();
-            case ColumnType.VARCHAR -> {
-                final Utf8Sequence text = constant.getVarcharValue();
-                if (text == null || text.isAscii()) {
-                    yield text == null ? null : text.asAsciiCharSequence();
-                }
-                sink.clear();
-                yield Utf8s.utf8ToUtf16(text, sink) ? sink : text.toString();
-            }
-            default -> null;
-        };
+        return constant.getText();
     }
 
     private void addExcluded(FunctionExpression call, BoundExpression value) {

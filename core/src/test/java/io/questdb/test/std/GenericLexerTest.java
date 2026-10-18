@@ -28,6 +28,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Misc;
+import io.questdb.std.RetainedCapacity;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -565,7 +566,7 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testPoolsGrowOnDemandAndTrimToCeiling() {
+    public void testPoolsGrowOnDemandAndReturnToFloor() {
         final GenericLexer lex = new GenericLexer(4, 16);
         Assert.assertEquals(4, lex.getPoolCapacity());
 
@@ -586,13 +587,25 @@ public class GenericLexerTest {
             GenericLexer.immutableOf(lex.next());
         }
         TestUtils.assertEquals("t0", first);
-        Assert.assertTrue(lex.getPoolCapacity() > 16);
+        final int grownCapacity = lex.getPoolCapacity();
+        Assert.assertTrue(grownCapacity > 16);
 
-        lex.of("a b c");
-        Assert.assertEquals(16, lex.getPoolCapacity());
+        lex.of(text);
+        final int retainedCapacity = lex.getPoolCapacity();
+        Assert.assertTrue(retainedCapacity > 16);
+        Assert.assertTrue(retainedCapacity <= grownCapacity);
         while (lex.hasNext()) {
             GenericLexer.immutableOf(lex.next());
         }
+        Assert.assertEquals(retainedCapacity, lex.getPoolCapacity());
+
+        for (int i = 0, n = 2 * RetainedCapacity.WINDOW_USES; i < n; i++) {
+            lex.of("a b c");
+            while (lex.hasNext()) {
+                GenericLexer.immutableOf(lex.next());
+            }
+        }
+        lex.of("a b c");
         Assert.assertEquals(16, lex.getPoolCapacity());
     }
 

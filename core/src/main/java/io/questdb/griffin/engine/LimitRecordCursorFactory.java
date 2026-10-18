@@ -37,10 +37,13 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -48,11 +51,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
     /**
      * {@code masterSuffixLimit}: the LIMIT count of the master filter of the join the base runs, which the base factory
-     * owns. When the join emits fewer rows than a negative LIMIT selects and older master rows may pass the filter, the
-     * cursor rewinds the join over a longer suffix of master rows, which keeps the join's slave side, and past the most
-     * rows the filter holds, opens the join again over all master rows. The rows of each master row come out together
-     * and in master order, so the last rows of the join over a suffix of the master rows are its last rows over all of
-     * them once there are as many as the LIMIT selects.
+     * owns. When the join emits fewer rows than a negative LIMIT selects over the last master rows, the cursor rewinds
+     * the join, which keeps its slave side, over older master rows only, until the join emits as many rows as the
+     * LIMIT selects or reads all master rows. The rows of each master row come out together and in master order, so
+     * the last rows of the join are those of the master rows it emitted them for, and the cursor rewinds the join over
+     * just those master rows to return them.
      */
     public LimitRecordCursorFactory(
             RecordCursorFactory base,
@@ -63,12 +66,17 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         super(base.getMetadata());
         this.base = base;
-        this.cursor = new LimitRecordCursor(base, loFunction, hiFunction, argPos, masterSuffixLimit);
+        this.cursor = new LimitRecordCursor(loFunction, hiFunction, argPos, masterSuffixLimit);
     }
 
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    @TestOnly
+    public long getWalkedRowCount() {
+        return cursor.walkedRowCount;
     }
 
     @Override
@@ -176,6 +184,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor.leftFunction);
         failure = Misc.freeBestEffort(failure, cursor.rightFunction);
+        failure = Misc.freeBestEffort(failure, cursor.masterRowRing);
+        failure = Misc.freeBestEffort(failure, cursor.masterRows);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -184,7 +194,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
      */
     public static class LimitRecordCursor implements RecordCursor {
         private final int argPos;
-        private final RecordCursorFactory baseFactory;
         private final RecordCursor.Counter counter = new Counter();
         private final Function leftFunction;
         private final MasterSuffixLimitFunction masterSuffixLimit;
@@ -194,22 +203,31 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private long baseRowsToTake;
         private long baseSize;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private SqlExecutionContext executionContext;
         private long hi;
         // The base sits at the first row the LIMIT returns, where toTop() left it.
         private boolean isBaseAtFirstRow;
         private long lo;
+        // The trailing master rows of one read of the master filter whose joined rows cover the rows the LIMIT still
+        // misses, as a ring of (row id, joined row count) pairs.
+        private DirectLongList masterRowRing;
+        // The master rows whose joined rows the LIMIT returns, newest first.
+        private DirectLongList masterRows;
         private long remaining;
+        private long ringCapacity;
+        private long ringHead;
+        private long ringRowCount;
+        private long ringSize;
+        private long ringTail;
         private long size;
+        // The joined rows the last read of older master rows walked one by one, see remainingMasterRowCount().
+        private long walkedRowCount;
 
         public LimitRecordCursor(
-                RecordCursorFactory baseFactory,
                 Function leftFunction,
                 Function rightFunction,
                 int argPos,
                 MasterSuffixLimitFunction masterSuffixLimit
         ) {
-            this.baseFactory = baseFactory;
             this.leftFunction = leftFunction;
             this.rightFunction = rightFunction;
             this.argPos = argPos;
@@ -361,8 +379,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 // If baseSize was cheap to get, bounds would already have been sorted out in of().
                 // Now it's time to use the heavy-handed approach to getting baseSize.
                 calculateBaseSize();
-                if (masterSuffixLimit != null) {
-                    readMasterSuffix();
+                if (masterSuffixLimit != null && masterSuffixLimit.isReadingLastRows(lo) && baseSize < -lo) {
+                    readOlderMasterRows();
                 }
                 // If both LIMIT args were non-negative, we would have resolved the bounds without
                 // needing to know baseSize. Since we're here, one of the args must be negative.
@@ -382,24 +400,94 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             return baseSize >= 0;
         }
 
-        private void readAllMasterRows() {
-            masterSuffixLimit.setReadingAllRows();
-            try {
-                base = Misc.free(base);
-                base = baseFactory.getCursor(executionContext);
-            } catch (SqlException e) {
-                throw CairoException.nonCritical().position(e.getPosition()).put(e.getFlyweightMessage());
-            } finally {
-                masterSuffixLimit.clearReadingAllRows();
+        /**
+         * The join emitted fewer rows than the LIMIT selects over the last master rows the filter returns, so it goes
+         * on over older master rows until it emits the {@code -lo} rows the LIMIT selects or runs out of master rows.
+         * Each read of the filter returns master rows the join has not read. The join emits the rows of a master row
+         * while its master cursor stands on that row, so the filter's cursor names the master row of each joined row,
+         * and the cursor keeps the master rows whose joined rows are among the last {@code -lo}, starting with those
+         * of the last master rows. The filter then returns just those master rows, and the join emits their rows,
+         * which the bounds trim to the last {@code -lo}.
+         */
+        private void readOlderMasterRows() {
+            final long rowCount = -lo;
+            final long ringCapacity = rowCount + 1;
+            if (masterRows == null) {
+                masterRows = new DirectLongList(rowCount, MemoryTag.NATIVE_DEFAULT);
             }
+            if (masterRowRing == null) {
+                masterRowRing = new DirectLongList(2 * ringCapacity, MemoryTag.NATIVE_DEFAULT);
+            } else if (masterRowRing.getCapacity() < 2 * ringCapacity) {
+                masterRowRing.setCapacity(2 * ringCapacity);
+            }
+            masterRows.clear();
+            this.ringCapacity = ringCapacity;
+            walkedRowCount = 0;
+            long keptRowCount = 0;
+            long missingRowCount = rowCount;
+            boolean hasRows = baseSize > 0 || masterSuffixLimit.readOlderRows();
+            while (hasRows) {
+                isBaseAtFirstRow = false;
+                base.toTop();
+                ringHead = 0;
+                ringTail = ringCapacity - 1;
+                ringSize = 0;
+                ringRowCount = 0;
+                long rowId = -1;
+                long rowIdCount = 0;
+                boolean hasNext;
+                do {
+                    hasNext = base.hasNext();
+                    final long nextRowId = hasNext ? masterSuffixLimit.getRowId() : -1;
+                    if (nextRowId != rowId) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                        keepMasterRow(rowId, rowIdCount, missingRowCount);
+                        rowId = nextRowId;
+                        rowIdCount = 0;
+                    }
+                    if (hasNext) {
+                        walkedRowCount++;
+                        rowIdCount++;
+                        final long rowsLeft = base.remainingMasterRowCount();
+                        if (rowsLeft > 0) {
+                            counter.set(rowsLeft);
+                            base.skipRows(counter, UNBOUNDED_ROW_COUNT);
+                            rowIdCount += rowsLeft - counter.get();
+                            counter.clear();
+                        }
+                    }
+                } while (hasNext);
+                for (long i = ringSize - 1; i > -1; i--) {
+                    masterRows.add(masterRowRing.get(2 * ((ringHead + i) % ringCapacity)));
+                }
+                keptRowCount += ringRowCount;
+                if (ringRowCount >= missingRowCount) {
+                    break;
+                }
+                missingRowCount -= ringRowCount;
+                hasRows = masterSuffixLimit.readOlderRows();
+            }
+            masterSuffixLimit.readRows(masterRows);
+            baseSize = keptRowCount;
         }
 
-        private void readMasterSuffix() {
-            while (baseSize < -lo && masterSuffixLimit.hasMoreRows()) {
-                if (!masterSuffixLimit.readMoreRows()) {
-                    readAllMasterRows();
-                }
-                calculateBaseSize();
+        /**
+         * Adds the master row and the count of its joined rows to the ring, then drops the oldest master rows while
+         * the newer ones alone cover the missing rows.
+         */
+        private void keepMasterRow(long rowId, long rowIdCount, long missingRowCount) {
+            if (rowIdCount == 0) {
+                return;
+            }
+            ringTail = (ringTail + 1) % ringCapacity;
+            masterRowRing.set(2 * ringTail, rowId);
+            masterRowRing.set(2 * ringTail + 1, rowIdCount);
+            ringSize++;
+            ringRowCount += rowIdCount;
+            while (ringRowCount - masterRowRing.get(2 * ringHead + 1) >= missingRowCount) {
+                ringRowCount -= masterRowRing.get(2 * ringHead + 1);
+                ringHead = (ringHead + 1) % ringCapacity;
+                ringSize--;
             }
         }
 
@@ -457,7 +545,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
             this.base = base;
-            this.executionContext = executionContext;
             this.circuitBreaker = executionContext.getCircuitBreaker();
 
             leftFunction.init(base, executionContext);

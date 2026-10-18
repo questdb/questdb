@@ -630,8 +630,13 @@ public final class LogicalPlans {
         return step.getJoinType().isMasterNulling() && steps.indexOf(step) > steps.indexOf(input);
     }
 
-    public static boolean isOrderIndependent(BoundExpression predicate) {
-        return isStableWithinExecution(predicate) && (predicate.getFunctionFlags() & BoundExpression.NON_DETERMINISTIC) == 0;
+    /**
+     * True when the value the expression takes for a row does not depend on the order the rows are evaluated in:
+     * every evaluation within one execution yields the same value for the same row. {@code now()} and a bind
+     * variable vary across executions only, so they qualify; {@code rnd_*()} and {@code systimestamp()} do not.
+     */
+    public static boolean isOrderIndependent(BoundExpression expression) {
+        return isStableWithinExecution(expression);
     }
 
     /**
@@ -644,11 +649,14 @@ public final class LogicalPlans {
     }
 
     /**
-     * True when the projection hands its input's rows on in their order: it declares no designated timestamp and
-     * computes nothing that depends on row order.
+     * True when the plan hands its input's rows on in their order, so a consumer that discards the order of the plan's
+     * rows discards the order of its input's rows as well: a filter, or a projection that declares no designated
+     * timestamp. What the plan computes does not count: a sub-query's ORDER BY orders the rows the sub-query returns,
+     * not the evaluation of an {@code rnd_*()} call above it.
      */
-    public static boolean isOrderTransparent(ProjectPlan project) {
-        return !project.hasTimestampDeclaration() && areOrderIndependent(project.getExpressions());
+    public static boolean isOrderTransparent(LogicalPlan plan) {
+        return plan instanceof FilterPlan
+                || plan instanceof ProjectPlan project && !project.hasTimestampDeclaration() && !project.hasUpdateConversions();
     }
 
     /**
@@ -658,6 +666,16 @@ public final class LogicalPlans {
      */
     public static boolean isResultStable(LogicalPlan plan, boolean isParallelGroupByEnabled, IntHashSet readColumnIds) {
         return (stability(plan, isParallelGroupByEnabled, readColumnIds) & RESULT_STABLE) != 0;
+    }
+
+    /**
+     * Whether the join step matches the rows of its input by stable conditions alone and its input yields the same
+     * rows on every evaluation, so that the step joins the same rows to the same master rows however often the join
+     * evaluates it: a temporal or UNNEST step depends on the order of its inputs.
+     */
+    public static boolean isStableJoinStep(JoinInput step, boolean isParallelGroupByEnabled, IntHashSet readColumnIds) {
+        return step.getJoinType().isRelational() && isStable(step.getKeyFilter()) && isStable(step.getOnResidual())
+                && isStable(step.getPostJoinFilter()) && isResultStable(step.getInput(), isParallelGroupByEnabled, readColumnIds);
     }
 
     /**

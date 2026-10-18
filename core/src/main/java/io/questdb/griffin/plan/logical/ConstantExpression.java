@@ -29,6 +29,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
@@ -38,6 +39,7 @@ import io.questdb.std.str.Utf8s;
  */
 public final class ConstantExpression extends BoundExpression {
     public static final ObjectFactory<ConstantExpression> FACTORY = ConstantExpression::new;
+    private final StringSink decodedText = new StringSink();
     private final Long256Impl long256 = new Long256Impl();
     private long hh;
     private long hl;
@@ -116,6 +118,25 @@ public final class ConstantExpression extends BoundExpression {
 
     public String getStrValue() {
         return (String) value;
+    }
+
+    /**
+     * The UTF-16 text of a STRING, SYMBOL or VARCHAR constant; null for a NULL value or any other type. A non-ASCII
+     * VARCHAR decodes into a sink the constant owns.
+     */
+    public CharSequence getText() {
+        return switch (ColumnType.tagOf(getDataType())) {
+            case ColumnType.STRING, ColumnType.SYMBOL -> (String) value;
+            case ColumnType.VARCHAR -> {
+                final Utf8Sequence text = (Utf8Sequence) value;
+                if (text == null || text.isAscii()) {
+                    yield text == null ? null : text.asAsciiCharSequence();
+                }
+                decodedText.clear();
+                yield Utf8s.utf8ToUtf16(text, decodedText) ? decodedText : text.toString();
+            }
+            default -> null;
+        };
     }
 
     public CharSequence getTimestampText() {

@@ -77,6 +77,20 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
         return cursor;
     }
 
+    /**
+     * The cursor over the rows in the page frame of {@code firstCursor}, then of the cursors at {@code cursorLo + 1},
+     * inclusive, to {@code cursorHi}, exclusive, one cursor after another.
+     */
+    protected RowCursor getCursor(RowCursor firstCursor, PageFrame pageFrame, PageFrameMemory pageFrameMemory, int cursorLo, int cursorHi) {
+        Misc.freeObjListAndClear(cursors);
+        cursors.add(firstCursor);
+        for (int i = cursorLo + 1; i < cursorHi; i++) {
+            cursors.add(cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
+        }
+        cursor.init();
+        return cursor;
+    }
+
     @Override
     public void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         RowCursorFactory.init(cursorFactories, pageFrameCursor, sqlExecutionContext);

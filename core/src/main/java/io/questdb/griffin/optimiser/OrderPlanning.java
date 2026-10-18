@@ -320,9 +320,9 @@ final class OrderPlanning implements OptimiserPass {
             case SortPlan sort when isUnreadTemporalOrder(sort) -> {
                 return removeUnreadOrder(sort.getChild());
             }
-            case FilterPlan filter when LogicalPlans.isOrderIndependent(filter.getPredicate()) ->
+            case FilterPlan filter when LogicalPlans.isOrderTransparent(filter) ->
                     filter.replaceInput(0, removeUnreadOrder(filter.getChild()));
-            case ProjectPlan project when !project.hasUpdateConversions() && LogicalPlans.isOrderTransparent(project) -> {
+            case ProjectPlan project when LogicalPlans.isOrderTransparent(project) -> {
                 project.replaceInput(0, removeUnreadOrder(project.getChild()));
                 if (project.getOutput().getTimestampIndex() < 0) {
                     project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project,
@@ -385,7 +385,7 @@ final class OrderPlanning implements OptimiserPass {
             }
             case ProjectPlan project -> {
                 final boolean isSorted = project.getChild() instanceof SortPlan;
-                replaceReorderedInput(project, isReordered && !project.hasTimestampDeclaration(), isSetBranchReordered);
+                replaceReorderedInput(project, isReordered && LogicalPlans.isOrderTransparent(project), isSetBranchReordered);
                 if (isSorted && project.getChild() instanceof ProjectPlan inner && isHiddenSortKeyPrefix(project, inner)) {
                     inner.getExpressions().setPos(project.getExpressions().size());
                     inner.getOutput().copyFrom(project.getOutput());
@@ -394,7 +394,7 @@ final class OrderPlanning implements OptimiserPass {
                 }
                 project.deriveColumnReferenceCounts(columnIds);
             }
-            case FilterPlan filter -> replaceReorderedInput(filter, isReordered, isSetBranchReordered);
+            case FilterPlan filter -> replaceReorderedInput(filter, isReordered && LogicalPlans.isOrderTransparent(filter), isSetBranchReordered);
             case WindowPlan window -> {
                 final boolean wasTimestampRead = isReorderedTimestampRead;
                 isReorderedTimestampRead |= hasTimestampWindowFunction(window);

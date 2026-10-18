@@ -39,16 +39,19 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanRewriter;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Merges column projections into their consumers and moves sorts across the projections that keep
  * their keys. On request of {@link AggregateRewrite}, also moves a LIMIT below a projection over
- * an aggregate.
+ * an aggregate, and on request of {@link ColumnPruning}, lets an aggregate read past the column
+ * projections pruning finds beneath it.
  */
 final class ProjectionMerge implements OptimiserPass {
     private final OptimiserContext context;
@@ -221,20 +224,7 @@ final class ProjectionMerge implements OptimiserPass {
                 return;
             }
         }
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            keys.setQuick(i, context.getRewriter().remapColumns(keys.getQuick(i), inner));
-        }
-        for (int i = 0, n = calls.size(); i < n; i++) {
-            calls.setQuick(i, (FunctionExpression) context.getRewriter().remapColumns(calls.getQuick(i), inner));
-        }
-        final IntList sharedIds = aggregate.getSharedInputIds();
-        for (int i = 0, n = sharedIds.size(); i < n; i++) {
-            final int index = inner.getOutput().getColumnIndexById(sharedIds.getQuick(i));
-            if (index >= 0) {
-                sharedIds.setQuick(i, ((ColumnExpression) inner.getExpressions().getQuick(index)).getColumnId());
-            }
-        }
-        aggregate.replaceInput(0, inner.getChild());
+        absorbColumnProject(aggregate, inner, null);
     }
 
     private LogicalPlan collapseColumnProject(LogicalPlan plan) throws SqlException {
@@ -339,6 +329,36 @@ final class ProjectionMerge implements OptimiserPass {
         project.replaceInput(0, sort.getChild());
         sort.replaceInput(0, project.rewriteBottomUp(columnProjectCollapses));
         return sort;
+    }
+
+    /**
+     * The aggregate reads the input of a column projection beneath it directly: the keys, the aggregate calls and the
+     * shared input ids map through the projection, which leaves the plan. {@code boundary} is the LIMIT the projection
+     * sits under, the last of a chain of LIMITs between the aggregate and the projection, or null when the aggregate
+     * reads the projection itself.
+     */
+    void absorbColumnProject(AggregatePlan aggregate, ProjectPlan project, @Nullable UnaryPlan boundary) {
+        final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
+        final ObjList<FunctionExpression> calls = aggregate.getAggregates();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            keys.setQuick(i, context.getRewriter().remapColumns(keys.getQuick(i), project));
+        }
+        for (int i = 0, n = calls.size(); i < n; i++) {
+            calls.setQuick(i, (FunctionExpression) context.getRewriter().remapColumns(calls.getQuick(i), project));
+        }
+        final IntList sharedIds = aggregate.getSharedInputIds();
+        for (int i = 0, n = sharedIds.size(); i < n; i++) {
+            final int index = project.getOutput().getColumnIndexById(sharedIds.getQuick(i));
+            if (index >= 0) {
+                sharedIds.setQuick(i, ((ColumnExpression) project.getExpressions().getQuick(index)).getColumnId());
+            }
+        }
+        if (boundary == null) {
+            aggregate.replaceInput(0, project.getChild());
+        } else {
+            boundary.replaceInput(0, project.getChild());
+            LogicalPlans.deriveLimits(aggregate.getChild());
+        }
     }
 
     /**

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -35,14 +36,19 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerFactory;
+import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -51,6 +57,8 @@ import java.util.ArrayList;
 
 public class SqlCompilerPoolTest extends AbstractCairoTest {
     private static final String CLOSE_FAILURE = "injected in-flight close failure";
+    private static final long INACTIVE_TTL_MILLIS = 1_000;
+    private static final String TRIM_FAILURE = "injected trim failure";
     private static int closeCount;
 
     @BeforeClass
@@ -80,6 +88,90 @@ public class SqlCompilerPoolTest extends AbstractCairoTest {
                     c1.refreshAt(null, c2);
                     Assert.fail();
                 } catch (UnsupportedOperationException ignore) {
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReleaseInactiveClosesCompilerItCannotTrim() throws Exception {
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try (
+                    CairoEngine idleEngine = new CairoEngine(inactiveTtlConfiguration()) {
+                        @Override
+                        public SqlCompilerFactory getSqlCompilerFactory() {
+                            return compilerEngine -> new SqlCompilerImpl(compilerEngine) {
+                                @Override
+                                public void releaseRetainedCapacity() {
+                                    throw new IllegalStateException(TRIM_FAILURE);
+                                }
+                            };
+                        }
+                    };
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(idleEngine)
+            ) {
+                setCurrentMicros(1_000_000);
+                try (SqlCompiler compiler = idleEngine.getSqlCompiler()) {
+                    compileAndClose(compiler, "SELECT 1", context);
+                }
+                setCurrentMicros(1_000_000 + INACTIVE_TTL_MILLIS * 1000 + 1);
+                Assert.assertTrue(idleEngine.releaseInactive());
+                capture.drain();
+                capture.assertLoggedRE("could not trim idle compiler, closing it \\[error=.*" + TRIM_FAILURE);
+                Assert.assertEquals(0, idleEngine.getSqlCompilerPool().getBusyCount());
+                try (SqlCompiler compiler = idleEngine.getSqlCompiler()) {
+                    compileAndClose(compiler, "SELECT 1", context);
+                }
+            } finally {
+                currentMicros = -1;
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testReleaseInactiveTrimsIdleCompilerOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            final int modelFloor = configuration.getSqlModelPoolCapacity();
+            final int characterFloor = configuration.getSqlCharacterStoreCapacity();
+            try (
+                    CairoEngine idleEngine = new CairoEngine(inactiveTtlConfiguration());
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(idleEngine)
+            ) {
+                setCurrentMicros(1_000_000);
+                final SqlCompiler idle = idleEngine.getSqlCompiler();
+                final SqlCompiler busy = idleEngine.getSqlCompiler();
+                final SqlCompilerImpl idleDelegate = (SqlCompilerImpl) ((SqlCompilerPool.C) idle).getDelegate();
+                final SqlCompilerImpl busyDelegate = (SqlCompilerImpl) ((SqlCompilerPool.C) busy).getDelegate();
+                try {
+                    compileAndClose(idle, cteChain(8), context);
+                    idle.close();
+                    compileAndClose(busy, cteChain(8), context);
+                    busy.clear();
+                    Assert.assertTrue(idleDelegate.getQueryModelPoolCapacity() > modelFloor);
+                    Assert.assertTrue(idleDelegate.getCharacterStoreCapacity() > characterFloor);
+                    final int busyModels = busyDelegate.getQueryModelPoolCapacity();
+                    Assert.assertTrue(busyModels > modelFloor);
+
+                    setCurrentMicros(1_000_000 + INACTIVE_TTL_MILLIS * 1000);
+                    idleEngine.releaseInactive();
+                    Assert.assertTrue(idleDelegate.getQueryModelPoolCapacity() > modelFloor);
+
+                    setCurrentMicros(1_000_000 + INACTIVE_TTL_MILLIS * 1000 + 1);
+                    idleEngine.releaseInactive();
+                    Assert.assertEquals(modelFloor, idleDelegate.getQueryModelPoolCapacity());
+                    Assert.assertEquals(characterFloor, idleDelegate.getCharacterStoreCapacity());
+                    Assert.assertEquals(configuration.getSqlExpressionPoolCapacity(), idleDelegate.getSqlNodePoolCapacity());
+                    Assert.assertEquals(busyModels, busyDelegate.getQueryModelPoolCapacity());
+                } finally {
+                    busy.close();
+                    currentMicros = -1;
+                }
+
+                try (SqlCompiler compiler = idleEngine.getSqlCompiler()) {
+                    compileAndClose(compiler, cteChain(8), context);
                 }
             }
         });
@@ -118,6 +210,31 @@ public class SqlCompilerPoolTest extends AbstractCairoTest {
                 capture.stop();
             }
         });
+    }
+
+    private static void compileAndClose(SqlCompiler compiler, CharSequence sql, SqlExecutionContext context) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+            Assert.assertNotNull(factory);
+        }
+    }
+
+    private static StringSink cteChain(int levels) {
+        final StringSink sql = new StringSink();
+        sql.put("WITH c0 AS (SELECT x l FROM long_sequence(3))");
+        for (int i = 1; i <= levels; i++) {
+            sql.put(", c").put(i).put(" AS (SELECT * FROM c").put(i - 1).put(" UNION ALL SELECT * FROM c").put(i - 1).put(')');
+        }
+        sql.put(" SELECT count() FROM c").put(levels);
+        return sql;
+    }
+
+    private static CairoConfiguration inactiveTtlConfiguration() {
+        return new CairoConfigurationWrapper(configuration) {
+            @Override
+            public long getInactiveReaderTTL() {
+                return INACTIVE_TTL_MILLIS;
+            }
+        };
     }
 
     private static class CloseFailingCursorFunctionFactory implements FunctionFactory {

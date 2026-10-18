@@ -317,6 +317,37 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupColumnHasNoNulls(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    column_index: u32,
+) -> bool {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<bool> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_column_has_no_nulls(row_group_index, column_index)
+    })();
+
+    match res {
+        Ok(has_no_nulls) => has_no_nulls,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not read null count for row group {}, column {}",
+                row_group_index, column_index
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupColumnHasNoNulls");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_decodeRowGroup(
     mut env: JNIEnv,
     _class: JClass,

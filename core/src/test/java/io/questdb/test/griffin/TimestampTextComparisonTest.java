@@ -113,6 +113,53 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonAsciiVarcharText() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            for (String table : TABLES) {
+                assertError(table, "ts = 'äö'::varchar", 9, "Invalid date [str=äö]");
+                assertError(table, "ts < 'äö'::varchar", 9, "Invalid date [str=äö]");
+                assertError(table, "ts IN ('2024'::varchar, 'äö'::varchar)", 28, "Invalid date [str=äö]");
+            }
+            execute("CREATE TABLE xd (d DATE, ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            assertError("xd", "d IN ('2014'::varchar, 'äö'::varchar)", 27, "Invalid date [str=äö]");
+        });
+    }
+
+    @Test
+    public void testOneCharacterText() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            for (String table : TABLES) {
+                assertError(table, "ts = 'a'", 5, "invalid timestamp");
+                assertError(table, "'a' = ts", 0, "invalid timestamp");
+                assertError(table, "ts != '1'", 6, "invalid timestamp");
+                assertError(table, "ts = ';'", 5, "not a timestamp, use IN keyword with intervals");
+                assertError(table, "ts < 'a'", 5, "Invalid date [str='a']");
+                assertError(table, "ts >= '1'", 6, "Invalid date [str='1']");
+                assertError(table, "t2 > 'a'", 5, "Invalid date [str='a']");
+                assertError(table, "ts IN ('2024', 'a')", 15, "Invalid date");
+                assertError(table, "ts IN ('a')", 7, "Invalid date");
+                assertError(table, "ts NOT IN ('2024', 'a')", 19, "Invalid date");
+                assertError(table, "ts BETWEEN 'a' AND 'b'", 11, "Invalid date");
+                assertError(table, "ts BETWEEN '2024' AND 'b'", 22, "Invalid date");
+            }
+            execute("CREATE TABLE xd (d DATE, ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            assertError("xd", "d = 'a'", 4, "Invalid date [str=a]");
+            assertError("xd", "d < 'a'", 4, "Invalid date [str=a]");
+            assertError("xd", "d IN ('2014', 'a')", 14, "Invalid date [str=a]");
+            assertError("xd", "d BETWEEN 'a' AND '2014'", 10, "Invalid date [str=a]");
+            assertQuery("SELECT 'a' = 'a' eq, 'a'::char c, 'a' < 'b' lt")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            eq	c	lt
+                            true	a	true
+                            """);
+        });
+    }
+
+    @Test
     public void testPartialTimestampText() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

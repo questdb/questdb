@@ -150,6 +150,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.RetainedCapacity;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -297,7 +298,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final int modelPoolCapacity = configuration.getSqlModelPoolCapacity();
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, modelPoolCapacity, modelPoolCapacity);
             this.planNodePools = new PlanNodePools(configuration);
-            this.tmpJoinChildrenPool = new ObjectPool<>(IntHashSet::new, 4, planNodePools.maxRetainedJoinContexts);
+            this.tmpJoinChildrenPool = new ObjectPool<>(IntHashSet::new, 4, planNodePools.minRetainedJoinContexts);
             final int windowColumnPoolCapacity = configuration.getWindowColumnPoolCapacity();
             ObjectPool<WindowExpression> windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, windowColumnPoolCapacity, columnPoolCapacity);
             this.compiledQuery = new CompiledQueryImpl(engine);
@@ -822,6 +823,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     public QueryBuilder query() {
         queryBuilder.clear();
         return queryBuilder;
+    }
+
+    @Override
+    public void releaseRetainedCapacity() {
+        // the statement lexer is reset by the next statement rather than by clear()
+        for (int i = 0; i < RetainedCapacity.USES_TO_FLOOR; i++) {
+            clear();
+            lexer.clear();
+        }
     }
 
     @TestOnly
@@ -2579,7 +2589,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * standalone expression keeps only the function it instantiated.
      */
     private void clearExpressions() {
-        final Throwable failure = Misc.clearBestEffort(Misc.clearBestEffort(null, preparedFunctions), planTables);
+        planTables.clear();
+        final Throwable failure = Misc.clearBestEffort(null, preparedFunctions);
         try {
             CairoException.rethrowCleanupFailure(failure);
         } finally {
@@ -2594,13 +2605,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         subqueries.clear();
         compiledSubqueryModels.clear();
         compiledSubqueries.clear();
+        planTables.clear();
         failure = Misc.clearBestEffort(failure, preparedFunctions);
-        failure = Misc.clearBestEffort(failure, functionSources);
-        return Misc.clearBestEffort(failure, planTables);
+        return Misc.clearBestEffort(failure, functionSources);
     }
 
     private Throwable closePrepared(Throwable primary) {
-        return planTables.release(functionSources.closePrepared(preparedFunctions.closePrepared(primary)));
+        planTables.clear();
+        return functionSources.closePrepared(preparedFunctions.closePrepared(primary));
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -5878,7 +5890,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private RecordCursorFactory generatePlan(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory;
         try {
-            planTables.reload(executionContext);
+            planTables.refresh(executionContext);
             optimiser.planAccessPaths(root, codeGenerator.getGenerationDepth(), executionContext.isTimestampRequired(), executionContext);
             factory = codeGenerator.generate(root, executionContext);
         } catch (Throwable th) {
@@ -6040,12 +6052,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private BoundExpressionRewriter newExpressionRewriter(FunctionParser parser) {
         return new BoundExpressionRewriter(parser.getFunctionFactoryCache(), planNodePools.columns, planNodePools.constants,
                 planNodePools.functions, planNodePools.outerColumns, planNodePools.parameters, planNodePools.types, tmpArguments,
-                tmpPositions, preparedFunctions, planNodePools.maxRetainedExpressions);
+                tmpPositions, preparedFunctions, planNodePools.minRetainedExpressions);
     }
 
     private FunctionInstantiator newFunctionInstantiator(FunctionParser parser) {
         return new FunctionInstantiator(this, parser.getFunctionResolver(), preparedFunctions, tmpScope,
-                planNodePools.maxRetainedExpressions);
+                planNodePools.minRetainedExpressions);
     }
 
     /**

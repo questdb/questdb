@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
+import io.questdb.PropertyKey;
 import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractOomSweepTest;
 import org.junit.Test;
@@ -41,6 +42,23 @@ import org.junit.Test;
  * {@code NATIVE_DEFAULT} leak.
  */
 public class ParquetScanOomTest extends AbstractOomSweepTest {
+
+    @Test
+    public void testKeyOrderedParquetScanCleansUpWhenDecodeRunsOutOfMemory() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k AS (SELECT x id, ('S' || (x % 3))::SYMBOL s, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(24)), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO k VALUES (25, 'S1', '2024-01-02')");
+            execute("ALTER TABLE k CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            final String query = "SELECT * FROM k WHERE ts IN '2024-01-01' ORDER BY s";
+            drain(query);
+            // A budget below the six decoded row groups makes the key-ordered read recycle and trim cached buffers
+            // on every pass, so the sweep faults decodes into a recycled buffer as well as into a fresh one.
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 160);
+            assertCursorDrainOomSweep(24 * 1024, 64, null, query);
+            drain(query);
+        });
+    }
 
     @Test
     public void testParquetScanCleansUpWhenBufferReopenRunsOutOfMemory() throws Exception {

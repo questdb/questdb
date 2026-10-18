@@ -407,7 +407,7 @@ final class AggregateFactoryGenerator {
                 return null;
             }
             mapping.add(index);
-            metadata.add(SqlCodeGenerator.copyColumn(primaryMetadata, index, SqlUtil.toColumnName(input.getColumnName(i))));
+            metadata.add(TableColumnMetadata.copyOf(primaryMetadata, index, SqlUtil.toColumnName(input.getColumnName(i))));
         }
         final int sharedId = frame.sharedConsumerCounts.getQuick(entry);
         frame.sharedConsumerCounts.setQuick(entry, sharedId + 1);

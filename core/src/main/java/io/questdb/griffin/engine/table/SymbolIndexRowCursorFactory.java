@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -36,6 +37,7 @@ import io.questdb.griffin.PlanSink;
 public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFactory {
     private final int columnIndex;
     private final int indexDirection;
+    private final ShiftedRowCursor shiftedCursor = new ShiftedRowCursor();
     private final Function symbolFunction;
     private int symbolKey;
 
@@ -59,8 +61,31 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     }
 
     @Override
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, long firstRow) {
+        final IndexReader reader = pageFrame.getIndexReader(columnIndex, indexDirection);
+        if (indexDirection == IndexReader.DIR_BACKWARD) {
+            return reader.getCursor(symbolKey, pageFrame.getPartitionLo(), firstRow);
+        }
+        return shiftedCursor.of(reader.getCursor(symbolKey, firstRow, pageFrame.getPartitionHi() - 1), firstRow - pageFrame.getPartitionLo());
+    }
+
+    @Override
     public Function getFunction() {
         return symbolFunction;
+    }
+
+    @Override
+    public long getRow(PageFrame pageFrame, long rowLo, long rowHi, long rowIndex) {
+        final BitmapIndexFwdReader reader = (BitmapIndexFwdReader) pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD);
+        return reader.getRow(symbolKey, rowLo, rowHi, indexDirection, rowIndex);
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, long rowLo, long rowHi, long maxCount) {
+        if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
+            return -1;
+        }
+        return reader.countRows(symbolKey, rowLo, rowHi, maxCount);
     }
 
     public int getSymbolKey() {

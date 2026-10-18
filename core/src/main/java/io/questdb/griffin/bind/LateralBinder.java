@@ -45,10 +45,10 @@ final class LateralBinder implements Mutable {
     private final BindContext ctx;
     private final ObjectPool<OutputSchema> scopes;
 
-    LateralBinder(BindContext ctx, SqlBinder binder, int maxRetainedScopes) {
+    LateralBinder(BindContext ctx, SqlBinder binder, int minRetainedScopes) {
         this.ctx = ctx;
         this.binder = binder;
-        this.scopes = new ObjectPool<>(OutputSchema::new, 2, maxRetainedScopes);
+        this.scopes = new ObjectPool<>(OutputSchema::new, 2, minRetainedScopes);
     }
 
     @Override

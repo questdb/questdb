@@ -1732,12 +1732,6 @@ final class AggregateBinder implements Mutable {
             for (int i = 0, n = groupBy.size(); i < n; i++) {
                 final ExpressionNode group = groupBy.getQuick(i);
                 final ExpressionNode expression = resolveGroupBy(group, model);
-                if (expression.isWildcard()) {
-                    throw SqlException.$(expression.position, "'*' is not allowed in GROUP BY");
-                }
-                if (ctx.hasAggregate(expression) || expression.windowExpression != null) {
-                    throw SqlException.$(group.position, "aggregate functions are not allowed in GROUP BY");
-                }
                 if (remainingGroups > 1 && isConstantGroupingExpression(expression)) {
                     if (i == 0) {
                         aggregate.setConstantLeadingGroupBy(true);

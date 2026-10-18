@@ -84,6 +84,13 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     QueryBuilder query();
 
+    /**
+     * Brings every structure the compiler keeps between statements back to its configured floor, as if the compiler
+     * had cleared through two windows of empty statements, see {@link io.questdb.std.RetainedCapacity}. The compiler
+     * pool calls it on a compiler that has been idle past the pool's inactive TTL, which no statement ages.
+     */
+    void releaseRetainedCapacity();
+
     @TestOnly
     void setEnableJitNullChecks(boolean value);
 

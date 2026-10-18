@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -92,6 +91,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import io.questdb.std.RetainedCapacity;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -107,7 +107,7 @@ import static io.questdb.griffin.model.QueryModel.CREATE_MAT_VIEW;
  * when it throws, so a caller never closes an input it has handed over.
  */
 public class SqlCodeGenerator implements Mutable, Closeable {
-    private static final int MAX_RETAINED_FRAMES = 32;
+    private static final int MIN_RETAINED_FRAMES = 32;
     private static final PlanVisitor UPDATE_SCANS = plan -> plan instanceof ScanPlan scan && scan.isUpdate() ? TreeWalk.STOP : TreeWalk.CONTINUE;
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
     private final AggregateFactoryGenerator aggregateGenerator;
@@ -120,6 +120,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final JoinFactoryGenerator joinGenerator;
     private final LatestByFactoryGenerator latestByGenerator;
     private final ProjectionFactoryGenerator projectionGenerator;
+    private final RetainedCapacity retainedFrameCapacity = new RetainedCapacity(MIN_RETAINED_FRAMES);
     private final SampleByFactoryGenerator sampleByGenerator;
     private final ScanFactoryGenerator scanGenerator;
     private final SetOperationFactoryGenerator setOperationGenerator;
@@ -209,8 +210,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = usedFrameCount; i < n; i++) {
             generationFrames.getQuick(i).clear();
         }
-        if (generationFrames.size() > MAX_RETAINED_FRAMES) {
-            generationFrames.remove(MAX_RETAINED_FRAMES, generationFrames.size() - 1);
+        final int retainedFrameCount = retainedFrameCapacity.endUse(usedFrameCount);
+        if (generationFrames.size() > retainedFrameCount) {
+            generationFrames.remove(retainedFrameCount, generationFrames.size() - 1);
         }
         generationDepth = 0;
         usedFrameCount = 0;
@@ -474,29 +476,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
         return factory;
-    }
-
-    static TableColumnMetadata copyColumn(RecordMetadata metadata, int index, String name) {
-        final TableColumnMetadata source = metadata.getColumnMetadata(index);
-        final TableColumnMetadata copy = new TableColumnMetadata(
-                name,
-                metadata.getColumnType(index),
-                metadata.getColumnIndexType(index),
-                metadata.getIndexValueBlockCapacity(index),
-                metadata.isSymbolTableStatic(index),
-                metadata.getMetadata(index),
-                source.getWriterIndex(),
-                source.isDedupKeyFlag(),
-                source.getReplacingIndex(),
-                source.isSymbolCacheFlag(),
-                source.getSymbolCapacity(),
-                source.getOriginalWriterIndex()
-        );
-        copy.setParquetEncodingConfig(source.getParquetEncodingConfig());
-        if (source.getCoveringColumnIndices() != null) {
-            copy.setCoveringColumnIndices(new IntList(source.getCoveringColumnIndices()));
-        }
-        return copy;
     }
 
     static boolean hasUpdateScan(LogicalPlan plan) {

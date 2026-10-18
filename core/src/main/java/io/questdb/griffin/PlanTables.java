@@ -30,45 +30,83 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.plan.logical.ScanPlan;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
-import java.io.Closeable;
-
 /**
- * The tables a statement's plan reads, held for the whole compilation: one reader per bound table and metadata
- * version, acquired when the binder binds the scan and released when the compiler releases the statement's
- * preparations, so the binder, the optimiser and the code generator see the same snapshot of each table.
+ * The tables a statement's plan reads: one {@link PlanTable} per bound table and metadata version, copied when the
+ * binder binds the scan, so the binder, the optimiser and the code generator read the same metadata version of each
+ * table. A reader serves a table only while this container copies its facts, so it holds no reader between copies.
  */
-public final class PlanTables implements Closeable, Mutable {
-    private final LongList metadataVersions = new LongList();
-    private final ObjList<TableReader> readers = new ObjList<>();
-    private final ObjList<TableToken> tokens = new ObjList<>();
+public final class PlanTables implements Mutable {
+    private final ObjList<PlanTable> tables = new ObjList<>();
+    private int tableCount;
 
     /**
-     * The reader of the table at its current metadata version, acquired once per compilation; the scan records the
-     * version of the metadata it returns. A table the engine cannot open is a statement error at {@code position}.
+     * The table at its current metadata version, copied once per compilation; the scan records the version of the
+     * metadata it returns. A table the engine cannot open is a statement error at {@code position}.
      */
-    public TableReader acquire(TableToken token, int position, SqlExecutionContext executionContext) throws SqlException {
+    public PlanTable acquire(TableToken token, int position, SqlExecutionContext executionContext) throws SqlException {
         return acquire(token, TableUtils.ANY_TABLE_VERSION, position, executionContext);
     }
 
     /**
-     * The reader of the table at {@code metadataVersion}, acquired once per compilation; the UPDATE target binds
-     * against the write metadata of that version and reads its rows through this reader.
+     * The table at {@code metadataVersion}, copied once per compilation; the UPDATE target binds against the write
+     * metadata of that version and generates the scan of its rows from this copy.
      */
-    public TableReader acquire(TableToken token, long metadataVersion, int position, SqlExecutionContext executionContext) throws SqlException {
+    public PlanTable acquire(TableToken token, long metadataVersion, int position, SqlExecutionContext executionContext) throws SqlException {
         final int index = indexOf(token, metadataVersion);
         if (index > -1) {
-            return readers.getQuick(index);
+            return tables.getQuick(index);
         }
-        final TableReader reader;
+        if (tableCount == tables.size()) {
+            tables.add(new PlanTable());
+        }
+        final PlanTable table = tables.getQuick(tableCount);
+        try (TableReader reader = getReader(token, metadataVersion, position, executionContext)) {
+            table.of(token, position, reader);
+        }
+        tableCount++;
+        return table;
+    }
+
+    @Override
+    public void clear() {
+        Misc.clearObjList(tables);
+        tableCount = 0;
+    }
+
+    /**
+     * The table the scan was bound from, found by its bound token and metadata version rather than by name; the
+     * factories keep the bound token, so cursor open rejects a name that has moved to another table.
+     */
+    public PlanTable of(ScanPlan scan) {
+        final int index = indexOf(scan.getTableToken(), scan.getMetadataVersion());
+        if (index < 0) {
+            throw new IllegalStateException("scan reads a table the binder did not acquire");
+        }
+        return tables.getQuick(index);
+    }
+
+    /**
+     * Re-reads the access facts of every table at its latest transaction, or at the one the execution context pins,
+     * before the plan is optimised and generated, and rejects the plan when a table's metadata changed since binding
+     * read it, so the compiler binds it again.
+     */
+    public void refresh(SqlExecutionContext executionContext) throws SqlException {
+        for (int i = 0; i < tableCount; i++) {
+            final PlanTable table = tables.getQuick(i);
+            try (TableReader reader = getReader(table.getTableToken(), table.getMetadataVersion(), table.getPosition(), executionContext)) {
+                table.readFacts(reader);
+            }
+        }
+    }
+
+    private static TableReader getReader(TableToken token, long metadataVersion, int position, SqlExecutionContext executionContext) throws SqlException {
         try {
-            reader = metadataVersion == TableUtils.ANY_TABLE_VERSION
+            return metadataVersion == TableUtils.ANY_TABLE_VERSION
                     ? executionContext.getReader(token) : executionContext.getReader(token, metadataVersion);
         } catch (EntryLockedException e) {
             throw SqlException.position(position).put("table is locked: ").put(token.getTableName());
@@ -78,76 +116,12 @@ public final class PlanTables implements Closeable, Mutable {
             }
             throw SqlException.position(position).put(e).setTableBusy(e instanceof EntryUnavailableException);
         }
-        try {
-            readers.add(reader);
-        } catch (Throwable th) {
-            Misc.free(reader, th);
-            throw th;
-        }
-        tokens.add(token);
-        metadataVersions.add(metadataVersion == TableUtils.ANY_TABLE_VERSION ? reader.getMetadata().getMetadataVersion() : metadataVersion);
-        return reader;
-    }
-
-    @Override
-    public void clear() {
-        CairoException.rethrowCleanupFailure(release(null));
-    }
-
-    @Override
-    public void close() {
-        clear();
-    }
-
-    /**
-     * The reader the scan was bound from, found by identity rather than by name: a rename after binding leaves the
-     * bound plan valid, and the factories keep the bound token, so cursor open still rejects a name that has moved
-     * to another table.
-     */
-    public TableReader of(ScanPlan scan) {
-        final int index = indexOf(scan.getTableToken(), scan.getMetadataVersion());
-        if (index < 0) {
-            throw new IllegalStateException("scan reads a table the binder did not acquire");
-        }
-        return readers.getQuick(index);
-    }
-
-    /**
-     * Releases every reader and chains release failures onto {@code primary}.
-     */
-    public Throwable release(Throwable primary) {
-        for (int i = readers.size() - 1; i > -1; i--) {
-            primary = Misc.freeBestEffort(primary, readers.getQuick(i));
-        }
-        readers.clear();
-        tokens.clear();
-        metadataVersions.clear();
-        return primary;
-    }
-
-    /**
-     * Moves every reader the execution context does not pin to its table's latest transaction before the plan is
-     * optimised and generated, and rejects the plan when a table's metadata changed since binding read it, so the
-     * compiler binds it again.
-     */
-    public void reload(SqlExecutionContext executionContext) {
-        for (int i = 0, n = readers.size(); i < n; i++) {
-            final TableReader reader = readers.getQuick(i);
-            final TableToken token = tokens.getQuick(i);
-            if (!executionContext.isReaderPinned(token)) {
-                reader.reload();
-            }
-            final long metadataVersion = reader.getMetadata().getMetadataVersion();
-            if (metadataVersion != metadataVersions.getQuick(i)) {
-                throw TableReferenceOutOfDateException.of(token, token.getTableId(), reader.getMetadata().getTableId(),
-                        metadataVersions.getQuick(i), metadataVersion);
-            }
-        }
     }
 
     private int indexOf(TableToken token, long metadataVersion) {
-        for (int i = 0, n = tokens.size(); i < n; i++) {
-            if ((metadataVersion == TableUtils.ANY_TABLE_VERSION || metadataVersions.getQuick(i) == metadataVersion) && tokens.getQuick(i).equals(token)) {
+        for (int i = 0; i < tableCount; i++) {
+            final PlanTable table = tables.getQuick(i);
+            if ((metadataVersion == TableUtils.ANY_TABLE_VERSION || table.getMetadataVersion() == metadataVersion) && table.getTableToken().equals(token)) {
                 return i;
             }
         }

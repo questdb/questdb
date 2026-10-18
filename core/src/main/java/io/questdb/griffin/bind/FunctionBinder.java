@@ -561,15 +561,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     private static CharSequence literalText(BoundExpression expression) {
-        if (!(expression instanceof ConstantExpression constant)) {
-            return null;
-        }
-        return switch (ColumnType.tagOf(constant.getDataType())) {
-            case ColumnType.STRING, ColumnType.SYMBOL -> constant.getStrValue();
-            case ColumnType.VARCHAR ->
-                    constant.getVarcharValue() == null ? null : constant.getVarcharValue().asAsciiCharSequence();
-            default -> null;
-        };
+        return expression instanceof ConstantExpression constant ? constant.getText() : null;
     }
 
     private static ConstantExpression markSource(ConstantExpression folded, BoundExpression source) {
@@ -1466,11 +1458,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 || expression.getDataType() != function.getType())) {
             final ConstantExpression normalized = markSource(constant(function, expression.getPosition()), expression);
             if (ColumnType.isTimestamp(function.getType()) && expression instanceof ConstantExpression original) {
-                if (original.getDataType() == ColumnType.STRING || original.getDataType() == ColumnType.SYMBOL) {
-                    normalized.withTimestampText(original.getStrValue());
-                } else if (original.getDataType() == ColumnType.VARCHAR && original.getVarcharValue() != null) {
-                    normalized.withTimestampText(original.getVarcharValue().asAsciiCharSequence());
-                }
+                normalized.withTimestampText(original.getText());
             }
             return normalized;
         }
@@ -1658,7 +1646,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             }
             FunctionResolver.wrapRuntimeConstants(args);
             try {
-                typeTimestampComparedParameters(name, args);
+                typeTimestampComparedOperands(name, args);
             } catch (Throwable th) {
                 Misc.freeObjList(args, th);
                 throw th;
@@ -1837,14 +1825,39 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         };
     }
 
+    private void typeQuotedCharAsText(ObjList<Function> args, int index) {
+        if (arguments.getQuick(index) instanceof ConstantExpression constant && constant.getDataType() == ColumnType.CHAR
+                && IntervalExtractor.isQuotedLiteral(constant)) {
+            final Function text = StrConstant.fromValue(String.valueOf(args.getQuick(index).getChar(null)));
+            Misc.free(args.getQuick(index));
+            args.setQuick(index, text);
+            arguments.setQuick(index, constant(text, constant.getPosition()).markLiteral());
+        }
+    }
+
     /**
-     * Types an untyped bind variable compared with a TIMESTAMP operand, or a BETWEEN bound of one, at the
-     * operand's precision, so its value parses as the text literal it stands for rather than at the
-     * precision of the overload's signature.
+     * Types the operands compared with a TIMESTAMP or DATE operand, by a comparison, a BETWEEN or an IN list: a
+     * quoted one-character literal as the text it spells, as a longer literal is, rather than as a CHAR; and an
+     * untyped bind variable compared with a TIMESTAMP operand, or a BETWEEN bound of one, at the operand's
+     * precision, so its value parses as the text literal it stands for rather than at the precision of the
+     * overload's signature.
      */
-    private void typeTimestampComparedParameters(CharSequence name, ObjList<Function> args) throws SqlException {
+    private void typeTimestampComparedOperands(CharSequence name, ObjList<Function> args) throws SqlException {
         final int count = args.size();
         final boolean isBetween = count == 3 && SqlKeywords.isBetweenKeyword(name);
+        if (count > 1 && SqlKeywords.isInKeyword(name) || isBetween) {
+            if (isTemporalOperand(args.getQuick(0))) {
+                for (int i = 1; i < count; i++) {
+                    typeQuotedCharAsText(args, i);
+                }
+            }
+        } else if (count == 2 && isTemporalComparisonOperator(name)) {
+            for (int i = 0; i < 2; i++) {
+                if (isTemporalOperand(args.getQuick(1 - i))) {
+                    typeQuotedCharAsText(args, i);
+                }
+            }
+        }
         if (!isBetween && (count != 2 || !isTemporalComparisonOperator(name))) {
             return;
         }

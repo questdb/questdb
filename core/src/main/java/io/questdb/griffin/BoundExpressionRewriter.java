@@ -73,10 +73,10 @@ public final class BoundExpressionRewriter implements Mutable {
             ObjList<BoundExpression> tmpArguments,
             IntList tmpPositions,
             PreparedFunctions prepared,
-            int maxRetainedArgumentLists
+            int minRetainedArgumentLists
     ) {
         this.functionFactoryCache = functionFactoryCache;
-        this.rewriteArguments = new ObjectPool<>(ObjList::new, 8, maxRetainedArgumentLists);
+        this.rewriteArguments = new ObjectPool<>(ObjList::new, 8, minRetainedArgumentLists);
         this.columns = columns;
         this.constants = constants;
         this.functions = functions;

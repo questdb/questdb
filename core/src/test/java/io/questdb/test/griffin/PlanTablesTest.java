@@ -25,7 +25,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
@@ -45,19 +47,23 @@ import io.questdb.griffin.engine.functions.regex.ILikeSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.regex.LikeSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
+import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class PlanTablesTest extends AbstractCairoTest {
@@ -130,36 +136,250 @@ public class PlanTablesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOneReaderPerTablePerCompile() throws Exception {
+    public void testCompileHoldsOneReaderAtATime() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES ('a', 1, '2024-01-01T00:00:00.000000Z'), ('b', 2, '2024-01-01T00:00:01.000000Z')");
+            final int tableCount = 20;
+            final StringSink sql = new StringSink();
+            final StringSink expected = new StringSink();
+            expected.put("v\n");
+            for (int i = 0; i < tableCount; i++) {
+                execute("CREATE TABLE t" + i + " (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO t" + i + " VALUES ('a', " + i + ", '2024-01-01T00:00:00.000000Z'), ('b', -1, '2024-01-01T00:00:01.000000Z')");
+                if (i > 0) {
+                    sql.put(" UNION ALL ");
+                }
+                sql.put("SELECT v FROM t").put(i).put(i % 2 == 0 ? " WHERE v >= 0" : " WHERE s = 'a'");
+                expected.put(i).put('\n');
+            }
             final AtomicInteger acquisitions = new AtomicInteger();
+            final AtomicInteger maxBusyReaders = new AtomicInteger();
             engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_READER && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)) {
                     acquisitions.incrementAndGet();
+                    maxBusyReaders.accumulateAndGet(engine.getBusyReaderCount(), Math::max);
                 }
             });
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                try (RecordCursorFactory ignored = select(compiler, "SELECT v FROM t WHERE s = 'a'", sqlExecutionContext)) {
+                try (RecordCursorFactory ignored = select(compiler, sql.toString(), sqlExecutionContext)) {
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                 }
-                Assert.assertEquals(1, acquisitions.getAndSet(0));
-                try (RecordCursorFactory ignored = select(compiler, "SELECT x.v, y.v FROM t x CROSS JOIN t y WHERE x.s = 'a' AND y.s = 'b'",
+                Assert.assertEquals(1, maxBusyReaders.getAndSet(0));
+                acquisitions.set(0);
+                try (RecordCursorFactory ignored = select(compiler, "SELECT x.v, y.v FROM t0 x CROSS JOIN t0 y WHERE x.s = 'a' AND y.s = 'b'",
                         sqlExecutionContext)) {
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                 }
-                Assert.assertEquals(1, acquisitions.get());
+                Assert.assertEquals(1, maxBusyReaders.get());
+                Assert.assertEquals(2, acquisitions.get());
             } finally {
                 engine.setPoolListener(null);
             }
-            assertQuery("SELECT x.v, y.v FROM t x CROSS JOIN t y WHERE x.s = 'a' AND y.s = 'b'")
+            assertQuery(sql.toString())
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected.toString());
+            assertQuery("SELECT x.v, y.v FROM t0 x CROSS JOIN t0 y WHERE x.s = 'a' AND y.s = 'b'")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
                             v\tv1
-                            1\t2
+                            0\t-1
                             """);
+        });
+    }
+
+    @Test
+    public void testDroppedTableFailsGenerationAndReleasesReaders() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, '2024-01-01T00:00:00.000000Z')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final ExecutionModel model = compiler.generateExecutionModel("SELECT v FROM t WHERE s = 'a'", sqlExecutionContext);
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                execute("DROP TABLE t");
+                try {
+                    Misc.free(compiler.generateSelectWithRetries(model.getQueryModel(), sqlExecutionContext, false));
+                    Assert.fail("generation must fail for a dropped table");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isTableDoesNotExist());
+                }
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByJitFilterHoldsOneReaderAtATime() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, k SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 'x', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 'x', 2, '2024-01-01T00:00:01.000000Z'),
+                    ('a', 'y', 3, '2024-01-01T00:00:02.000000Z'),
+                    ('b', 'x', -4, '2024-01-01T00:00:03.000000Z')
+                    """);
+            final String sql = "SELECT * FROM t WHERE k = 'x' AND v > 0 LATEST ON ts PARTITION BY s";
+            final AtomicInteger maxBusyReaders = new AtomicInteger();
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_READER && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)) {
+                    maxBusyReaders.accumulateAndGet(engine.getBusyReaderCount(), Math::max);
+                }
+            });
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory ignored = select(compiler, sql, sqlExecutionContext)
+            ) {
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(1, maxBusyReaders.get());
+            } finally {
+                engine.setPoolListener(null);
+            }
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("jit: true")
+                    .returns("""
+                            s\tk\tv\tts
+                            a\tx\t1\t2024-01-01T00:00:00.000000Z
+                            b\tx\t2\t2024-01-01T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testLockedTableFailsGenerationAndReleasesReaders() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, '2024-01-01T00:00:00.000000Z')");
+            final String sql = "SELECT v FROM t WHERE s = 'a'";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final ExecutionModel model = compiler.generateExecutionModel(sql, sqlExecutionContext);
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                final TableToken token = engine.verifyTableName("t");
+                Assert.assertTrue(engine.lockReaders(token));
+                try {
+                    Misc.free(compiler.generateSelectWithRetries(model.getQueryModel(), sqlExecutionContext, false));
+                    Assert.fail("generation must fail while the table's readers are locked");
+                } catch (SqlException e) {
+                    Assert.assertEquals(sql.indexOf("t WHERE"), e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table is locked: t");
+                } finally {
+                    engine.unlockReaders(token);
+                }
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            }
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .returns("""
+                            v
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testMetadataChangeBeforeLatestByJitRebindsStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, k SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 'x', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 'x', 2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            final AtomicInteger acquisitions = new AtomicInteger();
+            final AtomicBoolean isAltered = new AtomicBoolean();
+            final AtomicInteger acquisitionsAfterAlter = new AtomicInteger();
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                if (factoryType != PoolListener.SRC_READER || (event != PoolListener.EV_GET && event != PoolListener.EV_CREATE)
+                        || !Chars.equals(tableToken.getTableName(), "t")) {
+                    return;
+                }
+                if (isAltered.get()) {
+                    acquisitionsAfterAlter.incrementAndGet();
+                } else if (acquisitions.incrementAndGet() == 2) {
+                    try {
+                        execute("ALTER TABLE t ADD COLUMN w LONG");
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                    isAltered.set(true);
+                }
+            });
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = select(compiler, "SELECT * FROM t WHERE k = 'x' AND v > 0 LATEST ON ts PARTITION BY s",
+                            sqlExecutionContext)
+            ) {
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals("w", factory.getMetadata().getColumnName(4));
+                Assert.assertEquals(4, acquisitionsAfterAlter.get());
+            } finally {
+                engine.setPoolListener(null);
+            }
+        });
+    }
+
+    @Test
+    public void testMetadataChangeAfterBindingRebindsStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, '2024-01-01T00:00:00.000000Z')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final ExecutionModel model = compiler.generateExecutionModel("SELECT * FROM t", sqlExecutionContext);
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                execute("ALTER TABLE t ADD COLUMN w LONG");
+                try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model.getQueryModel(), sqlExecutionContext, false)) {
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals("w", factory.getMetadata().getColumnName(3));
+                }
+            }
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            s\tv\tts\tw
+                            a\t1\t2024-01-01T00:00:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testMetadataChangeDuringCompileRebindsStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, '2024-01-01T00:00:00.000000Z')");
+            final AtomicBoolean isAltering = new AtomicBoolean();
+            final AtomicBoolean isAltered = new AtomicBoolean();
+            final AtomicInteger acquisitionsAfterAlter = new AtomicInteger();
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                if (factoryType != PoolListener.SRC_READER || (event != PoolListener.EV_GET && event != PoolListener.EV_CREATE)
+                        || !Chars.equals(tableToken.getTableName(), "t")) {
+                    return;
+                }
+                if (isAltered.get()) {
+                    acquisitionsAfterAlter.incrementAndGet();
+                } else if (isAltering.compareAndSet(false, true)) {
+                    try {
+                        execute("ALTER TABLE t ADD COLUMN w LONG");
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                    isAltered.set(true);
+                }
+            });
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = select(compiler, "SELECT * FROM t WHERE s = 'a'", sqlExecutionContext)
+            ) {
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals("w", factory.getMetadata().getColumnName(3));
+                Assert.assertEquals(3, acquisitionsAfterAlter.get());
+            } finally {
+                engine.setPoolListener(null);
+            }
         });
     }
 

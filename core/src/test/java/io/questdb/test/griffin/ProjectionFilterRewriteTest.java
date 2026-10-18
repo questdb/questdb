@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -189,6 +190,70 @@ public class ProjectionFilterRewriteTest extends AbstractCairoTest {
                     SELECT a FROM (SELECT id AS a,id AS b FROM lp_pushdown) q
                     WHERE q.a=q.b AND q.b>1 ORDER BY a
                     """, "a\n2\n3\n4\n", ScanPlan.class);
+        });
+    }
+
+    @Test
+    public void testRuntimeConstantFilterReachesScan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_runtime (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO lp_runtime VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-02T00:00:00.000000Z'),
+                        (3, '2024-01-02T12:00:00.000000Z'),
+                        (4, '2024-01-03T00:00:00.000000Z')
+                    """);
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-01-03T00:00:00.000000Z"));
+            assertQuery("SELECT * FROM (SELECT * FROM lp_runtime ORDER BY x DESC) WHERE ts > dateadd('d', -1, now())")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [x desc]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_runtime
+                                      intervals: [("2024-01-02T00:00:00.000001Z","MAX")]
+                            """)
+                    .returns("""
+                            x	ts
+                            4	2024-01-03T00:00:00.000000Z
+                            3	2024-01-02T12:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM (SELECT x + 1 y, ts FROM lp_runtime) WHERE ts > dateadd('d', -1, now())")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [x+1,ts]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_runtime
+                                      intervals: [("2024-01-02T00:00:00.000001Z","MAX")]
+                            """)
+                    .returns("""
+                            y	ts
+                            4	2024-01-02T12:00:00.000000Z
+                            5	2024-01-03T00:00:00.000000Z
+                            """);
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, MicrosTimestampDriver.floor("2024-01-02T00:00:00.000000Z"));
+            assertQuery("SELECT * FROM (SELECT x + 1 y, ts FROM lp_runtime) WHERE ts > $1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [x+1,ts]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_runtime
+                                      intervals: [("2024-01-02T00:00:00.000001Z","MAX")]
+                            """)
+                    .returns("""
+                            y	ts
+                            4	2024-01-02T12:00:00.000000Z
+                            5	2024-01-03T00:00:00.000000Z
+                            """);
         });
     }
 

@@ -299,6 +299,14 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * Whether the generator hash-joins an empty master to the step's input instead of the join's master: a keyed RIGHT
+     * join whose ON residual is constant false, so no master row matches and the join emits each slave row once.
+     */
+    public static boolean isMasterEmptied(JoinInput step) {
+        return step.getJoinType() == JoinKind.RIGHT_OUTER && isNeverMatchingKeyedStep(step);
+    }
+
+    /**
      * True when the factory of the relational join step at {@code position} of the join's ordered inputs can keep its
      * master's designated timestamp: the join leads with its first input, see {@link LogicalPlans#isFirstInputLeading},
      * and the step neither null-extends its master nor drives the join with the smaller input. A markout step
@@ -340,11 +348,11 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * Whether the generator joins the step to an empty slave instead of its input: a LEFT join whose ON residual is
-     * constant false.
+     * Whether the generator hash-joins the master to an empty slave instead of the step's input: a keyed LEFT join
+     * whose ON residual is constant false, so no slave row matches and the join emits each master row once.
      */
     public static boolean isSlaveEmptied(JoinInput step) {
-        return step.getJoinType() == JoinKind.LEFT_OUTER && LogicalPlans.constantTruth(step.getOnResidual()) == 0;
+        return step.getJoinType() == JoinKind.LEFT_OUTER && isNeverMatchingKeyedStep(step);
     }
 
     /**
@@ -633,6 +641,10 @@ public final class PlanToFactoryRules {
             }
         }
         return true;
+    }
+
+    private static boolean isNeverMatchingKeyedStep(JoinInput step) {
+        return step.getMasterKeyColumnIds().size() > 0 && LogicalPlans.constantTruth(step.getOnResidual()) == 0;
     }
 
     /**

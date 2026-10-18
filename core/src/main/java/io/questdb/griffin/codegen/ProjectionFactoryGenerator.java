@@ -279,7 +279,7 @@ final class ProjectionFactoryGenerator {
             final CharSequence name = project.getOutput().getColumnName(i);
             metadata.add(Chars.equals(baseMetadata.getColumnName(index), name)
                     ? baseMetadata.getColumnMetadata(index)
-                    : SqlCodeGenerator.copyColumn(baseMetadata, index, Chars.toString(name)));
+                    : TableColumnMetadata.copyOf(baseMetadata, index, Chars.toString(name)));
         }
         metadata.setTimestampIndex(PlanToFactoryRules.projectedTimestampIndex(project, baseMetadata.getTimestampIndex()));
     }

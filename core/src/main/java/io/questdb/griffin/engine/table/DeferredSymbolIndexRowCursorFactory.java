@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -41,6 +42,7 @@ import io.questdb.std.Misc;
 public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactory {
     private final int columnIndex;
     private final int indexDirection;
+    private final ShiftedRowCursor shiftedCursor = new ShiftedRowCursor();
     private final Function symbol;
     private int symbolKey;
 
@@ -72,8 +74,37 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, long firstRow) {
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+            return EmptyRowCursor.INSTANCE;
+        }
+        final IndexReader reader = pageFrame.getIndexReader(columnIndex, indexDirection);
+        if (indexDirection == IndexReader.DIR_BACKWARD) {
+            return reader.getCursor(TableUtils.toIndexKey(symbolKey), pageFrame.getPartitionLo(), firstRow);
+        }
+        return shiftedCursor.of(reader.getCursor(TableUtils.toIndexKey(symbolKey), firstRow, pageFrame.getPartitionHi() - 1), firstRow - pageFrame.getPartitionLo());
+    }
+
+    @Override
     public Function getFunction() {
         return symbol;
+    }
+
+    @Override
+    public long getRow(PageFrame pageFrame, long rowLo, long rowHi, long rowIndex) {
+        final BitmapIndexFwdReader reader = (BitmapIndexFwdReader) pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD);
+        return reader.getRow(TableUtils.toIndexKey(symbolKey), rowLo, rowHi, indexDirection, rowIndex);
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, long rowLo, long rowHi, long maxCount) {
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+            return 0;
+        }
+        if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
+            return -1;
+        }
+        return reader.countRows(TableUtils.toIndexKey(symbolKey), rowLo, rowHi, maxCount);
     }
 
     @Override

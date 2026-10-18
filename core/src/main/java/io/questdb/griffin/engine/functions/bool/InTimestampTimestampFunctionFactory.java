@@ -338,8 +338,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             try {
                 addElement(res, func, null, driver);
             } catch (CairoException e) {
-                final CharSequence text = ColumnType.tagOf(func.getType()) == ColumnType.VARCHAR
-                        ? func.getVarcharA(null).asAsciiCharSequence() : func.getStrA(null);
+                final CharSequence text = func.getStrA(null);
                 if (intervals == null) {
                     intervals = new LongList();
                     parsed = new LongList();

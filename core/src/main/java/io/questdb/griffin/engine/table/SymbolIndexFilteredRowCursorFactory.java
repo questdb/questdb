@@ -61,8 +61,23 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     }
 
     @Override
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, long firstRow) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public Function getFunction() {
         return symbolFunction;
+    }
+
+    @Override
+    public long getRow(PageFrame pageFrame, long rowLo, long rowHi, long rowIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, long rowLo, long rowHi, long maxCount) {
+        return -1;
     }
 
     public int getSymbolKey() {

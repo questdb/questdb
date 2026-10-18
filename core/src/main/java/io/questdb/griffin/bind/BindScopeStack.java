@@ -26,17 +26,20 @@ package io.questdb.griffin.bind;
 
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import io.questdb.std.RetainedCapacity;
 import org.jetbrains.annotations.TestOnly;
 
 /**
  * One {@link BindScope} per nesting depth of the compiler's statements: the statement binds at depth 0 and a
  * sub-query one depth deeper than the query that contains it. Queries bind one at a time at each depth, a sub-query
  * only inside the query that contains it, so the scope of a depth serves every sub-query of that depth. Optimising
- * and generating a sub-query enter the depth it bound at. Clearing the stack keeps the scopes of the first
- * {@link #MAX_RETAINED_DEPTH} depths and drops deeper ones.
+ * and generating a sub-query enter the depth it bound at. Clearing the stack keeps the scopes of the depths its
+ * recent uses reached, see {@link RetainedCapacity}, and of at least the first {@link #MIN_RETAINED_DEPTH}
+ * depths, and drops deeper ones.
  */
 public final class BindScopeStack implements Mutable {
-    static final int MAX_RETAINED_DEPTH = 32;
+    static final int MIN_RETAINED_DEPTH = 32;
+    private final RetainedCapacity retainedScopeCapacity = new RetainedCapacity(MIN_RETAINED_DEPTH);
     private final ObjList<BindScope> scopes = new ObjList<>();
     private BindScope current;
     private int depth;
@@ -52,8 +55,9 @@ public final class BindScopeStack implements Mutable {
         for (int i = 0, n = usedScopeCount; i < n; i++) {
             scopes.getQuick(i).clear();
         }
-        if (scopes.size() > MAX_RETAINED_DEPTH) {
-            scopes.remove(MAX_RETAINED_DEPTH, scopes.size() - 1);
+        final int retainedScopeCount = retainedScopeCapacity.endUse(usedScopeCount);
+        if (scopes.size() > retainedScopeCount) {
+            scopes.remove(retainedScopeCount, scopes.size() - 1);
         }
         current = scopes.getQuick(0);
         usedScopeCount = 1;

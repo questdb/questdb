@@ -25,13 +25,17 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
@@ -621,6 +625,28 @@ public class LimitTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\tAAPL\tNYSE\t21.3\t20.3\t11.6\t10.5
                             1970-01-01T00:00:00.000003Z\tAAPL\tNYSE\t21.4\t20.4\t11.2\t10.2
                             """);
+        });
+    }
+
+    @Test
+    public void testLimitSkipsInsideHashJoinGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i FROM long_sequence(6))");
+            execute("CREATE TABLE s (k INT, v INT)");
+            execute("INSERT INTO s VALUES (2, 1), (2, 2), (2, 3), (4, 4), (5, 5), (5, 6)");
+            // the skip lands before, inside and past the slave rows each master row joins
+            final String join = "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k";
+            printSql(join);
+            final String all = sink.toString();
+            for (int lo = 0; lo < 7; lo++) {
+                for (int hi = lo; hi < 8; hi++) {
+                    final String query = join + " LIMIT " + lo + ", " + hi;
+                    assertQuery(query).noLeakCheck().noRandomAccess().returns(rowRange(all, lo, hi));
+                }
+                if (lo > 0) {
+                    assertQuery(join + " LIMIT -" + lo).noLeakCheck().noRandomAccess().expectSize().returns(lastRows(all, lo));
+                }
+            }
         });
     }
 
@@ -1869,8 +1895,8 @@ public class LimitTest extends AbstractCairoTest {
             execute("CREATE TABLE m AS (SELECT x::INT i, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT (100 + x)::INT k FROM long_sequence(3))");
             execute("CREATE TABLE sn AS (SELECT (2_000 + x)::INT k FROM long_sequence(3))");
-            // the slave filter counts the slave rows each build of the hash table reads; the master suffix grows from
-            // the last two filtered master rows to all of them before the join emits two rows
+            // the slave filter counts the slave rows each build of the hash table reads; the master filter returns
+            // older rows under the open join until the join emits two rows
             final String query = "SELECT m.i, s.k FROM m JOIN (SELECT k FROM s WHERE test_latched_counter()) s ON m.i = s.k WHERE m.i > 0 LIMIT -2";
             assertSlaveRowReads(query, 3);
             assertQuery(query)
@@ -1911,15 +1937,65 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegativeLimitOverJoinPastMaxNegativeLimitBuildsSlaveTwice() throws Exception {
+    public void testNegativeLimitOverJoinFilterFailsOnOlderFrames() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT (2_000 + x)::INT k FROM long_sequence(3))");
+            // no master row joins, so the master filter reads every master row: the last ones, the longer suffix it
+            // reads again, and the older page frames; it fails on whichever of them holds the faulting row
+            final int[] failingCall = new int[1];
+            final boolean[] isDisconnecting = new boolean[1];
+            final TestLatchedCounterFunctionFactory.Callback callback = new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (count == failingCall[0]) {
+                        throw isDisconnecting[0] ? CairoException.queryDisconnected(-1) : CairoException.nonCritical().put("injected filter failure");
+                    }
+                    return true;
+                }
+            };
+            TestLatchedCounterFunctionFactory.reset(callback);
+            final String query = "SELECT m.i, s.k FROM (SELECT * FROM m WHERE i > 0 AND test_latched_counter()) m JOIN s ON m.i = s.k LIMIT -1";
+            assertQuery(query).noLeakCheck().assertsPlanContaining("limit: 1");
+            try (RecordCursorFactory factory = select(query)) {
+                for (int call : new int[]{1, 11, 41, 301, 500}) {
+                    for (boolean isDisconnect : new boolean[]{false, true}) {
+                        failingCall[0] = call;
+                        isDisconnecting[0] = isDisconnect;
+                        TestLatchedCounterFunctionFactory.reset(callback);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            cursor.hasNext();
+                            Assert.fail();
+                        } catch (CairoException e) {
+                            if (isDisconnect) {
+                                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION, e.getInterruptionReason());
+                                TestUtils.assertContains(e.getFlyweightMessage(), "remote disconnected, query aborted");
+                            } else {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "injected filter failure");
+                            }
+                        }
+                    }
+                }
+                failingCall[0] = 0;
+                assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns("i\tk\n");
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
+    }
+
+    @Test
+    public void testNegativeLimitOverJoinPastMaxNegativeLimitBuildsSlaveOnce() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 100);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::INT i, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT (100 + x)::INT k FROM long_sequence(3))");
-            // the last 100 filtered master rows, the most the master filter holds, join no slave row, so the join runs
-            // once more over all master rows
+            // the last 100 filtered master rows, the most the master filter holds, join no slave row, so the master
+            // filter goes on to older page frames under the same hash table
             final String query = "SELECT m.i, s.k FROM m JOIN (SELECT k FROM s WHERE test_latched_counter()) s ON m.i = s.k WHERE m.i > 0 LIMIT -2";
-            assertSlaveRowReads(query, 6);
+            assertSlaveRowReads(query, 3);
             assertQuery(query)
                     .noLeakCheck()
                     .noRandomAccess()
@@ -1929,6 +2005,138 @@ public class LimitTest extends AbstractCairoTest {
                             102\t102
                             103\t103
                             """);
+        });
+    }
+
+    @Test
+    public void testNegativeLimitOverJoinReadsOlderFrames() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, x % 7 l, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT (x * 37)::INT k, x % 7 l, x v, (x * 133_200_000_000 + 500_000)::TIMESTAMP ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE c AS (SELECT x::INT c FROM long_sequence(2))");
+            // past the last four filtered master rows, the most the master filter holds, the LIMIT reads ranges of
+            // older page frames under the open join, the first of them cut at the oldest master row read before
+            final String[] joins = {
+                    "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k WHERE m.l > 0",
+                    "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k AND m.l = s.l WHERE m.l > 0 AND s.v > 2",
+                    "SELECT m.i, s.v FROM m LEFT JOIN s ON m.i = s.k WHERE m.l > 0 AND s.v > 2",
+                    "SELECT m.i, s.v FROM m ASOF JOIN s ON (l) WHERE m.l > 0 AND s.v > 8",
+                    "SELECT m.i, s.v FROM m LT JOIN s ON (l) WHERE m.l > 0 AND s.v > 8",
+                    "SELECT m.i, s.v FROM m CROSS JOIN s WHERE m.l > 0 AND m.i = s.k + 1",
+                    "SELECT m.i, s.v FROM m JOIN s ON m.i > s.k AND m.i < s.k + 3 WHERE m.l > 0",
+                    "SELECT m.i, s.v, c.c FROM m JOIN s ON m.i = s.k CROSS JOIN c WHERE m.l > 0",
+            };
+            for (String join : joins) {
+                printSql(join);
+                final String all = sink.toString();
+                for (int n = 1; n < 5; n++) {
+                    final String query = join + " LIMIT -" + n;
+                    assertQuery(query).noLeakCheck().assertsPlanContaining("limit: " + n);
+                    assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(lastRows(all, n));
+                    assertQuery(query).noLeakCheck().noRandomAccess().expectSize().fullFatJoins().returns(lastRows(all, n));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNegativeLimitOverJoinReadsOlderFramesBuildsSlaveOnce() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE sn AS (SELECT (2_000 + x)::INT k FROM long_sequence(3))");
+            execute("CREATE TABLE sf AS (SELECT CASE WHEN x = 2 THEN 5 ELSE 2_000 + x END::INT k FROM long_sequence(3))");
+            execute("CREATE TABLE st AS (SELECT CASE WHEN x = 2 THEN 498 ELSE 2_000 + x END::INT k FROM long_sequence(3))");
+            // the slave filter counts the slave rows each build of the hash table reads: one build serves the last
+            // master rows, the longer suffix and every range of older page frames
+            final String[] slaves = {"sn", "sf", "st"};
+            final String[] expected = {"i\tk\n", "i\tk\n5\t5\n", "i\tk\n498\t498\n"};
+            for (int i = 0; i < slaves.length; i++) {
+                final String query = "SELECT m.i, s.k FROM m JOIN (SELECT k FROM " + slaves[i] + " WHERE test_latched_counter()) s ON m.i = s.k WHERE m.i > 0 LIMIT -1";
+                assertSlaveRowReads(query, 3);
+                assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected[i]);
+            }
+        });
+    }
+
+    @Test
+    public void testNegativeLimitOverJoinReturnsLastRowsOfOldMasterRows() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (k INT, v INT)");
+            execute("INSERT INTO s VALUES (5, 1), (5, 2), (5, 3), (7, 4), (7, 5), (300, 6), (499, 7)");
+            // one of the last four master rows joins, then master rows 300, 7 and 5, which join several slave rows
+            // each, so the last rows start inside the rows of the oldest master row the LIMIT keeps
+            final String join = "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k WHERE m.i > 0";
+            assertQuery(join)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            i\tv
+                            5\t3
+                            5\t2
+                            5\t1
+                            7\t5
+                            7\t4
+                            300\t6
+                            499\t7
+                            """);
+            assertQuery(join + " LIMIT -4")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            i\tv
+                            7\t5
+                            7\t4
+                            300\t6
+                            499\t7
+                            """);
+            printSql(join, false);
+            final String all = sink.toString();
+            printSql(join, true);
+            final String allFullFat = sink.toString();
+            for (int n = 1; n < 5; n++) {
+                assertQuery(join + " LIMIT -" + n).noLeakCheck().noRandomAccess().expectSize().returns(lastRows(all, n));
+                assertQuery(join + " LIMIT -" + n).noLeakCheck().noRandomAccess().expectSize().fullFatJoins().returns(lastRows(allFullFat, n));
+            }
+        });
+    }
+
+    @Test
+    public void testNegativeLimitOverJoinSkipsRowsOfOldMasterRow() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT 5 k, x::INT v FROM long_sequence(1_000))");
+            execute("CREATE TABLE c AS (SELECT x::INT c FROM long_sequence(3))");
+            // only master row 5 joins, to 1_000 slave rows; the LIMIT reads the first of them and skips the others by
+            // their count, through a hash join and through a cross join over it
+            final String[] joins = {
+                    "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k WHERE m.i > 0",
+                    "SELECT m.i, s.v, c.c FROM m JOIN s ON m.i = s.k CROSS JOIN c WHERE m.i > 0",
+            };
+            for (String join : joins) {
+                printSql(join);
+                final String all = sink.toString();
+                for (int n = 1; n < 5; n++) {
+                    final String query = join + " LIMIT -" + n;
+                    try (RecordCursorFactory factory = select(query)) {
+                        assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(lastRows(all, n));
+                        RecordCursorFactory limit = factory;
+                        while (!(limit instanceof LimitRecordCursorFactory)) {
+                            limit = limit.getBaseFactory();
+                        }
+                        Assert.assertEquals(1, ((LimitRecordCursorFactory) limit).getWalkedRowCount());
+                    }
+                }
+            }
         });
     }
 
@@ -3205,6 +3413,19 @@ public class LimitTest extends AbstractCairoTest {
             start = rows.lastIndexOf('\n', start - 1);
         }
         return rows.substring(0, headerEnd + 1) + rows.substring(start + 1);
+    }
+
+    private static String rowRange(String rows, int lo, int hi) {
+        final int headerEnd = rows.indexOf('\n');
+        int start = headerEnd + 1;
+        for (int i = 0; i < lo && start < rows.length(); i++) {
+            start = rows.indexOf('\n', start) + 1;
+        }
+        int end = start;
+        for (int i = lo; i < hi && end < rows.length(); i++) {
+            end = rows.indexOf('\n', end) + 1;
+        }
+        return rows.substring(0, headerEnd + 1) + rows.substring(start, end);
     }
 
     private static void setLimitBindVariable(int type, long value) throws SqlException {

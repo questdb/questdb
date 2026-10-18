@@ -117,6 +117,8 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         private boolean masterHasNext;
         private long masterSize;
         private long slavePartialSize;
+        // The slave rows the cursor returned or skipped for the current master row.
+        private long slaveRowsRead;
         private long slaveSize;
 
         public CrossJoinRecordCursor(int columnSplit) {
@@ -178,6 +180,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
                 if (isMasterHasNextPending) {
                     masterHasNext = masterCursor.hasNext();
                     isMasterHasNextPending = false;
+                    slaveRowsRead = 0;
                 }
 
                 if (!masterHasNext) {
@@ -186,6 +189,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
 
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (slaveCursor.hasNext()) {
+                    slaveRowsRead++;
                     return true;
                 }
 
@@ -197,6 +201,16 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         @Override
         public long preComputedStateSize() {
             return 0;
+        }
+
+        @Override
+        public long remainingMasterRowCount() {
+            final long slaveRowCount = isSlaveSizeCalculated ? slaveSize : slaveCursor.size();
+            final long masterRowsLeft = masterCursor.remainingMasterRowCount();
+            if (isMasterHasNextPending || !masterHasNext || slaveRowCount < 0 || masterRowsLeft < 0) {
+                return -1;
+            }
+            return slaveRowCount - slaveRowsRead + masterRowsLeft * slaveRowCount;
         }
 
         @Override
@@ -226,7 +240,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
                 if (!masterHasNext) {
                     return; // the cursor is already exhausted
                 }
+                final long rowsBeforeSkip = rowCount.get();
                 slaveCursor.skipRows(rowCount, UNBOUNDED_ROW_COUNT);
+                slaveRowsRead += rowsBeforeSkip - rowCount.get();
                 if (rowCount.get() == 0) {
                     return; // skipped entirely within the current master row
                 }
@@ -264,7 +280,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
                 slaveCursor.toTop();
                 isSlaveReset = true;
             }
+            final long rowsBeforeSkip = rowCount.get();
             slaveCursor.skipRows(rowCount, UNBOUNDED_ROW_COUNT);
+            slaveRowsRead = rowsBeforeSkip - rowCount.get();
         }
 
         @Override

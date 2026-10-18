@@ -197,11 +197,6 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
         return true;
     }
 
-    @Override
-    public boolean isReaderPinned(TableToken tableToken) {
-        return baseTableReader != null && tableToken.equals(baseTableReader.getTableToken());
-    }
-
     public void of(TableReader baseTableReader) {
         this.baseTableReader = baseTableReader;
     }

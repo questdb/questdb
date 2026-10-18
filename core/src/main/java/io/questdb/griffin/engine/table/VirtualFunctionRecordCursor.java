@@ -175,6 +175,12 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long remainingMasterRowCount() {
+        assert baseCursor != null;
+        return baseCursor.remainingMasterRowCount();
+    }
+
+    @Override
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         if (baseCursor != null) {
             baseCursor.setParquetDecodeHint(hint);

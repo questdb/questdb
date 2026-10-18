@@ -426,6 +426,25 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * True when the nested loop of the unkeyed step copies its slave rows once: the loop rewinds the slave for every
+     * master row, as every nested loop but a RIGHT join's does, the slave is a join, whose rewind repeats the join, and
+     * every step of that join is {@link LogicalPlans#isStableJoinStep stable}, so every evaluation yields its rows.
+     */
+    private boolean isSlaveMaterialized(JoinInput step) {
+        if (step.getJoinType() == JoinKind.RIGHT_OUTER || !(step.getInput() instanceof JoinPlan slave)) {
+            return false;
+        }
+        final boolean isParallelGroupByEnabled = context.getExecutionContext().isParallelGroupByEnabled();
+        final ObjList<JoinInput> steps = slave.getOrderedInputs();
+        for (int i = 0, n = steps.size(); i < n; i++) {
+            if (!LogicalPlans.isStableJoinStep(steps.getQuick(i), isParallelGroupByEnabled, null)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * True when the consumer steals the filter the generator builds for the plan and reads the frames under it: a
      * parallel filter without a LIMIT, within a pattern scan or above it; the serial filter of a table scan, which a
      * top-K and a GROUP BY steal, and of a covering index scan, which a GROUP BY steals; and a gate over page frames,
@@ -668,7 +687,7 @@ final class OperatorPlanning implements Mutable {
                 && isAscendingMasterRead(join, inputIndex)) {
             step.setAlgorithm(JoinInput.Algorithm.MARKOUT);
         } else if (step.getMasterKeyColumnIds().size() == 0) {
-            step.setAlgorithm(JoinInput.Algorithm.NESTED_LOOP);
+            step.setAlgorithm(isSlaveMaterialized(step) ? JoinInput.Algorithm.MATERIALIZED_NESTED_LOOP : JoinInput.Algorithm.NESTED_LOOP);
         } else {
             final boolean isSlaveRandomAccess = PlanToFactoryRules.isSlaveEmptied(step) || isRandomAccess(slave);
             step.setAlgorithm(isSlaveRandomAccess && !isFullFatJoins ? JoinInput.Algorithm.LIGHT_HASH : JoinInput.Algorithm.HASH);
@@ -858,7 +877,7 @@ final class OperatorPlanning implements Mutable {
         }
         switch (step.getAlgorithm()) {
             case MARKOUT -> readJoinOrder(join, inputCount - 1, false, isDirectionRead);
-            case NESTED_LOOP -> {
+            case NESTED_LOOP, MATERIALIZED_NESTED_LOOP -> {
                 if (isMasterNullExtended) {
                     readOrder(step.getInput(), isAdviceRead, false);
                     readJoinOrder(join, inputCount - 1, false, isDirectionRead);

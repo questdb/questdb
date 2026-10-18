@@ -91,16 +91,11 @@ final class AggregateInputOrder implements Mutable {
                 }
                 return plan;
             }
-            case FilterPlan filter -> {
-                if (LogicalPlans.isOrderIndependent(filter.getPredicate())) {
-                    filter.replaceInput(0, removeAggregateInputOrder(filter.getChild()));
-                }
+            case FilterPlan filter when LogicalPlans.isOrderTransparent(filter) -> {
+                filter.replaceInput(0, removeAggregateInputOrder(filter.getChild()));
                 return plan;
             }
-            case ProjectPlan project -> {
-                if (project.hasUpdateConversions() || !LogicalPlans.isOrderTransparent(project)) {
-                    return plan;
-                }
+            case ProjectPlan project when LogicalPlans.isOrderTransparent(project) -> {
                 if (replaceWithUnorderedInput(project)) {
                     project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project,
                             project.getChild().getOutput().getTimestampColumnId()));

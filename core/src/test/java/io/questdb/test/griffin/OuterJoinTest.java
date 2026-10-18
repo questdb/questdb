@@ -34,6 +34,75 @@ import org.junit.Test;
 
 public class OuterJoinTest extends AbstractCairoTest {
     @Test
+    public void testConstantFalseOnEmptiesUnmatchableSide() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                final String light = isFullFat ? "" : " Light";
+                assertRows("SELECT l.id lid,r.id rid FROM lp_outer_l l LEFT JOIN "
+                                + "(SELECT * FROM lp_outer_r UNION ALL SELECT * FROM lp_outer_r) r ON l.k=r.k AND false ORDER BY lid,rid",
+                        isFullFat, """
+                                Hash Left Outer Join%s
+                                          condition: r.k=l.k
+                                          filter: false
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_outer_l
+                                            Hash
+                                                Empty table
+                                """.formatted(light),
+                        """
+                                lid	rid
+                                1	null
+                                2	null
+                                3	null
+                                4	null
+                                5	null
+                                """);
+                assertRows("SELECT l.id lid,r.id rid FROM (SELECT * FROM lp_outer_l UNION ALL SELECT * FROM lp_outer_l) l "
+                                + "RIGHT JOIN lp_outer_r r ON l.k=r.k AND false ORDER BY lid,rid",
+                        isFullFat, """
+                                Hash Right Outer Join%s
+                                          condition: r.k=l.k
+                                          filter: false
+                                            Empty table
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_outer_r
+                                """.formatted(light),
+                        """
+                                lid	rid
+                                null	10
+                                null	11
+                                null	12
+                                null	13
+                                null	14
+                                """);
+                assertRows("SELECT l.id lid,r.id rid FROM lp_outer_l l LEFT JOIN lp_outer_r r ON false ORDER BY lid,rid",
+                        isFullFat, """
+                                Nested Loop Left Join
+                                          filter: false
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_outer_l
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_outer_r
+                                """,
+                        """
+                                lid	rid
+                                1	null
+                                2	null
+                                3	null
+                                4	null
+                                5	null
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testEmptyInputsAndConstantFalsePreserveOuterRows() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

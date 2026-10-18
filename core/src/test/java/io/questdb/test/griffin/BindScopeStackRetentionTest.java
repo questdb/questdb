@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.RetainedCapacity;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -35,8 +36,9 @@ import org.junit.Test;
 
 /**
  * A compiler keeps one bind scope per nesting depth whatever the width of its queries and whichever clauses nest
- * them, and the statement's sub-queries come from a pool that keeps at most the configured model pool capacity
- * between statements, after success and after a failure at binding or generation alike.
+ * them, and the statement's sub-queries come from a pool that keeps what its recent uses took between statements and
+ * returns to the configured model pool capacity once they stop taking more, after success and after a failure at
+ * binding or generation alike.
  */
 public class BindScopeStackRetentionTest extends AbstractCairoTest {
     private static final String GENERATION_ERROR_SUBQUERY = "(SELECT p.price FROM (SELECT * FROM prices ORDER BY ts DESC) p ASOF JOIN trades t)";
@@ -104,7 +106,7 @@ public class BindScopeStackRetentionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWideQueryRetainsSubqueriesUpToCeiling() throws Exception {
+    public void testWideQuerySubqueriesReturnToFloor() throws Exception {
         assertMemoryLeak(() -> {
             final int ceiling = configuration.getSqlModelPoolCapacity();
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
@@ -118,6 +120,10 @@ public class BindScopeStackRetentionTest extends AbstractCairoTest {
                 compileAndClose(compiler, wideQuery(ceiling + 8));
                 Assert.assertTrue(compiler.getSubqueryPoolCapacity() > ceiling);
                 compiler.clear();
+                Assert.assertTrue(compiler.getSubqueryPoolCapacity() > ceiling);
+                for (int i = 0, n = 2 * RetainedCapacity.WINDOW_USES; i < n; i++) {
+                    compiler.clear();
+                }
                 Assert.assertEquals(ceiling, compiler.getSubqueryPoolCapacity());
             }
         });

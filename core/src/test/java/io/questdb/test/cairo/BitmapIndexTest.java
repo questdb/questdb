@@ -1368,6 +1368,104 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeRowsMatchCursors() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // value blocks of four postings make the walks cross block boundaries on almost every range
+            create(configuration, path.trimTo(plen), "x", 4);
+            final int columnTop = 7;
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                // key 0, the NULL key, holds rows above the column top, key 1 most rows, key 2 every 7th row of
+                // the middle, key 3 rows of the start only, key 4 rows of the end only, key 5 a single row, and key 6
+                // no row
+                for (int row = columnTop; row < 300; row++) {
+                    final int key;
+                    if (row < 40) {
+                        key = row % 3 == 0 ? 3 : 1;
+                    } else if (row > 260) {
+                        key = row % 2 == 0 ? 4 : 1;
+                    } else if (row == 150) {
+                        key = 5;
+                    } else if (row % 7 == 0) {
+                        key = 2;
+                    } else {
+                        key = row % 11 == 0 ? 0 : 1;
+                    }
+                    writer.add(key, row);
+                }
+                writer.add(7, 300);
+            }
+            final long[] bounds = {0, 1, 3, 4, 5, 6, 7, 8, 15, 16, 17, 39, 40, 41, 100, 149, 150, 151, 259, 260, 261, 262, 298, 299, 300, 301};
+            final LongList fwdRows = new LongList();
+            final LongList bwdRows = new LongList();
+            for (long top : new long[]{0, columnTop}) {
+                try (
+                        BitmapIndexFwdReader fwdReader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, top);
+                        BitmapIndexBwdReader bwdReader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, top)
+                ) {
+                    for (int key = 0; key < 10; key++) {
+                        for (long lo : bounds) {
+                            for (long hi : bounds) {
+                                if (lo > hi) {
+                                    Assert.assertEquals(0, fwdReader.countRows(key, lo, hi, Long.MAX_VALUE));
+                                    continue;
+                                }
+                                readRows(fwdReader.getCursor(key, lo, hi), lo, fwdRows);
+                                readRows(bwdReader.getCursor(key, lo, hi), lo, bwdRows);
+                                final long count = fwdRows.size();
+                                final String message = "top=" + top + ", key=" + key + ", lo=" + lo + ", hi=" + hi;
+                                Assert.assertEquals(message, count, bwdRows.size());
+                                Assert.assertEquals(message, count, fwdReader.countRows(key, lo, hi, Long.MAX_VALUE));
+                                for (long maxCount = 0; maxCount <= count + 1; maxCount++) {
+                                    final long cappedCount = fwdReader.countRows(key, lo, hi, maxCount);
+                                    if (count <= maxCount) {
+                                        Assert.assertEquals(message, count, cappedCount);
+                                    } else {
+                                        Assert.assertTrue(message + ", maxCount=" + maxCount, cappedCount > maxCount);
+                                    }
+                                }
+                                for (int i = 0; i < count; i++) {
+                                    Assert.assertEquals(message, fwdRows.getQuick(i), fwdReader.getRow(key, lo, hi, IndexReader.DIR_FORWARD, i));
+                                    Assert.assertEquals(message, bwdRows.getQuick(i), fwdReader.getRow(key, lo, hi, IndexReader.DIR_BACKWARD, i));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRangeRowsReadTheNearerEnd() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 4);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                for (int row = 0; row < 4_000; row++) {
+                    writer.add(0, row);
+                }
+            }
+            // 1_000 value blocks hold the postings, and a two-sided count of either range below hops across nearly all
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                BitmapIndexFwdReader.resetTestCounters();
+                BitmapIndexFwdReader.isBlockHopCounterEnabled = true;
+                try {
+                    Assert.assertEquals(12, reader.countRows(0, 0, 11, Long.MAX_VALUE));
+                    Assert.assertEquals(5, reader.getRow(0, 0, 11, IndexReader.DIR_FORWARD, 5));
+                    Assert.assertEquals(6, reader.getRow(0, 0, 11, IndexReader.DIR_BACKWARD, 5));
+                    Assert.assertEquals(12, reader.countRows(0, 3_988, 3_999, Long.MAX_VALUE));
+                    Assert.assertEquals(3_993, reader.getRow(0, 3_988, 3_999, IndexReader.DIR_FORWARD, 5));
+                    Assert.assertEquals(3_994, reader.getRow(0, 3_988, 3_999, IndexReader.DIR_BACKWARD, 5));
+                    Assert.assertTrue(reader.countRows(0, 0, 3_000, 10) > 10);
+                } finally {
+                    BitmapIndexFwdReader.isBlockHopCounterEnabled = false;
+                }
+                final long blockHops = BitmapIndexFwdReader.testRangeCountBlockHops.get();
+                Assert.assertTrue("block hops: " + blockHops, blockHops <= 100);
+            }
+        });
+    }
+
+    @Test
     public void testSimpleRollback() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd modelRnd = new Rnd();
@@ -1783,6 +1881,15 @@ public class BitmapIndexTest extends AbstractCairoTest {
             );
             mem.toTop();
             return mem;
+        }
+    }
+
+    private void readRows(RowCursor cursor, long minValue, LongList rows) {
+        rows.clear();
+        try (cursor) {
+            while (cursor.hasNext()) {
+                rows.add(minValue + cursor.next());
+            }
         }
     }
 

@@ -24,10 +24,97 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class OrderPlanningTest extends AbstractCairoTest {
+
+    @Test
+    public void testAggregateDropsSubQueryOrderUnderRandomFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createSequenceTable();
+            sqlExecutionContext.setRandom(new Rnd());
+            try {
+                // rnd_int() draws a different value on each read
+                assertQuery("SELECT sum(x) FROM (SELECT x FROM t ORDER BY x DESC) WHERE rnd_int(0, 1, 0) = 1")
+                        .noLeakCheck()
+                        .assertsPlan("""
+                                Async Group By workers: 1
+                                  vectorized: false
+                                  values: [sum(x)]
+                                  filter: rnd_int(0,1,0)=1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                                """);
+                assertQuery("SELECT sum(x) FROM (SELECT x FROM t ORDER BY x DESC) WHERE rnd_int(0, 1, 0) = 1")
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                sum
+                                16
+                                """);
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
+    }
+
+    @Test
+    public void testAggregateDropsSubQueryOrderUnderRandomProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            createSequenceTable();
+            sqlExecutionContext.setRandom(new Rnd());
+            try {
+                // rnd_int() draws a different value on each read
+                assertQuery("SELECT sum(r) FROM (SELECT x, rnd_int(0, 1000, 0) * x r FROM (SELECT x FROM t ORDER BY x DESC))")
+                        .noLeakCheck()
+                        .assertsPlan("""
+                                GroupBy vectorized: false
+                                  values: [sum(r)]
+                                    VirtualRecord
+                                      functions: [rnd_int(0,1000,0)*x]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                """);
+                assertQuery("SELECT sum(r) FROM (SELECT x, rnd_int(0, 1000, 0) * x r FROM (SELECT x FROM t ORDER BY x DESC))")
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                sum
+                                19691
+                                """);
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
+    }
+
+    @Test
+    public void testAggregateDropsSubQueryOrderUnderRuntimeConstantProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            createSequenceTable();
+            assertQuery("SELECT k, max(y) FROM (SELECT k, x + 0 * second(now()) y FROM (SELECT x, k FROM t ORDER BY x DESC))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              keys: [k]
+                              values: [max(y)]
+                                VirtualRecord
+                                  functions: [k,x+0*second(now())]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """)
+                    .returns("""
+                            k	max
+                            2	8
+                            1	7
+                            0	6
+                            """);
+        });
+    }
 
     @Test
     public void testAggregateOrderedByKeyReadsPageFrames() throws Exception {
@@ -849,6 +936,41 @@ public class OrderPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeSeriesJoinDropsDescendingOrderUnderRandomFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createSequenceTable();
+            execute("CREATE TABLE u AS (SELECT x y, timestamp_sequence(500_000, 2_000_000) ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.setRandom(new Rnd());
+            try {
+                // rnd_int() draws a different value on each read
+                assertQuery("SELECT sum(x), sum(y) FROM (SELECT x, ts FROM (SELECT x, ts FROM t ORDER BY ts DESC) WHERE rnd_int(0, 1, 0) = 1) a ASOF JOIN u b")
+                        .noLeakCheck()
+                        .assertsPlan("""
+                                GroupBy vectorized: false
+                                  values: [sum(a.x),sum(b.y)]
+                                    AsOf Join Fast
+                                        Async Filter workers: 1
+                                          filter: rnd_int(0,1,0)=1
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: u
+                                """);
+                assertQuery("SELECT sum(x), sum(y) FROM (SELECT x, ts FROM (SELECT x, ts FROM t ORDER BY ts DESC) WHERE rnd_int(0, 1, 0) = 1) a ASOF JOIN u b")
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                sum	sum1
+                                16	7
+                                """);
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
+    }
+
+    @Test
     public void testWindowWithoutOrderedInputUnderDescendingOrderScansBackward() throws Exception {
         assertMemoryLeak(() -> {
             createWindowTable();
@@ -899,6 +1021,10 @@ public class OrderPlanningTest extends AbstractCairoTest {
                                         Frame backward scan on: w
                             """);
         });
+    }
+
+    private static void createSequenceTable() throws Exception {
+        execute("CREATE TABLE t AS (SELECT x, x % 3 k, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(8)) TIMESTAMP(ts) PARTITION BY DAY");
     }
 
     private static void createTable() throws Exception {

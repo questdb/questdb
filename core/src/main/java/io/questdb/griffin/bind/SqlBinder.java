@@ -30,7 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.CharacterStore;
@@ -41,6 +41,7 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.PlanTable;
 import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.PreparedFunctions;
@@ -515,9 +516,7 @@ public final class SqlBinder implements Mutable {
             input = latest;
         }
 
-        if (!isHorizonJoin) {
-            aggregateBinder.validateGroupByKeys(model, source);
-        }
+        aggregateBinder.validateGroupByKeys(model, source);
         if (model.isDistinct() && isOrderBound) {
             aggregateBinder.validateDistinctOrder(model, source, sourcePlan.getOutput());
         }
@@ -804,7 +803,8 @@ public final class SqlBinder implements Mutable {
                 scan = updateBinder.bindTarget(source, tableName, token, executionContext);
             } else {
                 assert !token.isView();
-                scan = bindScan(source, tableName, ctx.planTables.acquire(token, tableName.position, executionContext).getMetadata());
+                final PlanTable table = ctx.planTables.acquire(token, tableName.position, executionContext);
+                scan = bindScan(source, tableName, table.getTableToken(), table.getMetadataVersion(), table.getMetadata());
             }
             scan.setRandomAccess(!isRowIdSuppressed);
             return bindTimestamp(scan, source);
@@ -1264,9 +1264,9 @@ public final class SqlBinder implements Mutable {
         return ctx.planNodes.columns.next().of(metadata.getColumnId(index), ColumnType.BOOLEAN, expression.position);
     }
 
-    ScanPlan bindScan(QueryModel source, ExpressionNode tableName, TableRecordMetadata metadata) {
+    ScanPlan bindScan(QueryModel source, ExpressionNode tableName, TableToken token, long metadataVersion, RecordMetadata metadata) {
         final BindScope scope = ctx.scope();
-        final ScanPlan scan = ctx.planNodes.scans.next().of(metadata.getTableToken(), metadata.getMetadataVersion(), tableName.position, source.isUpdate());
+        final ScanPlan scan = ctx.planNodes.scans.next().of(token, metadataVersion, tableName.position, source.isUpdate());
         scan.setHints(scanHints(source));
         final ExpressionNode view = source.getViewNameExpr();
         if (view != null) {

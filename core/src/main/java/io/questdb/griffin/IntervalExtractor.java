@@ -90,6 +90,13 @@ public final class IntervalExtractor implements Mutable {
     }
 
     /**
+     * A literal spelled in SQL as itself rather than folded from an expression.
+     */
+    public static boolean isQuotedLiteral(ConstantExpression constant) {
+        return constant.isLiteral() && constant.getSource() == null;
+    }
+
+    /**
      * A string literal spelled in SQL as itself rather than folded from an expression.
      */
     public static boolean isStringLiteral(ConstantExpression constant) {
@@ -162,12 +169,6 @@ public final class IntervalExtractor implements Mutable {
         return pointValue(constant);
     }
 
-    private static CharSequence constantText(ConstantExpression constant) {
-        return constant.getDataType() == ColumnType.VARCHAR
-                ? constant.getVarcharValue() == null ? null : constant.getVarcharValue().asAsciiCharSequence()
-                : constant.getStrValue();
-    }
-
     private static FunctionExpression findProjectedOffset(BoundExpression expression) {
         if (!(expression instanceof FunctionExpression call)) {
             return null;
@@ -228,10 +229,6 @@ public final class IntervalExtractor implements Mutable {
     private static boolean isMonotonicOperand(BoundExpression expression) {
         return expression instanceof FunctionExpression
                 || expression instanceof ColumnExpression column && !column.isDirectReference();
-    }
-
-    private static boolean isQuotedLiteral(ConstantExpression constant) {
-        return constant.isLiteral() && constant.getSource() == null;
     }
 
     private static boolean isRangeOperator(String operator) {
@@ -597,7 +594,7 @@ public final class IntervalExtractor implements Mutable {
                 return predicate;
             }
             if (bound instanceof ConstantExpression constant) {
-                final CharSequence text = ColumnType.isVarcharOrString(bound.getDataType()) ? constantText(constant) : null;
+                final CharSequence text = ColumnType.isVarcharOrString(bound.getDataType()) ? constant.getText() : null;
                 if (text != null) {
                     final CharSequence seq = isStringLiteral(constant) ? quote(text) : text;
                     final int lo = seq == text ? 0 : 1;
@@ -979,9 +976,7 @@ public final class IntervalExtractor implements Mutable {
      * quoted as in SQL, or null for any other element. The binder rejects text that spells neither.
      */
     private CharSequence intervalElement(ConstantExpression constant) {
-        final int tag = ColumnType.tagOf(constant.getDataType());
-        final CharSequence text = tag == ColumnType.STRING || tag == ColumnType.SYMBOL || tag == ColumnType.VARCHAR
-                ? constantText(constant) : null;
+        final CharSequence text = constant.getText();
         if (text == null) {
             return null;
         }
@@ -1103,7 +1098,7 @@ public final class IntervalExtractor implements Mutable {
         try {
             return switch (ColumnType.tagOf(constant.getDataType())) {
                 case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR -> {
-                    final CharSequence text = constantText(constant);
+                    final CharSequence text = constant.getText();
                     yield text == null ? Numbers.LONG_NULL : driver.parseFloorLiteral(text);
                 }
                 case ColumnType.DATE -> driver.fromDate(constant.getLongValue());
@@ -1134,7 +1129,7 @@ public final class IntervalExtractor implements Mutable {
             unionTimestampPredicates((FunctionExpression) call.argumentAt(1), input, executionContext);
         } else if ("in".equals(call.getName())) {
             final CharSequence text = call.getArgumentCount() == 2 && call.argumentAt(1) instanceof ConstantExpression constant
-                    && ColumnType.isVarcharOrString(constant.getDataType()) ? constantText(constant) : null;
+                    && ColumnType.isVarcharOrString(constant.getDataType()) ? constant.getText() : null;
             if (text != null) {
                 final CharSequence seq = isStringLiteral((ConstantExpression) call.argumentAt(1)) ? quote(text) : text;
                 final int lo = seq == text ? 0 : 1;

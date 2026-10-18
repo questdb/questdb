@@ -253,7 +253,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 // The buffer cannot hold the last rows the limit selects, so read all rows and skip to the last ones.
                 cursor.of(execute(executionContext, collectSubSeq, baseOrder), Long.MAX_VALUE);
                 if (lastRowsCursor == null) {
-                    lastRowsCursor = new LimitRecordCursorFactory.LimitRecordCursor(null, limitLoFunction, null, limitLoPos, null);
+                    lastRowsCursor = new LimitRecordCursorFactory.LimitRecordCursor(limitLoFunction, null, limitLoPos, null);
                 }
                 try {
                     lastRowsCursor.of(cursor, executionContext);

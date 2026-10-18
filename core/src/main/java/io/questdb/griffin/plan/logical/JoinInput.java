@@ -337,7 +337,7 @@ public final class JoinInput implements Mutable {
         }
     }
 
-    void visitReads(PlanExpressionVisitor visitor) {
+    public void visitReads(PlanExpressionVisitor visitor) {
         if (unnest != null) {
             unnest.visitReads(visitor);
         }
@@ -358,6 +358,11 @@ public final class JoinInput implements Mutable {
          * Pairs every master row with every slave row that passes the join condition.
          */
         NESTED_LOOP,
+        /**
+         * A nested loop over a copy of the slave rows, which it takes once instead of rewinding the slave for every
+         * master row.
+         */
+        MATERIALIZED_NESTED_LOOP,
         /**
          * Hashes copies of the slave rows by key.
          */

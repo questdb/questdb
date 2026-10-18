@@ -140,11 +140,6 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return tableToken == baseTableReader.getTableToken();
     }
 
-    @Override
-    public boolean isReaderPinned(TableToken tableToken) {
-        return tableToken.equals(baseTableReader.getTableToken());
-    }
-
     public void of(TableReader baseTableReader) {
         this.viewTableToken = baseTableReader.getTableToken();
         this.baseTableReader = baseTableReader;

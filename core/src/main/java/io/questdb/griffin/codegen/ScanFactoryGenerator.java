@@ -33,8 +33,6 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -49,6 +47,7 @@ import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.InstantiatedIntervalBounds;
 import io.questdb.griffin.IntervalExtractor;
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.PlanTable;
 import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -233,7 +232,8 @@ final class ScanFactoryGenerator {
     }
 
     private static PartitionFrameCursorFactory newFrames(ScanPlan scan, RuntimeIntrinsicIntervalModel intervalModel,
-                                                         RecordMetadata readerMetadata, int order) {
+                                                         PlanTable table, int order) {
+        final RecordMetadata readerMetadata = table.getMetadata();
         final PartitionFrameCursorFactory frames = intervalModel == null
                 ? new FullPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), readerMetadata, order,
                 scan.getViewName(), scan.getViewPosition(), scan.isUpdate())
@@ -279,23 +279,23 @@ final class ScanFactoryGenerator {
         return counts;
     }
 
-    private RuntimeIntrinsicIntervalModel buildIntervals(IntervalExtractor scanIntervals, TableReader reader) {
-        return scanIntervals == null ? null : scanIntervals.build(reader.getPartitionedBy());
+    private RuntimeIntrinsicIntervalModel buildIntervals(IntervalExtractor scanIntervals, PlanTable table) {
+        return scanIntervals == null ? null : scanIntervals.build(table.getPartitionedBy());
     }
 
     private void configurePushdown(GenerationFrame frame, PartitionFrameCursorFactory frames, BoundExpression residual, ScanPlan scan,
-                                   RecordMetadata metadata, IntList indexes, TableReader reader,
+                                   RecordMetadata metadata, IntList indexes, PlanTable table,
                                    SqlExecutionContext executionContext) throws SqlException {
         if (residual == null || !executionContext.isParquetRowGroupPruningEnabled()) {
             return;
         }
-        final long partitionTableVersion = reader.getTxFile().getPartitionTableVersion();
-        if (!reader.hasParquetPartitions()) {
+        final long partitionTableVersion = table.getPartitionTableVersion();
+        if (!table.hasParquetPartitions()) {
             frames.setPushdownFilterCondition(partitionTableVersion, null);
             return;
         }
         final ObjList<PushdownFilterExtractor.PushdownFilterCondition> conditions = frame.pushdown.extract(residual, scan.getOutput(),
-                metadata, indexes, reader.getMetadata(), functionInstantiator, executionContext);
+                metadata, indexes, table.getMetadata(), functionInstantiator, executionContext);
         if (conditions != null) {
             frames.setPushdownFilterCondition(partitionTableVersion, conditions);
         }
@@ -321,7 +321,7 @@ final class ScanFactoryGenerator {
 
     private RecordCursorFactory generateIndexedScan(
             GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
-            GenericRecordMetadata metadata, RecordMetadata readerMetadata, TableReader reader, IntList indexes, IntList shifts
+            GenericRecordMetadata metadata, PlanTable table, IntList indexes, IntList shifts
     ) throws SqlException {
         final BoundExpression residual = scan.getResidual();
         final int keyIndex = scan.getOutput().getColumnIndexById(scan.getIndexColumnId());
@@ -329,7 +329,7 @@ final class ScanFactoryGenerator {
         final ObjList<BoundExpression> values = isExcluded ? scan.getExcludedKeys() : scan.getIndexKeys();
         final int keyCount = values.size();
         final ObjList<Function> keys = new ObjList<>(keyCount);
-        RuntimeIntrinsicIntervalModel intervalModel = buildIntervals(scanIntervals, reader);
+        RuntimeIntrinsicIntervalModel intervalModel = buildIntervals(scanIntervals, table);
         Function filter = null;
         PartitionFrameCursorFactory frames = null;
         final int indexDirection = indexDirection(scan);
@@ -342,12 +342,12 @@ final class ScanFactoryGenerator {
             }
             instantiateKeys(values, keys, scan, metadata, executionContext);
             if (!isExcluded && isCovering) {
-                coveringMapping = buildCoveringMapping(reader, indexes.getQuick(keyIndex), indexes);
+                coveringMapping = buildCoveringMapping(table, indexes.getQuick(keyIndex), indexes);
             }
             final RuntimeIntrinsicIntervalModel frameIntervals = intervalModel;
             intervalModel = null;
-            frames = newFrames(scan, frameIntervals, readerMetadata, frameOrder(scan));
-            configurePushdown(frame, frames, residual, scan, metadata, indexes, reader, executionContext);
+            frames = newFrames(scan, frameIntervals, table, frameOrder(scan));
+            configurePushdown(frame, frames, residual, scan, metadata, indexes, table, executionContext);
         } catch (Throwable th) {
             Misc.free(frames, th);
             Misc.freeObjList(keys, th);
@@ -390,7 +390,7 @@ final class ScanFactoryGenerator {
 
     private RecordCursorFactory generateLatestByScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext,
                                                      IntervalExtractor scanIntervals, LatestByPlan latest, GenericRecordMetadata metadata,
-                                                     GenericRecordMetadata readerMetadata, TableReader reader, IntList indexes,
+                                                     PlanTable table, IntList indexes,
                                                      IntList shifts) throws SqlException {
         final BoundExpression residual = scan.getResidual();
         final CursorExpression keySubquery = scan.getKeySubquery();
@@ -404,14 +404,14 @@ final class ScanFactoryGenerator {
         try {
             filter = residual == null ? null : functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
             if (filter != null && scan.getIndexRead() == ScanPlan.IndexRead.NONE) {
-                filter = filterGenerator.compileLatestBy(filter, residual, scan.getOutput(), metadata, reader, indexes,
+                filter = filterGenerator.compileLatestBy(filter, residual, scan.getOutput(), metadata, table, indexes,
                         scan.isUpdate(), executionContext);
             }
             instantiateKeys(scan.getIndexKeys(), keys, scan, metadata, executionContext);
             instantiateKeys(scan.getExcludedKeys(), excludedKeys, scan, metadata, executionContext);
-            frames = newFrames(scan, buildIntervals(scanIntervals, reader), readerMetadata, frameOrder(scan));
+            frames = newFrames(scan, buildIntervals(scanIntervals, table), table, frameOrder(scan));
             if (residual != null && (residual.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == 0) {
-                configurePushdown(frame, frames, residual, scan, metadata, indexes, reader, executionContext);
+                configurePushdown(frame, frames, residual, scan, metadata, indexes, table, executionContext);
             }
             if (keySubquery != null) {
                 subquery = functionInstantiator.generateSubquery(keySubquery, executionContext);
@@ -432,18 +432,18 @@ final class ScanFactoryGenerator {
                     scan.getOutput().getColumnIndexById(latest.getKeyColumnIds().getQuick(0)), subquery, filter,
                     scan.getIndexRead() != ScanPlan.IndexRead.NONE, keyGetter, indexes, shifts);
         }
-        return latestByGenerator.generateLatestByScan(frame, scan, frames, metadata, reader, indexes, shifts, latest.getKeyColumnIds(),
+        return latestByGenerator.generateLatestByScan(frame, scan, frames, metadata, table, indexes, shifts, latest.getKeyColumnIds(),
                 filter, keys, excludedKeys, symbolCounts, executionContext);
     }
 
     private RecordCursorFactory generatePageFrameScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext,
-                                                      IntervalExtractor scanIntervals, GenericRecordMetadata metadata, RecordMetadata readerMetadata,
-                                                      TableReader reader, IntList indexes, IntList shifts) throws SqlException {
+                                                      IntervalExtractor scanIntervals, GenericRecordMetadata metadata,
+                                                      PlanTable table, IntList indexes, IntList shifts) throws SqlException {
         final BoundExpression residual = scan.getTableToken().isLiveView() ? null : scan.getResidual();
         final int order = frameOrder(scan);
-        final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, reader), readerMetadata, order);
+        final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table, order);
         try {
-            configurePushdown(frame, frames, residual, scan, metadata, indexes, reader, executionContext);
+            configurePushdown(frame, frames, residual, scan, metadata, indexes, table, executionContext);
         } catch (Throwable th) {
             Misc.free(frames, th);
             throw th;
@@ -457,9 +457,9 @@ final class ScanFactoryGenerator {
     }
 
     private RecordCursorFactory generatePostingDistinctScan(AggregatePlan aggregate, ScanPlan scan, IntervalExtractor scanIntervals,
-                                                            TableReader reader) {
+                                                            PlanTable table) {
         final ColumnExpression key = (ColumnExpression) aggregate.getGroupingExpressions().getQuick(0);
-        final TableReaderMetadata tableMetadata = reader.getMetadata();
+        final RecordMetadata tableMetadata = table.getMetadata();
         final int index = scan.getSourceColumnIndexes().getQuick(scan.getOutput().getColumnIndexById(key.getColumnId()));
         final TableColumnMetadata column = tableMetadata.getColumnMetadata(index);
         final GenericRecordMetadata metadata = new GenericRecordMetadata().add(new TableColumnMetadata(
@@ -471,27 +471,22 @@ final class ScanFactoryGenerator {
         if (scanIntervals != null && tableMetadata.getTimestampIndex() != index) {
             indexes.add(tableMetadata.getTimestampIndex());
         }
-        final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, reader),
-                GenericRecordMetadata.copyOfNew(tableMetadata), PartitionFrameCursorFactory.ORDER_ASC);
+        final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table,
+                PartitionFrameCursorFactory.ORDER_ASC);
         return new PostingIndexDistinctRecordCursorFactory(metadata, frames, index, 0, indexes);
     }
 
     private RecordCursorFactory generateReaderScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext,
-                                                   IntervalExtractor scanIntervals, LatestByPlan latest, TableReader reader)
+                                                   IntervalExtractor scanIntervals, LatestByPlan latest, PlanTable table)
             throws SqlException {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        final GenericRecordMetadata readerMetadata = new GenericRecordMetadata();
-        final TableReaderMetadata tableMetadata = reader.getMetadata();
-        for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
-            readerMetadata.add(SqlCodeGenerator.copyColumn(tableMetadata, i, tableMetadata.getColumnName(i)));
-        }
-        readerMetadata.setTimestampIndex(tableMetadata.getTimestampIndex());
+        final RecordMetadata readerMetadata = table.getMetadata();
         final IntList indexes = new IntList(scan.getOutput().getColumnCount());
         final IntList shifts = new IntList(scan.getOutput().getColumnCount());
         for (int i = 0, n = scan.getOutput().getColumnCount(); i < n; i++) {
             // UPDATE binds writer metadata, whose deleted-column slots are not
             // the dense reader positions. Resolve the final layout by bound name.
-            final int sourceIndex = tableMetadata.getColumnIndex(scan.getOutput().getColumnName(i));
+            final int sourceIndex = readerMetadata.getColumnIndex(scan.getOutput().getColumnName(i));
             indexes.add(sourceIndex);
             metadata.add(readerMetadata.getColumnMetadata(sourceIndex));
             shifts.add(Numbers.msb(ColumnType.sizeOf(readerMetadata.getColumnType(sourceIndex))));
@@ -504,10 +499,10 @@ final class ScanFactoryGenerator {
         return switch (accessPath) {
             case EMPTY -> new EmptyTableRecordCursorFactory(metadata);
             case PAGE_FRAMES ->
-                    generatePageFrameScan(frame, scan, executionContext, scanIntervals, metadata, readerMetadata, reader,
+                    generatePageFrameScan(frame, scan, executionContext, scanIntervals, metadata, table,
                             indexes, shifts);
             case SORTED_SYMBOL_INDEX -> {
-                final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, reader), readerMetadata, frameOrder(scan));
+                final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table, frameOrder(scan));
                 yield new SortedSymbolIndexRecordCursorFactory(configuration, metadata, frames,
                         scan.getOutput().getColumnIndexById(scan.getIndexColumnId()),
                         scan.getRequestedOrder().getDirections().getQuick(0) == SortDirection.ASCENDING,
@@ -515,18 +510,18 @@ final class ScanFactoryGenerator {
             }
             case SYMBOL_INDEX, EXCLUDED_SYMBOL_INDEX ->
                     generateIndexedScan(frame, scan, executionContext, scanIntervals, metadata,
-                            readerMetadata, reader, indexes, shifts);
+                            table, indexes, shifts);
             case SYMBOL_SUBQUERY ->
-                    generateSubqueryScan(frame, scan, executionContext, scanIntervals, metadata, readerMetadata, reader,
+                    generateSubqueryScan(frame, scan, executionContext, scanIntervals, metadata, table,
                             indexes, shifts);
             case SYMBOL_PATTERN ->
-                    generateSymbolPatternIndex(frame, scan, executionContext, scanIntervals, metadata, readerMetadata,
-                            reader, indexes, shifts);
+                    generateSymbolPatternIndex(frame, scan, executionContext, scanIntervals, metadata,
+                            table, indexes, shifts);
             case LATEST_BY_SUBQUERY, LATEST_BY_VALUE, LATEST_BY_VALUES, LATEST_BY_ALL_INDEXED, LATEST_BY_STATIC_SYMBOL,
                  LATEST_BY_SYMBOLS,
                  LATEST_BY_ALL ->
-                    generateLatestByScan(frame, scan, executionContext, scanIntervals, latest, metadata, readerMetadata,
-                            reader, indexes, shifts);
+                    generateLatestByScan(frame, scan, executionContext, scanIntervals, latest, metadata,
+                            table, indexes, shifts);
             case POSTING_DISTINCT, UPDATE_STUB ->
                     throw new IllegalStateException("access path does not read the table through a reader scan");
         };
@@ -544,7 +539,7 @@ final class ScanFactoryGenerator {
 
     private RecordCursorFactory generateSubqueryScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext,
                                                      IntervalExtractor scanIntervals, GenericRecordMetadata metadata,
-                                                     GenericRecordMetadata readerMetadata, TableReader reader,
+                                                     PlanTable table,
                                                      IntList indexes, IntList shifts) throws SqlException {
         final BoundExpression residual = scan.getResidual();
         PartitionFrameCursorFactory frames = null;
@@ -552,8 +547,8 @@ final class ScanFactoryGenerator {
         RecordCursorFactory subquery = null;
         final Record.CharSequenceFunction keyGetter;
         try {
-            frames = newFrames(scan, buildIntervals(scanIntervals, reader), readerMetadata, frameOrder(scan));
-            configurePushdown(frame, frames, residual, scan, metadata, indexes, reader, executionContext);
+            frames = newFrames(scan, buildIntervals(scanIntervals, table), table, frameOrder(scan));
+            configurePushdown(frame, frames, residual, scan, metadata, indexes, table, executionContext);
             filter = residual == null ? null : functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
             subquery = functionInstantiator.generateSubquery(scan.getKeySubquery(), executionContext);
             keyGetter = subqueryKeyGetter(subquery.getMetadata().getColumnType(0));
@@ -569,7 +564,7 @@ final class ScanFactoryGenerator {
 
     private RecordCursorFactory generateSymbolPatternIndex(
             GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
-            GenericRecordMetadata metadata, RecordMetadata readerMetadata, TableReader reader, IntList indexes, IntList shifts
+            GenericRecordMetadata metadata, PlanTable table, IntList indexes, IntList shifts
     ) throws SqlException {
         final BoundExpression predicate = scan.getResidual();
         final FunctionExpression pattern = scan.getKeyPattern();
@@ -604,9 +599,9 @@ final class ScanFactoryGenerator {
                     limit = filterGenerator.instantiateLimit(frame, limitCount, input, executionContext);
                 }
             }
-            final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, reader), readerMetadata, frameOrder(scan));
+            final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table, frameOrder(scan));
             try {
-                configurePushdown(frame, frames, predicate, scan, metadata, indexes, reader, executionContext);
+                configurePushdown(frame, frames, predicate, scan, metadata, indexes, table, executionContext);
             } catch (Throwable th) {
                 Misc.free(frames, th);
                 throw th;
@@ -617,7 +612,7 @@ final class ScanFactoryGenerator {
             filter = null;
             workerFilters = null;
             limit = null;
-            return generateSymbolPatternIndex(frames, metadata, reader, indexes, shifts, ownedFilter, predicate, pattern, residual, input,
+            return generateSymbolPatternIndex(frames, metadata, table, indexes, shifts, ownedFilter, predicate, pattern, residual, input,
                     ownedWorkers, ownedLimit, limitCount == null ? 0 : limitCount.getPosition(), scan.getIndexOrder(), isCovering,
                     isParallel, scan.hasHint(ScanPlan.HINT_PRE_TOUCH), stolenFilter, executionContext);
         } catch (Throwable th) {
@@ -669,7 +664,7 @@ final class ScanFactoryGenerator {
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 for (int i = 0, n = scan.getOutput().getColumnCount(); i < n; i++) {
                     final int index = tableMetadata.getColumnIndex(scan.getOutput().getColumnName(i));
-                    metadata.add(SqlCodeGenerator.copyColumn(tableMetadata, index, tableMetadata.getColumnName(index)));
+                    metadata.add(TableColumnMetadata.copyOf(tableMetadata, index, tableMetadata.getColumnName(index)));
                 }
                 metadata.setTimestampIndex(PhysicalProperties.timestampIndex(scan));
                 factory = new EmptyTableRecordCursorFactory(metadata, tableMetadata.getTableToken());
@@ -882,7 +877,7 @@ final class ScanFactoryGenerator {
     RecordCursorFactory generateSymbolPatternIndex(
             PartitionFrameCursorFactory frames,
             GenericRecordMetadata metadata,
-            TableReader reader,
+            TableAccessInfo table,
             IntList columnIndexes,
             IntList columnSizeShifts,
             AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter,
@@ -931,7 +926,7 @@ final class ScanFactoryGenerator {
             indexDelegate = new SymbolPatternIndexRecordCursorFactory(configuration, metadata, sharedFrames, keyColumnIndex,
                     effectiveKeys, indexOrder, IndexReader.DIR_FORWARD, columnIndexes, columnSizeShifts);
             if (isCovering) {
-                final int[] coveringMapping = buildCoveringMapping(reader, columnIndexes.getQuick(keyColumnIndex), columnIndexes);
+                final int[] coveringMapping = buildCoveringMapping(table, columnIndexes.getQuick(keyColumnIndex), columnIndexes);
                 coveringDelegate = new CoveringIndexRecordCursorFactory(metadata, sharedFrames, columnIndexes.getQuick(keyColumnIndex),
                         null, columnIndexes, coveringMapping, null, false, null, effectiveKeys, null, false);
             }

@@ -68,10 +68,10 @@ import io.questdb.std.ObjectPool;
 final class ColumnPruning implements OptimiserPass {
     private final AggregateInputOrder aggregateInputOrder;
     private final ObjList<LogicalPlan> alignedPath;
-    private final OptimiserContext context;
-    private final ObjectPool<ColumnExpression> narrowingColumns;
     private final ColumnReads columnReads;
+    private final ObjectPool<ColumnExpression> narrowingColumns;
     private final ObjectPool<ProjectPlan> narrowingProjects;
+    private final ProjectionMerge projectionMerge;
     private final ObjList<LogicalPlan> pruneAncestors;
     private final IntHashSet requiredColumnIds;
     private final IntList remappedSymbolColumns;
@@ -82,8 +82,8 @@ final class ColumnPruning implements OptimiserPass {
     private LogicalPlan joinInputPlan;
 
     ColumnPruning(
-            OptimiserContext context,
             AggregateInputOrder aggregateInputOrder,
+            ProjectionMerge projectionMerge,
             ColumnReads columnReads,
             ObjList<BoundExpression> tmpExpressions,
             ObjectPool<ColumnExpression> narrowingColumns,
@@ -95,8 +95,8 @@ final class ColumnPruning implements OptimiserPass {
             ObjList<LogicalPlan> alignedPath,
             OutputSchema tmpSchema
     ) {
-        this.context = context;
         this.aggregateInputOrder = aggregateInputOrder;
+        this.projectionMerge = projectionMerge;
         this.columnReads = columnReads;
         this.tmpExpressions = tmpExpressions;
         this.narrowingColumns = narrowingColumns;
@@ -299,7 +299,7 @@ final class ColumnPruning implements OptimiserPass {
                 }
                 removeOrderedAggregateInputProjection(aggregate);
                 if (columnReads.isUnreadCountInput(aggregate)) {
-                    aggregate.replaceInput(0, removeCountInputProjections(aggregate.getChild()));
+                    removeCountInputProjections(aggregate);
                 }
                 columnReads.collectInputReads(aggregate);
                 pruneColumns(aggregate.getChild());
@@ -672,14 +672,19 @@ final class ColumnPruning implements OptimiserPass {
         tmpSchema.clear();
     }
 
-    private LogicalPlan removeCountInputProjections(LogicalPlan input) {
-        while (input instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)) {
-            input = input.inputAt(0);
+    private void removeCountInputProjections(AggregatePlan aggregate) {
+        UnaryPlan boundary = null;
+        LogicalPlan input = aggregate.getChild();
+        while (true) {
+            if (input instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)) {
+                projectionMerge.absorbColumnProject(aggregate, project, boundary);
+            } else if (input instanceof LimitPlan limit) {
+                boundary = limit;
+            } else {
+                return;
+            }
+            input = boundary == null ? aggregate.getChild() : boundary.getChild();
         }
-        if (input instanceof LimitPlan limit) {
-            limit.replaceInput(0, removeCountInputProjections(limit.getChild()));
-        }
-        return input;
     }
 
     private void removeOrderedAggregateInputProjection(AggregatePlan aggregate) {
@@ -706,20 +711,7 @@ final class ColumnPruning implements OptimiserPass {
                     return;
                 }
             }
-            for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
-                aggregate.getGroupingExpressions().setQuick(i,
-                        context.getRewriter().remapColumns(aggregate.getGroupingExpressions().getQuick(i), project));
-            }
-            for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
-                aggregate.getAggregates().setQuick(i,
-                        (FunctionExpression) context.getRewriter().remapColumns(aggregate.getAggregates().getQuick(i), project));
-            }
-            if (boundary == null) {
-                aggregate.replaceInput(0, input);
-            } else {
-                boundary.replaceInput(0, input);
-                LogicalPlans.deriveLimits(aggregate.getChild());
-            }
+            projectionMerge.absorbColumnProject(aggregate, project, boundary);
         }
     }
 

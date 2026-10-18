@@ -84,8 +84,10 @@ import org.jetbrains.annotations.TestOnly;
  * <p>
  * The access-pattern hint declared by the enclosing factory scales the
  * effective ceiling: {@link ParquetDecodeHint#MONOTONIC} cursors get a quarter
- * of the configured budget, {@link ParquetDecodeHint#SCATTERED} cursors get all
- * of it. Hints come in via {@link #of(PageFrameAddressCache, ParquetDecodeHint)}
+ * of the configured budget, {@link ParquetDecodeHint#SCATTERED} and
+ * {@link ParquetDecodeHint#CYCLIC} cursors get all of it. A CYCLIC cursor
+ * reuses and trims the most recently decoded unpinned entries instead of the
+ * LRU oldest ones. Hints come in via {@link #of(PageFrameAddressCache, ParquetDecodeHint)}
  * or {@link #setParquetDecodeHint(ParquetDecodeHint)} and default to MONOTONIC.
  * <p>
  * This pool is thread-unsafe as it may hold navigated Parquet partition data,
@@ -140,8 +142,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
     // Bumped whenever the pool closes buffers that bound records may still alias
-    // (failed decode, bulk release). Records capture it on bind; a mismatch fails
-    // the navigateTo() fast path and forces a safe rebind.
+    // or hands them to another frame (failed decode, eviction, reuse, bulk release).
+    // Records capture it on bind; a mismatch fails the navigateTo() fast path and
+    // forces a safe rebind.
     private long bindGeneration;
     // Tracks which cached buffer currently holds each usage bit. Used to clear
     // the previous pin in O(1) without scanning every cached entry.
@@ -166,6 +169,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // teardown, keeping the pooled block clean while the buffers stay accounted globally until
     // their lazy free.
     private long coveredCachedBytes;
+    private long decodeCount;
     private ParquetDecodeHint decodeHint = ParquetDecodeHint.MONOTONIC;
     private long effectiveBudgetBytes;
     // True while parquetColumns/queryToSlot hold the full projection for the
@@ -266,7 +270,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return coveringByFrame.size();
     }
 
+    /**
+     * The number of Parquet frame decodes since the pool was last bound to an address cache.
+     */
     @TestOnly
+    public long getDecodeCount() {
+        return decodeCount;
+    }
+
     public ParquetDecodeHint getDecodeHint() {
         return decodeHint;
     }
@@ -632,6 +643,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         releaseCoveringBuffers();
         this.addressCache = addressCache;
         this.decodeHint = hint;
+        decodeCount = 0;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
         Misc.free(parquetMetaDecoder);
         Misc.free(legacyDecoder);
@@ -811,6 +823,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void accountDecode(ParquetBuffers parquetBuffers) {
+        decodeCount++;
         if (parquetBuffers.decodedBytes > parquetBuffers.retainedBytes) {
             cachedBytes += parquetBuffers.decodedBytes - parquetBuffers.retainedBytes;
             parquetBuffers.retainedBytes = parquetBuffers.decodedBytes;
@@ -821,12 +834,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private ParquetBuffers acquireBuffer(int frameIndex, byte usageBit) {
         assert getBound(usageBit) == null : "acquireBuffer requires the prior pin to have been cleared by tryHit";
         if (cachedBytes >= effectiveBudgetBytes || byFrameIndex.size() >= maxCachedBuffers()) {
-            for (ParquetBuffers victim = lruHead; victim != null; victim = victim.next) {
+            for (ParquetBuffers victim = firstVictim(); victim != null; victim = nextVictim(victim)) {
                 if (victim.usageFlags != 0) {
                     continue;
                 }
                 // In-place reuse keeps the victim's native memory (and thus its
                 // retainedBytes accounting); only the logical state resets.
+                bindGeneration++;
                 byFrameIndex.remove(victim.frameIndex);
                 lruUnlink(victim);
                 victim.frameIndex = frameIndex;
@@ -1018,6 +1032,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void evictAndClose(ParquetBuffers buffers) {
+        bindGeneration++;
         cachedBytes -= buffers.retainedBytes;
         if (buffers.frameIndex >= 0) {
             byFrameIndex.remove(buffers.frameIndex);
@@ -1069,6 +1084,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
             b = next;
         }
+    }
+
+    /**
+     * The cached buffer a full cache gives up first: the least recently used one, or the most recently decoded one
+     * for a cyclic walk.
+     */
+    private ParquetBuffers firstVictim() {
+        return decodeHint == ParquetDecodeHint.CYCLIC ? lruTail : lruHead;
     }
 
     private ParquetBuffers getBound(byte usageBit) {
@@ -1220,6 +1243,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         );
         record.setBoundPool(this, bindGeneration);
         return true;
+    }
+
+    private ParquetBuffers nextVictim(ParquetBuffers victim) {
+        return decodeHint == ParquetDecodeHint.CYCLIC ? victim.prev : victim.next;
     }
 
     private void openParquet(int frameIndex) {
@@ -1474,9 +1501,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void trimToBudget() {
-        ParquetBuffers b = lruHead;
+        ParquetBuffers b = firstVictim();
         while (b != null && cachedBytes > effectiveBudgetBytes) {
-            final ParquetBuffers next = b.next;
+            final ParquetBuffers next = nextVictim(b);
             if (b.usageFlags == 0) {
                 evictAndClose(b);
             }

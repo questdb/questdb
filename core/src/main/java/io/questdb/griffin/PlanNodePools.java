@@ -67,10 +67,11 @@ import io.questdb.std.ObjectPool;
  * node lives until the compiler rebuilds the statement's plan, so the nodes of a sub-query stay valid while the query
  * that contains it consumes them. {@link #syntheticNodes} and {@link #staticTypes} live for one binding call instead: the call takes a
  * mark on entry and rewinds to it on exit, so a sub-query bound inside the call releases only its own. Between
- * statements a pool of bound expressions keeps at most the configured expression pool capacity and a pool of plan
- * nodes at most the configured model pool capacity. The pools also number the columns the nodes define: an id is
- * unique across the statement, whichever query level or pass allocates it, so a plan can refer to any column of the
- * statement and a subtree can move between levels without renumbering.
+ * statements a pool keeps what its recent uses took, see {@link io.questdb.std.RetainedCapacity}, and never trims
+ * below the configured expression pool capacity for bound expressions or the configured model pool capacity for plan
+ * nodes. The pools also number the columns the nodes define: an id is unique across the statement, whichever query
+ * level or pass allocates it, so a plan can refer to any column of the statement and a subtree can move between levels
+ * without renumbering.
  */
 public final class PlanNodePools implements Mutable {
     public final ObjectPool<AggregatePlan> aggregates;
@@ -91,8 +92,8 @@ public final class PlanNodePools implements Mutable {
     public final ObjectPool<JoinPlan> joins;
     public final ObjectPool<LatestByPlan> latestByPlans;
     public final ObjectPool<LimitPlan> limits;
-    public final int maxRetainedExpressions;
-    public final int maxRetainedJoinContexts;
+    public final int minRetainedExpressions;
+    public final int minRetainedJoinContexts;
     public final ObjectPool<OuterColumnExpression> outerColumns;
     public final ObjectPool<BindVariableExpression> parameters;
     public final ObjectPool<ProjectPlan> projects;
@@ -117,8 +118,8 @@ public final class PlanNodePools implements Mutable {
     public PlanNodePools(CairoConfiguration configuration) {
         final int expressionCapacity = configuration.getSqlExpressionPoolCapacity();
         final int planCapacity = configuration.getSqlModelPoolCapacity();
-        this.maxRetainedExpressions = expressionCapacity;
-        this.maxRetainedJoinContexts = configuration.getSqlJoinContextPoolCapacity();
+        this.minRetainedExpressions = expressionCapacity;
+        this.minRetainedJoinContexts = configuration.getSqlJoinContextPoolCapacity();
         this.aggregates = new ObjectPool<>(AggregatePlan.FACTORY, 4, planCapacity);
         this.columns = new ObjectPool<>(ColumnExpression.FACTORY, 16, expressionCapacity);
         this.constants = new ObjectPool<>(ConstantExpression.FACTORY, 4, expressionCapacity);
@@ -130,8 +131,8 @@ public final class PlanNodePools implements Mutable {
         this.functions = new ObjectPool<>(FunctionExpression.FACTORY, 16, expressionCapacity);
         this.horizonJoinPlans = new ObjectPool<>(HorizonJoinPlan.FACTORY, 2, planCapacity);
         this.horizonJoinSlaves = new ObjectPool<>(HorizonJoinSlave.FACTORY, 2, planCapacity);
-        this.joinDependencies = new ObjectPool<>(JoinDependency.FACTORY, 8, maxRetainedJoinContexts);
-        this.joinEqualities = new ObjectPool<>(JoinEquality.FACTORY, 8, maxRetainedJoinContexts);
+        this.joinDependencies = new ObjectPool<>(JoinDependency.FACTORY, 8, minRetainedJoinContexts);
+        this.joinEqualities = new ObjectPool<>(JoinEquality.FACTORY, 8, minRetainedJoinContexts);
         this.joinGraphs = new ObjectPool<>(JoinGraph.FACTORY, 2, planCapacity);
         this.joinInputs = new ObjectPool<>(JoinInput.FACTORY, 4, planCapacity);
         this.joins = new ObjectPool<>(JoinPlan.FACTORY, 2, planCapacity);

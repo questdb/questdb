@@ -31,34 +31,41 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.RetainedCapacity;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.function.ToIntFunction;
+
 /**
- * A statement that grows the compiler's pools past their configured capacities leaves them back at those capacities
- * once the compiler clears, and ordinary statements leave the pools untouched.
+ * A statement that grows the compiler's pools past their configured capacities keeps that capacity while it comes
+ * back, so compiling it again creates no pooled objects, and leaves the pools back at the configured capacities once
+ * two windows of uses pass without it. Ordinary statements leave the pools untouched.
  */
 public class SqlCompilerRetentionTest extends AbstractCairoTest {
-    private static final int MAX_RETAINED_DEPTH = 32;
+    private static final int MIN_RETAINED_DEPTH = 32;
 
     @Test
-    public void testCteChainReturnsQueryModels() throws Exception {
+    public void testCteChainReturnsPoolsAfterSmallStatements() throws Exception {
         assertMemoryLeak(() -> {
-            final StringSink sql = new StringSink();
-            sql.put("WITH c0 AS (SELECT x l FROM long_sequence(3))");
-            for (int i = 1; i <= 8; i++) {
-                sql.put(", c").put(i).put(" AS (SELECT * FROM c").put(i - 1).put(" UNION ALL SELECT * FROM c").put(i - 1).put(')');
-            }
-            sql.put(" SELECT count() FROM c8");
-            final int ceiling = configuration.getSqlModelPoolCapacity();
+            final int modelCeiling = configuration.getSqlModelPoolCapacity();
+            final int characterCeiling = configuration.getSqlCharacterStoreCapacity();
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                compileAndClose(compiler, sql);
-                Assert.assertTrue(compiler.getQueryModelPoolCapacity() > ceiling);
+                compileAndClose(compiler, cteChain(8));
+                Assert.assertTrue(compiler.getQueryModelPoolCapacity() > modelCeiling);
                 compiler.clear();
-                Assert.assertEquals(ceiling, compiler.getQueryModelPoolCapacity());
+                Assert.assertTrue(compiler.getQueryModelPoolCapacity() > modelCeiling);
+                Assert.assertTrue(compiler.getCharacterStoreCapacity() > characterCeiling);
+
+                for (int i = 0, n = 2 * RetainedCapacity.WINDOW_USES; i < n; i++) {
+                    compileAndClose(compiler, "SELECT 1");
+                    compiler.clear();
+                }
+                Assert.assertEquals(modelCeiling, compiler.getQueryModelPoolCapacity());
+                Assert.assertEquals(characterCeiling, compiler.getCharacterStoreCapacity());
 
                 assertQuery("SELECT count() FROM (SELECT x FROM long_sequence(3) UNION ALL SELECT x FROM long_sequence(3))")
                         .withCompiler(compiler)
@@ -69,7 +76,7 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                                 count
                                 6
                                 """);
-                Assert.assertEquals(ceiling, compiler.getQueryModelPoolCapacity());
+                Assert.assertEquals(modelCeiling, compiler.getQueryModelPoolCapacity());
             }
         });
     }
@@ -78,7 +85,7 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
     public void testDeepBindFailureReturnsScopes() throws Exception {
         assertMemoryLeak(() -> {
             String sql = "SELECT missing FROM long_sequence(1)";
-            for (int i = 0; i < MAX_RETAINED_DEPTH + 8; i++) {
+            for (int i = 0; i < MIN_RETAINED_DEPTH + 8; i++) {
                 sql = "SELECT x FROM long_sequence(1) WHERE x = (" + sql + ")";
             }
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
@@ -86,10 +93,11 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                         .withCompiler(compiler)
                         .noLeakCheck()
                         .fails(sql.indexOf("missing"), "Invalid column: missing");
-                Assert.assertTrue(compiler.getBindScopeCount() > MAX_RETAINED_DEPTH);
+                Assert.assertTrue(compiler.getBindScopeCount() > MIN_RETAINED_DEPTH);
                 compiler.clear();
-                compiler.clear();
-                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getBindScopeCount());
+                Assert.assertTrue(compiler.getBindScopeCount() > MIN_RETAINED_DEPTH);
+                clearPastRetention(compiler);
+                Assert.assertEquals(MIN_RETAINED_DEPTH, compiler.getBindScopeCount());
 
                 assertQuery("SELECT x FROM long_sequence(2) WHERE x = (SELECT max(x) FROM long_sequence(2))")
                         .withCompiler(compiler)
@@ -100,9 +108,10 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                                 """);
                 compiler.clear();
                 compileAndClose(compiler, sql.replace("missing", "x"));
-                Assert.assertTrue(compiler.getBindScopeCount() > MAX_RETAINED_DEPTH);
+                Assert.assertTrue(compiler.getBindScopeCount() > MIN_RETAINED_DEPTH);
                 compiler.clear();
-                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getBindScopeCount());
+                clearPastRetention(compiler);
+                Assert.assertEquals(MIN_RETAINED_DEPTH, compiler.getBindScopeCount());
             }
         });
     }
@@ -113,14 +122,16 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
             execute("CREATE TABLE s (sym SYMBOL)");
             execute("INSERT INTO s VALUES ('a'), ('b')");
             String sql = "SELECT sym FROM s";
-            for (int i = 0; i < MAX_RETAINED_DEPTH + 8; i++) {
+            for (int i = 0; i < MIN_RETAINED_DEPTH + 8; i++) {
                 sql = "SELECT sym FROM s WHERE sym IN (" + sql + ")";
             }
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compileAndClose(compiler, sql);
-                Assert.assertTrue(compiler.getGenerationFrameCount() > MAX_RETAINED_DEPTH);
+                Assert.assertTrue(compiler.getGenerationFrameCount() > MIN_RETAINED_DEPTH);
                 compiler.clear();
-                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getGenerationFrameCount());
+                Assert.assertTrue(compiler.getGenerationFrameCount() > MIN_RETAINED_DEPTH);
+                clearPastRetention(compiler);
+                Assert.assertEquals(MIN_RETAINED_DEPTH, compiler.getGenerationFrameCount());
 
                 assertQuery("SELECT sym FROM s WHERE sym IN (SELECT sym FROM s WHERE sym = 'b')")
                         .withCompiler(compiler)
@@ -129,7 +140,7 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                                 sym
                                 b
                                 """);
-                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getGenerationFrameCount());
+                Assert.assertEquals(MIN_RETAINED_DEPTH, compiler.getGenerationFrameCount());
             }
         });
     }
@@ -140,7 +151,7 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
             execute("CREATE TABLE s (sym SYMBOL)");
             execute("INSERT INTO s VALUES ('a'), ('b')");
             String sql = "SELECT sym FROM s WHERE length(sym) > 0";
-            for (int i = 0; i < MAX_RETAINED_DEPTH + 8; i++) {
+            for (int i = 0; i < MIN_RETAINED_DEPTH + 8; i++) {
                 sql = "SELECT sym FROM s WHERE sym IN (" + sql + ")";
             }
             final RuntimeException failure = new IllegalStateException("generation failure");
@@ -149,7 +160,7 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                     SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1) {
                         @Override
                         public boolean isParquetRowGroupPruningEnabled() {
-                            if (compiler.getGenerationDepth() > MAX_RETAINED_DEPTH) {
+                            if (compiler.getGenerationDepth() > MIN_RETAINED_DEPTH) {
                                 throw failure;
                             }
                             return super.isParquetRowGroupPruningEnabled();
@@ -163,10 +174,11 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                     Assert.assertSame(failure, e);
                 }
                 Assert.assertEquals(0, compiler.getGenerationDepth());
-                Assert.assertTrue(compiler.getGenerationFrameCount() > MAX_RETAINED_DEPTH);
+                Assert.assertTrue(compiler.getGenerationFrameCount() > MIN_RETAINED_DEPTH);
                 compiler.clear();
-                compiler.clear();
-                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getGenerationFrameCount());
+                Assert.assertTrue(compiler.getGenerationFrameCount() > MIN_RETAINED_DEPTH);
+                clearPastRetention(compiler);
+                Assert.assertEquals(MIN_RETAINED_DEPTH, compiler.getGenerationFrameCount());
 
                 assertQuery("SELECT sym FROM s WHERE sym IN (SELECT sym FROM s WHERE sym = 'b')")
                         .withCompiler(compiler)
@@ -177,9 +189,10 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                                 """);
                 compiler.clear();
                 compileAndClose(compiler, sql);
-                Assert.assertTrue(compiler.getGenerationFrameCount() > MAX_RETAINED_DEPTH);
+                Assert.assertTrue(compiler.getGenerationFrameCount() > MIN_RETAINED_DEPTH);
                 compiler.clear();
-                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getGenerationFrameCount());
+                clearPastRetention(compiler);
+                Assert.assertEquals(MIN_RETAINED_DEPTH, compiler.getGenerationFrameCount());
             }
         });
     }
@@ -188,14 +201,16 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
     public void testDeepNestingReturnsBindScopes() throws Exception {
         assertMemoryLeak(() -> {
             String sql = "SELECT x FROM long_sequence(1)";
-            for (int i = 0; i < MAX_RETAINED_DEPTH + 8; i++) {
+            for (int i = 0; i < MIN_RETAINED_DEPTH + 8; i++) {
                 sql = "SELECT x FROM long_sequence(1) WHERE x = (" + sql + ")";
             }
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compileAndClose(compiler, sql);
-                Assert.assertEquals(MAX_RETAINED_DEPTH + 9, compiler.getBindScopeCount());
+                Assert.assertEquals(MIN_RETAINED_DEPTH + 9, compiler.getBindScopeCount());
                 compiler.clear();
-                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getBindScopeCount());
+                Assert.assertEquals(MIN_RETAINED_DEPTH + 9, compiler.getBindScopeCount());
+                clearPastRetention(compiler);
+                Assert.assertEquals(MIN_RETAINED_DEPTH, compiler.getBindScopeCount());
 
                 assertQuery("SELECT x FROM long_sequence(2) WHERE x = (SELECT max(x) FROM long_sequence(2))")
                         .withCompiler(compiler)
@@ -228,6 +243,39 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIdleViewLexersReturnToFloor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            final int floor = configuration.getSqlLexerPoolCapacity();
+            final StringSink view = new StringSink();
+            view.put("CREATE VIEW wide AS (SELECT ");
+            for (int i = 0; i < floor; i++) {
+                if (i > 0) {
+                    view.put(", ");
+                }
+                view.put("x + ").put(i).put(" c").put(i);
+            }
+            view.put(" FROM t)");
+            execute(view);
+            // the outer view holds its lexer while the inner one expands, so the wide body takes a second lexer
+            execute("CREATE VIEW outer_wide AS (SELECT c0 FROM wide)");
+            execute("CREATE VIEW narrow AS (SELECT x FROM t)");
+            drainWalAndViewQueues();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                compileAndClose(compiler, "SELECT c0 FROM outer_wide");
+                compiler.clear();
+                Assert.assertTrue(compiler.getViewLexerMaxPoolCapacity() > floor);
+                for (int i = 0; i < RetainedCapacity.USES_TO_FLOOR; i++) {
+                    compileAndClose(compiler, "SELECT x FROM narrow");
+                    compiler.clear();
+                }
+                Assert.assertEquals(floor, compiler.getViewLexerMaxPoolCapacity());
+            }
+        });
+    }
+
+    @Test
     public void testLongDeclaredValueAliasesReturnStore() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
@@ -248,6 +296,8 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                 Assert.assertTrue(compiler.getCharacterStoreCapacity() > ceiling);
                 Assert.assertTrue(compiler.getCharacterStoreCapacity() < valueLength * 50);
                 compiler.clear();
+                Assert.assertTrue(compiler.getCharacterStoreCapacity() > ceiling);
+                clearPastRetention(compiler);
                 Assert.assertEquals(ceiling, compiler.getCharacterStoreCapacity());
 
                 assertQuery("DECLARE @s := 'abc' SELECT @s, @s FROM long_sequence(1)")
@@ -335,14 +385,35 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
             final int ceiling = configuration.getSqlExpressionPoolCapacity();
             final SqlCompiler compiler = engine.getSqlCompiler();
             final SqlCompilerImpl delegate = (SqlCompilerImpl) ((SqlCompilerPool.C) compiler).getDelegate();
+            final int grownCapacity;
             try {
                 compileAndClose(compiler, wideSelect(ceiling + 1_000, true));
-                Assert.assertTrue(delegate.getSqlNodePoolCapacity() > ceiling);
+                grownCapacity = delegate.getSqlNodePoolCapacity();
+                Assert.assertTrue(grownCapacity > ceiling);
             } finally {
                 compiler.close();
             }
+            Assert.assertTrue(delegate.getSqlNodePoolCapacity() > ceiling);
+            Assert.assertTrue(delegate.getSqlNodePoolCapacity() < grownCapacity);
+            clearPastRetention(delegate);
             Assert.assertEquals(ceiling, delegate.getSqlNodePoolCapacity());
             Assert.assertEquals(ceiling, delegate.getPlanColumnPoolCapacity());
+        });
+    }
+
+    @Test
+    public void testRecurringCteChainCreatesNoPooledObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MODEL_POOL_CAPACITY, "16");
+            assertRecurringStatementCreatesNoPooledObjects(cteChain(4), SqlCompilerImpl::getQueryModelPoolCapacity, 16);
+        });
+    }
+
+    @Test
+    public void testRecurringWideSelectCreatesNoPooledObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_EXPRESSION_POOL_CAPACITY, "64");
+            assertRecurringStatementCreatesNoPooledObjects(wideSelect(100, true), SqlCompilerImpl::getSqlNodePoolCapacity, 64);
         });
     }
 
@@ -354,6 +425,8 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                 compileAndClose(compiler, wideSelect(ceiling + 1_000, false));
                 Assert.assertTrue(compiler.getCharacterStorePoolCapacity() > ceiling);
                 compiler.clear();
+                Assert.assertTrue(compiler.getCharacterStorePoolCapacity() > ceiling);
+                clearPastRetention(compiler);
                 Assert.assertEquals(ceiling, compiler.getCharacterStorePoolCapacity());
             }
         });
@@ -379,6 +452,8 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                 compileAndClose(compiler, sql);
                 Assert.assertTrue(compiler.getViewLexerCapacity() > ceiling);
                 compiler.clear();
+                Assert.assertTrue(compiler.getViewLexerCapacity() > ceiling);
+                clearPastRetention(compiler);
                 Assert.assertEquals(ceiling, compiler.getViewLexerCapacity());
 
                 assertQuery("SELECT x FROM v2 ORDER BY x")
@@ -469,10 +544,13 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compileAndClose(compiler, sql);
                 compiler.clear();
-                Assert.assertEquals(ceiling, compiler.getJoinEqualityCapacity());
+                final int retained = compiler.getJoinEqualityCapacity();
+                Assert.assertTrue(retained > ceiling);
 
                 compileAndClose(compiler, "SELECT a.k0 FROM a JOIN b ON a.k0 = b.k0 JOIN c ON b.k1 = c.k1");
                 compiler.clear();
+                Assert.assertEquals(retained, compiler.getJoinEqualityCapacity());
+                clearPastRetention(compiler);
                 Assert.assertEquals(ceiling, compiler.getJoinEqualityCapacity());
             }
         });
@@ -497,6 +575,10 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                 Assert.assertTrue(compiler.getPlanColumnPoolCapacity() > ceiling);
                 Assert.assertTrue(compiler.getPreparedFunctionCapacity() > ceiling);
                 compiler.clear();
+                Assert.assertTrue(compiler.getSqlNodePoolCapacity() > ceiling);
+                Assert.assertTrue(compiler.getPlanColumnPoolCapacity() > ceiling);
+                Assert.assertTrue(compiler.getPreparedFunctionCapacity() > ceiling);
+                clearPastRetention(compiler);
                 Assert.assertEquals(ceiling, compiler.getSqlNodePoolCapacity());
                 Assert.assertEquals(ceiling, compiler.getPlanColumnPoolCapacity());
                 Assert.assertEquals(ceiling, compiler.getPreparedFunctionCapacity());
@@ -529,6 +611,8 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                 compileAndClose(compiler, sql);
                 Assert.assertTrue(compiler.getWithClausesCopyPoolCapacity() > ceiling);
                 compiler.clear();
+                Assert.assertTrue(compiler.getWithClausesCopyPoolCapacity() > ceiling);
+                clearPastRetention(compiler);
                 Assert.assertEquals(ceiling, compiler.getWithClausesCopyPoolCapacity());
 
                 assertQuery("WITH a AS (SELECT 1 x FROM long_sequence(1)), b AS (SELECT x + 1 x FROM a) SELECT x FROM b")
@@ -551,16 +635,22 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, "8");
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 Assert.assertEquals(2, compiler.getWindowExpressionPoolCapacity());
-                final StringSink sql = new StringSink();
-                for (int windowCount : new int[]{6, 9, 6}) {
-                    sql.clear();
-                    sql.put("SELECT ").repeat("sum(x) OVER (), ", windowCount - 1)
-                            .put("sum(x) OVER () FROM long_sequence(1)");
-                    compileAndClose(compiler, sql);
-                    Assert.assertTrue(compiler.getWindowExpressionPoolCapacity() >= windowCount);
-                    compiler.clear();
-                    Assert.assertEquals(8, compiler.getWindowExpressionPoolCapacity());
-                }
+                compileAndClose(compiler, windowSelect(6));
+                Assert.assertTrue(compiler.getWindowExpressionPoolCapacity() >= 6);
+                compiler.clear();
+                Assert.assertEquals(8, compiler.getWindowExpressionPoolCapacity());
+
+                compileAndClose(compiler, windowSelect(9));
+                Assert.assertTrue(compiler.getWindowExpressionPoolCapacity() >= 9);
+                compiler.clear();
+                final int retained = compiler.getWindowExpressionPoolCapacity();
+                Assert.assertTrue(retained >= 9);
+
+                compileAndClose(compiler, windowSelect(6));
+                compiler.clear();
+                Assert.assertEquals(retained, compiler.getWindowExpressionPoolCapacity());
+                clearPastRetention(compiler);
+                Assert.assertEquals(8, compiler.getWindowExpressionPoolCapacity());
 
                 assertQuery("SELECT x, row_number() OVER (ORDER BY x DESC) n FROM long_sequence(3) ORDER BY x")
                         .withCompiler(compiler)
@@ -576,10 +666,63 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertRecurringStatementCreatesNoPooledObjects(
+            CharSequence sql,
+            ToIntFunction<SqlCompilerImpl> grownCapacity,
+            int ceiling
+    ) throws SqlException {
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+            compileAndClose(compiler, sql);
+            compiler.clear();
+            Assert.assertTrue(grownCapacity.applyAsInt(compiler) > ceiling);
+            for (int i = 0, n = 3 * RetainedCapacity.WINDOW_USES; i < n; i++) {
+                final String retained = capacities(compiler);
+                compileAndClose(compiler, sql);
+                Assert.assertEquals(retained, capacities(compiler));
+                compiler.clear();
+            }
+            Assert.assertTrue(grownCapacity.applyAsInt(compiler) > ceiling);
+        }
+    }
+
+    // the pools grow only by creating objects, so an unchanged capacity means the compile created none
+    private static String capacities(SqlCompilerImpl compiler) {
+        return "bindScopes=" + compiler.getBindScopeCount()
+                + ", characters=" + compiler.getCharacterStoreCapacity()
+                + ", characterSequences=" + compiler.getCharacterStorePoolCapacity()
+                + ", generationFrames=" + compiler.getGenerationFrameCount()
+                + ", joinEqualities=" + compiler.getJoinEqualityCapacity()
+                + ", planColumns=" + compiler.getPlanColumnPoolCapacity()
+                + ", preparedFunctions=" + compiler.getPreparedFunctionCapacity()
+                + ", queryModels=" + compiler.getQueryModelPoolCapacity()
+                + ", sqlNodes=" + compiler.getSqlNodePoolCapacity()
+                + ", subqueries=" + compiler.getSubqueryPoolCapacity()
+                + ", viewLexers=" + compiler.getViewLexerCapacity()
+                + ", viewLexerSequences=" + compiler.getViewLexerMaxPoolCapacity()
+                + ", windowExpressions=" + compiler.getWindowExpressionPoolCapacity()
+                + ", withClauseCopies=" + compiler.getWithClausesCopyPoolCapacity();
+    }
+
+    private static void clearPastRetention(SqlCompilerImpl compiler) {
+        for (int i = 0, n = 2 * RetainedCapacity.WINDOW_USES; i < n; i++) {
+            compiler.clear();
+        }
+    }
+
     private static void compileAndClose(SqlCompiler compiler, CharSequence sql) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             Assert.assertNotNull(factory);
         }
+    }
+
+    private static StringSink cteChain(int levels) {
+        final StringSink sql = new StringSink();
+        sql.put("WITH c0 AS (SELECT x l FROM long_sequence(3))");
+        for (int i = 1; i <= levels; i++) {
+            sql.put(", c").put(i).put(" AS (SELECT * FROM c").put(i - 1).put(" UNION ALL SELECT * FROM c").put(i - 1).put(')');
+        }
+        sql.put(" SELECT count() FROM c").put(levels);
+        return sql;
     }
 
     private static StringSink wideSelect(int columnCount, boolean isAliased) {
@@ -595,6 +738,12 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
             }
         }
         sql.put(" FROM long_sequence(1)");
+        return sql;
+    }
+
+    private static StringSink windowSelect(int windowCount) {
+        final StringSink sql = new StringSink();
+        sql.put("SELECT ").repeat("sum(x) OVER (), ", windowCount - 1).put("sum(x) OVER () FROM long_sequence(1)");
         return sql;
     }
 

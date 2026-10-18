@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
-import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -70,8 +69,18 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, int keyLo, int keyHi) {
-        cursor.of(pageFrame, keyLo, keyHi);
+        return getCursor(pageFrame, pageFrameMemory, keyLo, keyHi, indexDirection == IndexReader.DIR_BACKWARD ? pageFrame.getPartitionHi() - 1 : pageFrame.getPartitionLo());
+    }
+
+    @Override
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, int keyLo, int keyHi, long firstRow) {
+        cursor.of(pageFrame, keyLo, keyHi, firstRow);
         return cursor;
+    }
+
+    @Override
+    public int getIndexDirection() {
+        return indexDirection;
     }
 
     @Override
@@ -80,13 +89,19 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
     }
 
     @Override
-    public long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi) {
+    public long getRow(PageFrame pageFrame, int keyIndex, long rowLo, long rowHi, long rowIndex) {
+        final BitmapIndexFwdReader reader = (BitmapIndexFwdReader) pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD);
+        return reader.getRow(symbolKeys.getQuick(keyIndex), rowLo, rowHi, indexDirection, rowIndex);
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi, long maxCount) {
         if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
             return -1;
         }
         long count = 0;
-        for (int i = keyLo; i < keyHi; i++) {
-            count += reader.countMatchesInRange(symbolKeys.getQuick(i), rowLo, rowHi, BitmapIndexUtils.UNBOUNDED_BLOCK_HOPS);
+        for (int i = keyLo; i < keyHi && count <= maxCount; i++) {
+            count += reader.countRows(symbolKeys.getQuick(i), rowLo, rowHi, maxCount - count);
         }
         return count;
     }
@@ -182,9 +197,12 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
 
     private class ListBasedSymbolIndexRowCursor implements RowCursor {
         private RowCursor current;
+        private long firstRow;
         private int index;
         private int indexHi;
+        private int indexLo;
         private PageFrame pageFrame;
+        private long shift;
 
         @Override
         public void close() {
@@ -198,19 +216,26 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
 
         @Override
         public long next() {
-            return current.next();
+            return current.next() + shift;
         }
 
         private boolean fetchNext() {
             while (index < indexHi) {
                 Misc.free(current);
+                final long partitionLo = pageFrame.getPartitionLo();
+                long rowLo = partitionLo;
+                long rowHi = pageFrame.getPartitionHi() - 1;
+                if (index == indexLo) {
+                    if (indexDirection == IndexReader.DIR_BACKWARD) {
+                        rowHi = firstRow;
+                    } else {
+                        rowLo = firstRow;
+                    }
+                }
+                shift = rowLo - partitionLo;
                 current = pageFrame
                         .getIndexReader(columnIndex, indexDirection)
-                        .getCursor(
-                                symbolKeys.getQuick(index++),
-                                pageFrame.getPartitionLo(),
-                                pageFrame.getPartitionHi() - 1
-                        );
+                        .getCursor(symbolKeys.getQuick(index++), rowLo, rowHi);
 
                 if (current.hasNext()) {
                     return true;
@@ -219,10 +244,12 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
             return false;
         }
 
-        private void of(PageFrame pageFrame, int indexLo, int indexHi) {
+        private void of(PageFrame pageFrame, int indexLo, int indexHi, long firstRow) {
             this.pageFrame = pageFrame;
             this.index = indexLo;
+            this.indexLo = indexLo;
             this.indexHi = indexHi;
+            this.firstRow = firstRow;
             Misc.free(current);
             this.current = EmptyRowCursor.INSTANCE;
         }

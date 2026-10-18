@@ -63,12 +63,13 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
 
     /**
      * Creates a lexer whose sequence pools start at {@code initialPoolCapacity}, grow with the tokens a text needs and
-     * keep at most {@code maxRetainedPoolCapacity} sequences each once the lexer is reset.
+     * keep what the recent texts needed once the lexer is reset, see {@link RetainedCapacity}, but never fewer than
+     * {@code minRetainedPoolCapacity} sequences each.
      */
-    public GenericLexer(int initialPoolCapacity, int maxRetainedPoolCapacity) {
-        csPool = new ObjectPool<>(FloatingSequence::new, initialPoolCapacity, maxRetainedPoolCapacity);
-        csPairPool = new ObjectPool<>(FloatingSequencePair::new, initialPoolCapacity, maxRetainedPoolCapacity);
-        csTriplePool = new ObjectPool<>(FloatingSequenceTriple::new, initialPoolCapacity, maxRetainedPoolCapacity);
+    public GenericLexer(int initialPoolCapacity, int minRetainedPoolCapacity) {
+        csPool = new ObjectPool<>(FloatingSequence::new, initialPoolCapacity, minRetainedPoolCapacity);
+        csPairPool = new ObjectPool<>(FloatingSequencePair::new, initialPoolCapacity, minRetainedPoolCapacity);
+        csTriplePool = new ObjectPool<>(FloatingSequenceTriple::new, initialPoolCapacity, minRetainedPoolCapacity);
         for (int i = 0, n = WHITESPACE.size(); i < n; i++) {
             defineSymbol(Chars.toString(WHITESPACE.get(i)));
         }

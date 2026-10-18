@@ -1707,29 +1707,65 @@ impl ParquetDecoder {
         column_index: u32,
         parquet_encoding: i32,
     ) -> ParquetResult<bool> {
-        if row_group_index >= self.row_group_count {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "row group index {} out of range [0,{})",
-                row_group_index,
-                self.row_group_count
-            ));
-        }
-        if column_index >= self.col_count {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "column index {} out of range [0,{})",
-                column_index,
-                self.col_count
-            ));
-        }
-
-        let row_group = &self.metadata.row_groups[row_group_index as usize];
-        let column = &row_group.columns()[column_index as usize];
-        Ok(column
+        Ok(self
+            .column_chunk_meta(row_group_index, column_index)?
             .column_encoding()
             .iter()
             .any(|encoding| encoding.0 == parquet_encoding))
+    }
+
+    /// Reports whether the chunk's statistics prove it holds no NULL.
+    pub fn row_group_column_has_no_nulls(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<bool> {
+        Ok(
+            Self::chunk_null_count(self.column_chunk_meta(row_group_index, column_index)?)
+                == Some(0),
+        )
+    }
+
+    fn column_chunk_meta(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<&parquet2::metadata::ColumnChunkMetaData> {
+        let row_groups = &self.metadata.row_groups;
+        let row_group = row_groups.get(row_group_index as usize).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                row_groups.len()
+            )
+        })?;
+        let columns = row_group.columns();
+        columns.get(column_index as usize).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "column index {} out of range [0,{})",
+                column_index,
+                columns.len()
+            )
+        })
+    }
+
+    // Parquet stores the null count signed, and nothing validates the footer a third-party writer
+    // produced. A negative count is not "no nulls" - it is no information at all, so read it as
+    // absent: every consumer already treats an absent count conservatively, while a negative one
+    // made has_nulls false and let a NULL-sentinel filter prune a row group that does hold nulls.
+    // The `_pm` path applies the same rule to its unsigned encoding at both ends - see
+    // parquet_metadata::skip for the read and qdb_parquet_meta::convert::apply_thrift_stats for
+    // the write.
+    fn chunk_null_count(column: &parquet2::metadata::ColumnChunkMetaData) -> Option<i64> {
+        column
+            .column_chunk()
+            .meta_data
+            .as_ref()
+            .and_then(|m| m.statistics.as_ref())
+            .and_then(|s| s.null_count)
+            .filter(|&c| c >= 0)
     }
 
     pub fn decode_row_group(
@@ -2541,14 +2577,7 @@ impl ParquetDecoder {
             let column_metadata = &columns_meta[column_idx];
             let column_chunk_meta = column_metadata.column_chunk().meta_data.as_ref();
             let statistics = column_chunk_meta.and_then(|m| m.statistics.as_ref());
-            // Parquet stores the null count signed, and nothing validates the footer a third-party
-            // writer produced. A negative count is not "no nulls" - it is no information at all, so
-            // read it as absent: every consumer below already treats an absent count
-            // conservatively, while a negative one made has_nulls false and let a NULL-sentinel
-            // filter prune a row group that does hold nulls. The `_pm` path applies the same rule
-            // to its unsigned encoding at both ends - see parquet_metadata::skip for the read and
-            // qdb_parquet_meta::convert::apply_thrift_stats for the write.
-            let null_count = statistics.and_then(|s| s.null_count).filter(|&c| c >= 0);
+            let null_count = Self::chunk_null_count(column_metadata);
             let num_values = column_chunk_meta.map(|m| m.num_values);
 
             let qdb_column_type = packed_filter.qdb_column_type();

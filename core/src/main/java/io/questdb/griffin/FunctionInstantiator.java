@@ -125,9 +125,9 @@ public final class FunctionInstantiator implements Mutable {
      * nesting depth the scope stack enters. The NULL probe schema is borrowed for single calls only.
      */
     public FunctionInstantiator(SqlCompilerImpl compiler, FunctionResolver resolver, PreparedFunctions prepared, OutputSchema nullProbeSchema,
-                                int maxRetainedInstantiations) {
+                                int minRetainedInstantiations) {
         this.compiler = compiler;
-        this.instantiations = new ObjectPool<>(InstantiationArguments::new, 8, maxRetainedInstantiations);
+        this.instantiations = new ObjectPool<>(InstantiationArguments::new, 8, minRetainedInstantiations);
         this.resolver = resolver;
         this.prepared = prepared;
         this.nullProbeSchema = nullProbeSchema;

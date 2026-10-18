@@ -247,6 +247,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public void setPageFrameMaxRows(int maxRows) {
+        pageFrameMaxRows = maxRows;
+    }
+
+    @Override
     public long size() {
         return partitionFrameCursor.size();
     }
@@ -265,6 +270,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         cachedRowGroupIndex = -1;
         cachedRowGroupStartRow = 0;
         filterBufEnd = -1;
+        remainingRowsInInterval = 0;
         clearAddresses();
     }
 
@@ -530,6 +536,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         @Override
         public IndexReader getIndexReader(int columnIndex, int direction) {
+            // A lightweight frame of next(skipTarget) may leave its partition closed, and an index reader takes the
+            // column top of the open partition.
+            reader.openPartition(partitionIndex);
             return reader.getIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }
 

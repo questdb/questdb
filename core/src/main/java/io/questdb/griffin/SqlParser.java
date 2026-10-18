@@ -979,9 +979,10 @@ public class SqlParser {
      * sub-query: one for the body of a view that is not expanded inside itself, and one for each
      * level of copies nested in one another. A lexer for every expansion and every copy would make
      * the lexers a statement holds grow with the number of its reads, which doubles with every
-     * level of sub-queries that read one another twice, and the pool trims back to its configured
-     * capacity only when the parser clears after the statement. The copies still parse query
-     * models of their own, so {@link #parseDeclaredQuery} also bounds how many a statement parses.
+     * level of sub-queries that read one another twice, and the pool trims only when the parser
+     * clears after the statement, and then only to what its recent statements took. The copies
+     * still parse query models of their own, so {@link #parseDeclaredQuery} also bounds how many a
+     * statement parses.
      */
     private GenericLexer borrowViewLexer(CharSequence source, int position) {
         GenericLexer lexer = null;
@@ -7396,10 +7397,11 @@ public class SqlParser {
      * A copy parses a copy of every CTE its text reads, because the definition's parse of that
      * text took their models. So CTEs that read the one before them twice double the copies with
      * every level: 120 at six levels, over 2,000 at ten and over two million at twenty, each with
-     * query models, expression nodes and query columns of its own in pools that never shrink while
-     * the compiler lives, and with the aliases of its columns in the compiler's character store,
-     * which does not shrink either. Every copy first checks the statement's parse budget, see
-     * {@link #checkParseBudget}, at the reference that would make it, which names the CTE.
+     * query models, expression nodes and query columns of its own, and with the aliases of its
+     * columns in the compiler's character store, all held until the statement ends and kept by the
+     * compiler's pools while its recent statements need them. Every copy first checks the
+     * statement's parse budget, see {@link #checkParseBudget}, at the reference that would make
+     * it, which names the CTE.
      *
      * @param referencePosition where the reference sits in the text {@code lexer} reads
      */
@@ -8650,6 +8652,10 @@ public class SqlParser {
         withScope = topLevelWithModel;
         explainModelPool.clear();
         idleViewLexers.clear();
+        // a lexer no statement takes would otherwise keep what its last parse needed, see RetainedCapacity
+        for (int i = viewLexers.getPos(), n = viewLexers.getCapacity(); i < n; i++) {
+            viewLexers.peekQuick(i).clear();
+        }
         viewLexers.clear();
         digit = 1;
         aliasMap.clear();

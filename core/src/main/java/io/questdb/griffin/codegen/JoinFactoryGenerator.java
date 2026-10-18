@@ -96,6 +96,7 @@ import io.questdb.griffin.engine.join.LtJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.MarkoutHorizonRecordCursorFactory;
+import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
@@ -633,6 +634,21 @@ final class JoinFactoryGenerator {
     }
 
     /**
+     * Consumes the slave on entry, including failure.
+     */
+    private RecordCursorFactory materialize(RecordCursorFactory slave) {
+        final RecordSink rowSink;
+        try {
+            entityColumnFilter.of(slave.getMetadata().getColumnCount());
+            rowSink = RecordSinkFactory.getInstance(configuration, asm, slave.getMetadata(), entityColumnFilter);
+        } catch (Throwable th) {
+            Misc.free(slave, th);
+            throw th;
+        }
+        return new MaterializedRecordCursorFactory(configuration, slave, rowSink);
+    }
+
+    /**
      * Consumes the raw factory, including failure. Maps the bound output onto the full-fat layout: master
      * columns, slave value columns, then slave keys. The full-fat map exposes a slave key with its master
      * key's type, so a SYMBOL key paired with a STRING or VARCHAR master key is cast back to SYMBOL.
@@ -1121,12 +1137,12 @@ final class JoinFactoryGenerator {
                 resolveKeys(step.getInput().getOutput(), step.getSlaveKeyColumnIds(), joinKeys.slaveIndexes);
                 joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, isSelfJoin);
                 // Copy before closing: a derived slave may own closeable join metadata.
-                if (joinType == JoinKind.LEFT_OUTER && onFilter != null && onFilter.isConstant() && !onFilter.getBool(null)) {
+                if (PlanToFactoryRules.isSlaveEmptied(step)) {
                     final RecordCursorFactory empty = new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOfNew(slaveMetadata));
                     final RecordCursorFactory oldSlave = slave;
                     slave = empty;
                     oldSlave.close();
-                } else if (joinType == JoinKind.RIGHT_OUTER && onFilter != null && onFilter.isConstant() && !onFilter.getBool(null)) {
+                } else if (PlanToFactoryRules.isMasterEmptied(step)) {
                     final RecordCursorFactory empty = new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOfNew(masterMetadata));
                     final RecordCursorFactory oldMaster = master;
                     master = empty;
@@ -1212,7 +1228,7 @@ final class JoinFactoryGenerator {
                 masterAlias = null;
                 continue;
             }
-            final RecordCursorFactory slave;
+            RecordCursorFactory slave;
             try {
                 slave = codeGenerator.generate(frame, step.getInput(), executionContext);
             } catch (Throwable th) {
@@ -1225,6 +1241,14 @@ final class JoinFactoryGenerator {
                 Misc.free(slave, th);
                 Misc.free(master, th);
                 throw th;
+            }
+            if (step.getAlgorithm() == JoinInput.Algorithm.MATERIALIZED_NESTED_LOOP) {
+                try {
+                    slave = materialize(slave);
+                } catch (Throwable th) {
+                    Misc.free(master, th);
+                    throw th;
+                }
             }
             master = switch (step.getJoinType()) {
                 case ASOF, LT ->

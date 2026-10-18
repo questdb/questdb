@@ -27,6 +27,7 @@ package io.questdb.test.std;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.RetainedCapacity;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
@@ -88,48 +89,7 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     @Test
-    public void testClearAboveCeilingKeepsFirstObjects() {
-        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 8);
-        final ObjList<TestObject> taken = take(bounded, 20);
-        Assert.assertEquals(32, bounded.getCapacity());
-
-        bounded.clear();
-        Assert.assertEquals(8, bounded.getCapacity());
-        for (int i = 0; i < 8; i++) {
-            Assert.assertSame(taken.getQuick(i), bounded.peekQuick(i));
-            Assert.assertEquals(0, taken.getQuick(i).getValue());
-        }
-
-        final ObjList<TestObject> again = take(bounded, 9);
-        for (int i = 0; i < 8; i++) {
-            Assert.assertSame(taken.getQuick(i), again.getQuick(i));
-        }
-        Assert.assertNotSame(taken.getQuick(8), again.getQuick(8));
-        Assert.assertEquals(16, bounded.getCapacity());
-    }
-
-    @Test
-    public void testClearAboveCeilingRepeatedlyKeepsSameObjects() {
-        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 8);
-        final ObjList<TestObject> first = take(bounded, 20);
-        bounded.clear();
-        for (int round = 0; round < 3; round++) {
-            final ObjList<TestObject> taken = take(bounded, 20);
-            Assert.assertEquals(32, bounded.getCapacity());
-            for (int i = 0; i < 8; i++) {
-                Assert.assertSame(first.getQuick(i), taken.getQuick(i));
-            }
-            bounded.clear();
-            Assert.assertEquals(8, bounded.getCapacity());
-            Assert.assertEquals(0, bounded.getPos());
-            for (int i = 0; i < 20; i++) {
-                Assert.assertEquals(0, taken.getQuick(i).getValue());
-            }
-        }
-    }
-
-    @Test
-    public void testClearAtOrBelowCeilingKeepsEveryObject() {
+    public void testClearAtOrBelowFloorKeepsEveryObject() {
         final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 16);
         final ObjList<TestObject> taken = take(bounded, 10);
         Assert.assertEquals(16, bounded.getCapacity());
@@ -143,14 +103,14 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     @Test
-    public void testCeilingBelowInitialSizeKeepsInitialSize() {
-        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 1);
-        final ObjList<TestObject> taken = take(bounded, 10);
-        Assert.assertEquals(16, bounded.getCapacity());
+    public void testClearKeepsObjectsRecentUsesTook() {
+        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 8);
+        final ObjList<TestObject> taken = take(bounded, 20);
+        Assert.assertEquals(32, bounded.getCapacity());
 
         bounded.clear();
-        Assert.assertEquals(INITIAL_SIZE, bounded.getCapacity());
-        for (int i = 0; i < INITIAL_SIZE; i++) {
+        Assert.assertEquals(20, bounded.getCapacity());
+        for (int i = 0; i < 20; i++) {
             Assert.assertSame(taken.getQuick(i), bounded.peekQuick(i));
             Assert.assertEquals(0, taken.getQuick(i).getValue());
         }
@@ -166,6 +126,22 @@ public class ObjectPoolTest extends AbstractTest {
             Assert.assertEquals(i + 1, taken.getQuick(i).getValue());
         }
         Assert.assertEquals(0, pool.next().getValue());
+    }
+
+    @Test
+    public void testFloorBelowInitialSizeKeepsInitialSize() {
+        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 1);
+        final ObjList<TestObject> taken = take(bounded, 10);
+        Assert.assertEquals(16, bounded.getCapacity());
+
+        bounded.clear();
+        Assert.assertEquals(10, bounded.getCapacity());
+        clearPastRetention(bounded);
+        Assert.assertEquals(INITIAL_SIZE, bounded.getCapacity());
+        for (int i = 0; i < INITIAL_SIZE; i++) {
+            Assert.assertSame(taken.getQuick(i), bounded.peekQuick(i));
+            Assert.assertEquals(0, taken.getQuick(i).getValue());
+        }
     }
 
     @Test
@@ -197,6 +173,17 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     @Test
+    public void testIndividualReleasesCountTowardsPeak() {
+        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 8);
+        final ObjList<TestObject> taken = take(bounded, 20);
+        for (int i = 19; i > -1; i--) {
+            bounded.release(taken.getQuick(i));
+        }
+        bounded.clear();
+        Assert.assertEquals(20, bounded.getCapacity());
+    }
+
+    @Test
     public void testNextReturnsNewObject() {
         TestObject obj = pool.next();
         Assert.assertNotNull("Pool should return non-null object", obj);
@@ -225,6 +212,30 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     @Test
+    public void testOneOffUseReturnsToFloor() {
+        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 8);
+        final ObjList<TestObject> taken = take(bounded, 20);
+        bounded.clear();
+        for (int i = 0; i < RetainedCapacity.WINDOW_USES; i++) {
+            take(bounded, 2);
+            bounded.clear();
+            Assert.assertEquals(20, bounded.getCapacity());
+        }
+        for (int i = 0; i < RetainedCapacity.WINDOW_USES; i++) {
+            take(bounded, 2);
+            bounded.clear();
+        }
+        Assert.assertEquals(8, bounded.getCapacity());
+        for (int i = 0; i < 8; i++) {
+            Assert.assertSame(taken.getQuick(i), bounded.peekQuick(i));
+        }
+
+        final ObjList<TestObject> again = take(bounded, 9);
+        Assert.assertNotSame(taken.getQuick(8), again.getQuick(8));
+        Assert.assertEquals(16, bounded.getCapacity());
+    }
+
+    @Test
     public void testPeekQuick() {
         TestObject obj0 = pool.next();
         TestObject obj1 = pool.next();
@@ -237,6 +248,44 @@ public class ObjectPoolTest extends AbstractTest {
         pool.release(obj1);
         Assert.assertSame("Should get same object back", obj0, pool.peekQuick(0));
         Assert.assertSame("Should get same object back", obj2, pool.peekQuick(1));
+    }
+
+    @Test
+    public void testRecurringUseKeepsSameObjects() {
+        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 8);
+        final ObjList<TestObject> first = take(bounded, 20);
+        bounded.clear();
+        for (int round = 0; round < 3 * RetainedCapacity.WINDOW_USES; round++) {
+            if (round % (RetainedCapacity.WINDOW_USES / 2) == 0) {
+                final ObjList<TestObject> taken = take(bounded, 20);
+                Assert.assertEquals(20, bounded.getCapacity());
+                for (int i = 0; i < 20; i++) {
+                    Assert.assertSame(first.getQuick(i), taken.getQuick(i));
+                }
+            } else {
+                take(bounded, 2);
+            }
+            bounded.clear();
+            Assert.assertEquals(20, bounded.getCapacity());
+            Assert.assertEquals(0, bounded.getPos());
+        }
+    }
+
+    @Test
+    public void testReleaseNotFromPool() {
+        TestObject notFromPool = new TestObject();
+        try {
+            pool.release(notFromPool);
+        } catch (AssertionError expected) {
+
+        }
+
+        TestObject ignore = pool.next();
+        try {
+            pool.release(notFromPool);
+        } catch (AssertionError expected) {
+
+        }
     }
 
     @Test
@@ -268,23 +317,6 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     @Test
-    public void testReleaseNotFromPool() {
-        TestObject notFromPool = new TestObject();
-        try {
-            pool.release(notFromPool);
-        } catch (AssertionError expected) {
-
-        }
-
-        TestObject ignore = pool.next();
-        try {
-            pool.release(notFromPool);
-        } catch (AssertionError expected) {
-
-        }
-    }
-
-    @Test
     public void testRewindClearsReleasedObjects() {
         final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 8);
         final ObjList<TestObject> taken = take(bounded, 6);
@@ -298,7 +330,7 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     @Test
-    public void testRewindPastCeilingClearsEveryReleasedObject() {
+    public void testRewindPastFloorClearsEveryReleasedObject() {
         final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 8);
         final ObjList<TestObject> taken = take(bounded, 20);
         bounded.rewind(4);
@@ -309,6 +341,12 @@ public class ObjectPoolTest extends AbstractTest {
         }
         for (int i = 4; i < 20; i++) {
             Assert.assertEquals(0, taken.getQuick(i).getValue());
+        }
+    }
+
+    private static void clearPastRetention(ObjectPool<TestObject> pool) {
+        for (int i = 0, n = 2 * RetainedCapacity.WINDOW_USES; i < n; i++) {
+            pool.clear();
         }
     }
 

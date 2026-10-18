@@ -855,6 +855,121 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaterializedNestedLoopCopyHonoursJoinValueMaxPages() throws Exception {
+        // Under a generous query limit, the copy stops where a full-fat join's value pages would: at
+        // cairo.sql.hash.join.value.page.size times cairo.sql.hash.join.value.max.pages bytes.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024 * 1024L);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 64 * 1024L);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b AS (SELECT 1 k, x v FROM long_sequence(100_000))");
+            execute("CREATE TABLE c AS (SELECT 1 k FROM long_sequence(1))");
+            drainWalQueue();
+            final String sql = "SELECT twap(m.id, m.ts), sum(b.v) FROM m CROSS JOIN b JOIN c ON b.k = c.k";
+            assertUsesMaterializedNestedLoop(sql);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 3; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {
+                            // drain until the copy reaches its page limit
+                        }
+                        Assert.fail("expected the copy to breach its page limit at iteration " + i);
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "breached in VirtualMemory");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "cairo.sql.hash.join.value.max.pages");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMaterializedNestedLoopFailsOnLargeInput() throws Exception {
+        // twap() keeps the leading input first, so the nested loop crosses it with a copy of the keyed component;
+        // the copy of its 100_000 rows breaches the limit part way through.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b AS (SELECT 1 k, x v FROM long_sequence(100_000))");
+            execute("CREATE TABLE c AS (SELECT 1 k FROM long_sequence(1))");
+            drainWalQueue();
+            final String sql = "SELECT twap(m.id, m.ts), sum(b.v) FROM m CROSS JOIN b JOIN c ON b.k = c.k";
+            assertUsesMaterializedNestedLoop(sql);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 3; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach at iteration " + i);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMaterializedNestedLoopRepeatedCursorRunsReleaseAllocations() throws Exception {
+        // The reuse loop cycles the copy of the keyed component across of()/close(), after a full read and after a
+        // LIMIT that stops part way through the first copy; assertMemoryLeak checks that its malloc/free stays
+        // symmetric on the per-query counter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b AS (SELECT (x % 10)::INT k, x v FROM long_sequence(1_000))");
+            execute("CREATE TABLE c AS (SELECT x::INT k FROM long_sequence(2))");
+            drainWalQueue();
+            final String fullSql = "SELECT twap(m.id, m.ts) t, count() n FROM m CROSS JOIN b JOIN c ON b.k = c.k";
+            final String limitSql = "SELECT * FROM (SELECT m.id, m.ts, b.v FROM m CROSS JOIN b JOIN c ON b.k = c.k) TIMESTAMP(ts) LIMIT 5";
+            assertUsesMaterializedNestedLoop(fullSql);
+            assertUsesMaterializedNestedLoop(limitSql);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory fullFactory = compiler.compile(fullSql, sqlExecutionContext).getRecordCursorFactory();
+                 RecordCursorFactory limitFactory = compiler.compile(limitSql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 20; i++) {
+                    try (RecordCursor cursor = fullFactory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(600, cursor.getRecord().getLong(1));
+                    }
+                    try (RecordCursor cursor = limitFactory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals(5, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMaterializedNestedLoopSmallComponentStaysUnderLimit() throws Exception {
+        // A one-row component costs one small page, so the query runs under the 512 KiB limit with default page
+        // sizes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b AS (SELECT x::INT k, 'v' || x v FROM long_sequence(1))");
+            execute("CREATE TABLE c AS (SELECT x::INT k FROM long_sequence(1))");
+            drainWalQueue();
+            final String sql = "SELECT * FROM (SELECT m.id, m.ts, b.v FROM m CROSS JOIN b JOIN c ON b.k = c.k) TIMESTAMP(ts)";
+            assertUsesMaterializedNestedLoop(sql);
+            assertQuery(sql).noLeakCheck().noRandomAccess().timestamp("ts").returns("""
+                    id\tts\tv
+                    1\t1970-01-01T00:00:01.000000Z\tv1
+                    2\t1970-01-01T00:00:02.000000Z\tv1
+                    3\t1970-01-01T00:00:03.000000Z\tv1
+                    """);
+            assertQuery("SELECT twap(m.id, m.ts) t, count() n FROM m CROSS JOIN b JOIN c ON b.k = c.k")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("t\tn\n1.5\t3\n");
+        });
+    }
+
+    @Test
     public void testNestedLoopFullJoinFailsOnLargeInput() throws Exception {
         // A one-row master keeps the nested loop cheap while the non-equi FULL
         // OUTER condition matches nearly every slave row, growing the matched-row
@@ -1014,6 +1129,16 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             sink.clear();
             CursorPrinter.println(cursor, factory.getMetadata(), sink);
             TestUtils.assertContains(sink, "Markout Horizon Join");
+        }
+    }
+
+    private void assertUsesMaterializedNestedLoop(String sql) throws Exception {
+        try (RecordCursorFactory factory = select("EXPLAIN " + sql);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            sink.clear();
+            CursorPrinter.println(cursor, factory.getMetadata(), sink);
+            TestUtils.assertContains(sink, "Cross Join");
+            TestUtils.assertContains(sink, "Materialize");
         }
     }
 

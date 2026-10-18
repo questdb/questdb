@@ -957,6 +957,49 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegatedRangePrunesOnlyNullFreeRowGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            // Rows 101-150 hold NULLs, so the second row group has them and the other 49 do not.
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT CASE WHEN x BETWEEN 101 AND 150 THEN NULL ELSE x::INT END AS val
+                        FROM long_sequence(5_000)
+                    )
+                    """);
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                for (boolean statisticsEnabled : new boolean[]{true, false}) {
+                    path.of(root).concat(statisticsEnabled ? "stats.parquet" : "no_stats.parquet");
+                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                    PartitionEncoder.encodeWithOptions(
+                            partitionDescriptor,
+                            path,
+                            ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                            statisticsEnabled,
+                            false,
+                            100,
+                            0,
+                            ParquetVersion.PARQUET_VERSION_V1,
+                            0.0
+                    );
+                }
+            }
+            // The negation keeps the 100 rows from 4901 up and the 50 NULL rows. Every row group below 4901
+            // fails it, except the one holding NULLs.
+            final String expected = """
+                    count\tcount1
+                    150\t100
+                    """;
+            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('stats.parquet') WHERE NOT (val < 4901)", expected, 48);
+            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('stats.parquet') WHERE NOT (val <= 4900)", expected, 48);
+            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('no_stats.parquet') WHERE NOT (val < 4901)", expected, 0);
+        });
+    }
+
+    @Test
     public void testOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 10;
@@ -2039,6 +2082,24 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     true
             );
         }
+    }
+
+    private void assertRowGroupsSkipped(String query, String expected, int expectedSkipped) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
+        ParquetRowGroupFilter.resetRowGroupsSkipped();
+        try (
+                RecordCursorFactory factory = select(query);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            while (cursor.hasNext()) {
+                // drain a single pass so the skip counter covers exactly one scan
+            }
+        }
+        Assert.assertEquals(query, expectedSkipped, ParquetRowGroupFilter.getRowGroupsSkipped());
     }
 
     private void testCursor(boolean rawArrayEncoding) throws Exception {

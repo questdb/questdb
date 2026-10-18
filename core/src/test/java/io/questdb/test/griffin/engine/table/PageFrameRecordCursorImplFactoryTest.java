@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
@@ -74,6 +75,34 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
+    }
+
+    @Test
+    public void testCalculateSizeAfterPartialRead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, x::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.changePageFrameSizes(100, 100);
+            for (String query : new String[]{"SELECT * FROM t", "SELECT * FROM t WHERE ts >= 1 AND ts < 2_000", "SELECT * FROM t ORDER BY ts DESC"}) {
+                try (RecordCursorFactory factory = select(query)) {
+                    // the read leaves the page frame cursor inside its first partition frame
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                        Assert.assertEquals(query, 1_000, counter.get());
+                    }
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        cursor.toTop();
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                        Assert.assertEquals(query, 1_000, counter.get());
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -771,6 +800,30 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final long expectedNumOfRows = 300 + 1;
 
         testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testIndexReaderOfLightweightFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT timestamp_sequence(0, 1_000_000) ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t ADD COLUMN sym SYMBOL INDEX");
+            execute("INSERT INTO t SELECT timestamp_sequence(10_000_000, 1_000_000), 'a' FROM long_sequence(5)");
+            execute("INSERT INTO t SELECT timestamp_sequence(86_400_000_000, 1_000_000), 'b' FROM long_sequence(5)");
+            for (int order : new int[]{ORDER_ASC, ORDER_DESC}) {
+                try (
+                        RecordCursorFactory factory = select("SELECT ts, sym FROM t");
+                        PageFrameCursor frameCursor = factory.getPageFrameCursor(sqlExecutionContext, order)
+                ) {
+                    // a lightweight frame describes a partition frame that no page frame has opened yet
+                    PageFrame frame;
+                    while ((frame = frameCursor.next(Long.MAX_VALUE)) != null) {
+                        final long columnTop = frame.getPartitionIndex() == 0 ? 5 : 0;
+                        Assert.assertEquals(columnTop, frame.getIndexReader(1, IndexReader.DIR_FORWARD).getColumnTop());
+                        Assert.assertEquals(columnTop, frame.getIndexReader(1, IndexReader.DIR_BACKWARD).getColumnTop());
+                    }
+                }
+            }
+        });
     }
 
     @Test

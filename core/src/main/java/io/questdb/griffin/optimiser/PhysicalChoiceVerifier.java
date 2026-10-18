@@ -167,6 +167,8 @@ final class PhysicalChoiceVerifier {
             case MARKOUT -> joinType.isRelational() && step.getMarkoutTimestampColumnId() >= 0 && position > 0
                     && PhysicalProperties.masterScanDirection(join, position) == PhysicalProperties.ScanDirection.FORWARD;
             case NESTED_LOOP -> joinType.isRelational() && step.getMasterKeyColumnIds().size() == 0;
+            case MATERIALIZED_NESTED_LOOP -> joinType.isRelational() && joinType != JoinKind.RIGHT_OUTER
+                    && step.getMasterKeyColumnIds().size() == 0 && step.getInput() instanceof JoinPlan;
             case HASH, LIGHT_HASH -> joinType.isRelational() && step.getMasterKeyColumnIds().size() > 0;
         };
         if (!isValid) {

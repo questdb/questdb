@@ -29,11 +29,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
@@ -58,7 +58,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -164,7 +163,7 @@ final class LatestByFactoryGenerator {
      * Consumes frames, both key lists and the filter, including on failure.
      */
     private RecordCursorFactory generateLatestByKeyList(
-            TableReader reader,
+            TableAccessInfo table,
             RecordMetadata metadata,
             PartitionFrameCursorFactory frames,
             int keyIndex,
@@ -188,7 +187,7 @@ final class LatestByFactoryGenerator {
         final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
         final int[] coveringMapping;
         try {
-            coveringMapping = ScanFactoryGenerator.buildCoveringMapping(reader, readerKeyIndex, columnIndexes);
+            coveringMapping = ScanFactoryGenerator.buildCoveringMapping(table, readerKeyIndex, columnIndexes);
         } catch (Throwable th) {
             Misc.free(frames, th);
             Misc.free(filter, th);
@@ -220,10 +219,10 @@ final class LatestByFactoryGenerator {
     }
 
     /**
-     * Consumes frames, key and filter, including on failure; the reader is borrowed.
+     * Consumes frames, key and filter, including on failure.
      */
     private RecordCursorFactory generateLatestBySingleKey(
-            TableReader reader,
+            TableAccessInfo table,
             RecordMetadata metadata,
             PartitionFrameCursorFactory frames,
             int keyIndex,
@@ -245,7 +244,7 @@ final class LatestByFactoryGenerator {
         final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
         final int[] coveringMapping;
         try {
-            coveringMapping = ScanFactoryGenerator.buildCoveringMapping(reader, readerKeyIndex, columnIndexes);
+            coveringMapping = ScanFactoryGenerator.buildCoveringMapping(table, readerKeyIndex, columnIndexes);
         } catch (Throwable th) {
             Misc.free(frames, th);
             Misc.free(filter, th);
@@ -294,7 +293,7 @@ final class LatestByFactoryGenerator {
             ScanPlan scan,
             PartitionFrameCursorFactory frames,
             RecordMetadata queryMetadata,
-            @Transient TableReader reader,
+            TableAccessInfo table,
             IntList columnIndexes,
             IntList columnSizeShifts,
             IntList keyColumnIds,
@@ -329,10 +328,10 @@ final class LatestByFactoryGenerator {
         final boolean isBackupSuppressed = scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING);
         return switch (scan.getAccessPath()) {
             case LATEST_BY_VALUE ->
-                    generateLatestBySingleKey(reader, queryMetadata, frames, keyIndex, keys.getQuick(0), filter,
+                    generateLatestBySingleKey(table, queryMetadata, frames, keyIndex, keys.getQuick(0), filter,
                             columnIndexes, columnSizeShifts, scan.getIndexRead(), scan.hasNullableKey(), isBackupSuppressed);
             case LATEST_BY_VALUES ->
-                    generateLatestByKeyList(reader, queryMetadata, frames, keyIndex, keys, excludedKeys,
+                    generateLatestByKeyList(table, queryMetadata, frames, keyIndex, keys, excludedKeys,
                             filter, columnIndexes, columnSizeShifts, scan.getIndexRead(), scan.hasNullableKey(), isBackupSuppressed);
             case LATEST_BY_ALL_INDEXED ->
                     new LatestByAllIndexedRecordCursorFactory(executionContext.getCairoEngine(), configuration,

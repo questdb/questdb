@@ -4951,6 +4951,35 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithGroupByAggregateExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            final String prefix = "SELECT t.qty + sum(p.price) x, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h ";
+            assertQuery(prefix + "GROUP BY t.qty + sum(p.price)")
+                    .noLeakCheck()
+                    .fails(155, "aggregate functions are not allowed in GROUP BY");
+            assertQuery(prefix + "GROUP BY x")
+                    .noLeakCheck()
+                    .fails(147, "aggregate functions are not allowed in GROUP BY");
+            assertQuery(prefix + "GROUP BY 1")
+                    .noLeakCheck()
+                    .fails(147, "aggregate functions are not allowed in GROUP BY");
+            assertQuery("SELECT t.sym, abs(sum(p.price)) x, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY t.sym, abs(sum(p.price))")
+                    .noLeakCheck()
+                    .fails(162, "aggregate functions are not allowed in GROUP BY");
+        });
+    }
+
+    @Test
     public void testHorizonJoinWithGroupByColumnNotInSelect() throws Exception {
         // GROUP BY with a column not referenced in any SELECT column should fail
         assertMemoryLeak(() -> {

@@ -25,16 +25,31 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.ObjList;
 
 /**
  * The sequential row cursor factory of a scan ordered by its keys, each cursor of which reads one key.
  */
 class KeyOrderedSequentialRowCursorFactory extends SequentialRowCursorFactory implements KeyOrderedRowCursorFactory {
+    private final int indexDirection;
+    private final ObjList<? extends FunctionBasedRowCursorFactory> keyCursorFactories;
 
-    KeyOrderedSequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
+    KeyOrderedSequentialRowCursorFactory(ObjList<? extends FunctionBasedRowCursorFactory> cursorFactories, int[] cursorFactoriesIdx, int indexDirection) {
         super(cursorFactories, cursorFactoriesIdx);
+        this.keyCursorFactories = cursorFactories;
+        this.indexDirection = indexDirection;
+    }
+
+    @Override
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, int keyLo, int keyHi, long firstRow) {
+        return getCursor(keyCursorFactories.getQuick(keyLo).getCursor(pageFrame, pageFrameMemory, firstRow), pageFrame, pageFrameMemory, keyLo, keyHi);
+    }
+
+    @Override
+    public int getIndexDirection() {
+        return indexDirection;
     }
 
     @Override
@@ -43,7 +58,20 @@ class KeyOrderedSequentialRowCursorFactory extends SequentialRowCursorFactory im
     }
 
     @Override
-    public long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi) {
-        return -1;
+    public long getRow(PageFrame pageFrame, int keyIndex, long rowLo, long rowHi, long rowIndex) {
+        return keyCursorFactories.getQuick(keyIndex).getRow(pageFrame, rowLo, rowHi, rowIndex);
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi, long maxCount) {
+        long count = 0;
+        for (int i = keyLo; i < keyHi && count <= maxCount; i++) {
+            final long keyRowCount = keyCursorFactories.getQuick(i).getRowCount(pageFrame, rowLo, rowHi, maxCount - count);
+            if (keyRowCount < 0) {
+                return -1;
+            }
+            count += keyRowCount;
+        }
+        return count;
     }
 }

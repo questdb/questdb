@@ -219,12 +219,10 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         return fileSize;
     }
 
-    /**
-     * The footer statistics stay on the native side, so no chunk is proven NULL-free here.
-     */
     @Override
     public boolean hasNoNulls(int rowGroupIndex, int columnIndex) {
-        return false;
+        assert ptr != 0;
+        return rowGroupColumnHasNoNulls(ptr, rowGroupIndex, columnIndex);
     }
 
     public Metadata metadata() {
@@ -375,6 +373,12 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             int rowGroupIndex,
             int columnIndex,
             int encoding
+    ) throws CairoException;
+
+    private static native boolean rowGroupColumnHasNoNulls(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex
     ) throws CairoException;
 
     private static native long rowGroupCountOffset();
