@@ -437,6 +437,37 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * Client-close variant of
+     * {@link #testFatalCloseMustFlushReplicatedAckAfterParkedLocalAck}: the
+     * parked LOCAL frame arms {@code RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE},
+     * whose resume runs {@code finishClientCloseResponse}. Its
+     * {@code flushPendingAck} must re-collect both streams and send the
+     * replicated ack before the close response.
+     */
+    @Test
+    public void testClientCloseMustFlushReplicatedAckAfterParkedLocalAck() throws Exception {
+        assertReplicatedAckFollowsParkedLocalAck(true);
+    }
+
+    /**
+     * LOCAL|REPLICATED grant, fatal close deferred behind a parked
+     * {@code STATUS_LOCAL_DURABLE_ACK} frame. {@code [BINARY, TEXT]} in one
+     * recv chunk: the TEXT frame routes to {@code sendFatalClose}, whose
+     * {@code flushPendingAck} sends the cumulative ACK and then the additive
+     * LOCAL frame (the local-fsync frontier covers the commit, replicated
+     * uploads still lag). The LOCAL frame blocks, so the CLOSE parks in
+     * {@code RESUME_DURABLE_ACK_THEN_CLOSE}. Replicated coverage arrives while
+     * parked. On resume, {@code finishDeferredFatalClose} must re-collect both
+     * streams and send the final {@code STATUS_DURABLE_ACK} before the CLOSE:
+     * the client advances its replay/trim watermark only on that frame, never
+     * on the LOCAL one.
+     */
+    @Test
+    public void testFatalCloseMustFlushReplicatedAckAfterParkedLocalAck() throws Exception {
+        assertReplicatedAckFollowsParkedLocalAck(false);
+    }
+
+    /**
      * The deferral can also exit while a PONG (or error response) is parked:
      * {@code onFatalCloseBlocked} collapses those states to
      * {@code RESUME_CLOSE}, whose resume branch assumes the parked bytes ARE
@@ -1065,6 +1096,76 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     @Test
     public void testGraceExpiredRoleChangeCloseMustStillDrain() throws Exception {
         assertRoleChangeCloseEntersReadDrain(true);
+    }
+
+    private void assertReplicatedAckFollowsParkedLocalAck(boolean isClientClose) throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            // The local-fsync frontier covers the commit; replicated uploads lag.
+            final AtomicLong replicatedWatermark = new AtomicLong(-1L);
+            final AtomicLong localWatermark = new AtomicLong(Long.MAX_VALUE);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            final String tableName = isClientClose ? "tab_local_client_close" : "tab_local_fatal_close";
+
+            execute("CREATE TABLE " + tableName + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (CairoEngine engine = newEngineWithRegistry(readOnly, replicatedWatermark, null, localWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(tableName, 100L, 1_000_000L));
+                byte[] closeTrigger = isClientClose
+                        ? createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8})
+                        : createMaskedFrame(WebSocketOpcode.TEXT, new byte[]{'h', 'i'});
+                byte[] wire = concat(frame0, closeTrigger);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                NativeSocketBuffers buffers = new NativeSocketBuffers();
+                BlockingRecordingRawSocket rawSocket = buffers.socket;
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, buffers.recvBuffer, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, engine);
+                    state.setDurableAckTiers(DurabilityTier.LOCAL | DurabilityTier.REPLICATED);
+
+                    // Send call 1 is the cumulative ACK, call 2 the LOCAL frame.
+                    rawSocket.throwSlowToReadOnCall = 2;
+                    nf.release(wire.length);
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("Expected PeerIsSlowToReadException (close deferred behind the parked LOCAL frame)");
+                    } catch (PeerIsSlowToReadException expected) {
+                    }
+                    Assert.assertEquals(
+                            "test setup: the close must be deferred behind the parked durable-ack frame",
+                            isClientClose ? 13 /* RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE */ : 8 /* RESUME_DURABLE_ACK_THEN_CLOSE */,
+                            state.getSendState()
+                    );
+                    ObjList<byte[]> frames = rawSocket.sentFrames;
+                    Assert.assertEquals(
+                            "test setup: the parked frame must be the LOCAL durable ack",
+                            frames.size() - 1, indexOfLocalDurableAckFrame(frames)
+                    );
+                    Assert.assertEquals(
+                            "test setup: no replicated ack may be sent before replicated coverage exists",
+                            -1, indexOfDurableAckFrame(frames)
+                    );
+
+                    replicatedWatermark.set(Long.MAX_VALUE);
+                    try {
+                        processor.resumeSend(context);
+                        Assert.fail("Expected ServerDisconnectException after the deferred close");
+                    } catch (ServerDisconnectException expected) {
+                    }
+
+                    assertFinalDurableAckPrecedesClose(frames, isClientClose ? 1000 /* NORMAL_CLOSURE */ : 1003 /* UNSUPPORTED_DATA */);
+                    Assert.assertTrue(
+                            "the LOCAL durable ack must precede the replicated durable ack",
+                            indexOfLocalDurableAckFrame(frames) < indexOfDurableAckFrame(frames)
+                    );
+                    assertCloseIsFinalFrame(frames);
+                } finally {
+                    buffers.close();
+                }
+            }
+        });
     }
 
     /**
@@ -4377,6 +4478,25 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * Index of the first server-to-client BINARY frame whose payload status
+     * byte is {@code STATUS_LOCAL_DURABLE_ACK}, or -1. Server frames are
+     * unmasked and small in these tests, so the payload starts at offset 2.
+     */
+    private static int indexOfLocalDurableAckFrame(ObjList<byte[]> frames) {
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (f.length >= 3
+                    && (f[0] & 0x0F) == WebSocketOpcode.BINARY
+                    && (f[1] & 0x80) == 0
+                    && (f[1] & 0x7F) < 126
+                    && f[2] == QwpConstants.STATUS_LOCAL_DURABLE_ACK) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Engine whose read-only mode and durable-upload watermark are test-owned
      * knobs. The registry treats the watermark as global: any dir name
      * reports the same durably-uploaded seqTxn, mirroring "uploads lag"
@@ -4391,11 +4511,27 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
             AtomicLong durableWatermark,
             AtomicInteger registryLookups
     ) {
+        return newEngineWithRegistry(readOnly, durableWatermark, registryLookups, null);
+    }
+
+    /**
+     * {@code localDurableWatermark == null} models a registry without a local
+     * tier: it refuses any tier set containing LOCAL and reports no local
+     * progress. A non-null watermark grants LOCAL|REPLICATED, as Enterprise's
+     * upload-backed registry does on an eligible primary, and reports that
+     * global local-fsync frontier for every dir name.
+     */
+    private static CairoEngine newEngineWithRegistry(
+            AtomicBoolean readOnly,
+            AtomicLong durableWatermark,
+            AtomicInteger registryLookups,
+            AtomicLong localDurableWatermark
+    ) {
         return new CairoEngine(new DefaultTestCairoConfiguration(root)) {
             private final DurableAckRegistry testRegistry = new DurableAckRegistry() {
                 @Override
                 public long getLocalDurableSeqTxn(CharSequence tableDirName) {
-                    return -1L;
+                    return localDurableWatermark != null ? localDurableWatermark.get() : -1L;
                 }
 
                 @Override
@@ -4413,7 +4549,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
 
                 @Override
                 public boolean isTierSetAvailable(int tiers) {
-                    return !DurabilityTier.hasLocal(tiers);
+                    return localDurableWatermark != null || !DurabilityTier.hasLocal(tiers);
                 }
 
                 @Override
