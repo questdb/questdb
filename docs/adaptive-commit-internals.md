@@ -101,6 +101,11 @@ When its oldest pending commit is `W` old, `flushPendingDurable` runs `fdatasync
 The flush returns the transaction sampled under the sequencer lock; the frontier cannot include a later commit
 made after that lock was released. It also cannot pass an older pending writer.
 
+A writer returned to the pool flushes its pending batch at once: `WalWriter.cleanupBeforeClose` calls
+`flushPendingDurable` on every pool return and close, so the next acquirer and any durable-ack consumer find the
+frontier on disk. A writer taken for one statement, such as a SQL `INSERT`, therefore flushes per statement and
+shares nothing with the window; batching applies to writers held across commits (ILP, QWP).
+
 When commits stop, `WalPurgeJob` checks the queue on its worker passes, independently of its slower purge cadence,
 and calls `forceDurableIfPending`. Nominal delay is `W` plus worker sleep, scheduling and flush time, not a hard
 real-time RPO bound. A fatal barrier failure fences the frontier and the engine (section 9).

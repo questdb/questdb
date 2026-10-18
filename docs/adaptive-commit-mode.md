@@ -96,6 +96,14 @@ The window trades the recovery point (how much acknowledged data a power loss ca
   Most commits return before that flush; the commit that finds the oldest pending one a window old makes the flush
   itself before it returns. A power loss can lose the commits acknowledged in the last window.
 
+  The window shares the flush only among commits made through a writer that stays open between them: ILP over TCP,
+  ILP over HTTP on a kept-alive connection, and QWP. A SQL `INSERT` takes a table writer for one statement and hands
+  it back when the statement ends, and handing a writer back flushes the sequencer log at once. So each `INSERT`
+  through the HTTP `/exec` endpoint or the embedded API, and each PGWire Sync (once per statement, or once per
+  batch for drivers that batch), pays that flush before it returns, as with a window of 0. Those commits are on
+  stable storage when they are acknowledged. The flush holds the table's sequencer lock, so commits from other
+  writers to the same table, ILP and QWP included, wait for it.
+
 When commits stop in the middle of a window, the last flush is made by a background job that runs on the shared
 worker pool. Its nominal delay is the window plus the pool's sleep time (`shared.worker.sleep.timeout`), with
 scheduling and flush time on top. This is not a hard wall-clock loss bound if workers stall or storage is slow.
