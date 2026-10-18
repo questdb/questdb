@@ -155,6 +155,21 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         return Long.compare(task1.nextRunTimestamp, task2.nextRunTimestamp);
     }
 
+    // Purges a task the startup pass read. When a save point holds the task, the task joins heldTasks, which owns it
+    // from then on, and the method returns true. A task that fails for any other reason is not kept, so the log
+    // truncate drops it. Both the tasks inside the read loop and the last task go through here.
+    private static boolean purgeOrHold(
+            ColumnPurgeOperator columnPurgeOperator,
+            ColumnPurgeRetryTask task,
+            ObjList<ColumnPurgeRetryTask> heldTasks
+    ) {
+        if (!columnPurgeOperator.purge(task) && columnPurgeOperator.isLastPurgeHeldByEpoch()) {
+            heldTasks.add(task);
+            return true;
+        }
+        return false;
+    }
+
     private void calculateNextTimestamp(ColumnPurgeRetryTask task, long currentTime) {
         task.retryDelay = Math.min(retryDelayLimit, (long) (task.retryDelay * retryDelayMultiplier));
         task.nextRunTimestamp = currentTime + task.retryDelay;
@@ -264,8 +279,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     if (ts != lastTs || task == null) {
                         if (task != null) {
                             if (taskInitialized) {
-                                if (!columnPurgeOperator.purge(task) && columnPurgeOperator.isLastPurgeHeldByEpoch()) {
-                                    heldTasks.add(task);
+                                if (purgeOrHold(columnPurgeOperator, task, heldTasks)) {
                                     task = taskPool.pop();
                                 }
                                 taskInitialized = false;
@@ -326,9 +340,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     task.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
                 }
                 if (task != null) {
-                    if (taskInitialized && !columnPurgeOperator.purge(task) && columnPurgeOperator.isLastPurgeHeldByEpoch()) {
-                        heldTasks.add(task);
-                    } else {
+                    if (!taskInitialized || !purgeOrHold(columnPurgeOperator, task, heldTasks)) {
                         taskPool.push(task);
                     }
                 }
