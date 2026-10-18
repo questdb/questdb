@@ -37,6 +37,8 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class MemoryCMARWImplTest {
 
     @ClassRule
@@ -250,6 +252,30 @@ public class MemoryCMARWImplTest {
                 } finally {
                     mem.close();
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSyncMsyncsOnlyWhenNotAsync() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicInteger msyncs = new AtomicInteger();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public void msync(long addr, long len, boolean async) {
+                    msyncs.incrementAndGet();
+                    super.msync(addr, len, async);
+                }
+            };
+            try (
+                    Path path = new Path().of(temp.newFile().getAbsolutePath());
+                    MemoryCMARWImpl mem = new MemoryCMARWImpl(ff, path.$(), Files.PAGE_SIZE, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)
+            ) {
+                mem.putLong(42);
+                mem.sync(true);
+                Assert.assertEquals(0, msyncs.get());
+                mem.sync(false);
+                Assert.assertEquals(1, msyncs.get());
             }
         });
     }

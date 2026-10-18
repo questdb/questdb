@@ -243,6 +243,10 @@ public class SqlOptimiser implements Mutable {
     // lazily to the deepest wrapper nesting seen and is never shrunk.
     private final ObjList<SubsampleNameScope> subsampleNameScopes = new ObjList<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
+    // The model each entry of tableFactoriesInFlight hangs on, at the same index. A factory that is
+    // still its model's table name function has no owner yet: code generation detaches the ones it
+    // takes over.
+    private final ObjList<IQueryModel> tableFactoryModelsInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> tempAliasRewriteMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -277,6 +281,9 @@ public class SqlOptimiser implements Mutable {
     // see the reorder, so analyseEquals defers single-table WHERE predicates to the exec-order-aware
     // assignFilters instead of pushing them down eagerly. Filled by precomputeHasNonEquiNullingJoin.
     private boolean hasNonEquiNullingJoin;
+    // True when moveWhereInsideSubQueries has pushed down at least one and_offset wrapper, so
+    // rebuildStrandedAndOffsets may find one in a post-join filter.
+    private boolean hasOptimiserAndOffsets;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
     private OperatorExpression opAnd;
@@ -411,6 +418,7 @@ public class SqlOptimiser implements Mutable {
         literalCollectorBNames.clear();
         defaultAliasCount = 0;
         hasNonEquiNullingJoin = false;
+        hasOptimiserAndOffsets = false;
         isNullingExecOrderValid = false;
         nullingAnchorByExecPos.clear();
         nullingAnchorByModelPos.clear();
@@ -422,6 +430,7 @@ public class SqlOptimiser implements Mutable {
         tempCursorAliases.clear();
         tempCursorAliasSequenceMap.clear();
         tableFactoriesInFlight.clear();
+        tableFactoryModelsInFlight.clear();
         groupByAliases.clear();
         groupByNodes.clear();
         innerWindowModels.clear();
@@ -564,6 +573,111 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // A SHOW that names an object reads it through the view the context reads table-name functions
+    // through, if any, see createShowFactory().
+    private static RecordCursorFactory generateShowFactory(
+            @NotNull IQueryModel model,
+            @NotNull SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            Path path
+    ) throws SqlException {
+        final SqlExecutionContext.TableFunctionView view = executionContext.getTableFunctionView();
+        final RecordCursorFactory tableFactory;
+        TableToken tableToken;
+        switch (model.getShowKind()) {
+            case IQueryModel.SHOW_TABLES:
+                tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory(executionContext.getCairoEngine().getConfiguration());
+                break;
+            case IQueryModel.SHOW_COLUMNS:
+                tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
+                if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                        || !executionContext.isTableFunctionVisibleAtCompile(tableToken, view)) {
+                    throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
+                }
+                tableFactory = new ShowColumnsRecordCursorFactory(tableToken, model.getTableNameExpr().position, view);
+                break;
+            case IQueryModel.SHOW_PARTITIONS:
+                tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
+                if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                        || !executionContext.isTableFunctionVisibleAtCompile(tableToken, view)) {
+                    throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
+                }
+
+                int timestampType;
+                try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+                    timestampType = metadata.getTimestampType();
+                }
+                tableFactory = new ShowPartitionsRecordCursorFactory(tableToken, timestampType, model.getTableNameExpr().position, view);
+                break;
+            case IQueryModel.SHOW_TRANSACTION:
+            case IQueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
+                tableFactory = new ShowTransactionIsolationLevelCursorFactory();
+                break;
+            case IQueryModel.SHOW_DEFAULT_TRANSACTION_READ_ONLY:
+                tableFactory = new ShowDefaultTransactionReadOnlyCursorFactory();
+                break;
+            case IQueryModel.SHOW_MAX_IDENTIFIER_LENGTH:
+                tableFactory = new ShowMaxIdentifierLengthCursorFactory();
+                break;
+            case IQueryModel.SHOW_STANDARD_CONFORMING_STRINGS:
+                tableFactory = new ShowStandardConformingStringsCursorFactory();
+                break;
+            case IQueryModel.SHOW_SEARCH_PATH:
+                tableFactory = new ShowSearchPathCursorFactory();
+                break;
+            case IQueryModel.SHOW_DATE_STYLE:
+                tableFactory = new ShowDateStyleCursorFactory();
+                break;
+            case IQueryModel.SHOW_TIME_ZONE:
+                tableFactory = new ShowTimeZoneFactory();
+                break;
+            case IQueryModel.SHOW_PARAMETERS:
+                tableFactory = new ShowParametersCursorFactory();
+                break;
+            case IQueryModel.SHOW_SERVER_VERSION:
+                tableFactory = new ShowServerVersionCursorFactory();
+                break;
+            case IQueryModel.SHOW_SERVER_VERSION_NUM:
+                tableFactory = new ShowServerVersionNumCursorFactory();
+                break;
+            case IQueryModel.SHOW_CREATE_DATABASE:
+                tableFactory = sqlParserCallback.generateShowCreateDatabaseFactory(model, executionContext, path);
+                break;
+            case IQueryModel.SHOW_CREATE_TABLE:
+                tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
+                break;
+            case IQueryModel.SHOW_CREATE_LIVE_VIEW:
+                tableFactory = sqlParserCallback.generateShowCreateLiveViewFactory(model, executionContext, path);
+                break;
+            case IQueryModel.SHOW_CREATE_MAT_VIEW:
+                tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);
+                break;
+            case IQueryModel.SHOW_CREATE_VIEW:
+                tableFactory = sqlParserCallback.generateShowCreateViewFactory(model, executionContext, path);
+                break;
+            default:
+                tableFactory = sqlParserCallback.generateShowSqlFactory(model);
+                break;
+        }
+        return tableFactory;
+    }
+
+    // The SHOW statements that list objects or read their metadata, like the functions that declare
+    // SqlExecutionRequirements.DISCLOSES_OBJECTS do. Returns null for one that lists no objects.
+    private static @Nullable String getObjectDisclosingStatement(int showKind) {
+        return switch (showKind) {
+            case IQueryModel.SHOW_TABLES -> "SHOW TABLES";
+            case IQueryModel.SHOW_COLUMNS -> "SHOW COLUMNS";
+            case IQueryModel.SHOW_PARTITIONS -> "SHOW PARTITIONS";
+            case IQueryModel.SHOW_CREATE_TABLE -> "SHOW CREATE TABLE";
+            case IQueryModel.SHOW_CREATE_VIEW -> "SHOW CREATE VIEW";
+            case IQueryModel.SHOW_CREATE_MAT_VIEW -> "SHOW CREATE MATERIALIZED VIEW";
+            case IQueryModel.SHOW_CREATE_LIVE_VIEW -> "SHOW CREATE LIVE VIEW";
+            case IQueryModel.SHOW_CREATE_DATABASE -> "SHOW CREATE DATABASE";
+            default -> null;
+        };
+    }
+
     private static boolean hasLinearFill(ObjList<ExpressionNode> fill) {
         for (int i = 0, n = fill.size(); i < n; i++) {
             if (isLinearKeyword(fill.getQuick(i).token)) {
@@ -675,6 +789,18 @@ public class SqlOptimiser implements Mutable {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
+    }
+
+    // Whether the model reads the table through the view it was expanded from. The view lends its authority
+    // to the tables its definition names only, see SqlExecutionContext.TableFunctionView.isDependency(): a
+    // table a caller substitutes into the view, e.g. through an OVERRIDABLE variable, is read as the caller.
+    private static boolean isReadThroughView(
+            IQueryModel model,
+            TableToken tableToken,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final ExpressionNode viewNameExpr = model.getViewNameExpr();
+        return viewNameExpr != null && TableUtils.getTableFunctionView(viewNameExpr, executionContext).isDependency(tableToken);
     }
 
     /**
@@ -1180,6 +1306,9 @@ public class SqlOptimiser implements Mutable {
 
             final IQueryModel crossInner = queryModelPool.next();
             crossInner.setTableNameExpr(node);
+            // A cursor function in a view's select list reads its table through the view, like one in the
+            // view's FROM clause. addJoinModel() below propagates the view only after the function is parsed.
+            crossInner.setViewNameExpr(baseModel.getViewNameExpr());
             parseFunctionAndEnumerateColumns(crossInner, sqlExecutionContext, sqlParserCallback);
             cross.setNestedModel(crossInner);
 
@@ -1288,9 +1417,11 @@ public class SqlOptimiser implements Mutable {
         // select a, b+c ...
         // it should translate to:
         // select a, x from (select a, b+c x from (select a,b,c ...))
-        final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias());
+        // Both references keep the wildcard visibility of qc: an ORDER BY expression
+        // that the select list does not output must stay out of SELECT * above them.
+        final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias(), qc.isIncludeIntoWildcard());
         // outer column's should use innerColumn alias
-        final QueryColumn outerColumn = nextColumn(qc.getAlias(), innerColumn.getAlias());
+        final QueryColumn outerColumn = nextColumn(qc.getAlias(), innerColumn.getAlias(), qc.isIncludeIntoWildcard());
 
         // pull literals only into a translating model
         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false, false, false);
@@ -2283,25 +2414,31 @@ public class SqlOptimiser implements Mutable {
         if (!model.isOptimisable()) {
             return model;
         }
-        IQueryModel m = model.getUnionModel();
-        IQueryModel nested = model.getNestedModel();
-        if (nested != null) {
-            IQueryModel _n = bubbleUpOrderByAndLimitFromUnion(nested);
-            if (_n != nested) {
-                model.setNestedModel(_n);
-            }
-        }
-
-        if (m != null) {
-            // find order by clauses
-            if (m.getNestedModel() != null) {
-                IQueryModel mNested = m.getNestedModel();
-                final IQueryModel m1 = bubbleUpOrderByAndLimitFromUnion(mNested);
-                if (m1 != mNested) {
-                    m.setNestedModel(m1);
+        // Every branch, not only the first two, can read a set operation of its own through its
+        // nested or join models, and that set operation's trailing ORDER BY and LIMIT apply to
+        // all of it, not to its last branch.
+        for (IQueryModel branch = model; branch != null; branch = branch.getUnionModel()) {
+            final IQueryModel nested = branch.getNestedModel();
+            if (nested != null) {
+                final IQueryModel bubbled = bubbleUpOrderByAndLimitFromUnion(nested);
+                if (bubbled != nested) {
+                    branch.setNestedModel(bubbled);
                 }
             }
 
+            final ObjList<IQueryModel> joinModels = branch.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                final IQueryModel bubbled = bubbleUpOrderByAndLimitFromUnion(joinModel);
+                // A join model reads a set operation through its nested model and never heads
+                // one, so the call rewrites the models below it and returns it.
+                assert bubbled == joinModel;
+            }
+        }
+
+        IQueryModel m = model.getUnionModel();
+        if (m != null) {
+            // find order by clauses
             do {
                 if (m.getUnionModel() == null) {
                     // last model in the linked list
@@ -2327,6 +2464,10 @@ public class SqlOptimiser implements Mutable {
                             _nested.setNestedModel(model);
                             IQueryModel _model = queryModelPool.next();
                             _model.setNestedModel(_nested);
+                            // the wrappers stand for the set operation, so they report errors at
+                            // the position of its first model
+                            _nested.setModelPosition(model.getModelPosition());
+                            _model.setModelPosition(model.getModelPosition());
                             SqlUtil.addSelectStar(_model, queryColumnPool, expressionNodePool);
                             _model.setLimit(limitLo, limitHi);
                             return replaceAndTransferDependents(model, _model);
@@ -5217,6 +5358,43 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
+    /**
+     * Returns the position of the leftmost window function, i.e. a function node carrying an
+     * OVER clause, anywhere in the expression tree, or -1 if there is none. Unlike
+     * {@link #findWindowFunctionOrNamePosition(ExpressionNode)}, a pure window function name
+     * without OVER doesn't count; function parsing reports that one with its own error.
+     */
+    private int findWindowFunctionPosition(ExpressionNode node) {
+        sqlNodeStack.clear();
+        // ExpressionNode.paramCount invariants (documented on the field):
+        // paramCount == 1: rhs only; paramCount == 2: lhs and rhs; paramCount > 2: args,
+        // stored in reverse order, so the stack pops the leftmost argument first.
+        while (node != null) {
+            if (node.windowExpression != null) {
+                return node.position;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                if (node.lhs != null) {
+                    node = node.lhs;
+                } else {
+                    node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+                }
+            } else {
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+            }
+        }
+        return -1;
+    }
+
     private void fixTimestampAndCollectMissingTokens(
             ExpressionNode node,
             CharSequence timestampColumn,
@@ -6799,6 +6977,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void moveWhereInsideSubQueries(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        hasOptimiserAndOffsets = false;
         // Validate the original pipeline once, before this pass splits or moves any conjuncts.
         moveWhereInsideSubQueries(model, sqlExecutionContext, getLatestKeySelector(model, sqlExecutionContext));
     }
@@ -6957,15 +7136,15 @@ public class SqlOptimiser implements Mutable {
 
                             // whenever nested model has explicitly defined columns it must also
                             // have its own nested model, where we assign new "where" clauses
-                            final ExpressionNode normalisedNode = isLatestKeyPushdown && isOrKeyword(pushedNode.token)
-                                    ? rewriteLatestKeyOr(pushedNode)
-                                    : pushedNode;
-                            normalisedNode.innerPredicate = false;
-                            addWhereNode(nested, normalisedNode);
+                            if (isLatestKeyPushdown && SqlUtil.getEqualsOrColumn(pushedNode, sqlNodeStack) != null) {
+                                SqlUtil.rewriteEqualsOrToIn(pushedNode, sqlNodeStack);
+                            }
+                            pushedNode.innerPredicate = false;
+                            addWhereNode(nested, pushedNode);
                             // the predicate just landed on a nested join sub-query whose join
                             // optimisation already ran, so re-derive transitive constant filters to
                             // let the constant reach the slave scans (e.g. a view wrapping LEFT JOINs)
-                            deriveTransitiveFiltersFromPushedPredicate(nested, normalisedNode, sqlExecutionContext);
+                            deriveTransitiveFiltersFromPushedPredicate(nested, pushedNode, sqlExecutionContext);
                             // we do not have to deal with "union" models here
                             // because "where" clause is made to apply to the result of the union
                         } catch (NonLiteralException ignore) {
@@ -7011,29 +7190,6 @@ public class SqlOptimiser implements Mutable {
         if (nested != null) {
             moveWhereInsideSubQueries(nested, sqlExecutionContext, null);
         }
-    }
-
-    private ExpressionNode rewriteLatestKeyOr(ExpressionNode node) {
-        ExpressionNode in = expressionNodePool.next().of(FUNCTION, "in", node.precedence, node.position);
-        ExpressionNode column = null;
-        sqlNodeStack.clear();
-        sqlNodeStack.push(node);
-        while (!sqlNodeStack.isEmpty()) {
-            ExpressionNode leaf = sqlNodeStack.pop();
-            if (isOrKeyword(leaf.token)) {
-                sqlNodeStack.push(leaf.lhs);
-                sqlNodeStack.push(leaf.rhs);
-            } else if (leaf.lhs.type == LITERAL) {
-                column = leaf.lhs;
-                in.args.add(leaf.rhs);
-            } else {
-                column = leaf.rhs;
-                in.args.add(leaf.lhs);
-            }
-        }
-        in.args.add(column);
-        in.paramCount = in.args.size();
-        return in;
     }
 
     private ExpressionNode negate(ExpressionNode node) {
@@ -7192,12 +7348,27 @@ public class SqlOptimiser implements Mutable {
 
         int status = executionContext.getTableStatus(path, tableToken);
 
+        // An object the principal may not see resolves exactly like a missing one, before any of
+        // its columns are read, so neither the error nor a column-resolution error that would
+        // follow can disclose it. The tables a view's definition names are exempt: they are
+        // accessed through the view, whose own visibility SqlParser checked when it expanded the
+        // view. A table a caller substitutes into the view is not, see isReadThroughView().
+        if (status == TableUtils.TABLE_EXISTS
+                && !isReadThroughView(model, tableToken, executionContext)
+                && !executionContext.getSecurityContext().isTableVisible(tableToken)) {
+            status = TableUtils.TABLE_DOES_NOT_EXIST;
+        }
+
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             try {
                 model.getTableNameExpr().type = FUNCTION;
                 parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
                 return;
             } catch (SqlException e) {
+                if (e.isFunctionNotAllowed()) {
+                    // the name is a function, one the compile may not use here, e.g. in a materialized view
+                    throw e;
+                }
                 throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
             }
         }
@@ -7348,15 +7519,35 @@ public class SqlOptimiser implements Mutable {
         ObjList<ExpressionNode> expressionModels = model.getExpressionModels();
         final int n = expressionModels.size();
         if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                final ExpressionNode node = expressionModels.getQuick(i);
-                // for expression models that have been converted to
-                // the joins, the query model will be set to null.
-                if (node.queryModel != null) {
-                    IQueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
-                    if (optimised != node.queryModel) {
-                        node.queryModel = optimised;
+            // A table-name function in a sub-query of a view reads its argument through that view, like
+            // one in the view's FROM clause, see SqlExecutionContext.isTableFunctionVisible(). The tables
+            // such a sub-query reads are not affected: they are still accessed as the caller. The view is
+            // decided here, where the sub-query is written, and kept on its node for later compiles.
+            final ExpressionNode viewNameExpr = model.getViewNameExpr();
+            final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
+            int previousRequirementPosition = -1;
+            if (viewNameExpr != null) {
+                executionContext.setTableFunctionView(TableUtils.getTableFunctionView(viewNameExpr, executionContext));
+                // and the functions of the sub-query surface their execution requirements at the view's name
+                previousRequirementPosition = functionParser.enterExecutionRequirementPosition(viewNameExpr.position);
+            }
+            try {
+                for (int i = 0; i < n; i++) {
+                    final ExpressionNode node = expressionModels.getQuick(i);
+                    // for expression models that have been converted to
+                    // the joins, the query model will be set to null.
+                    if (node.queryModel != null) {
+                        node.tableFunctionView = executionContext.getTableFunctionView();
+                        IQueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
+                        if (optimised != node.queryModel) {
+                            node.queryModel = optimised;
+                        }
                     }
+                }
+            } finally {
+                if (viewNameExpr != null) {
+                    executionContext.setTableFunctionView(previousView);
+                    functionParser.restoreExecutionRequirementPosition(previousRequirementPosition);
                 }
             }
         }
@@ -7604,97 +7795,31 @@ public class SqlOptimiser implements Mutable {
             @NotNull SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final RecordCursorFactory tableFactory;
-        TableToken tableToken;
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_SHOW) {
-            switch (model.getShowKind()) {
-                case IQueryModel.SHOW_TABLES:
-                    tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory(executionContext.getCairoEngine().getConfiguration());
-                    break;
-                case IQueryModel.SHOW_COLUMNS:
-                    tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-                        throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
-                    }
-                    tableFactory = new ShowColumnsRecordCursorFactory(tableToken, model.getTableNameExpr().position);
-                    break;
-                case IQueryModel.SHOW_PARTITIONS:
-                    tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-                        throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
-                    }
-
-                    int timestampType;
-                    try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
-                        timestampType = metadata.getTimestampType();
-                    }
-                    tableFactory = new ShowPartitionsRecordCursorFactory(tableToken, timestampType);
-                    break;
-                case IQueryModel.SHOW_TRANSACTION:
-                case IQueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
-                    tableFactory = new ShowTransactionIsolationLevelCursorFactory();
-                    break;
-                case IQueryModel.SHOW_DEFAULT_TRANSACTION_READ_ONLY:
-                    tableFactory = new ShowDefaultTransactionReadOnlyCursorFactory();
-                    break;
-                case IQueryModel.SHOW_MAX_IDENTIFIER_LENGTH:
-                    tableFactory = new ShowMaxIdentifierLengthCursorFactory();
-                    break;
-                case IQueryModel.SHOW_STANDARD_CONFORMING_STRINGS:
-                    tableFactory = new ShowStandardConformingStringsCursorFactory();
-                    break;
-                case IQueryModel.SHOW_SEARCH_PATH:
-                    tableFactory = new ShowSearchPathCursorFactory();
-                    break;
-                case IQueryModel.SHOW_DATE_STYLE:
-                    tableFactory = new ShowDateStyleCursorFactory();
-                    break;
-                case IQueryModel.SHOW_TIME_ZONE:
-                    tableFactory = new ShowTimeZoneFactory();
-                    break;
-                case IQueryModel.SHOW_PARAMETERS:
-                    tableFactory = new ShowParametersCursorFactory();
-                    break;
-                case IQueryModel.SHOW_SERVER_VERSION:
-                    tableFactory = new ShowServerVersionCursorFactory();
-                    break;
-                case IQueryModel.SHOW_SERVER_VERSION_NUM:
-                    tableFactory = new ShowServerVersionNumCursorFactory();
-                    break;
-                case IQueryModel.SHOW_CREATE_DATABASE:
-                    tableFactory = sqlParserCallback.generateShowCreateDatabaseFactory(model, executionContext, path);
-                    break;
-                case IQueryModel.SHOW_CREATE_TABLE:
-                    tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
-                    break;
-                case IQueryModel.SHOW_CREATE_LIVE_VIEW:
-                    tableFactory = sqlParserCallback.generateShowCreateLiveViewFactory(model, executionContext, path);
-                    break;
-                case IQueryModel.SHOW_CREATE_MAT_VIEW:
-                    tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);
-                    break;
-                case IQueryModel.SHOW_CREATE_VIEW:
-                    tableFactory = sqlParserCallback.generateShowCreateViewFactory(model, executionContext, path);
-                    break;
-                default:
-                    tableFactory = sqlParserCallback.generateShowSqlFactory(model);
-                    break;
+        // A function or SHOW written in a view surfaces its execution requirements at the name of the
+        // view, like the functions code generation creates from the view, see SqlCodeGenerator.
+        final ExpressionNode viewNameExpr = model.getViewNameExpr();
+        final int previousRequirementPosition = viewNameExpr != null
+                ? functionParser.enterExecutionRequirementPosition(viewNameExpr.position)
+                : -1;
+        try {
+            if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_SHOW) {
+                final RecordCursorFactory showFactory = createShowFactory(functionParser, model, executionContext, sqlParserCallback, path);
+                model.setTableNameFunction(showFactory);
+                // like a table function's, owned by nothing until code generation takes it over
+                tableFactoriesInFlight.add(showFactory);
+                tableFactoryModelsInFlight.add(model);
+            } else {
+                // if we haven't initialised the model, initialise it
+                if (model.getTableNameFunction() == null) {
+                    final RecordCursorFactory tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
+                    model.setTableNameFunction(tableFactory);
+                    tableFactoriesInFlight.add(tableFactory);
+                    tableFactoryModelsInFlight.add(model);
+                }
             }
-            model.setTableNameFunction(tableFactory);
-            // Every branch above builds its cursor here rather than through the function parser, so
-            // nothing else records that this statement reads one. A WAL UPDATE may not read a cursor
-            // at all - it is replicated as SQL and re-executed per node, and a SHOW returns
-            // node-local state (the tables this process knows, this node's partition sizes on disk,
-            // this node's configuration, this node's ACL) that nothing keeps aligned across nodes.
-            // Several SHOW kinds set no table name expression at all, so the model's table-name walk
-            // cannot see them either.
-            functionParser.markCursorFunctionInstantiated();
-        } else {
-            // if we haven't initialised the model, initialise it
-            if (model.getTableNameFunction() == null) {
-                tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
-                model.setTableNameFunction(tableFactory);
-                tableFactoriesInFlight.add(tableFactory);
+        } finally {
+            if (viewNameExpr != null) {
+                functionParser.restoreExecutionRequirementPosition(previousRequirementPosition);
             }
         }
         copyColumnsFromMetadata(model, model.getTableNameFunction().getMetadata());
@@ -7797,7 +7922,11 @@ public class SqlOptimiser implements Mutable {
                     ExpressionNode subQueryNode = pivotForColumn.getSelectSubqueryExpr();
                     assert subQueryNode != null;
                     assert compiler != null;
-                    try (RecordCursorFactory inListFactory = compiler.generateSelectWithRetries(subQueryNode.queryModel, null, sqlExecutionContext, true)) {
+                    // The borrowed compiler did not parse this model, so it must not retry: a retry
+                    // re-parses its lexer, which holds the statement it compiled last. When a table
+                    // the sub-query reads goes out of date, the exception propagates to whatever
+                    // compiles this statement, which holds the statement's text and can retry it.
+                    try (RecordCursorFactory inListFactory = compiler.generateSelectWithoutRetries(subQueryNode.queryModel, sqlExecutionContext, true)) {
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
                         if (columnCount != 1) {
@@ -8523,6 +8652,40 @@ public class SqlOptimiser implements Mutable {
             i++;
         }
         return true;
+    }
+
+    /**
+     * Rebuilds every {@code and_offset} wrapper that {@link #moveWhereInsideSubQueries} pushed into a
+     * post-join filter into its {@code dateadd()} residual.
+     * <p>
+     * The pushdown wraps a predicate on a {@code dateadd()} column and moves the wrapper down one model
+     * at a time, renaming the column at each hop. The optimiser tags the column by name only (see
+     * {@link #detectTimestampOffset}), so the wrapper can stop above a table scan: when the column turns
+     * into an aggregate or a SAMPLE BY bucket ({@code max(ts) ts}), or when a LIMIT, an outer join or a
+     * union branch that can't take it blocks the path. Only a table scan's own filter goes through
+     * interval extraction, which turns the wrapper into an interval, or rebuilds it when the column isn't
+     * the designated timestamp ({@code ts2 AS ts}). Anywhere else the wrapper would reach the function
+     * compiler, which has no {@code and_offset} function.
+     * <p>
+     * {@code SqlCodeGenerator#generateFilter0} rebuilds the wrappers left in any other model's WHERE
+     * clause just before it compiles that filter. The join code compiles a post-join filter without
+     * {@code generateFilter0}, so this pass rebuilds the wrappers there.
+     * <p>
+     * Each hop renamed the column literal for literal, so {@code dateadd(unit, stride, column)} where the
+     * wrapper stopped is the original {@code dateadd()} column, and the rebuilt predicate filters the
+     * rows the query asked for.
+     */
+    private void rebuildStrandedAndOffsets(IQueryModel model) {
+        if (model == null || !model.isOptimisable()) {
+            return;
+        }
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            final IQueryModel m = joinModels.getQuick(i);
+            WhereClauseParser.rebuildStrandedAndOffsets(expressionNodePool, m.getPostJoinWhereClause(), null);
+            rebuildStrandedAndOffsets(m.getNestedModel());
+            rebuildStrandedAndOffsets(m.getUnionModel());
+        }
     }
 
     // A non-equi outer join consumes the complete logical prefix as its master, so every prefix
@@ -9409,12 +9572,23 @@ public class SqlOptimiser implements Mutable {
     // already has top-down columns, i.e. when it is a sub-query whose projection will be pruned; for a
     // top level model the top-down list is empty and the bottom-up projection is used verbatim, so there
     // is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
+    // A HORIZON JOIN model groups by its non-aggregate columns as well. For it, the method retains its
+    // hidden non-generated keys, such as those that moveOrderByFunctionsIntoOuterSelect() adds for an
+    // ORDER BY expression over a column that the select list does not output. The projection above the
+    // model does not output such a key, so once a parent query drops the ORDER BY, nothing references
+    // the key, and pruning it would merge the groups that it splits. The same check also matches other
+    // hidden non-generated keys, such as the LATERAL correlation keys that
+    // LateralJoinRewriter.ensureColumnInSelectAtFront() adds. The method leaves generated hidden
+    // columns, such as the SUBSAMPLE ordering helpers, to the regular pruning.
     private void retainGroupByKeysAsTopDownColumns(IQueryModel model) {
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
+        final int selectModelType = model.getSelectModelType();
+        final boolean isHorizonJoin = selectModelType == IQueryModel.SELECT_MODEL_HORIZON_JOIN;
+        if ((selectModelType == IQueryModel.SELECT_MODEL_GROUP_BY || isHorizonJoin) && model.getTopDownColumns().size() > 0) {
             final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
             for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
                 QueryColumn qc = bottomUpColumns.getQuick(i);
-                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                if ((!isHorizonJoin || (!qc.isIncludeIntoWildcard() && !qc.isGenerated()))
+                        && (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token))) {
                     model.addTopDownColumn(qc, qc.getAlias());
                 }
             }
@@ -10060,9 +10234,12 @@ public class SqlOptimiser implements Mutable {
                 limitModel = base;
             }
             final int selectModelType = baseParent.getSelectModelType();
+            // a HORIZON JOIN groups by its non-aggregate columns, so a hidden ORDER BY
+            // column would become an extra grouping key
             groupByOrDistinct = groupByOrDistinct
                     || selectModelType == IQueryModel.SELECT_MODEL_GROUP_BY
-                    || selectModelType == IQueryModel.SELECT_MODEL_DISTINCT;
+                    || selectModelType == IQueryModel.SELECT_MODEL_DISTINCT
+                    || selectModelType == IQueryModel.SELECT_MODEL_HORIZON_JOIN;
         }
 
         // find out how "order by" columns are referenced
@@ -10390,14 +10567,18 @@ public class SqlOptimiser implements Mutable {
             doRewriteOrderByPositionForUnionModels(model, model, next);
         }
 
-        next = model.getNestedModel();
-        if (next != null) {
-            rewriteOrderByPositionForUnionModels(next);
-        }
+        // Every branch, not only the first, can read a set operation of its own through its
+        // nested or join models.
+        for (IQueryModel branch = model; branch != null; branch = branch.getUnionModel()) {
+            next = branch.getNestedModel();
+            if (next != null) {
+                rewriteOrderByPositionForUnionModels(next);
+            }
 
-        ObjList<IQueryModel> joinModels = model.getJoinModels();
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            rewriteOrderByPositionForUnionModels(joinModels.getQuick(i));
+            ObjList<IQueryModel> joinModels = branch.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                rewriteOrderByPositionForUnionModels(joinModels.getQuick(i));
+            }
         }
     }
 
@@ -12293,7 +12474,7 @@ public class SqlOptimiser implements Mutable {
             );
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
 
             // group-by column could have spit out a function call, e.g.
             // select sum(f(x)) from t -> select sum(col) from (select f(x) col) from t)
@@ -12331,7 +12512,7 @@ public class SqlOptimiser implements Mutable {
             );
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
             rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
             rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
             return rewriteStatus;
@@ -12362,7 +12543,7 @@ public class SqlOptimiser implements Mutable {
 
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
             if (!isWindowJoin && !isHorizonJoin) {
                 for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                     emitLiterals(
@@ -12407,7 +12588,9 @@ public class SqlOptimiser implements Mutable {
                 // group-by column references might be needed when we have
                 // outer model supporting arithmetic such as:
                 // select sum(a)+sum(b) ...
-                QueryColumn ref = nextColumn(qc.getAlias());
+                // The reference keeps the wildcard visibility of qc: an ORDER BY expression
+                // that the select list does not output is a hidden group-by key.
+                QueryColumn ref = nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0);
                 outerVirtualModel.addBottomUpColumn(ref);
                 distinctModel.addBottomUpColumn(ref);
                 emitLiterals(
@@ -12429,7 +12612,7 @@ public class SqlOptimiser implements Mutable {
             } else if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_JOIN_MODE) != 0) {
                 qc = ensureAliasUniqueness(outerVirtualModel, qc);
                 outerVirtualModel.addBottomUpColumn(qc);
-                QueryColumn ref = nextColumn(qc.getAlias());
+                QueryColumn ref = nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0);
                 distinctModel.addBottomUpColumn(ref);
                 emitLiterals(
                         qc.getAst(),
@@ -12450,7 +12633,8 @@ public class SqlOptimiser implements Mutable {
                 // these qualified names in the AST by using preserveQualifiedNames=true.
                 qc = ensureAliasUniqueness(horizonJoinModel, qc);
                 horizonJoinModel.addBottomUpColumn(qc);
-                QueryColumn ref = nextColumn(qc.getAlias());
+                // the reference keeps the wildcard visibility of qc, as in the GROUP BY branch above
+                QueryColumn ref = nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0);
                 outerVirtualModel.addBottomUpColumn(ref);
                 distinctModel.addBottomUpColumn(ref);
                 emitLiterals(
@@ -12640,11 +12824,20 @@ public class SqlOptimiser implements Mutable {
             if (isWindowExpr && qc.getAst().type != FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Window function expected");
             }
-            if (isWindowExpr && isWindowJoin) {
-                throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in WINDOW JOIN queries");
-            }
-            if (isWindowExpr && isHorizonJoin) {
-                throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in HORIZON JOIN queries");
+            if (isWindowJoin || isHorizonJoin) {
+                // Look for a window function anywhere in the column, not only at its root. A nested one,
+                // as in row_number() OVER () + 1, routes the column to a window model that pre-empts the
+                // join model. Next to or inside an aggregate, as in sum(x) - sum(x) OVER (), it takes the
+                // aggregate path, and the join model gets it as a plain aggregate without its OVER clause.
+                final int windowFnPos = isWindowExpr ? qc.getAst().position : findWindowFunctionPosition(qc.getAst());
+                if (windowFnPos >= 0) {
+                    throw SqlException.$(
+                            windowFnPos,
+                            isWindowJoin
+                                    ? "WINDOW functions are not allowed in WINDOW JOIN queries"
+                                    : "WINDOW functions are not allowed in HORIZON JOIN queries"
+                    );
+                }
             }
 
             if (qc.getAst().type == BIND_VARIABLE) {
@@ -12971,7 +13164,11 @@ public class SqlOptimiser implements Mutable {
                     // outer projection both when the user wrote GROUP BY
                     // explicitly and when an aggregate elsewhere in the SELECT
                     // forces a GROUP BY model implicitly.
-                    if (explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
+                    // WINDOW JOIN and HORIZON JOIN take the same path: they have
+                    // no inner virtual model, and one added for the bind variable
+                    // would sit between the join model and the join, hiding the
+                    // columns the join model reads.
+                    if (explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0 || isWindowJoin || isHorizonJoin) {
                         rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                         rewriteStatus &= ~REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE;
                         outerVirtualModel.addBottomUpColumn(qc);
@@ -14839,6 +15036,8 @@ public class SqlOptimiser implements Mutable {
                 predicate.position
         );
         wrapper.paramCount = 3;
+        wrapper.isOptimiserAndOffset = true;
+        hasOptimiserAndOffsets = true;
 
         // Unit as constant char (quoted to match dateadd format)
         CharacterStoreEntry unitEntry = characterStore.newEntry();
@@ -14958,6 +15157,52 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * Creates the cursor of a SHOW statement. The optimiser creates the first, to read the columns
+     * of the statement, and code generation creates one for each further read of the statement, see
+     * {@code SqlCodeGenerator#generateShowQuery}. Like {@link TableUtils#createCursorFunction} for a
+     * table function, this creates every cursor of the statement alike: a SHOW written in a view
+     * reads the object it names through that view, like a table-name function in the view does, and
+     * a SHOW in a sub-query of a view's expression reads it through the view the context reads the
+     * sub-query through, see {@link ExpressionNode#tableFunctionView}.
+     */
+    static RecordCursorFactory createShowFactory(
+            @NotNull FunctionParser functionParser,
+            @NotNull IQueryModel model,
+            @NotNull SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            Path path
+    ) throws SqlException {
+        final ExpressionNode viewNameExpr = model.getViewNameExpr();
+        final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
+        if (viewNameExpr != null) {
+            executionContext.setTableFunctionView(TableUtils.getTableFunctionView(viewNameExpr, executionContext));
+        }
+        final RecordCursorFactory showFactory;
+        try {
+            final CharSequence objectDisclosingStatement = getObjectDisclosingStatement(model.getShowKind());
+            if (objectDisclosingStatement != null) {
+                // a materialized or live view may store what the statement lists only on the terms
+                // of a function that does so, see SqlExecutionRequirements.DISCLOSES_OBJECTS
+                functionParser.addObjectDisclosingStatement(model.getModelPosition(), objectDisclosingStatement, executionContext);
+            }
+            showFactory = generateShowFactory(model, executionContext, sqlParserCallback, path);
+        } finally {
+            if (viewNameExpr != null) {
+                executionContext.setTableFunctionView(previousView);
+            }
+        }
+        // generateShowFactory() builds every SHOW cursor directly rather than through the function
+        // parser, so nothing else records that this statement reads one. A WAL UPDATE may not read a cursor
+        // at all - it is replicated as SQL and re-executed per node, and a SHOW returns
+        // node-local state (the tables this process knows, this node's partition sizes on disk,
+        // this node's configuration, this node's ACL) that nothing keeps aligned across nodes.
+        // Several SHOW kinds set no table name expression at all, so the model's table-name walk
+        // cannot see them either.
+        functionParser.markCursorFunctionInstantiated();
+        return showFactory;
     }
 
     static long evalNonNegativeLongConstantOrDie(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -15223,17 +15468,54 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Closes the cursor-function factories {@link #parseFunctionAndEnumerateColumns} instantiated for
-     * FROM/JOIN table functions and that nothing else owns yet, folding close failures into
-     * {@code failure} as suppressed exceptions.
+     * FROM/JOIN table functions and SHOW statements and that nothing else owns yet, folding close
+     * failures into {@code failure} as suppressed exceptions.
      * <p>
-     * Only compile paths that throw before code generation starts may call this: generation transfers
-     * ownership of each factory to the tree it returns ({@code SqlCodeGenerator#generateFunctionQuery}),
-     * and it detaches the model field it took the factory from, so a call made after a generation
-     * attempt would free a factory its new owner still uses.
+     * Compile paths that fail before they generate the statement's plan call this. A factory can
+     * change hands before that point too: {@link #preparePivotForSelectSubquery} has a borrowed
+     * compiler generate the plan of a PIVOT IN sub-query while the optimiser runs, and that plan
+     * takes over the factories of the sub-query's models, and closes them when the optimiser
+     * closes the plan. So this method closes only the factories still attached to their model, as
+     * {@link #freeUnclaimedTableFactories} does.
      */
     void freeTableFactoriesInFlight(@NotNull Throwable failure) {
-        Misc.freeObjList(tableFactoriesInFlight, failure);
+        freeUnclaimedTableFactories(failure);
+    }
+
+    /**
+     * Closes the cursor-function factories {@link #parseFunctionAndEnumerateColumns} instantiated
+     * and code generation did not take over, and detaches each from its model.
+     * <p>
+     * The optimiser instantiates the factory of every model it optimises, and generation reaches
+     * only the models the plan reads. A sub-query in a column the outer query does not select, in
+     * a window column the optimiser dropped as a duplicate, or in a declared variable nothing
+     * reads is optimised and never generated, so its factory stays open on a compile that
+     * succeeds.
+     * <p>
+     * A caller may run this after a generation attempt, whether it returned or threw.
+     * Generation detaches the model field it takes a factory from
+     * ({@code SqlCodeGenerator#generateFunctionQuery}, {@code SqlCodeGenerator#generateShowQuery}),
+     * and so does the generator's cleanup of a failed attempt
+     * ({@code SqlCodeGenerator#freeTableNameFunctions}), so only a factory that is still its
+     * model's table name function has no owner. A later generation of such a model instantiates
+     * its factory again, as generation does for every read of a model after the first.
+     *
+     * @param failure the failure in flight, which takes every close failure as suppressed, or
+     *                null on a path that has not failed
+     * @return {@code failure}, or the first close failure when {@code failure} is null
+     */
+    @Nullable Throwable freeUnclaimedTableFactories(@Nullable Throwable failure) {
+        for (int i = 0, n = tableFactoriesInFlight.size(); i < n; i++) {
+            final RecordCursorFactory tableFactory = tableFactoriesInFlight.getQuick(i);
+            final IQueryModel model = tableFactoryModelsInFlight.getQuick(i);
+            if (model.getTableNameFunction() == tableFactory) {
+                model.setTableNameFunction(null);
+                failure = Misc.freeBestEffort(failure, tableFactory);
+            }
+        }
         tableFactoriesInFlight.clear();
+        tableFactoryModelsInFlight.clear();
+        return failure;
     }
 
     IQueryModel optimise(
@@ -15287,10 +15569,14 @@ public class SqlOptimiser implements Mutable {
             createOrderHash(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel, sqlExecutionContext);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
+            if (hasOptimiserAndOffsets) {
+                rebuildStrandedAndOffsets(rewrittenModel);
+            }
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             rewrittenModel.recordViews(model.getReferencedViews());
+            rewrittenModel.recordViewAudits(model.getViewAudits());
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             if (ALLOW_FUNCTION_MEMOIZATION) {
                 collectColumnRefCount(null, rewrittenModel);
@@ -15313,6 +15599,12 @@ public class SqlOptimiser implements Mutable {
         selectQueryModel.setIsUpdate(true);
         IQueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext, sqlParserCallback);
         assert optimisedNested.isUpdate();
+        // The parser hands a statement's views and view audits to its top model, which for an
+        // UPDATE is this one. Code generation compiles the nested model into the cursor that reads
+        // the rows, so they have to be on that one, or an UPDATE that reads an audited view records
+        // nothing, and its plan never notices the view was redefined.
+        optimisedNested.recordViews(updateQueryModel.getReferencedViews());
+        optimisedNested.recordViewAudits(updateQueryModel.getViewAudits());
         updateQueryModel.setNestedModel(optimisedNested);
 
         // And then generate plan for UPDATE top level QueryModel

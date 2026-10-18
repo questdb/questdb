@@ -531,6 +531,41 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewCursorFunctionFromViewClosedOnPostOptimiseRejection() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            final String functionName = "disclosing_cursor";
+            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.DISCLOSES_OBJECTS, factories);
+            try {
+                execute("create view v as (select * from " + functionName + "())");
+                drainWalAndViewQueues();
+                final int viewFactoryCount = factories.size();
+
+                // A materialized view may use a function that discloses objects only where a SYSTEM ADMIN writes
+                // it, never through a regular view. The optimiser instantiates the function in the view's FROM
+                // clause, so the post-optimise backstop rejects it, and has to close it exactly once.
+                final String sql = "create materialized view test as (select t1.ts, count() from " + TABLE1 +
+                        " t1 cross join v sample by 30s) partition by day";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(
+                                sql.indexOf("v sample"),
+                                "catalogue function from view v cannot be used in materialized view: " + functionName
+                        );
+                assertEquals(viewFactoryCount + 1, factories.size());
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    assertEquals(1, factories.getQuick(i).getCloseCount());
+                }
+                assertNull(getMatViewDefinition("test"));
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewDisabled() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "false");
