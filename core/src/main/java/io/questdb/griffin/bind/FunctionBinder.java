@@ -590,7 +590,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     private static boolean requiresConditionalRebuild(FunctionFactoryDescriptor overload, ObjList<Function> args) {
         final boolean isSwitch = overload.isSwitch();
-        if (!isSwitch && !overload.isCase()) {
+        if (args == null || !isSwitch && !overload.isCase()) {
             return false;
         }
         final int count = args.size();
@@ -1696,6 +1696,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 case BindVariableExpression parameter ->
                         ctx.planNodes.parameters.next().of(parameter.getName(), parameter.getDataType(), parameter.getFunctionFlags(), position, false);
                 case FunctionExpression call -> ctx.planNodes.functions.next().of(call, position);
+                // a scalar sub-query reports its row-count errors at its own position
+                case CursorExpression cursor -> ctx.planNodes.cursors.next().of(cursor);
                 default -> constant(function, position);
             };
             if (!unconstructedIndex.excludes(argument)) {

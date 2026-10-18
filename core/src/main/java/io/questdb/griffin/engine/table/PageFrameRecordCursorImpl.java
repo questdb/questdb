@@ -353,6 +353,25 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     }
 
     /**
+     * The rows of the pass before its page frame at {@code frameIndex}. When the keys of the pass hold every row of
+     * its run, those are the rows of the run before the page frame. Otherwise a count reads the posting lists from
+     * one of their ends to the page frame, so this counts the rows on the side of the page frame nearer its end of
+     * the run.
+     */
+    private long countRowsBefore(PageFrame frame, int frameIndex, boolean isBackward, long passRowLo, long passRowHi, long passRowCount) {
+        final long row = passFrameRows.getQuick(isBackward ? 2 * frameIndex + 1 : 2 * frameIndex);
+        final long rowsBelow;
+        if (passRowCount == passRowHi - passRowLo) {
+            rowsBelow = row - passRowLo;
+        } else if (row - passRowLo < passRowHi - row) {
+            rowsBelow = passRowCount - keyOrderedFactory.getRowCount(frame, keyLo, keyHi, row, passRowHi - 1);
+        } else {
+            rowsBelow = keyOrderedFactory.getRowCount(frame, keyLo, keyHi, passRowLo, row - 1);
+        }
+        return isBackward ? passRowCount - rowsBelow : rowsBelow;
+    }
+
+    /**
      * The next page frame. A read ordered by keys passes over the page frames once for each key, or, when there is a
      * single page frame, once for the first key and once for all the others.
      */
@@ -389,13 +408,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     }
 
     /**
-     * Moves the frame cursor on to the page frame at {@code frameIndex} of the pass, which the pass has read before.
+     * Moves the frame cursor on to the page frame at {@code frameIndex} of the pass, which the pass has read before,
+     * caching the addresses of the page frames up to it.
      */
     private PageFrame seekFrame(int frameIndex) {
         super.toTop();
         PageFrame frame;
         do {
             frame = frameCursor.next();
+            frameAddressCache.add(frameCount, frame);
         } while (++frameCount <= frameIndex);
         return frame;
     }
@@ -405,6 +426,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
      * its keys and the pass reads a single run of rows of one partition.
      */
     private void skipKeyOrderedRows(Counter rowCount) {
+        if (rowCount.get() == 0) {
+            return;
+        }
         if (rowCursor != null) {
             skipRowCursorRows(rowCount);
             if (rowCount.get() == 0) {
@@ -423,17 +447,34 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     /**
      * Skips the rows of the pass that starts at the next page frame, landing in the page frame that holds the row after
-     * the skip. The pass counts its rows from its last page frame back, so a skip that lands in the last rows of the
-     * pass counts only those.
+     * the skip. A skip shorter than the first page frame walks that page frame before it reads the page frames of the
+     * whole pass, since the read after the skip opens that page frame anyway. Otherwise the search for the landing page
+     * frame gallops from the end of the pass nearer the landing, so its counts cost no more than the rows up to it.
      */
     private void skipPass(Counter rowCount) {
+        PageFrame frame = frameCursor.next();
+        if (frame == null) {
+            return;
+        }
+        final long skipCount = rowCount.get();
+        if (skipCount < frame.getPartitionHi() - frame.getPartitionLo()) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            frameAddressCache.add(frameCount, frame);
+            rowCursor = keyOrderedFactory.getCursor(frame, frameMemoryPool.navigateTo(frameCount++), keyLo, keyHi);
+            skipRowCursorRows(rowCount);
+            if (rowCount.get() == 0) {
+                return;
+            }
+            rowCount.add(skipCount - rowCount.get());
+            rowCursor = Misc.free(rowCursor);
+        }
+        super.toTop();
         passFrameRows.clear();
-        PageFrame frame;
         int partitionIndex = -1;
         boolean isSingleRun = true;
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-            frameAddressCache.add(frameCount++, frame);
+            frameCount++;
             final long rowLo = frame.getPartitionLo();
             final long rowHi = frame.getPartitionHi();
             if (passFrameRows.size() > 0) {
@@ -444,10 +485,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             passFrameRows.add(rowLo, rowHi);
         }
         final int passFrameCount = frameCount;
-        if (passFrameCount == 0) {
-            return;
-        }
-        frame = seekFrame(passFrameCount - 1);
+        frame = seekFrame(0);
         final boolean isBackward = passFrameCount > 1 && passFrameRows.getQuick(2) < passFrameRows.getQuick(0);
         final long passRowLo = passFrameRows.getQuick(isBackward ? 2 * passFrameCount - 2 : 0);
         final long passRowHi = passFrameRows.getQuick(isBackward ? 1 : 2 * passFrameCount - 1);
@@ -457,16 +495,44 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             skipPassFrames(rowCount);
             return;
         }
-        if (passRowCount <= rowCount.get()) {
+        if (passRowCount <= skipCount) {
             rowCount.dec(passRowCount);
+            seekFrame(passFrameCount - 1);
             return;
         }
-        int frameIndex = passFrameCount - 1;
-        long rowsBefore;
-        while ((rowsBefore = isBackward
-                ? keyOrderedFactory.getRowCount(frame, keyLo, keyHi, passFrameRows.getQuick(2 * frameIndex + 1), passRowHi - 1)
-                : keyOrderedFactory.getRowCount(frame, keyLo, keyHi, passRowLo, passFrameRows.getQuick(2 * frameIndex) - 1)) > rowCount.get()) {
-            frameIndex--;
+        int frameIndex = 0;
+        long rowsBefore = 0;
+        int frameIndexHi = passFrameCount;
+        if (skipCount < passRowCount - skipCount) {
+            for (int step = 1; frameIndex + step < frameIndexHi; step <<= 1) {
+                final long rows = countRowsBefore(frame, frameIndex + step, isBackward, passRowLo, passRowHi, passRowCount);
+                if (rows > skipCount) {
+                    frameIndexHi = frameIndex + step;
+                    break;
+                }
+                frameIndex += step;
+                rowsBefore = rows;
+            }
+        } else {
+            for (int step = 1; frameIndexHi - step > frameIndex; step <<= 1) {
+                final long rows = countRowsBefore(frame, frameIndexHi - step, isBackward, passRowLo, passRowHi, passRowCount);
+                if (rows <= skipCount) {
+                    frameIndex = frameIndexHi - step;
+                    rowsBefore = rows;
+                    break;
+                }
+                frameIndexHi -= step;
+            }
+        }
+        while (frameIndexHi - frameIndex > 1) {
+            final int mid = (frameIndex + frameIndexHi) >>> 1;
+            final long rows = countRowsBefore(frame, mid, isBackward, passRowLo, passRowHi, passRowCount);
+            if (rows > skipCount) {
+                frameIndexHi = mid;
+            } else {
+                frameIndex = mid;
+                rowsBefore = rows;
+            }
         }
         rowCount.dec(rowsBefore);
         frame = seekFrame(frameIndex);

@@ -55,6 +55,10 @@ public final class CursorExpression extends BoundExpression {
         return getDataType() == ColumnType.BOOLEAN;
     }
 
+    public CursorExpression of(CursorExpression that) {
+        return of(that.subquery, that.getDataType(), that.getFunctionFlags(), that.getPosition());
+    }
+
     public CursorExpression of(Subquery subquery, int position) {
         return of(subquery, ColumnType.CURSOR, subquery.isStable() ? STABLE_WITHIN_EXECUTION : 0, position);
     }

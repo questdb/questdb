@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.std.str.StringSink;
@@ -973,6 +974,72 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSortedSymbolIndexSkipCostFollowsLanding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 'a'::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(100_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.changePageFrameSizes(100, 100);
+            String query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("SortedSymbolIndex")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000001Z	a
+                            """);
+            assertSkipCost(query, 0, 0);
+            query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 5, 7";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000006Z	a
+                            1970-01-01T00:00:00.000007Z	a
+                            """);
+            assertSkipCost(query, 0, 5);
+            query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 60_050, 60_052";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.060051Z	a
+                            1970-01-01T00:00:00.060052Z	a
+                            """);
+            assertSkipCost(query, 0, 50);
+            query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts DESC LIMIT 60_050, 60_052";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.039950Z	a
+                            1970-01-01T00:00:00.039949Z	a
+                            """);
+            assertSkipCost(query, 0, 50);
+
+            execute("CREATE TABLE u AS (SELECT ('a' || (x % 2))::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(100_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            final long tenPostingListTraversals = 10 * 50_000 / configuration.getIndexValueBlockSize();
+            query = "SELECT ts, sym FROM u WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 30_060, 30_062";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("SortedSymbolIndex")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.060121Z	a1
+                            1970-01-01T00:00:00.060123Z	a1
+                            """);
+            assertSkipCost(query, tenPostingListTraversals, 10);
+            query = "SELECT ts, sym FROM u WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts DESC LIMIT 30_060, 30_062";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.039879Z	a1
+                            1970-01-01T00:00:00.039877Z	a1
+                            """);
+            assertSkipCost(query, tenPostingListTraversals, 10);
+        });
+    }
+
+    @Test
     public void testSortedSymbolIndexSkipsCountedPageFrames() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT 'a'::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(1_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1914,6 +1981,22 @@ public class OrderByAdviceTest extends AbstractCairoTest {
 
     private static void createKeyTable(String name, String partitionBy) throws Exception {
         execute("CREATE TABLE " + name + " AS (SELECT x id, ('S' || (x % 3))::SYMBOL s, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(24)), INDEX(s) TIMESTAMP(ts) PARTITION BY " + partitionBy);
+    }
+
+    private void assertSkipCost(String query, long maxBlockHops, long walkedRows) throws Exception {
+        BitmapIndexFwdReader.resetTestCounters();
+        PageFrameRecordCursorImpl.testWalkedRows.set(0);
+        BitmapIndexFwdReader.isBlockHopCounterEnabled = true;
+        PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+        try {
+            printSql(query, new StringSink());
+        } finally {
+            BitmapIndexFwdReader.isBlockHopCounterEnabled = false;
+            PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+        }
+        final long blockHops = BitmapIndexFwdReader.testRangeCountBlockHops.get();
+        Assert.assertTrue("block hops: " + blockHops, blockHops <= maxBlockHops);
+        Assert.assertEquals(walkedRows, PageFrameRecordCursorImpl.testWalkedRows.get());
     }
 
     private void assertWalksFewRows(String query) throws Exception {

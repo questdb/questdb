@@ -86,6 +86,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
         int n = argTypes.size();
+        if (n < 2) {
+            return ColumnType.UNDEFINED;
+        }
         int returnType = -1;
         if (n % 2 == 0) {
             returnType = argTypes.getQuick(--n);
@@ -132,6 +135,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
             EqualityFactory equalityFactory,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        if (args == null || args.size() < 2) {
+            throw SqlException.$(position, "switch can be used with 2 or more arguments");
+        }
         int n = args.size();
         final Function keyFunction = args.getQuick(0);
         final int keyType = keyFunction.getType();

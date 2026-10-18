@@ -90,6 +90,23 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastSubQueryPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertPredicate(THE_ROW, "select * from t where (select b from x_true limit 1)::boolean");
+            assertPredicate(NO_ROWS, "select * from t where (select b from x_false limit 1)::boolean");
+            assertPredicate(THE_ROW, "select * from t where cast((select b from x_true limit 1) as boolean)");
+            assertQuery("SELECT (SELECT true)::BOOLEAN b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("b\ntrue\n");
+            assertQuery("SELECT (SELECT x > 0 FROM long_sequence(2))::BOOLEAN b")
+                    .noLeakCheck()
+                    .fails(8, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
     public void testExplainShowsSubQueryFilter() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

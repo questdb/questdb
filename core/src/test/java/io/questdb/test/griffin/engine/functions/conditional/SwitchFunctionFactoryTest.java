@@ -2541,6 +2541,14 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTooFewArguments() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck("SELECT switch()", 7, "switch can be used with 2 or more arguments");
+            assertExceptionNoLeakCheck("SELECT switch(1)", 7, "switch can be used with 2 or more arguments");
+        });
+    }
+
+    @Test
     public void testVolatileColumnKeyWithEqualityConstant() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
