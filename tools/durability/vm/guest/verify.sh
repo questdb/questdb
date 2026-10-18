@@ -331,12 +331,23 @@ case "$ARM" in
         # exist" as a LOUD_FAILURE, which is a legitimate outcome if nothing was ever committed.
         # Committed rows with no table is real data loss, so reclassify only when the durable
         # watermark says nothing was committed; otherwise the failure stands.
+        #
+        # The watermark is the one the workload wrote: the qwp arms' client writes _qwp_progress
+        # and never _progress, so reading _progress for them grades every absent table NO_COMMIT.
+        # This mirrors lib/arms.sh arm_progress_file, which the guest cannot source because only
+        # guest/ is shipped into the VM. qwp-sf and product always carry --qwp=true (see
+        # arm_verify_flags). test/t13 runs this file under every arm's flags and fails if the two
+        # mappings disagree.
+        progress_file=_progress
+        if [ "$QWP" = true ] || [ "$QWPSF" = true ]; then
+            progress_file=_qwp_progress
+        fi
         case "$line" in
             LOUD_FAILURE*"table does not exist"*)
-                # `|| true` is required: an early cut has no _progress by definition, and under
-                # `set -euo pipefail` the failed head would kill the script before it prints a
-                # verdict, which the caller then classifies UNPARSEABLE.
-                committed=$(head -1 "$DB/_progress" 2>/dev/null | tr -dc '0-9' || true)
+                # `|| true` is required: an early cut has no progress file by definition, and
+                # under `set -euo pipefail` the failed head would kill the script before it prints
+                # a verdict, which the caller then classifies UNPARSEABLE.
+                committed=$(head -1 "$DB/$progress_file" 2>/dev/null | tr -dc '0-9' || true)
                 if [ -z "$committed" ] || [ "$committed" -eq 0 ] 2>/dev/null; then
                     line="NO_COMMIT cut landed before any commit (watermark=${committed:-absent})"
                 else

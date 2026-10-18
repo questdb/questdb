@@ -843,6 +843,7 @@ stages:
           #      t10 the barrier control       t08 the reaper keeps what it must
           #      t09 the report is honest      t11 the env builders agree
           #      t12 a verdict token means one thing
+          #      t13 a lost table is judged by its own arm's watermark
           - bash: |
               set -uo pipefail
               source "$(Agent.TempDirectory)/durability-budget.sh"
@@ -854,12 +855,13 @@ stages:
               run_phase t06-selftest       2 bash test/t06-log-writes-replay.sh --self-test   || rc=1
               run_phase t11-builder-parity 2 bash test/t11-builder-parity.sh                  || rc=1
               run_phase t12-verdict-vocab  2 bash test/t12-verdict-vocabulary.sh              || rc=1
+              run_phase t13-absent-table   2 bash test/t13-absent-table-watermark.sh          || rc=1
               run_phase t08-state-reaper   2 bash test/t08-state-reaper.sh                    || rc=1
               run_phase t09-junit-xml      2 bash test/t09-junit-xml.sh                       || rc=1
 
               # As load-bearing as the VM controls, so they gate the sweeps the same way.
               for t in t10-judge-selftest t06-selftest t11-builder-parity t12-verdict-vocab \
-                       t08-state-reaper t09-junit-xml; do
+                       t13-absent-table t08-state-reaper t09-junit-xml; do
                 grep -q "^$t .* rc=0$" "$(Agent.TempDirectory)/durability-timing.txt" 2>/dev/null \
                   || { echo "VM-free control did not complete: $t"; rc=1; }
               done
