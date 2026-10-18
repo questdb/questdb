@@ -728,6 +728,68 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
         assertNoIdleSavePoint("adaptive", -1, false);
     }
 
+    @Test
+    public void testStartupColumnPurgeKeepsVersionNamedBySavePoint() throws Exception {
+        // The column purge at server start skips the reader check, so the save point check alone keeps the column
+        // version an UPDATE left while the older save point still names it.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            startClock();
+            try {
+                final TableToken tt = createDays("t", false);
+                final ObjList<String> left = columnFiles(tt);
+                tick(INTERVAL_MS);
+                execute("UPDATE t SET v = 9 WHERE ts < '2024-01-02'");
+                drainWalQueue();
+                final String logTable;
+                try (ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(engine)) {
+                    columnPurgeJob.run();
+                    logTable = columnPurgeJob.getLogTableName();
+                }
+                // No leak check: its engine.clear() would drop the table's txn tracker, which holds the pins.
+                assertQuery("SELECT count() FROM '" + logTable + "' WHERE completed = null")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                1
+                                """);
+                final StringSink failures = new StringSink();
+                checkOnDisk(failures, "logged for purge", tt, left, true);
+                // A new job runs the logged purge in the startup mode, then truncates the log.
+                try (ColumnPurgeJob ignore = new ColumnPurgeJob(engine)) {
+                    checkOnDisk(failures, "startup purge, the older save point names it", tt, left, true);
+                }
+                assertQuery("SELECT count() FROM '" + logTable + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                0
+                                """);
+                idlePass(INTERVAL_MS / 2, null);
+                idlePass(INTERVAL_MS / 2, null);
+                final SeqTxnTracker tracker = tracker(tt);
+                Assert.assertEquals("idle spell over", tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                execute("VACUUM TABLE t");
+                checkOnDisk(failures, "vacuum, both save points past the update", tt, left, false);
+                Assert.assertEquals("", failures.toString());
+            } finally {
+                setCurrentMicros(-1);
+            }
+            assertQuery("SELECT sum(v) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            26
+                            """);
+        });
+    }
+
     private static void checkOnDisk(StringSink failures, String context, TableToken tt, ObjList<String> dirs, boolean expected) {
         for (int i = 0, n = dirs.size(); i < n; i++) {
             if (Files.exists(Path.of(configuration.getDbRoot(), tt.getDirName(), dirs.getQuick(i))) != expected) {
