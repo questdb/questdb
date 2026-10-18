@@ -27,9 +27,11 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -729,6 +731,76 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStartupColumnPurgeKeepsLiveVersionOfRewoundUpdate() throws Exception {
+        // A purge log row whose update is past the committed txn, as a recovery rewind to a save point before the
+        // update leaves it, names the version the table uses now. The startup purge neither deletes it nor keeps it
+        // for a retry, so the running job does not delete it once both save points have moved past the update.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            startClock();
+            try {
+                final TableToken tt = createDays("t", false);
+                final long updateTxn = tableTxn(tt) + 1;
+                final Path liveFile = logUpdatePastCommittedTxn(tt);
+                try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
+                    Assert.assertTrue("startup purge deleted " + liveFile, Files.exists(liveFile));
+                    Assert.assertEquals("tasks kept for a retry", 0, job.getOutstandingPurgeTasks());
+                    execute("INSERT INTO t VALUES ('2024-01-03T03:00:00.000000Z', 4)");
+                    drainWalQueue();
+                    for (int i = 0; i < 4; i++) {
+                        idlePass(INTERVAL_MS / 2, null);
+                        job.run();
+                    }
+                    final SeqTxnTracker tracker = tracker(tt);
+                    Assert.assertTrue("save points past the update", tracker.getPinnedEpochTxn() >= updateTxn && tracker.getOtherPinnedEpochTxn() >= updateTxn);
+                    tick(INTERVAL_MS);
+                    job.run();
+                    Assert.assertTrue("running purge deleted " + liveFile, Files.exists(liveFile));
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+            assertQuery("SELECT sum(v) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            14
+                            """);
+        });
+    }
+
+    @Test
+    public void testStartupColumnPurgeKeepsLiveVersionOfUpdateLostWithoutSavePoint() throws Exception {
+        // The same row on a table without save points, as a power loss in nosync leaves it, or a nosync start
+        // after an adaptive one: recovery rewinds the table and leaves adaptive, which drops the pins, before the
+        // purge job starts. With no save point check to stop it, only the committed txn keeps the live version.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            startClock();
+            try {
+                final TableToken tt = createDays("t", false);
+                final Path liveFile = logUpdatePastCommittedTxn(tt);
+                Assert.assertEquals("pinned save point", -1, tracker(tt).getPinnedEpochTxn());
+                try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
+                    Assert.assertTrue("startup purge deleted " + liveFile, Files.exists(liveFile));
+                    Assert.assertEquals("tasks kept for a retry", 0, job.getOutstandingPurgeTasks());
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+            assertQuery("SELECT sum(v) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            10
+                            """);
+        });
+    }
+
+    @Test
     public void testStartupColumnPurgeKeepsVersionNamedBySavePoint() throws Exception {
         // The column purge at server start skips the reader check, so the save point check alone keeps the column
         // version an UPDATE left while the older save point still names it.
@@ -822,6 +894,37 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
         }
     }
 
+    // Logs a purge of the 2024-01-02 column v version the table uses now, for an update one txn past the committed
+    // txn, and returns that version's data file.
+    private static Path logUpdatePastCommittedTxn(TableToken tt) throws Exception {
+        final String logTable;
+        try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
+            logTable = job.getLogTableName();
+        }
+        final long partitionTs = MicrosTimestampDriver.floor("2024-01-02");
+        final long txn;
+        final long columnVersion;
+        final long partitionNameTxn;
+        final long truncateVersion;
+        try (TableReader reader = engine.getReader(tt)) {
+            txn = reader.getTxn();
+            columnVersion = reader.getColumnVersionReader().getColumnNameTxn(partitionTs, 1);
+            partitionNameTxn = reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTs);
+            truncateVersion = reader.getTxFile().getTruncateVersion();
+        }
+        execute("INSERT INTO '" + logTable + "' VALUES (" + (currentMicros - 1000) + ", '" + tt.getDirName() + "', 'v', "
+                + tt.getTableId() + ", " + truncateVersion + ", " + ColumnType.LONG + ", " + PartitionBy.DAY + ", "
+                + (txn + 1) + ", " + columnVersion + ", " + partitionTs + ", " + partitionNameTxn + ", NULL)");
+        final Path liveFile = Path.of(
+                configuration.getDbRoot(),
+                tt.getDirName(),
+                partitionNameTxn > -1 ? "2024-01-02." + partitionNameTxn : "2024-01-02",
+                columnVersion > -1 ? "v.d." + columnVersion : "v.d"
+        );
+        Assert.assertTrue(liveFile.toString(), Files.exists(liveFile));
+        return liveFile;
+    }
+
     // Runs the live view refresh job until it reports no work, in a bounded burst.
     private static void runJob(LiveViewRefreshJob job) {
         //noinspection StatementWithEmptyBody
@@ -844,6 +947,12 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     private static String tableState(CairoEngine eng, TableToken tt) {
         try (TableReader reader = eng.getReader(tt)) {
             return "rows=" + reader.size() + " partitions=" + reader.getPartitionCount() + " txn=" + reader.getTxn();
+        }
+    }
+
+    private static long tableTxn(TableToken tt) {
+        try (TableReader reader = engine.getReader(tt)) {
+            return reader.getTxn();
         }
     }
 

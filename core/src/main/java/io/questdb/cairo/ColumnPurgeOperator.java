@@ -295,6 +295,16 @@ public class ColumnPurgeOperator implements Closeable {
                     LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
                     return false;
                 }
+                // A logged update past the committed txn did not survive the stop: a power loss outside adaptive,
+                // or a recovery rewind to a save point before it, dropped it. The version the row names is the
+                // one the table uses now, and a replay of the update queues its own purge.
+                if (scoreboardUseMode == ScoreboardUseMode.STARTUP_ONLY && task.getUpdateTxn() > txReader.getTxn()) {
+                    LOG.info().$("cannot purge, update is past the committed txn [path=").$(path.trimTo(pathTableLen))
+                            .$(", updateTxn=").$(task.getUpdateTxn())
+                            .$(", txn=").$(txReader.getTxn())
+                            .I$();
+                    return false;
+                }
                 return true;
             default:
                 return false;
