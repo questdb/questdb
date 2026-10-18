@@ -2713,14 +2713,18 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // Additive LOCAL stream first (LOCAL|REPLICATED grants only): the local
         // frontier runs ahead of the replicated one, so its progress frame is
         // the earlier signal. A blocked send parks with the stream marker set
-        // (see setSendingLocalDurableAck); the RESUME_DURABLE_ACK continuation
-        // re-enters trySendDurableAck, which re-collects both streams and sends
-        // whatever remains.
-        // Limitation: the composite RESUME_DURABLE_ACK_THEN_* continuations
-        // complete only the parked frame, so a parked LOCAL frame with a close
-        // deferred behind it would close without the final replicated ack. OSS
-        // cannot grant both tiers; Enterprise must extend those continuations
-        // before it grants LOCAL|REPLICATED.
+        // (see setSendingLocalDurableAck), so completing it advances only the
+        // LOCAL watermark. The RESUME_DURABLE_ACK continuation then re-enters
+        // trySendDurableAck, which re-collects both streams and sends whatever
+        // remains. The close continuations do the same before they close:
+        // RESUME_DURABLE_ACK_THEN_CLOSE (finishDeferredFatalClose) and
+        // RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE (finishClientCloseResponse)
+        // run flushPendingAck, so the final replicated ack precedes the CLOSE,
+        // and a new block re-parks the close behind that frame. Teardown is
+        // different on purpose: onConnectionClosed's drainPendingResponse
+        // finishes a frame parked ahead of a client-close response and skips
+        // the response, and leaves a parked fatal close unsent; only the
+        // best-effort flushPendingAck that follows may send more.
         CharSequenceLongHashMap localProgress = state.getLocalDurableProgressSnapshot();
         if (localProgress.size() > 0) {
             state.setSendingLocalDurableAck(true);
