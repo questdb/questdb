@@ -608,7 +608,9 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // calling super cannot skip them.
     @Before
     public void enableGuaranteedRefreshJobLogging() {
-        LogFactory.enableGuaranteedLogging(LiveViewRefreshJob.class);
+        if (isRefreshJobLoggingGuaranteed()) {
+            LogFactory.enableGuaranteedLogging(LiveViewRefreshJob.class);
+        }
     }
 
     @After
@@ -861,6 +863,17 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      * exists to prevent.
      */
     protected boolean isMillisecondClockSimulated() {
+        return true;
+    }
+
+    /**
+     * Whether {@link LiveViewRefreshJob} logs through a guaranteed logger for the test. A
+     * guaranteed record waits for a ring slot, so while stdout stalls the refresh job stalls
+     * with it. A suite that asserts no refresh job lines and runs refresh workers under a
+     * liveness deadline overrides this to return false, keeping a stdout stall out of its
+     * refresh workers.
+     */
+    protected boolean isRefreshJobLoggingGuaranteed() {
         return true;
     }
 

@@ -1413,6 +1413,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         return false;
     }
 
+    // No test here asserts a refresh job line, and the soaks' readers and writers fill the log
+    // ring whenever stdout stalls. A guaranteed logger then parks every refresh worker on a
+    // ring slot until the paced writers' 30s tick deadline expires.
+    @Override
+    protected boolean isRefreshJobLoggingGuaranteed() {
+        return false;
+    }
+
     private static void appendRow(WalWriter walWriter, long ts, int symIdx, long iv, double xv) {
         appendRow(walWriter, ts, symIdx < 0 ? null : SYMBOLS[symIdx], iv, xv);
     }
