@@ -717,6 +717,7 @@ final class OrderPlanning implements OptimiserPass {
                     .rowOrderRequired(orderedInput != null || !isQueryOrder && requirement.isRowOrderRequired() && !hasGroupByWindowFunction(window)));
             return;
         }
+        assert orderedInput != null;
         final int orderedInputColumnId = orderedInput.getOrderByColumnIds().getQuick(0);
         final SortDirection orderedInputDirection = orderedInput.getOrderByDirections().getQuick(0);
         if (isOrderedInputServed(window, orderedInputColumnId, orderedInputDirection)) {
