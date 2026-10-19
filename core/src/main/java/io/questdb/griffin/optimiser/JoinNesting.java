@@ -41,7 +41,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
 /**
- * Nests every run of the ordered steps of a join that reads no input ordered before it as one input of the join, which
+ * When the leading cross input is fixed, nests each run that reads no input ordered before it as one input of the join, which
  * a CROSS step joins. A run starts at an INNER or CROSS step that reads no earlier input and takes each following INNER
  * or CROSS step that reads an input of the run and none before it; every step of a run is
  * {@link LogicalPlans#isStableJoinStep stable}. In the left-deep order every later step of the run joins again for each
@@ -152,7 +152,7 @@ final class JoinNesting implements OptimiserPass {
     }
 
     private LogicalPlan nestRuns(LogicalPlan plan) throws SqlException {
-        if (!(plan instanceof JoinPlan join)) {
+        if (!(plan instanceof JoinPlan join) || !join.isLeadingCrossJoinFixed()) {
             return plan;
         }
         final ObjList<JoinInput> ordered = join.getOrderedInputs();

@@ -1466,6 +1466,36 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeRowsStopAtOffset() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 4);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                for (int row = 0; row < 4_000; row++) {
+                    writer.add(0, row);
+                }
+            }
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                BitmapIndexFwdReader.isBlockHopCounterEnabled = true;
+                try {
+                    for (int cell = 0; cell < 4; cell++) {
+                        for (int offset : new int[]{0, 1, 3, 4, 5, 127, 128, 1_900}) {
+                            final long maxBlockHops = 2L * ((offset + cell) / 4);
+                            BitmapIndexFwdReader.resetTestCounters();
+                            Assert.assertEquals(cell + offset, reader.getRow(0, cell, 1_999, IndexReader.DIR_FORWARD, offset));
+                            Assert.assertTrue("forward block hops: " + BitmapIndexFwdReader.testRangeCountBlockHops.get(), BitmapIndexFwdReader.testRangeCountBlockHops.get() <= maxBlockHops);
+                            BitmapIndexFwdReader.resetTestCounters();
+                            Assert.assertEquals(3_999 - cell - offset, reader.getRow(0, 2_000, 3_999 - cell, IndexReader.DIR_BACKWARD, offset));
+                            Assert.assertTrue("backward block hops: " + BitmapIndexFwdReader.testRangeCountBlockHops.get(), BitmapIndexFwdReader.testRangeCountBlockHops.get() <= maxBlockHops);
+                        }
+                    }
+                } finally {
+                    BitmapIndexFwdReader.isBlockHopCounterEnabled = false;
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSimpleRollback() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd modelRnd = new Rnd();

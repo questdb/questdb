@@ -209,15 +209,15 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
             return nullRowCount;
         }
         final long valueCount = readKeyEntry(key);
-        return valueCount > 0 ? nullRowCount + locateValues(valueCount, minValue, maxValue, maxCount - nullRowCount) : nullRowCount;
+        return valueCount > 0 ? nullRowCount + locateValues(valueCount, minValue, maxValue, maxCount - nullRowCount, 0) : nullRowCount;
     }
 
     /**
      * The row a cursor in {@code direction} returns for {@code key} over {@code [minValue, maxValue]} after it
      * skips {@code rowIndex} rows. The key must have more than {@code rowIndex} rows there.
      * <p>
-     * It locates the values of the range as {@link #countRows(int, long, long, long)} does and then hops to the value
-     * block that holds the row from the nearer end of the range.
+     * It locates the values of the range as {@link #countRows(int, long, long, long)} does, stopping once it passes
+     * the requested row from the requested direction, then hops to the value block from the nearer located end.
      *
      * @param direction {@link IndexReader#DIR_FORWARD} or {@link IndexReader#DIR_BACKWARD}
      */
@@ -229,7 +229,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
         }
         final long valueRowIndex = direction == IndexReader.DIR_FORWARD ? rowIndex - nullRowCount : rowIndex;
         final long valueCount = readKeyEntry(key);
-        final long valueRowCount = valueCount > 0 ? locateValues(valueCount, minValue, maxValue, Long.MAX_VALUE) : 0;
+        final long valueRowCount = valueCount > 0 ? locateValues(valueCount, minValue, maxValue, valueRowIndex, direction) : 0;
         if (valueRowIndex < valueRowCount) {
             return getRangeValue(direction == IndexReader.DIR_FORWARD ? rangeLo + valueRowIndex : rangeHi - 1 - valueRowIndex);
         }
@@ -349,12 +349,12 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
     }
 
     // Locates the values of the key entry readKeyEntry() read last that lie in [minValue, maxValue] and returns their
-    // number, or any number above maxCount once the count passes it. Once it finds both bounds, the values sit at the
-    // positions rangeLo, inclusive, to rangeHi, exclusive, and the value blocks rangeLoBlock and rangeHiBlock hold
+    // number, or any number above maxCount once the count passes it from direction (0 allows either end). The located
+    // values sit at positions rangeLo, inclusive, to rangeHi, exclusive. The blocks rangeLoBlock and rangeHiBlock hold
     // rangeLo and rangeHi - 1. A walk up from the first value block and a walk down from the last one race, a block at
     // a time, to the bound nearer their end. A walk inside the range from that bound then races the walk from the other
-    // end to the other bound, and gives up once it counts more than maxCount values.
-    private long locateValues(long valueCount, long minValue, long maxValue, long maxCount) {
+    // end to the other bound, retaining only a prefix or suffix when it stops after maxCount values.
+    private long locateValues(long valueCount, long minValue, long maxValue, long maxCount, int direction) {
         final long blockStartMask = ~(long) blockValueCountMod;
         long headBlock = entryFirstValueBlockOffset;
         long headPosition = 0;
@@ -420,7 +420,9 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
                     rangeHiBlock = block;
                     break;
                 }
-                if (count > maxCount) {
+                if (count > maxCount && direction != IndexReader.DIR_BACKWARD) {
+                    rangeHi = end;
+                    rangeHiBlock = block;
                     return count;
                 }
                 lowerBlock = block;
@@ -458,7 +460,9 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
                     rangeLoBlock = block;
                     break;
                 }
-                if (count > maxCount) {
+                if (count > maxCount && direction != IndexReader.DIR_FORWARD) {
+                    rangeLo = start;
+                    rangeLoBlock = block;
                     return count;
                 }
                 upperBlock = block;

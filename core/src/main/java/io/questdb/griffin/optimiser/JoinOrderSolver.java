@@ -125,6 +125,7 @@ final class JoinOrderSolver implements Mutable {
             for (int i = dependencies.size(), n = join.getInputs().size(); i < n; i++) {
                 dependencies.add(null);
             }
+            join.setLeadingCrossJoinFixed(isFirstInputFixed && !hasLeadingJoinDependency(join));
             linkDependencies();
             for (int i = 0, n = dependencies.size(); i < n; i++) {
                 final JoinDependency dependency = dependencies.getQuick(i);
@@ -230,6 +231,26 @@ final class JoinOrderSolver implements Mutable {
                         pendingSources.add(constraints.getQuick(i));
                     }
                 }
+            }
+        }
+        return false;
+    }
+
+    private boolean hasLeadingJoinDependency(JoinPlan join) {
+        final ObjList<JoinInput> inputs = join.getInputs();
+        for (int i = 1, n = inputs.size(); i < n; i++) {
+            final JoinInput input = inputs.getQuick(i);
+            final JoinKind type = input.getJoinType();
+            final JoinDependency dependency = dependencies.getQuick(i);
+            if (type.isTemporal() || dependency != null && dependency.getParents().contains(0)
+                    || i == 1 && type == JoinKind.LEFT_OUTER && input.getOnResidual() != null) {
+                return true;
+            }
+        }
+        final IntList constraints = graph.getOrderingConstraints();
+        for (int i = 0, n = constraints.size(); i < n; i += 2) {
+            if (constraints.getQuick(i) == 0 && inputs.getQuick(constraints.getQuick(i + 1)).getJoinType() != JoinKind.UNNEST) {
+                return true;
             }
         }
         return false;

@@ -51,4 +51,12 @@ public class OuterJoinRecord extends JoinRecord {
     boolean hasSlave() {
         return slave != nullRecord;
     }
+
+    @Override
+    void setSlave(Record slave) {
+        if (this.slave == flappingSlave) {
+            this.slave = slave;
+        }
+        flappingSlave = slave;
+    }
 }

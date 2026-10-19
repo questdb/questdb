@@ -1024,6 +1024,36 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampSequenceConstantStartWithScalarSubquery() throws Exception {
+        testTimestampSequenceScalarSubquery(
+                "0",
+                "CASE WHEN x > (SELECT v FROM b) THEN 0::LONG ELSE 1::LONG END",
+                " = 0",
+                "count\n1\n"
+        );
+    }
+
+    @Test
+    public void testTimestampSequenceScalarSubqueryStart() throws Exception {
+        testTimestampSequenceScalarSubquery(
+                "CASE WHEN x > (SELECT v FROM b) THEN ts ELSE NULL END",
+                "0",
+                " IS NOT NULL",
+                "count\n0\n"
+        );
+    }
+
+    @Test
+    public void testTimestampSequenceVariableStartWithScalarSubquery() throws Exception {
+        testTimestampSequenceScalarSubquery(
+                "ts",
+                "CASE WHEN x > (SELECT v FROM b) THEN 0::LONG ELSE 1::LONG END",
+                " = ts",
+                "count\n1\n"
+        );
+    }
+
+    @Test
     public void testVarcharBindVariable() throws Exception {
         testStrBindVariable("VARCHAR", SqlJitMode.JIT_MODE_ENABLED);
     }
@@ -1576,6 +1606,50 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 configuration,
                 LOG
         );
+    }
+
+    private void testTimestampSequenceScalarSubquery(
+            String startExpression,
+            String incrementExpression,
+            String comparison,
+            String expectedAfter
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, context) -> {
+                        engine.execute("CREATE TABLE b AS (SELECT 0::LONG v)", context);
+                        for (boolean isNano : new boolean[]{false, true}) {
+                            final String timestampType = isNano ? "TIMESTAMP_NS" : "TIMESTAMP";
+                            final String function = isNano ? "timestamp_sequence_ns" : "timestamp_sequence";
+                            // One frame keeps the sequence independent of which worker evaluates it.
+                            engine.execute("CREATE TABLE t AS (SELECT x, x::" + timestampType
+                                    + " ts FROM long_sequence(" + PAGE_FRAME_MAX_ROWS + "))", context);
+                            for (boolean isParallel : new boolean[]{true, false}) {
+                                ((SqlExecutionContextImpl) context).setParallelFilterEnabled(isParallel);
+                                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR}) {
+                                    context.setJitMode(jitMode);
+                                    engine.execute("UPDATE b SET v = 0", context);
+                                    assertQuery("SELECT count() FROM t WHERE " + function + "("
+                                            + startExpression + ", " + incrementExpression + ")" + comparison)
+                                            .withEngine(engine)
+                                            .withContext(context)
+                                            .noLeakCheck()
+                                            .noRandomAccess()
+                                            .expectSize()
+                                            .withPlanContaining(isParallel ? "Async Filter workers: 2" : "Filter")
+                                            .mutateWith("UPDATE b SET v = NULL")
+                                            .returns("count\n" + PAGE_FRAME_MAX_ROWS + "\n", expectedAfter);
+                                }
+                            }
+                            engine.execute("DROP TABLE t", context);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private void testStrBindVariable(String columnType, int jitMode) throws Exception {

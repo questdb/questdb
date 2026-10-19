@@ -855,9 +855,30 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaterializedNestedLoopCopyHonoursJoinValueMaxPages() throws Exception {
-        // Under a generous query limit, the copy stops where a full-fat join's value pages would: at
-        // cairo.sql.hash.join.value.page.size times cairo.sql.hash.join.value.max.pages bytes.
+    public void testMaterializedNestedLoopLimitOffsetCrossesFallback() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16L);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 16L);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts)");
+            execute("CREATE TABLE b AS (SELECT 1 k, x v FROM long_sequence(5))");
+            execute("CREATE TABLE c AS (SELECT 1 k FROM long_sequence(1))");
+            final String sql = "SELECT * FROM (SELECT m.id,m.ts,b.v FROM m CROSS JOIN b JOIN c ON b.k=c.k) TIMESTAMP(ts) LIMIT 4,8";
+            final String expected = """
+                    id\tts\tv
+                    1\t1970-01-01T00:00:01.000000Z\t5
+                    2\t1970-01-01T00:00:02.000000Z\t1
+                    2\t1970-01-01T00:00:02.000000Z\t2
+                    2\t1970-01-01T00:00:02.000000Z\t3
+                    """;
+            assertQuery(sql).noLeakCheck().noRandomAccess().sizeMayVary().timestamp("ts")
+                    .withPlanContaining("Materialize").returns(expected);
+            assertQuery(sql).noLeakCheck().fullFatJoins().noRandomAccess().expectSize().timestamp("ts").returns(expected);
+        });
+    }
+
+    @Test
+    public void testMaterializedNestedLoopStreamsBeyondJoinValueMaxPages() throws Exception {
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024 * 1024L);
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 64 * 1024L);
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 4);
@@ -868,48 +889,24 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             drainWalQueue();
             final String sql = "SELECT twap(m.id, m.ts), sum(b.v) FROM m CROSS JOIN b JOIN c ON b.k = c.k";
             assertUsesMaterializedNestedLoop(sql);
-            try (SqlCompiler compiler = engine.getSqlCompiler();
-                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                for (int i = 0; i < 3; i++) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        while (cursor.hasNext()) {
-                            // drain until the copy reaches its page limit
-                        }
-                        Assert.fail("expected the copy to breach its page limit at iteration " + i);
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "breached in VirtualMemory");
-                        TestUtils.assertContains(e.getFlyweightMessage(), "cairo.sql.hash.join.value.max.pages");
-                    }
-                }
-            }
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize()
+                    .returns("twap\tsum\n1.5\t15000150000\n");
+            assertQuery(sql).noLeakCheck().fullFatJoins().noRandomAccess().expectSize()
+                    .returns("twap\tsum\n1.5\t15000150000\n");
         });
     }
 
     @Test
-    public void testMaterializedNestedLoopFailsOnLargeInput() throws Exception {
-        // twap() keeps the leading input first, so the nested loop crosses it with a copy of the keyed component;
-        // the copy of its 100_000 rows breaches the limit part way through.
+    public void testMaterializedNestedLoopStreamsBeyondQueryMemoryLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE b AS (SELECT 1 k, x v FROM long_sequence(100_000))");
             execute("CREATE TABLE c AS (SELECT 1 k FROM long_sequence(1))");
             drainWalQueue();
-            final String sql = "SELECT twap(m.id, m.ts), sum(b.v) FROM m CROSS JOIN b JOIN c ON b.k = c.k";
+            final String sql = "SELECT count(), sum(v) FROM (SELECT m.ts, b.v FROM m CROSS JOIN b JOIN c ON b.k = c.k) TIMESTAMP(ts)";
             assertUsesMaterializedNestedLoop(sql);
-            try (SqlCompiler compiler = engine.getSqlCompiler();
-                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                for (int i = 0; i < 3; i++) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        while (cursor.hasNext()) {
-                            // drain until breach
-                        }
-                        Assert.fail("expected per-query memory breach at iteration " + i);
-                    } catch (CairoException e) {
-                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
-                    }
-                }
-            }
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tsum\n300000\t15000150000\n");
         });
     }
 

@@ -433,12 +433,13 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the nested loop of the unkeyed step copies its slave rows once: the loop rewinds the slave for every
+     * True when the leading cross input is fixed and the unkeyed step can cache its slave rows: the loop rewinds it for every
      * master row, as every nested loop but a RIGHT join's does, the slave is a join, whose rewind repeats the join, and
      * every step of that join is {@link LogicalPlans#isStableJoinStep stable}, so every evaluation yields its rows.
      */
-    private boolean isSlaveMaterialized(JoinInput step) {
-        if (step.getJoinType() == JoinKind.RIGHT_OUTER || !(step.getInput() instanceof JoinPlan slave)) {
+    private boolean isSlaveMaterialized(JoinPlan join, JoinInput step) {
+        if (!join.isLeadingCrossJoinFixed() || step.getJoinType() == JoinKind.RIGHT_OUTER || step.getJoinType() == JoinKind.FULL_OUTER
+                || !(step.getInput() instanceof JoinPlan slave)) {
             return false;
         }
         final boolean isParallelGroupByEnabled = context.getExecutionContext().isParallelGroupByEnabled();
@@ -727,7 +728,7 @@ final class OperatorPlanning implements Mutable {
                 && isAscendingMasterRead(join, inputIndex)) {
             step.setAlgorithm(JoinInput.Algorithm.MARKOUT);
         } else if (step.getKeys().size() == 0) {
-            step.setAlgorithm(isSlaveMaterialized(step) ? JoinInput.Algorithm.MATERIALIZED_NESTED_LOOP : JoinInput.Algorithm.NESTED_LOOP);
+            step.setAlgorithm(isSlaveMaterialized(join, step) ? JoinInput.Algorithm.MATERIALIZED_NESTED_LOOP : JoinInput.Algorithm.NESTED_LOOP);
         } else {
             final boolean isSlaveRandomAccess = PlanToFactoryRules.isSlaveEmptied(step) || isRandomAccess(slave);
             step.setAlgorithm(isSlaveRandomAccess && !isFullFatJoins ? JoinInput.Algorithm.LIGHT_HASH : JoinInput.Algorithm.HASH);

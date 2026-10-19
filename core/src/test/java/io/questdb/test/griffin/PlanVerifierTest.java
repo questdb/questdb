@@ -431,6 +431,22 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinMaterializedNestedLoopFullOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE b (k INT)");
+            execute("CREATE TABLE c (k INT)");
+            assertAlgorithmContradicts("SELECT * FROM (SELECT m.ts, b.k FROM m CROSS JOIN b JOIN c ON b.k = c.k) TIMESTAMP(ts)",
+                    JoinPlan.class, join -> {
+                        final JoinInput step = join.getOrderedInputs().getQuick(1);
+                        Assert.assertEquals(JoinInput.Algorithm.MATERIALIZED_NESTED_LOOP, step.getAlgorithm());
+                        step.setJoinType(JoinKind.FULL_OUTER);
+                        join.getOutput().setTimestampIndex(-1);
+                    }, PlanVerifier.JOIN_ALGORITHM);
+        });
+    }
+
+    @Test
     public void testJoinOnKept() {
         final JoinPlan join = join(source(), source(5, 6));
         final JoinInput step = join.getInputs().getQuick(1);

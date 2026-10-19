@@ -305,6 +305,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
+            MaterializedRecordCursorFactory.bindSlaveRecord(slaveCursor, record);
             isMasterHasNextPending = true;
             this.circuitBreaker = circuitBreaker;
 

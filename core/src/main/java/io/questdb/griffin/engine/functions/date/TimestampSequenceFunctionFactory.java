@@ -108,6 +108,13 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof TimestampSequenceFunction other) {
+                longIncrement.offerStateTo(other.longIncrement);
+            }
+        }
+
+        @Override
         public boolean shouldMemoize() {
             return true;
         }
@@ -165,6 +172,14 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public boolean isNonDeterministic() {
             return true;
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof TimestampSequenceVariableFunction other) {
+                start.offerStateTo(other.start);
+                longIncrement.offerStateTo(other.longIncrement);
+            }
         }
 
         @Override

@@ -40,6 +40,7 @@ public final class JoinPlan extends LogicalPlan {
     private final ObjList<JoinInput> orderedInputs = new ObjList<>();
     private JoinGraph graph;
     private boolean hasExplicitTimestamp;
+    private boolean isLeadingCrossJoinFixed;
 
     /**
      * Appends an input, last in occurrence and execution order alike.
@@ -75,6 +76,7 @@ public final class JoinPlan extends LogicalPlan {
         orderedInputs.clear();
         graph = null;
         hasExplicitTimestamp = false;
+        isLeadingCrossJoinFixed = false;
     }
 
     /**
@@ -126,6 +128,10 @@ public final class JoinPlan extends LogicalPlan {
         return count;
     }
 
+    public boolean isLeadingCrossJoinFixed() {
+        return isLeadingCrossJoinFixed;
+    }
+
     public JoinPlan of(int position) {
         setPosition(position);
         return this;
@@ -142,6 +148,10 @@ public final class JoinPlan extends LogicalPlan {
 
     public void setGraph(JoinGraph graph) {
         this.graph = graph;
+    }
+
+    public void setLeadingCrossJoinFixed(boolean isLeadingCrossJoinFixed) {
+        this.isLeadingCrossJoinFixed = isLeadingCrossJoinFixed;
     }
 
     @Override

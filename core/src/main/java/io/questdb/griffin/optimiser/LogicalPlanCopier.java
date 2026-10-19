@@ -211,6 +211,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.getFilterConjuncts().addAll(join.getFilterConjuncts());
         clone.getFilterConjunctOrigins().addAll(join.getFilterConjunctOrigins());
         clone.setExplicitTimestamp(join.hasExplicitTimestamp());
+        clone.setLeadingCrossJoinFixed(join.isLeadingCrossJoinFixed());
         return clone;
     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -66,6 +67,53 @@ public class JoinPlanningTest extends AbstractCairoTest {
                     Row forward scan
                     Frame forward scan on: lp_cross_a
             """;
+
+    @Test
+    public void testConnectedTimestampLeadingInputStreamsDisconnectedComponent() throws Exception {
+        assertAnchoredLeadingInputStreamsDisconnectedComponent("m JOIN q ON m.id=q.id");
+    }
+
+    @Test
+    public void testCorrelatedLeadingInputStreamsDisconnectedComponent() throws Exception {
+        assertAnchoredLeadingInputStreamsDisconnectedComponent("m CROSS JOIN LATERAL (SELECT q.id FROM q WHERE q.id=m.id) l");
+    }
+
+    @Test
+    public void testFixedLeadingCrossMaterializesIndependentComponents() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts, ARRAY[1.0,2.0] arr FROM long_sequence(3)) TIMESTAMP(ts)");
+            execute("CREATE TABLE q AS (SELECT 1 id FROM long_sequence(1))");
+            execute("CREATE TABLE b AS (SELECT 1 k, x v FROM long_sequence(3))");
+            execute("CREATE TABLE c AS (SELECT 1 k FROM long_sequence(1))");
+            assertQuery("SELECT count(),sum(b.v) FROM m CROSS JOIN UNNEST(m.arr) u CROSS JOIN b JOIN c ON b.k=c.k")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("Materialize")
+                    .returns("count\tsum\n18\t36\n");
+            assertQuery("SELECT count(),sum(b.v) FROM m CROSS JOIN LATERAL (SELECT * FROM q) l CROSS JOIN b JOIN c ON b.k=c.k")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("Materialize")
+                    .returns("count\tsum\n9\t18\n");
+            assertQuery("SELECT count(),sum(b.v) FROM m CROSS JOIN b CROSS JOIN LATERAL (SELECT * FROM q WHERE q.id=b.k) l JOIN c ON b.k=c.k")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("Materialize")
+                    .returns("count\tsum\n9\t18\n");
+            assertQuery("SELECT twap(m.id,m.ts),sum(b.v) FROM m CROSS JOIN b JOIN c ON b.k=c.k LEFT JOIN q ON true")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("Materialize")
+                    .returns("twap\tsum\n1.5\t18\n");
+        });
+    }
+
+    @Test
+    public void testLeftFalseLeadingInputStreamsDisconnectedComponent() throws Exception {
+        assertAnchoredLeadingInputStreamsDisconnectedComponent("m LEFT JOIN q ON false");
+    }
+
+    @Test
+    public void testLeftResidualLeadingInputStreamsDisconnectedComponent() throws Exception {
+        assertAnchoredLeadingInputStreamsDisconnectedComponent("m LEFT JOIN q ON m.id<q.id AND q.id-m.id=1");
+    }
+
+    @Test
+    public void testLeftTrueLeadingInputStreamsDisconnectedComponent() throws Exception {
+        assertAnchoredLeadingInputStreamsDisconnectedComponent("m LEFT JOIN (SELECT * FROM q LIMIT 1) q ON true");
+    }
 
     @Test
     public void testCompileTimeWhereConjunctsKeepTheirOwnBooleanValidation() throws Exception {
@@ -352,7 +400,7 @@ public class JoinPlanningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDisconnectedComponentAfterKeyedComponentIsMaterialized() throws Exception {
+    public void testDisconnectedComponentAfterKeyedComponentStreams() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_comp_a AS (SELECT x id FROM long_sequence(100))");
             execute("CREATE TABLE lp_comp_d AS (SELECT x id FROM long_sequence(50))");
@@ -363,28 +411,56 @@ public class JoinPlanningTest extends AbstractCairoTest {
             assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().withPlan("""
                     GroupBy vectorized: false
                       values: [count(*),sum(a.id),sum(c.k)]
-                        Cross Join
-                            Hash Join Light
-                              condition: d.id=a.id
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: lp_comp_a
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: lp_comp_d
-                            Materialize
+                        Hash Join Light
+                          condition: c.k=b.k
+                            Cross Join
                                 Hash Join Light
-                                  condition: c.k=b.k
+                                  condition: d.id=a.id
                                     PageFrame
                                         Row forward scan
-                                        Frame forward scan on: lp_comp_b
+                                        Frame forward scan on: lp_comp_a
                                     Hash
                                         PageFrame
                                             Row forward scan
-                                            Frame forward scan on: lp_comp_c
+                                            Frame forward scan on: lp_comp_d
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_comp_b
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_comp_c
                     """).returns("count\tsum\tsum1\n150\t3825\t3000\n");
             assertQuery(sql).noLeakCheck().fullFatJoins().noRandomAccess().expectSize().returns("count\tsum\tsum1\n150\t3825\t3000\n");
+        });
+    }
+
+    @Test
+    public void testDisconnectedComponentStreamsBeyondMaterializationBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_comp_a AS (SELECT 1 id FROM long_sequence(1))");
+            execute("CREATE TABLE lp_comp_d AS (SELECT 1 id FROM long_sequence(1))");
+            execute("CREATE TABLE lp_comp_b AS (SELECT 1 k, x v FROM long_sequence(100_000))");
+            execute("CREATE TABLE lp_comp_c AS (SELECT 1 k FROM long_sequence(1))");
+            final String sql = "SELECT count(), sum(b.v) FROM lp_comp_a a JOIN lp_comp_d d ON a.id = d.id "
+                    + "CROSS JOIN lp_comp_b b JOIN lp_comp_c c ON b.k = c.k";
+            for (int i = 0; i < 2; i++) {
+                if (i == 1) {
+                    setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 65_536L);
+                    setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 4);
+                    setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 131_072L);
+                }
+                assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().withPlanNotContaining("Materialize")
+                        .returns("count\tsum\n100000\t5000050000\n");
+                assertQuery(sql).noLeakCheck().fullFatJoins().noRandomAccess().expectSize()
+                        .returns("count\tsum\n100000\t5000050000\n");
+                // A binder-created nested join fixes the leading input under the solver's existing stability rules.
+                final String commaSql = "SELECT count(), sum(b.v) FROM lp_comp_a a, lp_comp_b b FULL JOIN lp_comp_c c ON b.k = c.k";
+                assertQuery(commaSql).noLeakCheck().noRandomAccess().expectSize().withPlanContaining("Materialize")
+                        .returns("count\tsum\n100000\t5000050000\n");
+                assertQuery(commaSql).noLeakCheck().fullFatJoins().noRandomAccess().expectSize()
+                        .returns("count\tsum\n100000\t5000050000\n");
+            }
         });
     }
 
@@ -602,8 +678,19 @@ public class JoinPlanningTest extends AbstractCairoTest {
                               values: [count(*),sum(a.id),sum(c.id),sum(d.id)]
                                 Hash Right Outer Join Light
                                   condition: d.id=c.id
-                                    Cross Join
-                            """ + scanA.indent(12) + "            Materialize\n" + keyed.indent(16) + "        Hash\n" + scanD.indent(12))
+                                    Hash Join Light
+                                      condition: c.id=b.id
+                                        Cross Join
+                            """ + scanA.indent(16) + """
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_outer_b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_outer_c
+                                    Hash
+                            """ + scanD.indent(12))
                     .returns("count\tsum\tsum1\tsum2\n1000\t500500\t1000\t1000\n");
         });
     }
@@ -1395,6 +1482,53 @@ public class JoinPlanningTest extends AbstractCairoTest {
                                 2	12
                                 3	13
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testTemporalLeadingInputStreamsDisconnectedComponent() throws Exception {
+        assertAnchoredLeadingInputStreamsDisconnectedComponent("m ASOF JOIN q");
+    }
+
+    private void assertAnchoredLeadingInputStreamsDisconnectedComponent(String leadingJoin) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts)");
+            execute("CREATE TABLE q AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts)");
+            execute("CREATE TABLE b (k INT, v LONG)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO b VALUES (1,10), (null,20), (2,30)");
+            execute("INSERT INTO c VALUES (1), (null)");
+            final String join = leadingJoin + " CROSS JOIN b JOIN c ON b.k=c.k";
+            final String countSql = "SELECT count(),sum(b.v) FROM " + join;
+            final String twapSql = "SELECT twap(m.id,m.ts),sum(b.v) FROM " + join;
+            final String timestampSql = "SELECT * FROM (SELECT m.ts,b.v FROM " + join + ") TIMESTAMP(ts)";
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    assertQuery("SELECT twap(m.id,m.ts),sum(b.v) FROM m CROSS JOIN b JOIN c ON b.k=c.k")
+                            .withCompiler(compiler).noLeakCheck().assertsPlanContaining("Materialize");
+                    assertQuery(countSql).withCompiler(compiler).noLeakCheck().assertsPlanNotContaining("Materialize");
+                    assertQuery(countSql).withCompiler(compiler).noLeakCheck().noRandomAccess().expectSize()
+                            .returns("count\tsum\n6\t90\n");
+                    assertQuery(twapSql).withCompiler(compiler).noLeakCheck().assertsPlanNotContaining("Materialize");
+                    assertQuery(twapSql).withCompiler(compiler).noLeakCheck().noRandomAccess().expectSize()
+                            .returns("twap\tsum\n1.5\t90\n");
+                    assertQuery(timestampSql).withCompiler(compiler).noLeakCheck().assertsPlanNotContaining("Materialize");
+                    try (RecordCursorFactory factory = compiler.compile(timestampSql, sqlExecutionContext).getRecordCursorFactory()) {
+                        Assert.assertEquals(0, factory.getMetadata().getTimestampIndex());
+                        assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().sizeMayVary()
+                                .returns("""
+                                        ts\tv
+                                        1970-01-01T00:00:01.000000Z\t10
+                                        1970-01-01T00:00:01.000000Z\t20
+                                        1970-01-01T00:00:02.000000Z\t10
+                                        1970-01-01T00:00:02.000000Z\t20
+                                        1970-01-01T00:00:03.000000Z\t10
+                                        1970-01-01T00:00:03.000000Z\t20
+                                        """);
+                    }
+                }
             }
         });
     }

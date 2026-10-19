@@ -367,8 +367,8 @@ public final class JoinInput implements Mutable {
          */
         NESTED_LOOP,
         /**
-         * A nested loop over a copy of the slave rows, which it takes once instead of rewinding the slave for every
-         * master row.
+         * A nested loop with a fixed leading input that caches the slave rows within its memory budget and
+         * streams them when they do not fit.
          */
         MATERIALIZED_NESTED_LOOP,
         /**

@@ -1269,6 +1269,41 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSortedSymbolIndexSmallBackwardSkipCostIsBounded() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int rowCount : new int[]{20_000, 200_000}) {
+                final String table = "t" + rowCount;
+                execute("CREATE TABLE " + table + " AS (SELECT x id, (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(" + rowCount + ")), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+                final String query = "SELECT id, sym FROM " + table + " WHERE ts > " + rowCount / 2 + " AND ts <= " + rowCount + " ORDER BY sym, ts DESC LIMIT 1,2";
+                assertQuery(query)
+                        .noLeakCheck()
+                        .withPlanContaining("SortedSymbolIndex")
+                        .returns("id\tsym\n" + (rowCount - 2) + "\ta\n");
+                assertSkipCost(query, 0, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexSmallForwardSkipCostIsBounded() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int rowCount : new int[]{20_000, 200_000}) {
+                final String table = "t" + rowCount;
+                execute("CREATE TABLE " + table + " AS (SELECT x id, (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(" + rowCount + ")), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+                final String query = "SELECT id, sym FROM " + table + " WHERE ts >= 0 AND ts < " + (rowCount / 2 + 1) + " ORDER BY sym, ts LIMIT 1,2";
+                assertQuery(query)
+                        .noLeakCheck()
+                        .withPlanContaining("SortedSymbolIndex")
+                        .returns("""
+                                id\tsym
+                                4\ta
+                                """);
+                assertSkipCost(query, 0, 0);
+            }
+        });
+    }
+
+    @Test
     public void testSortedSymbolIndexSkipCostFollowsLanding() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT 'a'::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(100_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
