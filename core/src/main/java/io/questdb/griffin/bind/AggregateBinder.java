@@ -47,6 +47,7 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
@@ -251,8 +252,12 @@ final class AggregateBinder implements Mutable {
                     ? ctx.functionBinder.bindValue(expression, bindingScope, sourceAlias(source), scope.cursorNodes, scope.cursorColumns, context)
                     : ctx.functionBinder.bindValue(expression, bindingScope, sourceAlias(source), context);
         }
-        // Explicit constant keys retain keyed empty-input semantics. Implicit
-        // SELECT constants never reach here and remain above the aggregate.
+        if (scope.isImplicitAggregation && ((bound.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
+                || bound instanceof FunctionExpression call && LogicalPlans.isStableWithinExecution(call)
+                && LogicalPlans.readsOnlyOuterColumns(call) && LogicalPlans.readsOnly(call, bindingScope))) {
+            scope.aggregateProjectionExpressions.put(expression, bound);
+            return;
+        }
         scope.groupingNodes.add(expression);
         aggregate.getGroupingExpressions().add(bound);
         final int index = bound instanceof ColumnExpression ref ? input.getColumnIndexById(ref.getColumnId()) : -1;
@@ -371,8 +376,11 @@ final class AggregateBinder implements Mutable {
                     }
                     scope.substitutionNodes.clear();
                     scope.substitutionColumns.clear();
+                    scope.aggregateSubstitutions.clear();
                     collectAggregateOrderSubstitutions(order, source, aggregate, project, visibleCount);
-                    final BoundExpression expression = ctx.functionBinder.bind(order, project.getOutput(), null, scope.substitutionNodes, scope.substitutionColumns, executionContext);
+                    final BoundExpression expression = scope.substitutionNodes.size() == 1 && scope.substitutionNodes.getQuick(0) == order
+                            ? scope.aggregateSubstitutions.getQuick(0)
+                            : ctx.functionBinder.bind(order, project.getOutput(), null, scope.substitutionNodes, scope.aggregateSubstitutions, executionContext);
                     if (readsProjectedColumns(expression, project)) {
                         scope.resetAliases(project.getOutput());
                         index = project.getExpressions().size();
@@ -426,9 +434,13 @@ final class AggregateBinder implements Mutable {
         final BindScope scope = ctx.scope();
         scope.substitutionNodes.clear();
         scope.substitutionColumns.clear();
+        scope.aggregateSubstitutions.clear();
         collectAggregateOrderSubstitutions(order, source, aggregate, project,
                 model.isDistinct() && !ctx.hasAggregation(model, source) ? visibleCount : 0);
-        return ctx.functionBinder.bind(order, project.getOutput(), null, scope.substitutionNodes, scope.substitutionColumns, executionContext);
+        if (scope.substitutionNodes.size() == 1 && scope.substitutionNodes.getQuick(0) == order) {
+            return scope.aggregateSubstitutions.getQuick(0);
+        }
+        return ctx.functionBinder.bind(order, project.getOutput(), null, scope.substitutionNodes, scope.aggregateSubstitutions, executionContext);
     }
 
     private LogicalPlan bindDistinctAggregation(
@@ -540,7 +552,7 @@ final class AggregateBinder implements Mutable {
             }
             for (int i = args.size() - 1; i > 0; i--) {
                 final ExpressionNode arg = args.getQuick(i);
-                if (aggregateSubstitutionIndex(arg, source, aggregate) < 0) {
+                if (ctx.scope().aggregateProjectionExpressions.get(arg) == null && aggregateSubstitutionIndex(arg, source, aggregate) < 0) {
                     collectAggregateChildSubstitutions(arg, source, aggregate);
                 }
             }
@@ -566,6 +578,12 @@ final class AggregateBinder implements Mutable {
         if (expression == null) {
             return;
         }
+        final BoundExpression retained = scope.aggregateProjectionExpressions.get(expression);
+        if (retained != null) {
+            scope.substitutionNodes.add(expression);
+            scope.aggregateSubstitutions.add(ctx.expressionRewriter.remapColumns(retained, scope.aggregateColumnMappings));
+            return;
+        }
         if (expression.type == ExpressionNode.LITERAL
                 && getColumnIndexQuiet(aggregate.getChild().getOutput(), expression.token) < 0
                 && orderProjectionIndex(expression, project.getOutput(), visibleCount) >= 0) {
@@ -576,7 +594,7 @@ final class AggregateBinder implements Mutable {
             final OutputSchema output = project.getOutput();
             final int projectedIndex = scope.aggregateProjectionIndexes.getQuick(index);
             scope.substitutionNodes.add(expression);
-            scope.substitutionColumns.add(ctx.planNodes.columns.next().of(output.getColumnId(projectedIndex), output.getColumnType(projectedIndex), expression.position));
+            scope.aggregateSubstitutions.add(ctx.planNodes.columns.next().of(output.getColumnId(projectedIndex), output.getColumnType(projectedIndex), expression.position));
             return;
         }
         if (expression.type == ExpressionNode.LITERAL) {
@@ -598,21 +616,28 @@ final class AggregateBinder implements Mutable {
         }
     }
 
-    private void collectColumnSpellings(ExpressionNode node, OutputSchema input) {
+    private void collectColumnSpellings(ExpressionNode node, OutputSchema input, CharSequence inputAlias) {
         if (node == null) {
             return;
         }
         if (node.type == ExpressionNode.LITERAL) {
-            final int index = FunctionBinder.findColumn(node, input, null);
+            int index = FunctionBinder.findColumn(node, input, inputAlias);
+            if (index < 0) {
+                final ObjList<OutputSchema> outerScopes = ctx.scope().outerScopes;
+                for (int i = outerScopes.size() - 1; i >= 0 && index < 0; i--) {
+                    input = outerScopes.getQuick(i);
+                    index = FunctionBinder.findColumn(node, input, null);
+                }
+            }
             if (index >= 0 && columnSpellings.keyIndex(input.getColumnId(index)) > -1) {
                 columnSpellings.put(input.getColumnId(index), node);
             }
             return;
         }
-        collectColumnSpellings(node.lhs, input);
-        collectColumnSpellings(node.rhs, input);
+        collectColumnSpellings(node.lhs, input, inputAlias);
+        collectColumnSpellings(node.rhs, input, inputAlias);
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            collectColumnSpellings(node.args.getQuick(i), input);
+            collectColumnSpellings(node.args.getQuick(i), input, inputAlias);
         }
     }
 
@@ -623,7 +648,25 @@ final class AggregateBinder implements Mutable {
     private void collectGroupingExpressions(
             ExpressionNode expression, QueryModel model, QueryModel source, GroupingPlan aggregate, SqlExecutionContext context, boolean isNested
     ) throws SqlException {
-        if (expression == null || ctx.isAggregate(expression)) {
+        final BindScope scope = ctx.scope();
+        if (expression == null || ctx.isAggregate(expression) || scope.aggregateProjectionExpressions.get(expression) != null) {
+            return;
+        }
+        if (scope.isImplicitAggregation && isNested && expression.type != ExpressionNode.LITERAL
+                && !ctx.hasAggregate(expression) && !hasCursorColumn(expression)) {
+            if (!isConstantGroupingExpression(expression)) {
+                final OutputSchema input = aggregate.getChild().getOutput();
+                final OutputSchema bindingScope = aggregate.getChild() instanceof WindowPlan ? ctx.windowBindingScope(input) : input;
+                final BoundExpression bound = scope.cursorNodes.size() > 0
+                        ? ctx.functionBinder.bindValue(expression, bindingScope, sourceAlias(source), scope.cursorNodes, scope.cursorColumns, context)
+                        : ctx.functionBinder.bindValue(expression, bindingScope, sourceAlias(source), context);
+                columnSpellings.clear();
+                collectColumnSpellings(expression, bindingScope, sourceAlias(source));
+                scope.aggregateColumnMappings.clear();
+                collectNestedGroupingColumns(bound, model, source, aggregate, context);
+                scope.aggregateProjectionExpressions.put(expression, ctx.expressionRewriter.remapColumns(bound, scope.aggregateColumnMappings));
+                columnSpellings.clear();
+            }
             return;
         }
         if (!ctx.hasAggregate(expression) && (!isNested || expression.type == ExpressionNode.LITERAL)) {
@@ -638,6 +681,25 @@ final class AggregateBinder implements Mutable {
         } else {
             for (int i = 0, n = expression.args.size(); i < n; i++) {
                 collectGroupingExpressions(expression.args.getQuick(i), model, source, aggregate, context, true);
+            }
+        }
+    }
+
+    private void collectNestedGroupingColumns(
+            BoundExpression expression, QueryModel model, QueryModel source, GroupingPlan aggregate, SqlExecutionContext context
+    ) throws SqlException {
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                collectNestedGroupingColumns(call.argumentAt(i), model, source, aggregate, context);
+            }
+        } else if (expression instanceof ColumnExpression || expression instanceof OuterColumnExpression) {
+            final int columnId = expression instanceof ColumnExpression column ? column.getColumnId() : ((OuterColumnExpression) expression).getColumnId();
+            final BindScope scope = ctx.scope();
+            if (scope.aggregateColumnMappings.get(columnId) < 0) {
+                final ExpressionNode spelling = columnSpellings.get(columnId);
+                addGroupingExpression(spelling, model, source, aggregate, context);
+                final int index = findGroupingExpression(spelling, source, aggregate);
+                scope.aggregateColumnMappings.put(columnId, aggregate.getOutput().getColumnId(index));
             }
         }
     }
@@ -815,6 +877,10 @@ final class AggregateBinder implements Mutable {
                         input.getMetadata(i), input.getColumnName(i), false);
             }
         }
+        scope.aggregateColumnMappings.clear();
+        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+            scope.aggregateColumnMappings.put(input.getColumnId(i), project.getOutput().getColumnId(scope.aggregateProjectionIndexes.getQuick(i)));
+        }
     }
 
     private ExpressionNode findGroupByViolation(ExpressionNode expression) {
@@ -849,6 +915,16 @@ final class AggregateBinder implements Mutable {
     private boolean hasAggregateOrder(QueryModel source) {
         for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
             if (ctx.isAggregate(source.getOrderBy().getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasCursorColumn(ExpressionNode expression) {
+        final ObjList<ExpressionNode> cursorNodes = ctx.scope().cursorNodes;
+        for (int i = 0, n = cursorNodes.size(); i < n; i++) {
+            if (containsNode(expression, cursorNodes.getQuick(i))) {
                 return true;
             }
         }
@@ -892,7 +968,7 @@ final class AggregateBinder implements Mutable {
     private boolean isAggregateOrderAvailable(
             ExpressionNode expression, QueryModel model, QueryModel source, GroupingPlan aggregate, boolean hasSelectAliases
     ) throws SqlException {
-        if (expression == null || ctx.isAggregate(expression)) {
+        if (expression == null || ctx.isAggregate(expression) || ctx.scope().aggregateProjectionExpressions.get(expression) != null) {
             return true;
         }
         if (hasSelectAliases && expression.type == ExpressionNode.LITERAL
@@ -1088,7 +1164,7 @@ final class AggregateBinder implements Mutable {
         columnSpellings.clear();
         if (isJoin) {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                collectColumnSpellings(model.getBottomUpColumns().getQuick(i).getAst(), sampleBy.getChild().getOutput());
+                collectColumnSpellings(model.getBottomUpColumns().getQuick(i).getAst(), sampleBy.getChild().getOutput(), null);
             }
         }
         for (int i = 0, n = sampleBy.getGroupingExpressions().size(); i < n; i++) {
@@ -1266,11 +1342,17 @@ final class AggregateBinder implements Mutable {
 
     private boolean substituteAggregateNode(ExpressionNode expression, QueryModel source, GroupingPlan aggregate) throws SqlException {
         final BindScope scope = ctx.scope();
+        final BoundExpression retained = scope.aggregateProjectionExpressions.get(expression);
+        if (retained != null) {
+            scope.substitutionNodes.add(expression);
+            scope.aggregateSubstitutions.add(retained);
+            return true;
+        }
         final int index = aggregateSubstitutionIndex(expression, source, aggregate);
         if (index >= 0) {
             final OutputSchema output = aggregate.getOutput();
             scope.substitutionNodes.add(expression);
-            scope.substitutionColumns.add(ctx.planNodes.columns.next().of(output.getColumnId(index), output.getColumnType(index), expression.position,
+            scope.aggregateSubstitutions.add(ctx.planNodes.columns.next().of(output.getColumnId(index), output.getColumnType(index), expression.position,
                     expression.type == ExpressionNode.LITERAL));
             return true;
         }
@@ -1322,11 +1404,12 @@ final class AggregateBinder implements Mutable {
         final BindScope scope = ctx.scope();
         scope.substitutionNodes.clear();
         scope.substitutionColumns.clear();
+        scope.aggregateSubstitutions.clear();
         collectAggregateSubstitutions(expression, source, aggregate);
         if (scope.substitutionNodes.size() == 1 && scope.substitutionNodes.getQuick(0) == expression) {
-            return scope.substitutionColumns.getQuick(0);
+            return scope.aggregateSubstitutions.getQuick(0);
         }
-        return ctx.functionBinder.bindValue(expression, aggregate.getOutput(), null, scope.substitutionNodes, scope.substitutionColumns, context);
+        return ctx.functionBinder.bindValue(expression, aggregate.getOutput(), null, scope.substitutionNodes, scope.aggregateSubstitutions, context);
     }
 
     LogicalPlan bindAggregation(
@@ -1341,6 +1424,7 @@ final class AggregateBinder implements Mutable {
         final boolean hasSampleByFill = source.getSampleBy() != null && sampleFill.size() > 0
                 && (sampleBy != null || sampleFill.size() > 1 || !SqlKeywords.isNoneKeyword(sampleFill.getQuick(0).token));
         scope.clearAggregateNodes();
+        scope.aggregateProjectionExpressions.clear();
         scope.groupingNodes.clear();
         final boolean isDistinctRetained = model.isDistinct() && !(isGroupingSelect(model) && (!isOrderBound || !hasAggregateOrder(source)));
         scope.aggregateSelectExpressions.clear();
@@ -1354,6 +1438,8 @@ final class AggregateBinder implements Mutable {
             scope.aggregateOrderExpressions.add(orders.getQuick(i));
         }
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
+        scope.isImplicitAggregation = groupBy.size() == 0 && sampleBy == null && sampleByBucket == null
+                && !(input instanceof HorizonJoinPlan) && ctx.hasAggregation(model, source);
         aggregate.setExplicitGrouping(groupBy.size() > 0);
         aggregate.setSampleByBucket(sampleByBucket != null);
         aggregate.setDirectTableInput(hasDirectTableInput(source));

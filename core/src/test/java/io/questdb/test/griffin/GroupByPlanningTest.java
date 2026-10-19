@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -39,6 +40,234 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class GroupByPlanningTest extends AbstractCairoTest {
+    @Test
+    public void testNestedCursorGroupingExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            final boolean isParallelEnabled = sqlExecutionContext.isParallelGroupByEnabled();
+            try {
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    sqlExecutionContext.setParallelGroupByEnabled(isParallel);
+                    assertQuery("SELECT (pg_catalog.pg_class()).oid AS k, count() + abs((pg_catalog.pg_class()).oid) AS z FROM long_sequence(2)")
+                            .expectSize().returns("k\tz\n1259\t1261\n");
+                    assertQuery("SELECT (pg_catalog.pg_class()).oid AS k, count() + abs(abs((pg_catalog.pg_class()).oid) + (pg_catalog.pg_class()).oid) AS z FROM long_sequence(2)")
+                            .expectSize().returns("k\tz\n1259\t2520\n");
+                    assertQuery("SELECT count() + abs(abs((pg_catalog.pg_class()).oid)) AS z, abs((pg_catalog.pg_class()).oid) AS k FROM long_sequence(2)")
+                            .expectSize().returns("z\tk\n1261\t1259\n");
+                    assertQuery("SELECT (pg_catalog.pg_class()).oid AS k, count() + abs((pg_catalog.pg_class()).oid) + length(typeOf(x)) AS z FROM long_sequence(2)")
+                            .expectSize().returns("k\tz\n1259\t1265\n");
+                    assertQuery("SELECT (pg_catalog.pg_class()).oid AS k, count() + abs((pg_catalog.pg_class()).oid + x) AS z FROM long_sequence(2) ORDER BY z")
+                            .expectSize().returns("k\tz\n1259\t1261\n1259\t1262\n");
+                }
+            } finally {
+                sqlExecutionContext.setParallelGroupByEnabled(isParallelEnabled);
+            }
+        });
+    }
+
+    @Test
+    public void testImplicitConstantFunctionKeepsEmptyAggregateRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("SELECT coalesce(NULL::INT,99) AS z,count() AS n,sum(k) AS s FROM lp_group WHERE k=100")
+                    .noRandomAccess().expectSize()
+                    .returns("z\tn\ts\n99\t0\tnull\n");
+        });
+    }
+
+    @Test
+    public void testNestedConstantFunctionKeepsEmptyAggregateRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("SELECT count()+length(typeOf(k)) AS z,count() AS n FROM lp_group WHERE k=100")
+                    .noRandomAccess().expectSize()
+                    .returns("z\tn\n3\t0\n");
+        });
+    }
+
+    @Test
+    public void testImplicitConstantFunctionsAcrossAggregateAndFilterModes() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            final boolean isParallelEnabled = sqlExecutionContext.isParallelGroupByEnabled();
+            final int previousJitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    sqlExecutionContext.setParallelGroupByEnabled(isParallel);
+                    for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                        sqlExecutionContext.setJitMode(jitMode);
+                        assertQuery("SELECT coalesce(NULL::INT,99) AS z,count() AS n,sum(k) AS s FROM lp_group WHERE k=100")
+                                .noRandomAccess().expectSize()
+                                .returns("z\tn\ts\n99\t0\tnull\n");
+                        assertQuery("SELECT abs(-99) AS z,count() AS n FROM lp_group WHERE k=100")
+                                .noRandomAccess().expectSize()
+                                .returns("z\tn\n99\t0\n");
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setParallelGroupByEnabled(isParallelEnabled);
+                sqlExecutionContext.setJitMode(previousJitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testImplicitConstantsPreserveExplicitGroupingDistinctAndVolatility() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            for (String group : new String[]{"z", "1", "coalesce(NULL::INT,99)"}) {
+                assertQuery("SELECT coalesce(NULL::INT,99) AS z,count() AS n FROM lp_group WHERE k=100 GROUP BY " + group)
+                        .expectSize().returns("z\tn\n");
+                assertQuery("SELECT coalesce(NULL::INT,99) AS z,count() AS n FROM lp_group GROUP BY " + group)
+                        .expectSize().returns("z\tn\n99\t6\n");
+            }
+            assertQuery("SELECT DISTINCT coalesce(NULL::INT,99) AS z FROM lp_group WHERE k=100")
+                    .expectSize().returns("z\n");
+            assertQuery("SELECT DISTINCT coalesce(NULL::INT,99) AS z FROM lp_group")
+                    .expectSize().returns("z\n99\n");
+            assertQuery("SELECT DISTINCT coalesce(NULL::INT,99) AS z,count() AS n FROM lp_group WHERE k=100")
+                    .noRandomAccess().expectSize().returns("z\tn\n99\t0\n");
+            assertQuery("SELECT k,coalesce(NULL::INT,99) AS z,count() AS n FROM lp_group WHERE k=100")
+                    .expectSize().returns("k\tz\tn\n");
+            assertQuery("SELECT k,coalesce(NULL::INT,99) AS z,count() AS n FROM lp_group ORDER BY k")
+                    .expectSize().returns("k\tz\tn\nnull\t99\t1\n1\t99\t2\n2\t99\t2\n3\t99\t1\n");
+            assertQuery("SELECT coalesce(rnd_int(),99) AS z,count() AS n FROM lp_group WHERE k=100")
+                    .expectSize().returns("z\tn\n");
+        });
+    }
+
+    @Test
+    public void testImplicitFoldedColumnsAndConstantInputPaths() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            execute("CREATE TABLE empty_group (k INT)");
+            for (String input : new String[]{"lp_group WHERE k=100", "lp_group WHERE false", "empty_group"}) {
+                assertQuery("SELECT coalesce(NULL::INT,99) AS z,upper('a') AS s,upper('b'::VARCHAR) AS v,count() AS n,sum(k) AS total FROM " + input)
+                        .noRandomAccess().expectSize()
+                        .returns("z\ts\tv\tn\ttotal\n99\tA\tB\t0\tnull\n");
+                assertQuery("SELECT typeOf(k) AS t,k+NULL::INT AS z,count() AS n FROM " + input)
+                        .noRandomAccess().expectSize().returns("t\tz\tn\nINT\tnull\t0\n");
+            }
+            assertQuery("SELECT typeOf(k) AS t,k+NULL::INT AS z,count() AS n FROM lp_group")
+                    .noRandomAccess().expectSize().returns("t\tz\tn\nINT\tnull\t6\n");
+            assertQuery("SELECT coalesce(NULL::INT,99) AS z,count() AS n FROM lp_group")
+                    .noRandomAccess().expectSize().returns("z\tn\n99\t6\n");
+            assertQuery("SELECT coalesce(NULL::INT,99) AS z,count() AS n FROM (SELECT typeOf(k) AS t,count() AS n FROM lp_group WHERE k=100) WHERE n=100")
+                    .noRandomAccess().expectSize().returns("z\tn\n99\t0\n");
+        });
+    }
+
+    @Test
+    public void testImplicitRetainedConstantsInOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            for (String order : new String[]{"z", "1", "coalesce(NULL::INT,99)"}) {
+                assertQuery("SELECT coalesce(NULL::INT,99) AS z,count() AS n FROM lp_group WHERE k=100 ORDER BY " + order)
+                        .noRandomAccess().expectSize().returns("z\tn\n99\t0\n");
+            }
+            assertQuery("SELECT count() AS n FROM lp_group WHERE k=100 ORDER BY typeOf(k)")
+                    .noRandomAccess().expectSize().returns("n\n0\n");
+            assertQuery("SELECT count()+1 AS n FROM lp_group WHERE k=100 ORDER BY length(typeOf(k))")
+                    .noRandomAccess().expectSize().returns("n\n1\n");
+            assertQuery("SELECT count() AS n FROM lp_group WHERE k=100 ORDER BY count()+length(typeOf(k))")
+                    .noRandomAccess().expectSize().returns("n\n0\n");
+            assertQuery("SELECT coalesce(NULL::INT,99) AS z FROM lp_group WHERE k=100 ORDER BY count()")
+                    .noRandomAccess().expectSize().returns("z\n99\n");
+        });
+    }
+
+    @Test
+    public void testImplicitRuntimeConstantsSurviveRebindingAndCompilerClose() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            RecordCursorFactory retained = null;
+            try {
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    retained = compiler.compile(
+                            "SELECT coalesce($1,99) AS z,count() AS n FROM lp_group WHERE k=100", sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    assertFactory(retained).withContext(sqlExecutionContext).noRandomAccess().expectSize()
+                            .returns("z\tn\n99\t0\n");
+                    try (RecordCursorFactory other = compiler.compile(
+                            "SELECT count()+length(typeOf(k)) AS z FROM lp_group", sqlExecutionContext
+                    ).getRecordCursorFactory()) {
+                        assertFactory(other).withContext(sqlExecutionContext).noRandomAccess().expectSize()
+                                .returns("z\n9\n");
+                    }
+                    try {
+                        compiler.compile("SELECT coalesce($1,99) AS z,count(),missing(k) FROM lp_group", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "unknown function name");
+                    }
+                    compiler.clear();
+                }
+                bindVariableService.setInt(0, 7);
+                assertFactory(retained).withContext(sqlExecutionContext).noRandomAccess().expectSize()
+                        .returns("z\tn\n7\t0\n");
+                bindVariableService.setInt(0, Numbers.INT_NULL);
+                assertFactory(retained).withContext(sqlExecutionContext).noRandomAccess().expectSize()
+                        .returns("z\tn\n99\t0\n");
+            } finally {
+                Misc.free(retained);
+            }
+            assertQuery("SELECT coalesce(now(),NULL::TIMESTAMP) IS NOT NULL AS z,count() AS n FROM lp_group WHERE k=100")
+                    .noRandomAccess().expectSize().returns("z\tn\ntrue\t0\n");
+        });
+    }
+
+    @Test
+    public void testNestedConstantsPreserveInputGrouping() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nested_group (k INT,j INT)");
+            execute("INSERT INTO nested_group VALUES (1,2),(1,3),(-1,4),(-1,5)");
+            assertQuery("SELECT count()+abs(k) AS z FROM nested_group ORDER BY z")
+                    .expectSize().returns("z\n3\n3\n");
+            assertQuery("SELECT count()+abs(k+length(typeOf(j))) AS z FROM nested_group ORDER BY z")
+                    .expectSize().returns("z\n4\n6\n");
+            assertQuery("SELECT count()+abs(k) AS z FROM nested_group ORDER BY count()+abs(k+length(typeOf(j)))")
+                    .expectSize().returns("z\n3\n3\n");
+            assertQuery("SELECT count()+abs(k+length(typeOf(j))) AS z FROM nested_group WHERE k=100")
+                    .expectSize().returns("z\n");
+            assertQuery("SELECT count() AS n FROM (SELECT count()+coalesce(rnd_int(),length(typeOf(k))) AS z FROM nested_group WHERE k=100)")
+                    .noRandomAccess().expectSize().returns("n\n1\n");
+        });
+    }
+
+    @Test
+    public void testNestedConstantsUnderBinaryAndMultiArgumentFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("SELECT coalesce(sum(k),length(typeOf(k)),99) AS z FROM lp_group WHERE k=100")
+                    .noRandomAccess().expectSize().returns("z\n3\n");
+            assertQuery("SELECT coalesce(sum(k),length(typeOf(k)),99) AS z FROM lp_group")
+                    .noRandomAccess().expectSize().returns("z\n9\n");
+            assertQuery("SELECT count()+length(typeOf(k)) AS z,count() AS n FROM lp_group")
+                    .noRandomAccess().expectSize().returns("z\tn\n9\t6\n");
+        });
+    }
+
+    @Test
+    public void testNestedConstantsWithQualifiedColumnsAndOuterScopes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nested_group (k INT,j INT)");
+            execute("INSERT INTO nested_group VALUES (1,2),(1,3),(-1,4),(-1,5)");
+            assertQuery("SELECT count()+abs(t.k) AS z FROM nested_group t ORDER BY z")
+                    .expectSize().returns("z\n3\n3\n");
+            assertQuery("SELECT count()+abs(t.k+length(typeOf(t.j))) AS z FROM nested_group t ORDER BY z")
+                    .expectSize().returns("z\n4\n6\n");
+            assertQuery("""
+                    SELECT o.k,s.z FROM nested_group o
+                    LEFT JOIN LATERAL (
+                        SELECT count()+abs(o.k)+length(typeOf(i.j)) AS z FROM nested_group i WHERE i.k=o.k
+                    ) s ON true ORDER BY o.k
+                    """)
+                    .returns("k\tz\n-1\t6\n-1\t6\n1\t6\n1\t6\n");
+            assertQuery("SELECT typeOf(k) AS t,count()+length(typeOf((SELECT 1))) AS n FROM nested_group WHERE k=100")
+                    .noRandomAccess().expectSize().returns("t\tn\nINT\t6\n");
+        });
+    }
+
     @Test
     public void testAggregateFactorySurvivesCompilerReuseAndClose() throws Exception {
         assertMemoryLeak(() -> {

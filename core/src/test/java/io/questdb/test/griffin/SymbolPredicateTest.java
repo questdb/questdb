@@ -27,11 +27,78 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class SymbolPredicateTest extends AbstractCairoTest {
+    @Test
+    public void testDisjointSymbolExclusions() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            final StringSink query = new StringSink();
+            query.put("SELECT id FROM lp_symbol WHERE s IN ('alpha','Alpha','中','a',''");
+            for (int i = 0; i < 1024; i++) {
+                query.put(",'included").put(i).put('\'');
+            }
+            query.put(") AND s NOT IN (");
+            for (int i = 0; i < 1024; i++) {
+                if (i > 0) {
+                    query.put(',');
+                }
+                query.put("'excluded").put(i).put('\'');
+            }
+            query.put(") ORDER BY id");
+            assertQuery(query).sizeMayVary().returns("id\n1\n2\n3\n5\n6\n");
+        });
+    }
+
+    @Test
+    public void testMixedTypeSymbolExclusions() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            execute("INSERT INTO lp_symbol VALUES (87,7,'42','42'),(88,8,'-1','-1')");
+            assertQuery("""
+                    SELECT id FROM lp_symbol WHERE s IN ('alpha',NULL,'中')
+                    AND s NOT IN ('missing','a') ORDER BY id
+                    """).sizeMayVary().returns("id\n1\n3\n4\n");
+            assertQuery("""
+                    SELECT id FROM lp_symbol
+                    WHERE s IN ('alpha','Alpha','中',null,'a','')
+                    AND s NOT IN ('missing','a'::CHAR,'中'::VARCHAR,NULL::STRING)
+                    ORDER BY id
+                    """).sizeMayVary().returns("id\n1\n2\n6\n");
+            assertQuery("""
+                    SELECT id FROM lp_symbol
+                    WHERE s IN ('alpha'::VARCHAR,'Alpha'::SYMBOL,'中'::CHAR,NULL::CHAR,'a'::VARCHAR,''::VARCHAR)
+                    AND s NOT IN ('alpha','Alpha','',NULL::VARCHAR,'absent'::VARCHAR)
+                    ORDER BY id
+                    """).sizeMayVary().returns("id\n3\n5\n");
+            assertQuery("""
+                    SELECT id FROM lp_symbol WHERE s IN (42,-1,NULL::INT)
+                    AND s NOT IN ('42'::VARCHAR,100,NULL::LONG) ORDER BY id
+                    """).sizeMayVary().returns("id\n8\n");
+            assertQuery("""
+                    SELECT id FROM lp_symbol WHERE s IN ('a',NULL)
+                    AND s NOT IN ('a'::CHAR,NULL::CHAR,'absent')
+                    """).sizeMayVary().returns("id\n");
+            bindVariableService.setStr(0, "alpha");
+            bindVariableService.setStr(1, "中");
+            bindVariableService.setStr(2, "missing");
+            try (RecordCursorFactory factory = select("""
+                    SELECT id FROM lp_symbol WHERE s IN ($1,$2,NULL,'a')
+                    AND s NOT IN ($3,'a'::CHAR) ORDER BY id
+                    """)) {
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("id\n1\n3\n4\n");
+                bindVariableService.setStr(2, "alpha");
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("id\n3\n4\n");
+                bindVariableService.setStr(2, null);
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("id\n1\n3\n");
+            }
+        });
+    }
+
     @Test
     public void testStaticSymbolComparisonsNullsAndAliases() throws Exception {
         assertMemoryLeak(() -> {

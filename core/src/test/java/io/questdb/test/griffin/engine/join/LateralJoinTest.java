@@ -9518,6 +9518,292 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarComputedOuterCrossJoinPreservesEmptyInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT)");
+            execute("INSERT INTO outer_t VALUES (1), (2)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.k, s.z, s.n FROM outer_t o
+                        CROSS JOIN LATERAL (SELECT o.k + 1 z, count() n FROM inner_t i WHERE i.k = o.k) s
+                        ORDER BY o.k
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tz\tn
+                                1\t2\t1
+                                2\t3\t0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterDecimalOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT, d DECIMAL(18, 2))");
+            execute("INSERT INTO outer_t VALUES (1, 1.25m), (2, null), (3, 2.50m)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1)");
+
+            final ObjList<String> projections = new ObjList<>();
+            projections.add("count() n");
+            projections.add("o.k + 1 z, count() n");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (int j = 0; j < projections.size(); j++) {
+                    assertQuery("SELECT o.k, s.n FROM outer_t o CROSS JOIN LATERAL (SELECT "
+                            + projections.getQuick(j) + " FROM inner_t i WHERE i.k = o.k ORDER BY o.d + 1m) s ORDER BY o.k")
+                            .noLeakCheck()
+                            .expectSize(isFullFat)
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tn
+                                    1\t1
+                                    2\t0
+                                    3\t0
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterExplicitGroupAndDistinctStayEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT)");
+            execute("INSERT INTO outer_t VALUES (1), (2)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1)");
+
+            final ObjList<String> bodies = new ObjList<>();
+            bodies.add("SELECT o.k + 1 z, count() n FROM inner_t i WHERE i.k = o.k GROUP BY o.k + 1");
+            bodies.add("SELECT o.k + 1 z, count() n FROM inner_t i WHERE i.k = o.k GROUP BY z");
+            bodies.add("SELECT o.k + 1 z, count() n FROM inner_t i WHERE i.k = o.k GROUP BY 1");
+            bodies.add("SELECT DISTINCT o.k + 1 z FROM inner_t i WHERE i.k = o.k");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (boolean isLeft : new boolean[]{false, true}) {
+                    for (int j = 0; j < bodies.size(); j++) {
+                        assertQuery("SELECT o.k, s.z FROM outer_t o " + (isLeft ? "LEFT" : "CROSS")
+                                + " JOIN LATERAL (" + bodies.getQuick(j) + ") s"
+                                + (isLeft ? " ON true" : "") + " ORDER BY o.k")
+                                .noLeakCheck()
+                                .expectSize(isFullFat && !isLeft)
+                                .fullFatJoins(isFullFat)
+                                .returns("k\tz\n1\t2\n" + (isLeft ? "2\tnull\n" : ""));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterLeftJoinPreservesEmptyInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT)");
+            execute("INSERT INTO outer_t VALUES (1), (2)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.k, s.z, s.n FROM outer_t o
+                        LEFT JOIN LATERAL (SELECT o.k + 1 z, count() n FROM inner_t i WHERE i.k = o.k) s ON true
+                        ORDER BY o.k
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tz\tn
+                                1\t2\t1
+                                2\t3\t0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterNullableAndFoldedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (id INT, k INT, txt STRING)");
+            execute("INSERT INTO outer_t VALUES (1, 1, 'a'), (2, 2, null), (3, null, 'c')");
+            execute("CREATE TABLE inner_t (k INT)");
+
+            final ObjList<String> orders = new ObjList<>();
+            orders.add("typeof(i.k) || o.txt || 'x'");
+            orders.add("count() + coalesce(sum(i.k), 0) + coalesce(o.k, 10)");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (boolean isLeft : new boolean[]{false, true}) {
+                    for (int j = 0; j < orders.size(); j++) {
+                        assertQuery("SELECT o.id, s.z, s.fallback, s.folded, s.n, s.total FROM outer_t o "
+                                + (isLeft ? "LEFT" : "CROSS") + " JOIN LATERAL ("
+                                + "SELECT o.k + 1 z, (coalesce(o.k, 10) + 1)::LONG fallback, "
+                                + "typeof(i.k) || o.txt folded, count() n, sum(i.k) total "
+                                + "FROM inner_t i WHERE i.k = o.k ORDER BY " + orders.getQuick(j) + ") s"
+                                + (isLeft ? " ON true" : "") + " ORDER BY o.id")
+                                .noLeakCheck()
+                                .expectSize(isFullFat && !isLeft)
+                                .fullFatJoins(isFullFat)
+                                .returns("""
+                                        id\tz\tfallback\tfolded\tn\ttotal
+                                        1\t2\t2\tINTa\t0\tnull
+                                        2\t3\t3\tINT\t0\tnull
+                                        3\tnull\t11\tINTc\t0\tnull
+                                        """);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterOnRejectsRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT)");
+            execute("INSERT INTO outer_t VALUES (1), (2), (3)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1), (2), (2)");
+
+            final ObjList<String> projections = new ObjList<>();
+            projections.add("o.k + 1 z, count() n");
+            projections.add("count() n, o.k + 1 z");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (int j = 0; j < projections.size(); j++) {
+                    assertQuery("SELECT o.k, s.z + s.z doubled, coalesce(s.z, -1) fallback, s.z again, s.n "
+                            + "FROM outer_t o LEFT JOIN LATERAL (SELECT " + projections.getQuick(j)
+                            + " FROM inner_t i WHERE i.k = o.k) s ON s.n = 0 ORDER BY o.k")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tdoubled\tfallback\tagain\tn
+                                    1\tnull\t-1\tnull\tnull
+                                    2\tnull\t-1\tnull\tnull
+                                    3\t8\t4\t4\t0
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterTwoDependencies() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT, j INT)");
+            execute("INSERT INTO outer_t VALUES (1, 10), (1, 20), (2, null)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (boolean isEmpty : new boolean[]{false, true}) {
+                    assertQuery("SELECT o.k, o.j, s.z, s.n FROM outer_t o CROSS JOIN LATERAL ("
+                            + "SELECT o.k + coalesce(o.j, 30) z, count() n FROM inner_t i WHERE "
+                            + (isEmpty ? "i.k < 0" : "i.k = o.k") + ") s ORDER BY o.k, o.j")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("k\tj\tz\tn\n1\t10\t11\t" + (isEmpty ? 0 : 1)
+                                    + "\n1\t20\t21\t" + (isEmpty ? 0 : 1) + "\n2\tnull\t32\t0\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarCountOnDoesNotRewriteInsertedGuards() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1), (2)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.k, s.z FROM o
+                        LEFT JOIN LATERAL (SELECT o.k z, count() n FROM i WHERE i.k = o.k) s
+                        ON s.n = 0 ORDER BY o.k
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tz
+                                1\tnull
+                                2\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testScalarCountOnGuardedExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1), (2)");
+
+            final ObjList<String> projections = new ObjList<>();
+            projections.add("o.k z, count() n");
+            projections.add("count() n, o.k z");
+            projections.add("99 z, count() n");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (int j = 0; j < projections.size(); j++) {
+                    assertQuery("SELECT o.k, s.z + s.z doubled, coalesce(s.z, -1) fallback, s.z again, s.n "
+                            + "FROM o LEFT JOIN LATERAL (SELECT " + projections.getQuick(j)
+                            + " FROM i WHERE i.k = o.k) s ON s.n = 0 ORDER BY o.k")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tdoubled\tfallback\tagain\tn
+                                    1\tnull\t-1\tnull\tnull
+                                    2\tnull\t-1\tnull\tnull
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarCountOnGuardedMixedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2), (3)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1), (2), (2)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.k, s.z, s.n FROM o
+                        LEFT JOIN LATERAL (SELECT o.k z, count() n FROM i WHERE i.k = o.k) s
+                        ON s.n <> 1 ORDER BY o.k
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tz\tn
+                                1\tnull\tnull
+                                2\t2\t2
+                                3\t3\t0
+                                """);
+                assertQuery("""
+                        SELECT o.k, s.z, s.n FROM o
+                        LEFT JOIN LATERAL (SELECT o.k z, count() n FROM i WHERE i.k = o.k GROUP BY o.k) s
+                        ON s.n <> 1 ORDER BY o.k
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tz\tn
+                                1\tnull\tnull
+                                2\t2\t2
+                                3\tnull\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testScalarCountWrappersPreserveEmptyInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (k INT)");

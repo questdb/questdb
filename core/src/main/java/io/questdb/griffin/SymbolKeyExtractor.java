@@ -679,6 +679,9 @@ public final class SymbolKeyExtractor implements Mutable {
         }
 
         void remove(BoundExpression value) {
+            if (!contains(value)) {
+                return;
+            }
             for (int i = 0, n = values.size(); i < n; i++) {
                 if (isSameKey(values.getQuick(i), value)) {
                     if (value instanceof BindVariableExpression parameter) {

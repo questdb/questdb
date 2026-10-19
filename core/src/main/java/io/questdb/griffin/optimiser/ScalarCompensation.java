@@ -307,7 +307,7 @@ final class ScalarCompensation implements Mutable {
     }
 
     /**
-     * The value a visible column of the projection over a keyless aggregate takes over no rows, over
+     * The value a column of the projection over a keyless aggregate takes over no rows, over
      * {@code input}: counts read zero, other aggregates read their carried value (NULL), and the columns
      * {@link DecorrelationContext#substitution} holds read their substitutes. Null when the column reads aggregates none of which
      * counts through null-propagating arithmetic: the LEFT join's NULL is then the value.
@@ -678,6 +678,7 @@ final class ScalarCompensation implements Mutable {
      */
     LogicalPlan compensateBlock(ProjectPlan project, int base) throws SqlException {
         final int position = project.getPosition();
+        final int columnCount = project.getOutput().getColumnCount() - (mapping.mark() - base);
         exposeCarriers(project);
         domains.coverMapping(base);
         final int domainBase = mapping.mark();
@@ -698,15 +699,13 @@ final class ScalarCompensation implements Mutable {
             substitution.put(LogicalPlans.projectedSourceColumnId(project, columnId), domainId);
         }
         final ProjectPlan compensated = planNodes.projects.next().of(join, position);
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            if (output.isVisible(i)) {
-                final int columnId = output.getColumnId(i);
-                renameJoinedColumn(join, output, i, context.newColumnId());
-                final BoundExpression empty = emptyValue(project, i, join.getOutput());
-                final BoundExpression value = empty != null ? empty : planNodes.columns.next().of(output.getColumnId(i), output.getColumnType(i), position);
-                compensated.getExpressions().add(value);
-                compensated.getOutput().add(columnId, output.getColumnName(i), value.getDataType(), output.getMetadata(i), true);
-            }
+        for (int i = 0; i < columnCount; i++) {
+            final int columnId = output.getColumnId(i);
+            renameJoinedColumn(join, output, i, context.newColumnId());
+            final BoundExpression empty = emptyValue(project, i, join.getOutput());
+            final BoundExpression value = empty != null ? empty : planNodes.columns.next().of(output.getColumnId(i), output.getColumnType(i), position);
+            compensated.getExpressions().add(value);
+            compensated.getOutput().add(columnId, output.getColumnName(i), value.getDataType(), output.getMetadata(i), output.isVisible(i));
         }
         for (int i = domainBase, n = mapping.mark(); i < n; i++) {
             mapping.setColumnIdAt(i - domainBase + base,
@@ -742,11 +741,7 @@ final class ScalarCompensation implements Mutable {
         }
         final ObjList<BoundExpression> expressions = project.getExpressions();
         for (int i = 0, n = expressions.size(); i < n; i++) {
-            BoundExpression expression = expressions.getQuick(i);
-            for (int k = 0, m = compensatedIds.size(); k < m; k++) {
-                expression = context.getRewriter().substituteColumn(expression, compensatedIds.getQuick(k), compensations.getQuick(k));
-            }
-            expressions.setQuick(i, expression);
+            expressions.setQuick(i, context.getRewriter().substituteColumns(expressions.getQuick(i), compensatedIds, compensations));
         }
         compensatedIds.clear();
         compensatedNames.clear();
@@ -928,7 +923,7 @@ final class ScalarCompensation implements Mutable {
 
     /**
      * Exposes, as hidden columns of the projection, the aggregate outputs that the empty-input values of its
-     * visible columns read through other expressions, recording each in {@link #carrierColumnIds}.
+     * columns read through other expressions, recording each in {@link #carrierColumnIds}.
      */
     void exposeCarriers(ProjectPlan project) {
         final AggregatePlan aggregate = scalarAggregateBelow(project);
@@ -937,7 +932,7 @@ final class ScalarCompensation implements Mutable {
         final int keyCount = aggregate.getGroupingExpressions().size();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             final BoundExpression expression = project.getExpressions().getQuick(i);
-            if (!output.isVisible(i) || expression instanceof ColumnExpression || isNullOnEmpty(expression, aggregate)) {
+            if (expression instanceof ColumnExpression || isNullOnEmpty(expression, aggregate)) {
                 continue;
             }
             final int columnBase = tmpColumnIds.size();

@@ -188,7 +188,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             OutputSchema input,
             CharSequence inputAlias,
             ObjList<ExpressionNode> replacementNodes,
-            ObjList<ColumnExpression> replacementColumns,
+            ObjList<? extends BoundExpression> replacementColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
         return bind(node, BindingRole.SCALAR, input, inputAlias, ColumnType.UNDEFINED, replacementNodes, replacementColumns, null, executionContext);
@@ -254,7 +254,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             ExpressionNode node,
             OutputSchema input,
             ObjList<ExpressionNode> replacementNodes,
-            ObjList<ColumnExpression> replacementColumns,
+            ObjList<? extends BoundExpression> replacementColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
         assert ctx.isAggregate(node);
@@ -337,7 +337,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             OutputSchema input,
             CharSequence inputAlias,
             ObjList<ExpressionNode> replacementNodes,
-            ObjList<ColumnExpression> replacementColumns,
+            ObjList<? extends BoundExpression> replacementColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
         return bind(node, BindingRole.SCALAR, input, inputAlias, ColumnType.STRING, replacementNodes, replacementColumns, null, executionContext);
@@ -655,7 +655,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             CharSequence inputAlias,
             int preferredType,
             ObjList<ExpressionNode> replacementNodes,
-            ObjList<ColumnExpression> replacementColumns,
+            ObjList<? extends BoundExpression> replacementColumns,
             IntHashSet nativeTimestampIds,
             SqlExecutionContext executionContext
     ) throws SqlException {

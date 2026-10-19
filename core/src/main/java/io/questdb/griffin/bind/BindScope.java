@@ -39,6 +39,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -61,10 +62,13 @@ import io.questdb.std.ObjObjHashMap;
  * projection reads earlier aliases.
  */
 final class BindScope implements Mutable {
+    final IntIntHashMap aggregateColumnMappings = new IntIntHashMap();
     final ObjList<ExpressionNode> aggregateNodes;
     final ObjList<ExpressionNode> aggregateOrderExpressions;
+    final ObjObjHashMap<ExpressionNode, BoundExpression> aggregateProjectionExpressions = new ObjObjHashMap<>();
     final IntList aggregateProjectionIndexes;
     final ObjList<ExpressionNode> aggregateSelectExpressions;
+    final ObjList<BoundExpression> aggregateSubstitutions = new ObjList<>();
     final LowerCaseCharSequenceIntHashMap aliasSequences = new LowerCaseCharSequenceIntHashMap();
     final LowerCaseCharSequenceHashSet aliases = new LowerCaseCharSequenceHashSet();
     final IntHashSet ambiguousTimestampColumnIds = new IntHashSet();
@@ -146,11 +150,12 @@ final class BindScope implements Mutable {
     OutputSchema expressionInput;
     CharSequence expressionInputAlias;
     boolean hasWithin;
+    boolean isImplicitAggregation;
     boolean isInsideJoin;
     QueryModel namedWindowScope;
     IntHashSet nativeTimestampIds;
     int nestedWindowPosition;
-    ObjList<ColumnExpression> replacementColumns;
+    ObjList<? extends BoundExpression> replacementColumns;
     ObjList<ExpressionNode> replacementNodes;
     QueryModel timestampFromSubquery;
     int timestampSubqueryType;
@@ -185,6 +190,9 @@ final class BindScope implements Mutable {
     @Override
     public void clear() {
         clearAggregateNodes();
+        aggregateColumnMappings.clear();
+        aggregateProjectionExpressions.clear();
+        aggregateSubstitutions.clear();
         aliasSequences.clear();
         aliases.clear();
         ambiguousTimestampColumnIds.clear();
@@ -239,6 +247,7 @@ final class BindScope implements Mutable {
         expressionInput = null;
         expressionInputAlias = null;
         hasWithin = false;
+        isImplicitAggregation = false;
         isInsideJoin = false;
         namedWindowScope = null;
         nativeTimestampIds = null;

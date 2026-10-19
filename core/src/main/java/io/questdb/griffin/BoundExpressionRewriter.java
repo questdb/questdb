@@ -380,6 +380,35 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
+     * Replaces columns in the original expression only, copying each replacement without rewriting its columns;
+     * preparations stay with the originals.
+     */
+    public BoundExpression substituteColumns(BoundExpression expression, IntList columnIds, ObjList<BoundExpression> replacements) {
+        if (expression instanceof ColumnExpression column) {
+            final int index = columnIds.indexOf(column.getColumnId(), 0, columnIds.size());
+            return index < 0 ? expression : copy(replacements.getQuick(index));
+        }
+        if (!(expression instanceof FunctionExpression call)) {
+            return expression;
+        }
+        ObjList<BoundExpression> args = null;
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            final BoundExpression argument = call.argumentAt(i);
+            final BoundExpression substituted = substituteColumns(argument, columnIds, replacements);
+            if (args == null && substituted != argument) {
+                args = rewriteArguments.next();
+                for (int k = 0; k < i; k++) {
+                    args.add(call.argumentAt(k));
+                }
+            }
+            if (args != null) {
+                args.add(substituted);
+            }
+        }
+        return args == null ? expression : functions.next().of(call, args, substitutedFlags(call, args));
+    }
+
+    /**
      * Replaces each column with the expression the projection computes for it: an input column or
      * a timestamp offset. Each reference reads its own copy of the projected expression, so the projection keeps
      * its own preparation.
