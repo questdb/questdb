@@ -60,6 +60,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // Limit shares base's metadata, so idx needs no translation. Recurse into base rather than read its
+    // metadata name: a wrapper below may carry the implicit, blank-named timestamp column.
+    @Override
+    public String getBaseColumnName(int idx) {
+        return base.getBaseColumnName(idx);
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);

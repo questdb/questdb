@@ -110,7 +110,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
 
     @Override
     public int getScanDirection() {
-        return SortedRecordCursorFactory.getScanDirection(sortColumnFilter);
+        return SortedRecordCursorFactory.getScanDirection(sortColumnFilter, getMetadata().getTimestampIndex());
     }
 
     @Override
