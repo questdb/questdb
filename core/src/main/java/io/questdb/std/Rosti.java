@@ -187,7 +187,7 @@ public final class Rosti {
     // min short
     public static native boolean keyedIntMinShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
 
-    public static native boolean keyedIntMinShortWrapUp(long pRosti, int valueOffset, long accumulatedValue);
+    public static native boolean keyedIntMinShortWrapUp(long pRosti, int valueOffset, int accumulatedValue);
 
     // nsum double
     public static native boolean keyedIntNSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);

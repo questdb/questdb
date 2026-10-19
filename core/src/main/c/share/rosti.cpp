@@ -90,6 +90,9 @@ rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, co
         return map;
     }
 
+    // The offsets were allocated before the map and are reachable only through it, so the
+    // caller cannot free them once we drop the map.
+    free(value_offsets);
     free(map);
     return nullptr;
 }

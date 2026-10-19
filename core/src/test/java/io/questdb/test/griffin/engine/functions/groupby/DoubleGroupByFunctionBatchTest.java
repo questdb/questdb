@@ -699,6 +699,28 @@ public class DoubleGroupByFunctionBatchTest extends AbstractGroupByFunctionBatch
     }
 
     @Test
+    public void testNSumDoubleMergeCarriesSourceCompensation() {
+        // Parallel group by folds one worker's map into another's. A shard's total is its sum plus
+        // its compensation, and the Neumaier step folds in the sum alone, so the source's
+        // compensation has to be seeded into the destination's -- the empty-destination branch has
+        // always copied it wholesale. Dyadic rationals throughout, so the arithmetic is exact.
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue dest = prepare(function)) {
+            dest.putDouble(0, 8.0);
+            dest.putDouble(1, 0.25);
+            dest.putLong(2, 2);
+            try (SimpleMapValue src = new SimpleMapValue(3)) {
+                src.putDouble(0, 2.0);
+                src.putDouble(1, 0.5);
+                src.putLong(2, 1);
+                function.merge(dest, src);
+            }
+            Assert.assertEquals(10.75, function.getDouble(dest), 0.0);
+            Assert.assertEquals(3L, dest.getLong(2));
+        }
+    }
+
+    @Test
     public void testNSumDoubleSetEmpty() {
         NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
