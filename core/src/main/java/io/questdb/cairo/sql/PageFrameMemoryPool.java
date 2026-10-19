@@ -139,9 +139,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final IntList sourceColumnTypes;
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
-    // Bumped whenever the pool closes buffers that bound records may still alias
-    // (failed decode, bulk release). Records capture it on bind; a mismatch fails
-    // the navigateTo() fast path and forces a safe rebind.
+    // Bumped whenever the pool closes or reuses buffers that bound records may still
+    // alias (failed decode, bulk release, eviction, in-place reuse for another frame).
+    // Records capture it on bind; a mismatch fails the navigateTo() fast path and
+    // forces a safe rebind.
     private long bindGeneration;
     // Tracks which cached buffer currently holds each usage bit. Used to clear
     // the previous pin in O(1) without scanning every cached entry.
@@ -827,6 +828,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
                 // In-place reuse keeps the victim's native memory (and thus its
                 // retainedBytes accounting); only the logical state resets.
+                // A record can still alias the victim without pinning it: init(PageFrameMemory)
+                // binds a record to the frame memory's buffer, and the next frame unpins that
+                // buffer. Bump the generation so such a record fails the navigateTo() fast path
+                // and decodes its frame again, instead of reading another frame's rows.
+                bindGeneration++;
                 byFrameIndex.remove(victim.frameIndex);
                 lruUnlink(victim);
                 victim.frameIndex = frameIndex;
@@ -1018,6 +1024,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void evictAndClose(ParquetBuffers buffers) {
+        // A record may alias the buffer without pinning it, see acquireBuffer().
+        bindGeneration++;
         cachedBytes -= buffers.retainedBytes;
         if (buffers.frameIndex >= 0) {
             byFrameIndex.remove(buffers.frameIndex);
