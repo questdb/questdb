@@ -866,6 +866,8 @@ public class TxReader implements Closeable, Mutable {
 
             final long prevPartitionTableVersion = partitionTableVersion;
             final long prevColumnVersion = this.columnVersion;
+            // The partition table follows the symbol counts.
+            symbolColumnCount = symbolsSize / Long.BYTES;
             unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
             transientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
             fixedRowCount = getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
