@@ -371,12 +371,7 @@ public class FuzzRunner {
                         READER_SNAPSHOTS.remove(rdr2);
                         rdr1 = Misc.free(rdr1);
                         rdr2 = Misc.free(rdr2);
-                        // A failed goActive() leaves the reader half-reloaded: readTxnSlow() already advanced
-                        // its txn and applyTransition() its metadata version, so the next reload() takes the
-                        // fast path and never rebuilds the symbol map readers that reshuffleSymbolMapReaders()
-                        // or reloadSymbolMapCounts() left freed or unmapped. ReaderPool.get0() disposes such a
-                        // reader when goActive() fails under the pool; this harness drives goActive() itself,
-                        // so close() would hand the torn instance straight back to the next getReader().
+                        // A failed goActive() leaves the reader torn, and close() would hand it back to the pool.
                         // Drop the idle pooled readers so getReader() opens fresh ones.
                         engine.releaseInactive();
                         rdr1 = getReader(tableName);

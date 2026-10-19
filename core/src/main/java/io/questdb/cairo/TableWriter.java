@@ -314,8 +314,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
     private final TableWriterSegmentFileCache segmentFileCache;
     private final TxReader slaveTxReader;
-    // pairs of (partition timestamp, txn of the last O3 split of that partition) this writer performed
-    private final LongList splitParentTxns = new LongList();
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
     private final SymbolTableProviderFromWriter symbolTableProvider = new SymbolTableProviderFromWriter();
@@ -2805,11 +2803,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * An O3 split shrinks the parent's row count but leaves the moved rows in its column files.
      * Returns true while a reader locked in [parentNameTxn, splitNameTxn] can still read them,
-     * so the parent's tail must not be written in place.
+     * so the parent's tail must not be written in place. Rewrites of the split move its name txn
+     * forward, so the range may include readers that never saw the moved rows: a needless merge,
+     * never a missed reader. States the check cannot judge report a pinned tail.
      */
     public boolean isPartitionTailPinnedByReaders(long partitionTimestamp) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        assert partitionIndex > -1 : "partition does not exist [timestamp=" + partitionTimestamp + ']';
+        if (partitionIndex < 0) {
+            return true;
+        }
         if (partitionIndex + 1 >= txWriter.getPartitionCount()) {
             return false;
         }
@@ -2818,21 +2820,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         final long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        // The parent shrinks only when a split moves its tail out, and the split's name txn is the txn of
-        // that commit. Every later rewrite of the split bumps its name txn, so readers that opened after
-        // the split would count as pinning. Prefer the split txn this writer saw; a reopened writer has
-        // none and falls back to the split's name txn.
-        long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1);
-        final long lastSplitTxn = getLastSplitTxn(partitionTimestamp);
-        if (lastSplitTxn > -1) {
-            assert lastSplitTxn <= toTxn : "split txn past the split's name txn [lastSplitTxn=" + lastSplitTxn + ", nameTxn=" + toTxn + ']';
-            toTxn = Math.min(toTxn, lastSplitTxn);
+        final long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1) + 1;
+        if (toTxn > txWriter.getTxn()) {
+            // A split from the commit in flight: readers at the current txn still see the pre-split row count,
+            // and isRangeAvailable() would push the scoreboard max past the committed txn, stalling new readers.
+            return true;
         }
-        toTxn++;
-        // O3 tasks plan before o3ConsumePartitionUpdateSink() registers this commit's splits. A split
-        // from the commit in flight would let isRangeAvailable() raise the scoreboard max past the
-        // committed txn and stall new readers until the commit lands.
-        assert toTxn <= txWriter.getTxn() : "split partition from the commit in flight [toTxn=" + toTxn + ", txn=" + txWriter.getTxn() + ']';
         return !txnScoreboard.isRangeAvailable(fromTxn, toTxn);
     }
 
@@ -3273,12 +3266,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
         rowAction = ROW_ACTION_OPEN_PARTITION;
-        // The append horizon must not outlive the partitions. processWalCommitBlock() does not
-        // open a partition on an empty table, and processO3Block() only raises partitionTimestampHi
-        // (Math.max), so a stale value from a later partition would survive a block commit into an
-        // earlier one. finishO3Commit() re-syncs a native last partition by reopening it, but not a
-        // parquet one, and the next processWalCommit() then asserts that partitionTimestampHi and
-        // maxTimestamp resolve to the same partition. Same reset as the replace-commit truncate.
+        // Reset the append horizon with the partitions, as the replace-commit truncate does. A stale
+        // partitionTimestampHi survives a block commit into an earlier partition and, on a parquet table,
+        // trips the partition consistency assert of the next processWalCommit().
         partitionTimestampHi = Long.MIN_VALUE;
         lastPartitionTimestamp = Long.MIN_VALUE;
 
@@ -7768,19 +7758,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return deferredPostingSealPurgeTaskPool;
     }
 
-    // Returns the txn of the last O3 split of the partition this writer performed, or -1 when this writer
-    // has not split it. A stale pair cannot harm: the partition is only checked once it has a split
-    // neighbor, and the split that created that neighbor either updated the pair in this writer or
-    // happened in an earlier writer, which left no pair at all.
-    private long getLastSplitTxn(long partitionTimestamp) {
-        for (int i = 0, n = splitParentTxns.size(); i < n; i += 2) {
-            if (splitParentTxns.getQuick(i) == partitionTimestamp) {
-                return splitParentTxns.getQuick(i + 1);
-            }
-        }
-        return -1;
-    }
-
     private long getO3RowCount0() {
         return (masterRef - o3MasterRef + 1) / 2;
     }
@@ -9195,7 +9172,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", part2Size=").$(o3SplitPartitionSize)
                             .I$();
                     this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, newPartitionTimestamp);
-                    setLastSplitTxn(partitionTimestamp, txWriter.txn);
                     txWriter.bumpPartitionTableVersion();
                     txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn);
                     if (partitionTimestamp == lastPartitionTimestamp) {
@@ -14468,16 +14444,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return dataSizeBytes;
     }
 
-    private void setLastSplitTxn(long partitionTimestamp, long txn) {
-        for (int i = 0, n = splitParentTxns.size(); i < n; i += 2) {
-            if (splitParentTxns.getQuick(i) == partitionTimestamp) {
-                splitParentTxns.setQuick(i + 1, txn);
-                return;
-            }
-        }
-        splitParentTxns.add(partitionTimestamp, txn);
-    }
-
     private void setO3AppendPosition(final long position) {
         for (int i = 0; i < columnCount; i++) {
             int columnType = metadata.getColumnType(i);
@@ -15237,7 +15203,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
         clearTodoLog();
         this.minSplitPartitionTimestamp = Long.MAX_VALUE;
-        splitParentTxns.clear();
         processPartitionRemoveCandidates();
 
         LOG.info().$("truncated [name=").$(tableToken).I$();

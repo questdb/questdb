@@ -40,7 +40,6 @@ public class O3OpenColumnTask {
     private int columnType;
     private int indexBlockCapacity;
     private IndexWriter indexWriter;
-    private boolean isTailPinned;
     private long mergeDataHi;
     private long mergeDataLo;
     private long mergeOOOHi;
@@ -258,11 +257,6 @@ public class O3OpenColumnTask {
         return txn;
     }
 
-    // true when a reader that locked a txn before the partition's last split can still read its moved rows
-    public boolean isTailPinned() {
-        return isTailPinned;
-    }
-
     public void of(
             int openColumnMode,
             Path pathToTable,
@@ -308,8 +302,7 @@ public class O3OpenColumnTask {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn,
-            boolean isTailPinned
+            long columnNameTxn
     ) {
         this.openColumnMode = openColumnMode;
         this.pathToTable = pathToTable;
@@ -356,6 +349,5 @@ public class O3OpenColumnTask {
         this.srcDataNewPartitionSize = srcDataNewPartitionSize;
         this.srcDataOldPartitionSize = srcDataOldPartitionSize;
         this.o3SplitPartitionSize = o3NewPartitionSize;
-        this.isTailPinned = isTailPinned;
     }
 }

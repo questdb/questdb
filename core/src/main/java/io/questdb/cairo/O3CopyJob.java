@@ -133,10 +133,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             columnType,
                             timestampMergeIndexAddr,
                             timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
-                            // this is a hack, when we have column top we can have only of the two:
-                            // srcDataFixOffset, when we had to shift data to back-fill nulls or
-                            // srcDataTopOffset - if we kept the column top
-                            // when one value is present the other will be 0
+                            // srcDataTop is the column top offset when the merge kept the column top, so row numbers
+                            // address the data past it, and 0 when the merge materialized the column top
                             srcDataFixAddr + srcDataFixOffset - srcDataTop,
                             srcDataVarAddr + srcDataVarOffset,
                             srcOooFixAddr,
@@ -233,11 +231,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 timestampMergeIndexSize,
                 srcDataFixFd,
                 srcDataFixAddr,
-                srcDataFixOffset,
                 srcDataFixSize,
                 srcDataVarFd,
                 srcDataVarAddr,
-                srcDataVarOffset,
                 srcDataVarSize,
                 timestampMin,
                 partitionTimestamp,
@@ -588,11 +584,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long timestampMergeIndexSize,
             long srcDataFixFd,
             long srcDataFixAddr,
-            long srcDataFixOffset,
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
-            long srcDataVarOffset,
             long srcDataVarSize,
             long timestampMin,
             long partitionTimestamp,
@@ -654,6 +648,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
             }
 
+            // A merge that materialized the column top left scratch past the destination's logical end, see
+            // O3OpenColumnJob.mergeFixColumn(). Trim it before the sync, so the sync does not write it out.
+            // Windows cannot truncate a mapped file, so a failed attempt is retried after the unmap.
+            O3Utils.unmap(ff, srcDataFixAddr, srcDataFixSize);
+            O3Utils.unmap(ff, srcDataVarAddr, srcDataVarSize);
+            final boolean hasDstScratch = dstFixFd > 0 && srcDataFixFd == -dstFixFd;
+            final long dstFixFileSize = TableUtils.alignedSize(Math.abs(dstFixSize));
+            final boolean isScratchTrimmed = !hasDstScratch || ff.truncate(dstFixFd, dstFixFileSize);
+
             final int commitMode = tableWriter.getConfiguration().getCommitMode();
             if (commitMode != CommitMode.NOSYNC) {
                 syncColumns(
@@ -661,11 +664,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         timestampMergeIndexAddr,
                         timestampMergeIndexSize,
                         srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixSize,
+                        0,
+                        0,
                         srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarSize,
+                        0,
+                        0,
                         dstFixFd,
                         dstFixAddr,
                         dstFixSize,
@@ -681,21 +684,17 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
             }
 
-            // unmap memory
-            O3Utils.unmap(ff, srcDataFixAddr, srcDataFixSize);
-            O3Utils.unmap(ff, srcDataVarAddr, srcDataVarSize);
-            if (o3SplitPartitionSize > 0) {
-                // A split keeps the parent's column files. When the column top lies above the split,
-                // O3OpenColumnJob.mergeFixColumn()/mergeVarColumn() materialize the column top nulls at
-                // srcDataFixOffset/srcDataVarOffset, past any data a reader may still see. Every copy part of this
-                // column is done with that scratch, so drop it; otherwise each split of a parent pinned by a reader
-                // would grow the files by the parent's size.
-                truncateColumnTopScratch(ff, srcDataFixFd, srcDataFixOffset);
-                truncateColumnTopScratch(ff, srcDataVarFd, srcDataVarOffset);
-            }
             O3Utils.close(ff, srcDataFixFd);
             O3Utils.close(ff, srcDataVarFd);
-            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmap(ff, dstFixAddr, dstFixSize);
+            if (!isScratchTrimmed && !ff.truncate(dstFixFd, dstFixFileSize)) {
+                // harmless, readers never look past the partition's row count
+                LOG.info().$("could not trim column top scratch [fd=").$(dstFixFd)
+                        .$(", size=").$(dstFixFileSize)
+                        .$(", errno=").$(ff.errno())
+                        .I$();
+            }
+            O3Utils.close(ff, dstFixFd);
             O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
 
             final int columnsRemaining = columnCounter.decrementAndGet();
@@ -791,21 +790,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     tableWriter
             );
             throw e;
-        }
-    }
-
-    // Truncates a split parent's column file back to where the column top scratch starts.
-    // A positive fd belongs to this job; the writer owns a negative one and may still have it mapped.
-    // A zero offset means the merge did not materialize the column top or the file held no bytes before
-    // the scratch (mergeVarColumn() leaves srcDataVarOffset at 0 when a VARCHAR column has no var bytes), so
-    // there is nothing to drop and a reader may still read what lies past 0.
-    private static void truncateColumnTopScratch(FilesFacade ff, long fd, long scratchOffset) {
-        if (fd > 0 && scratchOffset > 0 && !ff.truncate(fd, scratchOffset)) {
-            // Windows refuses to truncate a file a reader has mapped; the next split appends past the stale scratch
-            LOG.debug().$("could not truncate column top scratch [fd=").$(fd)
-                    .$(", size=").$(scratchOffset)
-                    .$(", errno=").$(ff.errno())
-                    .I$();
         }
     }
 

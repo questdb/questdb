@@ -1528,14 +1528,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                boolean canAppendOnly = !partitionSplit;
+                // Never append in place over a pinned tail. mergeEquals = 1 already merges most such commits;
+                // rows above the parent's max, e.g. in a gap a range-replace commit left, copy the parent instead.
+                boolean canAppendOnly = !partitionSplit && !isTailPinned;
                 if (tableWriter.isCommitReplaceMode()) {
                     canAppendOnly &= (!overlaps && suffixType == O3_BLOCK_O3);
                 } else {
                     canAppendOnly &= mergeType == O3_BLOCK_NONE && (prefixType == O3_BLOCK_NONE || prefixType == O3_BLOCK_DATA);
                 }
-                // with mergeEquals = 1 a row at the pinned parent's max merges, and rows above it go to the split
-                assert !canAppendOnly || !isTailPinned : "in-place append over a pinned split parent tail";
                 if (canAppendOnly) {
                     // We do not need to create a copy of partition when we simply need to append
                     // to the existing one.
@@ -2877,8 +2877,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn,
-            boolean isTailPinned
+            long columnNameTxn
     ) {
         while (cursor == -2) {
             Os.pause();
@@ -2932,8 +2931,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter,
                     partitionUpdateSinkAddr,
                     columnIndex,
-                    columnNameTxn,
-                    isTailPinned
+                    columnNameTxn
             );
         } else {
             O3OpenColumnJob.openColumn(
@@ -2981,8 +2979,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter,
                     partitionUpdateSinkAddr,
                     columnIndex,
-                    columnNameTxn,
-                    isTailPinned
+                    columnNameTxn
             );
         }
     }
@@ -3033,8 +3030,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn,
-            boolean isTailPinned
+            long columnNameTxn
     ) {
         final O3OpenColumnTask openColumnTask = tableWriter.getO3OpenColumnQueue().get(cursor);
         openColumnTask.of(
@@ -3082,8 +3078,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 indexWriter,
                 partitionUpdateSinkAddr,
                 columnIndex,
-                columnNameTxn,
-                isTailPinned
+                columnNameTxn
         );
         tableWriter.getO3OpenColumnPubSeq().done(cursor);
     }
@@ -3238,8 +3233,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         appendOnly = oooTimestampMin >= dataMergeMaxTimestamp;
                     }
 
-                    // A split parent's files still hold the rows the split moved out. While a reader that locked
-                    // a txn before the split can still read them, the writer keeps the merge instead of appending in place.
+                    // keep the merge, an in-place append would overwrite rows a reader locked before the split still reads
                     if (appendOnly && isTailPinned) {
                         appendOnly = false;
                     }
@@ -3470,8 +3464,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexWriter,
                                 partitionUpdateSinkAddr,
                                 i,
-                                columnNameTxn,
-                                isTailPinned
+                                columnNameTxn
                         );
                     } else {
                         publishOpenColumnTaskContended(
@@ -3520,8 +3513,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexWriter,
                                 partitionUpdateSinkAddr,
                                 i,
-                                columnNameTxn,
-                                isTailPinned
+                                columnNameTxn
                         );
                     }
                 } catch (Throwable e) {

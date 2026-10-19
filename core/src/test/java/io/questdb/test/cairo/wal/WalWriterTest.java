@@ -5393,13 +5393,8 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testTruncateParquetThenBlockCommitIntoEarlierPartition() throws Exception {
-        // TRUNCATE (removeAllPartitions) used to leave partitionTimestampHi at the dropped last
-        // partition. A block commit (two consecutive INSERTs) into an earlier partition goes
-        // through processWalCommitBlock(), which does not open a partition on an empty table, and
-        // processO3Block() only raises partitionTimestampHi, so the stale value survived. With a
-        // native last partition finishO3Commit() reopens it and re-syncs; with a parquet one it
-        // does not, and the next single-txn processWalCommit() tripped its partition consistency
-        // assert and suspended the table.
+        // TRUNCATE resets the writer's append horizon. A stale one would survive a block commit into an
+        // earlier partition, and on a parquet table the next single-transaction commit would suspend the table.
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, val INT, sym SYMBOL)" +
