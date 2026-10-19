@@ -75,7 +75,9 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             predicates.add("row_number() OVER (ORDER BY v + $1) > 1");
             predicates.add("sum(v) OVER (ORDER BY ts ROWS BETWEEN $1 PRECEDING AND CURRENT ROW) > 1");
             predicates.add("sum(v) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND :keep FOLLOWING) > 1");
-            predicates.add("row_number() OVER (ORDER BY ts) > 1 AND k IN (SELECT k FROM base WHERE v > $1)");
+            // The sub-query's projection parses before its FROM, so the bind variable is rejected before the
+            // read of mv, which CREATE rejects as a read of an object other than the view.
+            predicates.add("row_number() OVER (ORDER BY ts) > 1 AND v IN (SELECT v + $1 FROM mv)");
 
             for (int binding = 0; binding < 3; binding++) {
                 sqlExecutionContext.getBindVariableService().clear();
@@ -523,8 +525,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         // case-insensitive, so the policy text and the read may each spell the name in a different case, and
         // every spelling must keep the same rows. A spelling the parser failed to match would apply the policy
         // a second time inside the subquery, where it hides A's 1.0 row, empties the subquery and shows every
-        // row. A subquery that reaches the view through a SQL view is a cycle, and the cycle check matches the
-        // view body's spelling regardless of case.
+        // row. A SQL view over the view is not the view itself, so a subquery cannot read it.
         assertMemoryLeak(() -> {
             createViewWith("");
             execute("alter materialized view mv set expire rows when v < max(v) over (partition by k) and k in (select k from mv where v < 2)");
@@ -552,38 +553,27 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSetExpireRejectsPolicyReachingViewThroughSqlView() throws Exception {
-        // A read of a SQL view over mv expands mv's policy. A policy subquery that reaches mv through a SQL
-        // view would expand that SQL view again inside its own expansion, so every read of the SQL view would
-        // fail. SET EXPIRE rejects such a policy, as ALTER VIEW rejects the mirror case.
+    public void testSetExpireRejectsPolicyReadingSqlView() throws Exception {
+        // A read of a SQL view over mv expands mv's policy, so a policy subquery that read such a SQL view
+        // would expand it again inside its own expansion. A SQL view that does not reach mv would leave the
+        // policy depending on an object nothing tracks. Either way the subquery reads an object other than
+        // the view, and SET EXPIRE rejects it.
         assertMemoryLeak(() -> {
             createViewWith("");
             execute("create view vw as (select * from mv)");
             execute("create view vw2 as (select * from vw)");
             execute("create view vw_marker as (select * from '*!*mv')");
-            // No policy exists anywhere in the engine yet.
-            assertSetExpireReadingViewRejected("vw");
-            assertSetExpireReadingViewRejected("vw2");
-            assertSetExpireReadingViewRejected("vw_marker");
-
-            // vw3 reaches mv through mv2's policy.
-            execute("create materialized view mv2 as (select * from base)");
+            execute("create view other as (select * from base)");
+            for (String view : new String[]{"vw", "vw2", "vw_marker", "other"}) {
+                assertSetExpireReadingViewRejected(view);
+            }
             drainWalAndMatViewQueues();
-            execute("alter materialized view mv2 set expire rows when v < max(v) over (partition by k) and k in (select k from mv where v < 2)");
-            drainWalAndMatViewQueues();
-            execute("create view vw3 as (select * from mv2)");
-            assertSetExpireReadingViewRejected("vw3");
-
-            for (String view : new String[]{"vw", "vw2", "vw_marker"}) {
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                Assert.assertNull(metadata.getExpiryPredicate());
+            }
+            for (String view : new String[]{"vw", "vw2", "vw_marker", "other"}) {
                 assertQuery("select count() c from " + view).noRandomAccess().expectSize().noLeakCheck().returns("c\n9\n");
             }
-            assertQuery("select count() c from vw3").noRandomAccess().expectSize().noLeakCheck().returns("c\n7\n");
-
-            // A SQL view that does not reach mv is a valid source for the policy's subquery.
-            execute("create view other as (select * from base)");
-            execute("alter materialized view mv set expire rows when v < max(v) over (partition by k) and k in (select k from other where v < 2)");
-            drainWalAndMatViewQueues();
-            assertSelfReferencePolicyKeepsRows();
         });
     }
 
@@ -1385,9 +1375,8 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                 + view + " where v < 2)";
         assertExceptionNoLeakCheck(
                 sql,
-                sql.indexOf("v < max"),
-                "invalid EXPIRE ROWS policy: circular dependency detected: 'mv' cannot depend on '" + view
-                        + "' because '" + view + "' already depends on 'mv'"
+                sql.indexOf("from " + view) + "from ".length(),
+                "EXPIRE ROWS predicate can read only the view the policy is set on"
         );
     }
 

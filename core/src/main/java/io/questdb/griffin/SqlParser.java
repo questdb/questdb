@@ -293,6 +293,9 @@ public class SqlParser {
     // artifacts (flip eligibility, quoted column CSV); the instance's policy-relevant state (predicate,
     // timestamp, columns) is immutable per hydration, so it is safe to hold beyond the cache read lock.
     private CairoTable expiryPolicyTable;
+    // The view whose new window WHEN policy validateWindowExpiryPredicate() is parsing: the only object a
+    // sub-query of that policy may read. Null at CREATE, where the view does not exist yet.
+    private TableToken expiryPredicateTarget;
     // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
@@ -622,7 +625,7 @@ public class SqlParser {
             CreateTableOperationBuilderImpl builder,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final ExpireRowsClause clause = parseExpireRowsClause(lexer, true, sqlParserCallback);
+        final ExpireRowsClause clause = parseExpireRowsClause(lexer, true, null, sqlParserCallback);
         builder.setExpiryPredicate(clause.predicate);
         builder.setExpiryCleanupIntervalMicros(clause.cleanupIntervalMicros);
         return clause.nextTok;
@@ -639,14 +642,22 @@ public class SqlParser {
      * parenthesis depth zero; the KEEP column-list capture consults it for every token because that grammar
      * accepts only a flat list of column names. A boundary that belongs to the CREATE TABLE tail is returned
      * to the caller in {@link ExpireRowsClause#nextTok}. Cleanup interval defaults to 1 hour when omitted.
+     *
+     * @param target the view an ALTER sets the policy on, the only object a sub-query of a window WHEN
+     *               policy may read; null at CREATE, where the view does not exist yet
      */
-    public ExpireRowsClause parseExpireRowsClause(GenericLexer lexer, boolean inCreateTable) throws SqlException {
-        return parseExpireRowsClause(lexer, inCreateTable, null);
+    public ExpireRowsClause parseExpireRowsClause(
+            GenericLexer lexer,
+            boolean inCreateTable,
+            @Nullable TableToken target
+    ) throws SqlException {
+        return parseExpireRowsClause(lexer, inCreateTable, target, null);
     }
 
     private ExpireRowsClause parseExpireRowsClause(
             GenericLexer lexer,
             boolean inCreateTable,
+            @Nullable TableToken target,
             @Nullable SqlParserCallback sqlParserCallback
     ) throws SqlException {
         expectTok(lexer, "rows");
@@ -771,7 +782,7 @@ public class SqlParser {
             // A predicate referencing a window function (e.g. v < max(v) OVER (...)) is illegal in a plain
             // WHERE, so flag it for the projection-CASE read filter / cleanup instead.
             if (predicateHasWindowFunction(rawPredicate)) {
-                validateWindowExpiryPredicate(lexer.getContent(), predicateStart, predicateEnd, sqlParserCallback);
+                validateWindowExpiryPredicate(lexer.getContent(), predicateStart, predicateEnd, target, sqlParserCallback);
                 predicateSql = RowExpiryUtil.encodeWindow(rawPredicate);
             } else {
                 predicateSql = rawPredicate;
@@ -963,6 +974,10 @@ public class SqlParser {
         return Chars.startsWith(unquotedName, IQueryModel.NO_ROWID_MARKER)
                 ? unquotedName.subSequence(IQueryModel.NO_ROWID_MARKER.length(), unquotedName.length())
                 : unquotedName;
+    }
+
+    private static SqlException expiryPredicateForeignRead(int position) {
+        return SqlException.$(position, "EXPIRE ROWS predicate can read only the view the policy is set on");
     }
 
     private static boolean isJsonUnnestSupportedType(int type) {
@@ -1411,6 +1426,9 @@ public class SqlParser {
      * sub-query that a later read copies, see {@link #parseWith} and {@link #parseDeclaredQuery}.
      */
     private void compileViewQuery(IQueryModel model, TableToken viewToken, int viewPosition) throws SqlException {
+        if (isParsingOwnExpiryPredicateText()) {
+            throw expiryPredicateForeignRead(viewPosition);
+        }
         final CharSequence viewName = viewToken.getTableName();
 
         // Detect cycle: if we're already compiling this view, it's a circular reference
@@ -2577,6 +2595,12 @@ public class SqlParser {
         } finally {
             viewLexers.release(lookahead);
         }
+    }
+
+    // True while the parse is in the text of the window WHEN policy that validateWindowExpiryPredicate()
+    // checks, and not in the current policy or a view body that a read of the view expands.
+    private boolean isParsingOwnExpiryPredicateText() {
+        return isParsingExpiryPredicate && viewExpansionDepth == 0 && expiringTablesBeingExpanded.size() == 0;
     }
 
     /**
@@ -7866,12 +7890,12 @@ public class SqlParser {
         // nested model above (tableNameExpr stays null), so it is naturally skipped. A reference
         // spelled with the no-rowid marker resolves to the same table, see expiryLookupName().
         final ExpressionNode resolvedTableNameExpr = model.getTableNameExpr();
+        if (resolvedTableNameExpr != null && isParsingOwnExpiryPredicateText()) {
+            rejectExpiryPredicateForeignRead(resolvedTableNameExpr);
+        }
         if (resolvedTableNameExpr == null || resolvedTableNameExpr.type != ExpressionNode.LITERAL) {
             return;
         }
-        // Runs ahead of the policy checks below: the view a SET EXPIRE check reads may carry no policy
-        // yet, and no other table may carry one either.
-        rejectExpiryPolicyCycleThroughView(resolvedTableNameExpr);
         if (cairoEngine.getMetadataCache().mayHaveExpiryPolicy()) {
             // Normalise to the unquoted name so the recursion guard matches regardless of quoting:
             // the outer reference may be "from t" while the synthetic inner is "from \"t\"".
@@ -8681,26 +8705,18 @@ public class SqlParser {
         }
     }
 
-    // ALTER MATERIALIZED VIEW ... SET EXPIRE checks a new policy by compiling a read of the view that
-    // reads the view itself without any policy, see SqlExecutionContext.getExpiryRawReadTable(). A
-    // reference to that view from inside a SQL view body means the new policy's subquery reaches the
-    // view through a SQL view. A read of that SQL view would expand the policy, and the policy would
-    // expand the SQL view again, so every read of it would fail as a circular view reference. The check
-    // rejects such a policy, the way ViewGraph.validateNoCycle rejects the SQL view that closes the
-    // same cycle from the other side.
-    private void rejectExpiryPolicyCycleThroughView(ExpressionNode tableNameExpr) throws SqlException {
-        if (viewsBeingCompiled.size() == 0 || expiryFilterExecutionContext == null) {
+    // A sub-query of a window WHEN policy reads only the view the policy is set on. Nothing records what
+    // else it reads, so DROP, RENAME or a column change on any other table, view or table function's
+    // source would go through, and every read of the view would then fail compiling the stored policy.
+    // A SQL view would also close a cycle: its reads would expand the policy, which expands the SQL
+    // view again.
+    private void rejectExpiryPredicateForeignRead(ExpressionNode tableNameExpr) throws SqlException {
+        if (tableNameExpr.type == ExpressionNode.LITERAL
+                && expiryPredicateTarget != null
+                && expiryPredicateTarget.equals(cairoEngine.getTableTokenIfExists(expiryLookupName(tableNameExpr.token)))) {
             return;
         }
-        final TableToken rawReadTable = expiryFilterExecutionContext.getExpiryRawReadTable();
-        if (rawReadTable != null && rawReadTable.equals(cairoEngine.getTableTokenIfExists(expiryLookupName(tableNameExpr.token)))) {
-            final CharSequence viewName = viewsBeingCompiled.getQuick(0);
-            throw SqlException.$(tableNameExpr.position, "circular dependency detected: '")
-                    .put(rawReadTable.getTableName())
-                    .put("' cannot depend on '").put(viewName)
-                    .put("' because '").put(viewName)
-                    .put("' already depends on '").put(rawReadTable.getTableName()).put('\'');
-        }
+        throw expiryPredicateForeignRead(tableNameExpr.position);
     }
 
     // Join ON-clause sub-queries are unsupported and rejected during expression parsing, but
@@ -9641,17 +9657,27 @@ public class SqlParser {
         }
     }
 
-    private void validateWindowExpiryPredicate(CharSequence sql, int lo, int hi, SqlParserCallback sqlParserCallback) throws SqlException {
+    private void validateWindowExpiryPredicate(
+            CharSequence sql,
+            int lo,
+            int hi,
+            @Nullable TableToken target,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         final GenericLexer probe = viewLexers.next();
         probe.of(sql, lo, hi);
         final boolean isParsingExpiryPredicateBefore = isParsingExpiryPredicate;
+        final TableToken expiryPredicateTargetBefore = expiryPredicateTarget;
         isParsingExpiryPredicate = true;
+        expiryPredicateTarget = target;
         try {
             // Parse without binding or folding: even an unused branch must not persist a parameter.
-            // A model lets subqueries parse normally; expr() also checks their nested expressions.
+            // A model lets subqueries parse normally; expr() also checks their nested expressions, and
+            // parseSelectFrom() and compileViewQuery() check what they read.
             expr(probe, queryModelPool.next(), sqlParserCallback != null ? sqlParserCallback : viewSqlParserCallback);
         } finally {
             isParsingExpiryPredicate = isParsingExpiryPredicateBefore;
+            expiryPredicateTarget = expiryPredicateTargetBefore;
         }
     }
 
@@ -9934,7 +9960,7 @@ public class SqlParser {
     }
 
     /**
-     * Result of {@link #parseExpireRowsClause(GenericLexer, boolean)}: the captured raw predicate
+     * Result of {@link #parseExpireRowsClause(GenericLexer, boolean, TableToken)}: the captured raw predicate
      * text, the cleanup interval in microseconds, and the next unconsumed token (the boundary
      * keyword for the CREATE TABLE caller; null/';' for the ALTER caller).
      */

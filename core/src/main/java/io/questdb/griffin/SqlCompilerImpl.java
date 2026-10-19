@@ -7372,7 +7372,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     protected void alterTableSetExpire(SqlExecutionContext executionContext, TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
         // EXPIRE has already been consumed; parse "ROWS WHEN <predicate> [CLEANUP EVERY <dur>]"
         // using the shared CREATE-path parser (inCreateTable=false: ';'/EOF are the only boundaries).
-        final SqlParser.ExpireRowsClause clause = parser.parseExpireRowsClause(lexer, false);
+        final SqlParser.ExpireRowsClause clause = parser.parseExpireRowsClause(lexer, false, tableToken);
         if (clause.nextTok != null && !isSemicolon(clause.nextTok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(clause.nextTok).put("] while trying to set row-expiry policy");
         }
@@ -7541,8 +7541,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // under the same name has a new table id, and the WAL writer rejects the ALTER when it executes.
         // The probe reads the view without its current policy, the way a read sees the view once the new
         // policy replaces it, so it asks for SELECT on the new policy's columns and not on the columns of
-        // the policy it replaces. Every other table the probe reads keeps its own policy, as it does in that
-        // read.
+        // the policy it replaces. The probe reads no other table: the parser has already rejected a window
+        // predicate whose sub-query reads anything but the view.
         final TableToken previousExpiryRawReadTable = executionContext.getExpiryRawReadTable();
         executionContext.setExpiryRawReadTable(tableToken);
         try {

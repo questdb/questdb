@@ -158,42 +158,33 @@ live view needs re-creation.
 - **Pinned by:** `LiveViewMatViewBaseTest`,
   `MatViewExpireRowsHardeningTest.testCreateDependentDuringExpiryMetaSwapRejected`.
 
-### A window policy's subquery can lose its table
+### A window policy's subquery reads only its view
 
-A window `WHEN` predicate can read another table through a subquery, for
-example `WHEN v < max(v) OVER (PARTITION BY k) AND k IN (SELECT k FROM lookup)`.
-`SET EXPIRE` checks the predicate against `lookup` as it is then, and nothing
-records the dependency, so `DROP TABLE`, `RENAME TABLE`, `DROP COLUMN`,
-`RENAME COLUMN` and `ALTER COLUMN TYPE` on `lookup` all succeed. Every read of
-the view compiles the stored predicate again (`SqlParser.expandExpiringTable`),
-so after such a change every read fails with the raw compile error, such as
-`table does not exist [table=lookup]` or `Invalid column: k`. The error does not
-name the view or its policy, and its position is an offset into the query that
-`expandExpiringTable` builds around the stored predicate, not into the reader's
-SQL. Refresh does not read the policy, so `materialized_views()` keeps
-reporting the view as `valid` with no reason. Reads work again after
-`DROP EXPIRE`, or once the table and columns the subquery names exist again.
+A window `WHEN` predicate can hold a subquery, but the subquery can read only
+the view the policy is set on, for example
+`WHEN v < max(v) OVER (PARTITION BY k) AND k IN (SELECT k FROM mv WHERE v < 2)`
+on `mv`. `SET EXPIRE` rejects a subquery that reads any other table, SQL view,
+materialized view or table function, at any depth, with
+`EXPIRE ROWS predicate can read only the view the policy is set on`. `CREATE
+MATERIALIZED VIEW ... EXPIRE ROWS` rejects every subquery read, because the view
+does not exist yet. A scalar `WHEN` predicate accepts no subquery at all. A
+policy that expires the keys another table lists, such as
+`k IN (SELECT k FROM lookup)`, cannot be expressed.
 
-The subquery resolves `lookup` by name on every read. A table created or
-renamed to `lookup` later is the one the policy reads, whatever it holds, and
-its rows decide which view rows expire. A type change that keeps the predicate
-legal keeps working: SYMBOL to VARCHAR under `k IN (SELECT k FROM lookup)`
-expires the same rows. One that does not, such as DOUBLE to VARCHAR under
-`v > (SELECT min(x) FROM lookup)`, fails every read with
-`cannot compare DOUBLE and VARCHAR`.
-
-- **Why accepted:** a read that cannot apply the policy fails closed. Serving
-  the rows without the policy would show rows the user configured to expire.
-  SQL views behave the same way: a read of a view whose table was dropped fails
-  with the raw error from its definition. Blocking the DDL needs a persisted
-  dependency registry that table and column DDL, WAL apply and replicas all
-  consult. Reporting the error at the view reference needs wrapping in
-  `SqlOptimiser` and `SqlCodeGenerator`, where the wrap also sees errors that
-  have nothing to do with the policy.
-- **Pinned by:** `RowExpiryWindowSubqueryDependencyTest`.
-- **Follow-up:** name the view and its policy in the error, positioned at the
-  view reference, and have `materialized_views()` report the view as invalid
-  with the reason, as `views()` does for a SQL view.
+- **Why accepted:** every read of the view compiles the stored predicate again,
+  and nothing records what its subquery reads. `DROP TABLE`, `RENAME TABLE` and
+  column changes on another object it read would all succeed, and every read of
+  the view would then fail with an error that names neither the view nor its
+  policy, while `materialized_views()` kept reporting the view as `valid`. A
+  table later created under the dropped name would silently decide which rows
+  expire. A subquery that read a SQL view over the view would expand that SQL
+  view inside its own expansion, failing every read of the SQL view. Tracking
+  these reads needs a persisted dependency registry that table and column DDL,
+  WAL apply and replicas all consult.
+- **Pinned by:** `RowExpiryWindowSubquerySourceTest`,
+  `RowExpiryWindowTest.testSetExpireRejectsPolicyReadingSqlView`.
+- **Follow-up:** record the objects a policy's subquery reads as dependencies
+  of the view, if a use case for reading them appears.
 
 ### Aggregating views accept a policy
 
@@ -537,12 +528,10 @@ until a refresh runs, as after a restart, and `REFRESH FULL` recovers it.
 To check a KEEP LATEST, KEEP HIGHEST/LOWEST or window WHEN policy, `ALTER
 MATERIALIZED VIEW ... SET EXPIRE ROWS` compiles and opens the query a read of the
 view will run once the new policy replaces the current one. That query reads the
-view without its current policy. A window WHEN predicate can hold a subquery, and
-a subquery that names the view itself reads it without any policy, in the check
-and in every later read. A subquery that reaches the view through a SQL view is
-rejected, as `ALTER VIEW` rejects the SQL view that closes the same cycle from
-the other side. Opening the check's cursor runs such a
-subquery. When it fails, the error carries the reason, and the reason can include
+view without its current policy. A window WHEN predicate can hold a subquery that
+reads the view itself, and nothing else (see "A window policy's subquery reads
+only its view"). Such a subquery reads the view without any policy, in the check
+and in every later read. Opening the check's cursor runs such a subquery. When it fails, the error carries the reason, and the reason can include
 a row value. In QuestDB Enterprise, with `WHEN secret < 20` in force, a user who
 holds `SET TABLE PARAM` and SELECT on `k`, `v` and `sym`, but not on `secret`,
 runs:
@@ -569,8 +558,8 @@ through `secret < 20` needs SELECT on `secret`.
 - **Pinned by:** in QuestDB Enterprise,
   `EntRowExpiryAclTest.testAlterMatViewSetExpireOverPolicyRequiresSelectOnNewPolicyColumnsOnly`
   replaces a policy on a column the user cannot read, and
-  `EntRowExpiryAclTest.testAlterMatViewSetExpireSubqueryRequiresSelectOnOtherViewPolicyColumns`
-  shows that only the view itself is read without its policy.
+  `EntRowExpiryAclTest.testAlterMatViewSetExpireSubqueryCannotReadOtherObject`
+  shows that SELECT on another view does not let the subquery read it.
 - **Follow-up:** replacing the reason with a generic message for failures raised
   while the check opens its cursor would stop the values from showing, at the
   cost of the detail for every policy error found there.
