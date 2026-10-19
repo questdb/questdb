@@ -547,10 +547,11 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     reader.getSeqTxn(),
                     command
             );
-            if (command.isFullyMaterialized()) {
+            if (command.isFullyMaterialized() || command.isIndexRowMapDropped()) {
                 // Every column of the new file starts at row 0 and the swap zeroes every column top, so the
                 // source's index files - built past a top, or never built for a column the source file lacked -
-                // do not describe the copy. Build them afresh off the new file, here, so the swap stays
+                // do not describe the copy. Neither do index files an in-place O3 update grew over an index
+                // row map the copy drops. Build them afresh off the new file, here, so the swap stays
                 // metadata-only.
                 getParquetIndexBuilder().buildIndexes(
                         other,

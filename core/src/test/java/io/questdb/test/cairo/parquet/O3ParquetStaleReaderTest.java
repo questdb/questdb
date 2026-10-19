@@ -29,13 +29,17 @@ import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -308,6 +312,81 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\n14\n");
+        });
+    }
+
+    @Test
+    public void testIndexCursorOpenedBeforeInPlaceO3KeepsItsSnapshot() throws Exception {
+        // Reproduces https://github.com/questdb/questdb/issues/7910: an in-place
+        // O3 update of a parquet partition rebuilds the SYMBOL index files under
+        // the same names, so a cursor opened before the commit decodes the old
+        // parquet footer while reading row ids from the rebuilt index.
+        // Small row groups and permissive rewrite thresholds keep the merge in place.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO pt VALUES
+                            ('a', 1, '2024-01-01T00:00:00.000000Z'), ('b', 2, '2024-01-01T01:00:00.000000Z'),
+                            ('c', 3, '2024-01-01T02:00:00.000000Z'), ('a', 4, '2024-01-01T03:00:00.000000Z'),
+                            ('b', 5, '2024-01-01T04:00:00.000000Z'), ('c', 6, '2024-01-01T05:00:00.000000Z'),
+                            ('a', 7, '2024-01-01T06:00:00.000000Z'), ('b', 8, '2024-01-01T07:00:00.000000Z'),
+                            ('c', 9, '2024-01-01T08:00:00.000000Z'), ('a', 10, '2024-01-01T09:00:00.000000Z'),
+                            ('b', 11, '2024-01-01T10:00:00.000000Z'), ('c', 12, '2024-01-01T11:00:00.000000Z'),
+                            ('a', 99, '2024-01-02T00:00:00.000000Z')
+                            """
+            );
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final long nameTxn = getParquetPartitionNameTxn("pt");
+            final String query = "SELECT s, v, ts FROM pt WHERE s = 'a' AND ts IN '2024-01-01'";
+            assertQuery(query).noLeakCheck().assertsPlanContaining("Index forward scan on: s");
+            try (RecordCursorFactory factory = select(query)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    // O3 commit into the parquet partition while the cursor is open
+                    execute("INSERT INTO pt VALUES ('a', 101, '2024-01-01T04:30:00.000000Z')");
+                    drainWalQueue();
+                    Assert.assertEquals(
+                            "O3 merge must update the parquet partition in place",
+                            nameTxn,
+                            getParquetPartitionNameTxn("pt")
+                    );
+
+                    // the cursor was opened before the commit, so it must return the pre-commit 'a' rows
+                    TestUtils.assertCursor(
+                            """
+                                    s\tv\tts
+                                    a\t1\t2024-01-01T00:00:00.000000Z
+                                    a\t4\t2024-01-01T03:00:00.000000Z
+                                    a\t7\t2024-01-01T06:00:00.000000Z
+                                    a\t10\t2024-01-01T09:00:00.000000Z
+                                    """,
+                            cursor,
+                            factory.getMetadata(),
+                            true,
+                            new StringSink()
+                    );
+                }
+            }
+
+            // a query that starts after the commit sees the merged row
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tv\tts
+                            a\t1\t2024-01-01T00:00:00.000000Z
+                            a\t4\t2024-01-01T03:00:00.000000Z
+                            a\t101\t2024-01-01T04:30:00.000000Z
+                            a\t7\t2024-01-01T06:00:00.000000Z
+                            a\t10\t2024-01-01T09:00:00.000000Z
+                            """);
         });
     }
 
@@ -658,6 +737,13 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             }
         }
         return -1;
+    }
+
+    private static long getParquetPartitionNameTxn(String tableName) {
+        try (TableReader reader = getReader(tableName)) {
+            Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+            return reader.getTxFile().getPartitionNameTxn(0);
+        }
     }
 
     private void assertParquetColumnCount(int expectedColumnCount) {

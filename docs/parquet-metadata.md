@@ -214,10 +214,11 @@ file otherwise. Feature sections are ordered by bit position.
 
 **Footer flag bits:**
 
-| bit | name       | footer section                                                                                                                                   |
-| --- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0   | SEQ_TXN    | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
-| 1   | SCRATCHPAD | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
+| bit | name          | footer section                                                                                                                                   |
+| --- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0   | SEQ_TXN       | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
+| 1   | SCRATCHPAD    | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
+| 32  | INDEX_ROW_MAP | Required. `8 + 8 * ROW_GROUP_COUNT` bytes: `[u64 index_row_count][u64 index_row_lo; ROW_GROUP_COUNT]`. See "Index row map" below.               |
 
 Bit 2 indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The
 on-disk `SORTING_COLUMN_COUNT` is 0 and the SORTING_COLUMNS section is absent, but readers treat the partition as sorted
@@ -227,6 +228,31 @@ only valid when `DESIGNATED_TIMESTAMP >= 0`; writers must not set it when `DESIG
 QuestDB-managed parquet snapshots represented by `_pm` always normalize `column_top` to `0`. Null prefixes are
 materialized directly into parquet chunks/pages, and `_pm` pruning relies on per-chunk `NULL_COUNT` rather than
 file-level `column_top` metadata.
+
+### Index row map
+
+The symbol indexes of a parquet partition live next to `data.parquet` and store, for each key, the rows that
+hold it. They store **index rows** rather than partition rows. Row group `i` occupies index rows
+`[index_row_lo[i], index_row_lo[i] + NUM_ROWS[i])`; `index_row_count` is the number of index rows the indexes
+cover, rows of replaced row groups included.
+
+Without the `INDEX_ROW_MAP` section, the footer uses the identity map: row group `i` starts at the sum of the
+preceding row groups' `NUM_ROWS`, and `index_row_count` is the partition row count. Writers that build a new
+`data.parquet` (conversion, rewrite, compaction) always produce the identity map and index the file afresh.
+
+An in-place O3 update changes the row layout of the live file, while readers of the committed snapshot keep
+using the same index files. It therefore keeps the index rows of the row groups it kept (wherever they sit in
+the new footer, matched by the byte offset of their first column chunk) and gives the row groups it wrote fresh
+index rows from `index_row_count` upwards, in row group order. The indexes only ever grow: the update appends
+the rows of the new row groups, and the entries a pinned reader's footer refers to stay as they are. A reader
+asks the index for the index rows of each row group it reads, in footer order, and maps a result back to its
+row group position by subtracting `index_row_lo`.
+
+The writer omits the section when the resolved map is the identity map, for example after an update that only
+appended row groups after the last one. The bit is in the required range: a reader that ignored the map would
+resolve index rows at the wrong row group, so an older reader rejects such a footer instead.
+
+The section is the last footer-flag section, immediately before the CRC.
 
 ### File header
 

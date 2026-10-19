@@ -356,6 +356,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ParquetPartitionDecoder parquetDecoder;
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+    private final LongList parquetRowGroupIndexRowLos = new LongList();
+    private final IntList parquetRowGroupOrder = new IntList();
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
     // at once; the writer-thread paths touch the same list only after the O3 workers
@@ -2243,6 +2245,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw CairoException.nonCritical().put("partition path does not exist [path=").put(path).put(']');
             }
 
+            // The parquet partition's index files hold partition rows only while its footer
+            // uses the identity index row map. Ask before other points at the new directory.
+            final boolean canLinkIndexFiles = isParquetIndexRowMapIdentity(partitionTimestamp, partitionIndex, partitionNameTxn);
+
             // upgrade partition version
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
             createDirsOrFail(ff, other, configuration.getMkDirMode());
@@ -2252,7 +2258,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long parquetRowCount = produceNativeFromParquet(path, other, partitionTimestamp, partitionIndex, partitionNameTxn);
 
             LOG.info().$("restoring index files after parquet decode [path=").$substr(pathRootSize, other).I$();
-            restoreIndexFilesAfterParquetToNative(partitionTimestamp, partitionNameTxn, newPartitionDirLen, parquetRowCount);
+            restoreIndexFilesAfterParquetToNative(partitionTimestamp, partitionNameTxn, newPartitionDirLen, parquetRowCount, canLinkIndexFiles);
 
             // used to update txn and bump recordStructureVersion
             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
@@ -9986,27 +9992,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int includedCoveredCount = 0;
 
             try {
+                // The index stores index rows, see ParquetMetaFileReader#getRowGroupIndexRowLo.
+                // After an in-place O3 update they differ from partition rows: the update keeps
+                // the index rows of the row groups it kept and moves the row groups it wrote to
+                // fresh ones. The covered scratch files then hold one entry per index row.
+                final long indexRowCount = parquetMetadata.getIndexRowCount();
                 if (hasCovering) {
                     // Covered column data goes to mmap-backed scratch files (+ aux for
                     // var-size), written in the row-group loop and read from the same
                     // addresses during seal -- no write()/re-mmap round-trip.
                     addCoveredSlots(coveringColumnIndices, timestamp, parquetMetadata, partitionSize, normalizeColumnTops);
                     includedCoveredCount = coveredColumnAccumulator.openScratchFiles(
-                            configuration, ff, path, plen, parquetMetadata, partitionSize, parquetColumnIdsAndTypes);
+                            configuration, ff, path, plen, parquetMetadata, indexRowCount, parquetColumnIdsAndTypes);
                 }
 
-                long rowCount = 0;
-                final int rowGroupCount = parquetMetadata.getRowGroupCount();
                 final IndexWriter indexWriter = indexer.getWriter();
-                for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+                // Index values grow per key, so the row groups go in the order of their index rows.
+                parquetMetadata.collectRowGroupsInIndexRowOrder(parquetRowGroupOrder, parquetRowGroupIndexRowLos);
+                // The column top is in partition rows, and an index row map only exists after an
+                // in-place update, which zeroes every column top.
+                assert columnTop == 0 || !parquetMetadata.hasIndexRowMap() : "column top " + columnTop + " over an index row map";
+                long nextIndexRow = 0;
+                for (int i = 0, n = parquetRowGroupOrder.size(); i < n; i++) {
+                    final int rowGroupIndex = parquetRowGroupOrder.getQuick(i);
                     final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
+                    final long indexRowLo = parquetRowGroupIndexRowLos.getQuick(rowGroupIndex);
+                    if (includedCoveredCount > 0) {
+                        // Index rows of replaced row groups: no entry points at them.
+                        coveredColumnAccumulator.accumulateNulls(indexRowLo - nextIndexRow);
+                    }
+                    nextIndexRow = indexRowLo + rowGroupSize;
 
                     // For row groups fully below columnTop, covered columns
                     // still need decoding (their column_top may differ from
                     // the symbol's) but the SYMBOL data is skipped.
-                    final boolean belowColumnTop = rowCount + rowGroupSize <= columnTop;
+                    final boolean belowColumnTop = indexRowLo + rowGroupSize <= columnTop;
                     if (belowColumnTop && includedCoveredCount == 0) {
-                        rowCount += rowGroupSize;
                         continue;
                     }
 
@@ -10014,30 +10035,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             rowGroupBuffers,
                             parquetColumnIdsAndTypes,
                             rowGroupIndex,
-                            belowColumnTop ? 0 : (int) Math.max(0, columnTop - rowCount),
+                            belowColumnTop ? 0 : (int) Math.max(0, columnTop - indexRowLo),
                             (int) rowGroupSize
                     );
 
                     // Accumulate covered column data into mmap'd temp files.
                     if (includedCoveredCount > 0) {
-                        coveredColumnAccumulator.accumulate(rowGroupBuffers, rowGroupIndex, rowGroupSize);
+                        coveredColumnAccumulator.accumulate(rowGroupBuffers, rowGroupSize);
                     }
 
                     // Feed SYMBOL column to the posting index.
                     if (!belowColumnTop) {
-                        long rowId = Math.max(rowCount, columnTop);
+                        long rowId = Math.max(indexRowLo, columnTop);
                         final long addr = rowGroupBuffers.getChunkDataPtr(0);
                         final long size = rowGroupBuffers.getChunkDataSize(0);
                         if (size == 0) {
-                            BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                            BitmapIndexUtils.addNullEntries(indexWriter, rowId, indexRowLo + rowGroupSize);
                         } else {
                             for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
                                 indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
                             }
                         }
                     }
-
-                    rowCount += rowGroupSize;
                 }
 
                 // Wire up covered column addresses for the seal path. No
@@ -10051,7 +10070,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     coveredColumnAccumulator.configureCovering(indexer, metadata.getTimestampIndex());
                 }
 
-                indexWriter.setMaxValue(partitionSize - 1);
+                indexWriter.setMaxValue(indexRowCount - 1);
                 indexer.seal();
             } finally {
                 if (hasCovering) {
@@ -10262,6 +10281,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if the posting index key file exists with a non-empty
      * v2 chain (at least one published seal entry).
      */
+    /**
+     * Returns true when the committed footer of a parquet partition uses the identity index
+     * row map, so its index files hold partition rows. Returns false when the footer maps row
+     * groups to other index rows, and when the {@code _pm} cannot be read: callers then
+     * rebuild the index from the data instead of reusing the index files.
+     */
+    private boolean isParquetIndexRowMapIdentity(long partitionTimestamp, int partitionIndex, long partitionNameTxn) {
+        final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        other.concat(PARQUET_METADATA_FILE_NAME).$();
+        final ParquetMetaFileReader reader = parquetMetaReader;
+        long addr = 0;
+        try {
+            addr = ParquetMetaFileReader.openAndMapRO(ff, other.$(), reader);
+            return addr != 0 && reader.resolveFooter(parquetFileSize) && !reader.hasIndexRowMap();
+        } catch (CairoException e) {
+            LOG.info().$("could not read parquet index row map, index files will be rebuilt [path=").$substr(pathRootSize, other)
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return false;
+        } finally {
+            final long size = reader.getFileSize();
+            reader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            other.trimTo(pathSize);
+        }
+    }
+
     private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
         LPSZ keyFile = io.questdb.cairo.idx.PostingIndexUtils.keyFileName(
                 path.trimTo(plen), columnName, columnNameTxn);
@@ -16355,11 +16404,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3PartitionUpdateSink.setBlockSize(PARTITION_SINK_SIZE_LONGS + metadata.getColumnCount());
     }
 
+    /**
+     * Restores the index files of a partition that was just converted from parquet to native.
+     *
+     * @param canLinkIndexFiles true when the parquet partition's index files hold partition
+     *                          rows, which the native partition shares. False when an in-place
+     *                          O3 update moved row groups to other index rows, see
+     *                          {@link ParquetMetaFileReader#getRowGroupIndexRowLo}; the index
+     *                          is then rebuilt from the decoded column.
+     */
     private void restoreIndexFilesAfterParquetToNative(
             long partitionTimestamp,
             long parquetNameTxn,
             int dstDirLen,
-            long partitionRowCount
+            long partitionRowCount,
+            boolean canLinkIndexFiles
     ) {
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
         final int srcDirLen = path.size();
@@ -16379,7 +16438,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
                 // Prefer linking the existing index files
-                if (ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                if (canLinkIndexFiles && ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
                     linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, partitionTimestamp, parquetNameTxn);
                     continue;
                 }

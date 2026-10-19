@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
@@ -62,6 +63,8 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
     private final FilesFacade ff;
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
+    private final LongList rowGroupIndexRowLos = new LongList();
+    private final IntList rowGroupOrder = new IntList();
     private final PostingSupersededFileRemover supersededFileRemover;
     private DirectIntList decodeColumns;
     private SymbolColumnIndexer indexer;
@@ -254,38 +257,47 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             decodeColumns.clear();
             decodeColumns.add(parquetIndex);
             decodeColumns.add(ColumnType.SYMBOL);
+            // The index stores index rows, see ParquetMetaFileReader#getRowGroupIndexRowLo; the covered
+            // scratch files hold one entry per index row.
+            final long indexRowCount = parquetMetadata.getIndexRowCount();
             int decodedCoveredCount = 0;
             if (hasCovering) {
                 addCoveredSlots(metadata, parquetMetadata, coveredWriterIndices, columnVersions, partitionTimestamp);
                 decodedCoveredCount = coveredColumnAccumulator.openScratchFiles(
-                        configuration, ff, partitionDir, dirLen, parquetMetadata, partitionRowCount, decodeColumns);
+                        configuration, ff, partitionDir, dirLen, parquetMetadata, indexRowCount, decodeColumns);
             }
 
             final IndexWriter indexWriter = indexer.getWriter();
-            long rowCount = 0;
-            for (int rowGroup = 0, n = parquetMetadata.getRowGroupCount(); rowGroup < n; rowGroup++) {
+            // Index values grow per key, so the row groups go in the order of their index rows.
+            parquetMetadata.collectRowGroupsInIndexRowOrder(rowGroupOrder, rowGroupIndexRowLos);
+            long nextIndexRow = 0;
+            for (int i = 0, n = rowGroupOrder.size(); i < n; i++) {
+                final int rowGroup = rowGroupOrder.getQuick(i);
                 final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroup);
+                final long indexRowLo = rowGroupIndexRowLos.getQuick(rowGroup);
                 decoder.decodeRowGroup(rowGroupBuffers, decodeColumns, rowGroup, 0, (int) rowGroupSize);
                 if (decodedCoveredCount > 0) {
-                    coveredColumnAccumulator.accumulate(rowGroupBuffers, rowGroup, rowGroupSize);
+                    // Index rows of replaced row groups: no entry points at them.
+                    coveredColumnAccumulator.accumulateNulls(indexRowLo - nextIndexRow);
+                    coveredColumnAccumulator.accumulate(rowGroupBuffers, rowGroupSize);
                 }
+                nextIndexRow = indexRowLo + rowGroupSize;
                 final long addr = rowGroupBuffers.getChunkDataPtr(0);
                 final long size = rowGroupBuffers.getChunkDataSize(0);
                 if (size == 0) {
-                    BitmapIndexUtils.addNullEntries(indexWriter, rowCount, rowCount + rowGroupSize);
+                    BitmapIndexUtils.addNullEntries(indexWriter, indexRowLo, indexRowLo + rowGroupSize);
                 } else {
-                    long rowId = rowCount;
+                    long rowId = indexRowLo;
                     for (long p = addr, lim = addr + size; p < lim; p += Integer.BYTES, rowId++) {
                         indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
                     }
                 }
-                rowCount += rowGroupSize;
             }
             if (hasCovering) {
                 final int timestampIndex = metadata.getTimestampIndex();
                 coveredColumnAccumulator.configureCovering(indexer, timestampIndex < 0 ? -1 : metadata.getWriterIndex(timestampIndex));
             }
-            indexWriter.setMaxValue(partitionRowCount - 1);
+            indexWriter.setMaxValue(indexRowCount - 1);
             indexer.seal();
         } finally {
             if (hasCovering) {

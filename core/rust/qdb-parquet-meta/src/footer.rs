@@ -41,6 +41,16 @@ const _: () = assert!(SEQ_TXN_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
 pub const SCRATCHPAD_SECTION_IDX: usize = 1;
 const _: () = assert!(SCRATCHPAD_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
 
+/// Index of the `INDEX_ROW_MAP_BIT` section in the footer-flag offsets array.
+pub const INDEX_ROW_MAP_SECTION_IDX: usize = 2;
+const _: () = assert!(INDEX_ROW_MAP_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
+
+/// On-disk size of the index row map section for `row_group_count` row groups:
+/// `[u64 index_row_count][u64 index_row_lo; row_group_count]`.
+pub fn index_row_map_section_size(row_group_count: u32) -> usize {
+    8 + 8 * row_group_count as usize
+}
+
 /// Walks set footer-flag bits forward from `sections_start` (= end of the
 /// bloom filter section, or `entries_end` when bloom is absent), stamping
 /// each known section's offset and advancing the cursor by its on-disk
@@ -49,6 +59,7 @@ const _: () = assert!(SCRATCHPAD_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
 /// `(offsets, sections_end)`. Add one branch per new known bit.
 pub fn compute_section_offsets(
     feature_flags: FooterFeatureFlags,
+    row_group_count: u32,
     sections_start: usize,
     data: &[u8],
     end: usize,
@@ -69,6 +80,17 @@ pub fn compute_section_offsets(
     if feature_flags.has_scratchpad() {
         offsets[SCRATCHPAD_SECTION_IDX] = cursor as u32;
         cursor += parse_scratchpad_size(data, cursor, end)?;
+    }
+    if feature_flags.has_index_row_map() {
+        offsets[INDEX_ROW_MAP_SECTION_IDX] = cursor as u32;
+        cursor += index_row_map_section_size(row_group_count);
+        if cursor > end {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "index row map section exceeds CRC offset {}",
+                end
+            ));
+        }
     }
     Ok((offsets, cursor))
 }
@@ -300,8 +322,13 @@ impl<'a> Footer<'a> {
                 bloom_section_size
             ));
         }
-        let (section_offsets, sections_end) =
-            compute_section_offsets(raw.feature_flags, bloom_section_end, data, crc_offset)?;
+        let (section_offsets, sections_end) = compute_section_offsets(
+            raw.feature_flags,
+            raw.row_group_count,
+            bloom_section_end,
+            data,
+            crc_offset,
+        )?;
         if sections_end > crc_offset {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
@@ -425,6 +452,41 @@ impl<'a> Footer<'a> {
             .map(|(_, content)| content)
     }
 
+    /// Total index rows the partition's symbol indexes cover, dead rows
+    /// included, or `None` when the footer uses the identity map (see
+    /// [`FooterFeatureFlags::INDEX_ROW_MAP_BIT`]).
+    pub fn index_row_count(&self) -> Option<u64> {
+        if !self.raw.feature_flags.has_index_row_map() {
+            return None;
+        }
+        let off = self.section_offsets[INDEX_ROW_MAP_SECTION_IDX] as usize;
+        // Unwrap: Footer::new validated the section against the CRC offset.
+        Some(u64::from_le_bytes(
+            self.data[off..off + 8].try_into().unwrap(),
+        ))
+    }
+
+    /// First index row of the row group at `index`, or `None` when the footer
+    /// uses the identity map (see [`FooterFeatureFlags::INDEX_ROW_MAP_BIT`]).
+    pub fn row_group_index_row_lo(&self, index: usize) -> ParquetMetaResult<Option<u64>> {
+        if index >= self.raw.row_group_count as usize {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "row group index {} out of range [0, {})",
+                index,
+                self.raw.row_group_count
+            ));
+        }
+        if !self.raw.feature_flags.has_index_row_map() {
+            return Ok(None);
+        }
+        let off = self.section_offsets[INDEX_ROW_MAP_SECTION_IDX] as usize + 8 + index * 8;
+        // Unwrap: Footer::new validated the section against the CRC offset.
+        Ok(Some(u64::from_le_bytes(
+            self.data[off..off + 8].try_into().unwrap(),
+        )))
+    }
+
     /// Byte offset (relative to footer start) where the bloom filter
     /// section ends. Higher-level readers use this as the end bound when
     /// slicing the bloom section from `entries_end..bloom_section_end()`.
@@ -486,6 +548,9 @@ pub struct FooterBuilder {
     bloom_filter_section: Vec<u8>,
     seq_txn: Option<SeqTxn>,
     scratchpad: Vec<(u32, Vec<u8>)>,
+    /// `(index_row_count, index_row_lo per row group)`; `None` writes the
+    /// identity map (no section).
+    index_row_map: Option<(u64, Vec<u64>)>,
 }
 
 impl FooterBuilder {
@@ -500,7 +565,30 @@ impl FooterBuilder {
             bloom_filter_section: Vec::new(),
             seq_txn: None,
             scratchpad: Vec::new(),
+            index_row_map: None,
         }
+    }
+
+    /// Sets the index row map: the total index rows and the first index row of
+    /// each row group, in row group order. `None` writes the identity map.
+    pub fn set_index_row_map(&mut self, map: Option<(u64, Vec<u64>)>) -> &mut Self {
+        self.index_row_map = map;
+        self
+    }
+
+    /// Rejects an index row map whose length differs from the row group count.
+    pub fn validate_index_row_map(&self) -> ParquetMetaResult<()> {
+        if let Some((_, lows)) = &self.index_row_map {
+            if lows.len() != self.row_group_offsets.len() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "index row map has {} entries for {} row groups",
+                    lows.len(),
+                    self.row_group_offsets.len()
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn unused_bytes(&mut self, unused_bytes: u64) -> &mut Self {
@@ -590,14 +678,22 @@ impl FooterBuilder {
 
         // Force feature bits to match section presence so a caller-set
         // feature_flags() can't desync from the actual payload.
-        let known_section_bits =
-            FooterFeatureFlags::SEQ_TXN_BIT | FooterFeatureFlags::SCRATCHPAD_BIT;
+        let known_section_bits = FooterFeatureFlags::SEQ_TXN_BIT
+            | FooterFeatureFlags::SCRATCHPAD_BIT
+            | FooterFeatureFlags::INDEX_ROW_MAP_BIT;
         let mut effective_flags = FooterFeatureFlags(self.feature_flags.0 & !known_section_bits);
         if self.seq_txn.is_some() {
             effective_flags = effective_flags.with_seq_txn();
         }
         if !self.scratchpad.is_empty() {
             effective_flags = effective_flags.with_scratchpad();
+        }
+        debug_assert!(
+            self.validate_index_row_map().is_ok(),
+            "index row map length differs from the row group count"
+        );
+        if self.index_row_map.is_some() {
+            effective_flags = effective_flags.with_index_row_map();
         }
 
         buf.extend_from_slice(&self.parquet_footer_offset.to_le_bytes());
@@ -613,7 +709,8 @@ impl FooterBuilder {
         }
 
         // Header-flag sections first (bloom), then footer-flag sections
-        // in ascending bit order: seq_txn (bit 0), scratchpad (bit 1).
+        // in ascending bit order: seq_txn (bit 0), scratchpad (bit 1),
+        // index row map (bit 32).
         if !self.bloom_filter_section.is_empty() {
             buf.extend_from_slice(&self.bloom_filter_section);
         }
@@ -637,6 +734,12 @@ impl FooterBuilder {
                 buf.extend_from_slice(&code.to_le_bytes());
                 buf.extend_from_slice(&(content.len() as u32).to_le_bytes());
                 buf.extend_from_slice(content);
+            }
+        }
+        if let Some((index_row_count, lows)) = &self.index_row_map {
+            buf.extend_from_slice(&index_row_count.to_le_bytes());
+            for lo in lows {
+                buf.extend_from_slice(&lo.to_le_bytes());
             }
         }
 
@@ -676,6 +779,66 @@ mod tests {
         assert_eq!(footer.row_group_count(), 0);
         assert_eq!(footer.unused_bytes(), 0);
         assert_eq!(footer.checksum().unwrap(), 0); // placeholder
+    }
+
+    #[test]
+    fn round_trip_with_index_row_map() {
+        let mut fb = FooterBuilder::new(0, 0);
+        fb.add_row_group_offset(0).unwrap();
+        fb.add_row_group_offset(64).unwrap();
+        fb.set_seq_txn(SeqTxn::new(7));
+        fb.set_index_row_map(Some((30, vec![20, 0])));
+        fb.validate_index_row_map().unwrap();
+
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+
+        let footer = parse_footer(&buf, start);
+        assert!(footer.feature_flags().has_index_row_map());
+        assert_eq!(footer.seq_txn(), Some(SeqTxn::new(7)));
+        assert_eq!(footer.index_row_count(), Some(30));
+        assert_eq!(footer.row_group_index_row_lo(0).unwrap(), Some(20));
+        assert_eq!(footer.row_group_index_row_lo(1).unwrap(), Some(0));
+        assert!(footer.row_group_index_row_lo(2).is_err());
+    }
+
+    #[test]
+    fn index_row_map_absent_reads_as_identity() {
+        let mut fb = FooterBuilder::new(0, 0);
+        fb.add_row_group_offset(0).unwrap();
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+
+        let footer = parse_footer(&buf, start);
+        assert!(!footer.feature_flags().has_index_row_map());
+        assert_eq!(footer.index_row_count(), None);
+        assert_eq!(footer.row_group_index_row_lo(0).unwrap(), None);
+        assert!(footer.row_group_index_row_lo(1).is_err());
+    }
+
+    #[test]
+    fn index_row_map_length_mismatch_rejected() {
+        let mut fb = FooterBuilder::new(0, 0);
+        fb.add_row_group_offset(0).unwrap();
+        fb.set_index_row_map(Some((10, vec![0, 5])));
+        assert!(fb.validate_index_row_map().is_err());
+    }
+
+    #[test]
+    fn index_row_map_truncated_section_rejected() {
+        // The flag claims a section for two row groups, but the bytes before the
+        // CRC only hold the base footer.
+        let mut fb = FooterBuilder::new(0, 0);
+        fb.add_row_group_offset(0).unwrap();
+        fb.add_row_group_offset(64).unwrap();
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+        let flags_off = start + 32;
+        let flags = FooterFeatureFlags::new().with_index_row_map();
+        buf[flags_off..flags_off + 8].copy_from_slice(&flags.to_le_bytes());
+
+        let footer_length = u32::from_le_bytes(buf[buf.len() - 4..].try_into().unwrap());
+        assert!(Footer::new(&buf[start..], footer_length, 0).is_err());
     }
 
     #[test]

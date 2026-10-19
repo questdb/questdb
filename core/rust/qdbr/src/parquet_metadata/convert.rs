@@ -31,6 +31,8 @@
 //! preserving the existing write-path callers in `parquet_write/jni.rs` and
 //! `parquet_write/update.rs`.
 
+use std::collections::HashMap;
+
 use parquet2::thrift_format::{ColumnMetaData, RowGroup};
 
 use crate::parquet::error::{parquet_meta_err, ParquetError, ParquetResult};
@@ -221,6 +223,18 @@ pub fn update_parquet_metadata(
         existing_parquet_meta_file_size,
     )?;
 
+    // A row group the update kept may sit at a new position, for example when
+    // the update inserted a row group in front of it. Find it by fingerprint
+    // so the writer reuses its block, bloom filters and index rows instead of
+    // treating it as new data.
+    let mut existing_by_fingerprint: HashMap<u64, usize> =
+        HashMap::with_capacity(existing_rg_count);
+    for (i, fp) in existing_fingerprints.iter().enumerate() {
+        if let Some(fp) = fp {
+            existing_by_fingerprint.insert(*fp, i);
+        }
+    }
+
     let bloom_source = VecBloomFilterSource::new(bloom_bitsets);
     for (i, thrift_rg) in thrift_row_groups.iter().enumerate() {
         let new_fp: Option<u64> = thrift_rg
@@ -230,6 +244,11 @@ pub fn update_parquet_metadata(
             .map(|m| m.dictionary_page_offset.unwrap_or(m.data_page_offset) as u64);
 
         if i < existing_rg_count && existing_fingerprints[i] == new_fp {
+            continue;
+        }
+
+        if let Some(&src) = new_fp.and_then(|fp| existing_by_fingerprint.get(&fp)) {
+            updater.reuse_row_group(i, src)?;
             continue;
         }
 
@@ -1702,6 +1721,83 @@ mod tests {
 
         let old_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
         assert_eq!(old_reader.row_group_count(), 1);
+    }
+
+    #[test]
+    fn update_parquet_metadata_reuses_shifted_row_group() {
+        // An update that inserts a row group in front of the committed one shifts
+        // it to position 1. update_parquet_metadata must recognize it by its
+        // fingerprint, reuse its block, and keep its index rows: the inserted row
+        // group takes fresh index rows past the committed ones.
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let schema_columns = metadata2.schema_descr.columns();
+        let col_infos = col_infos_from_schema(schema_columns, qdb_meta.as_ref());
+
+        let (initial_pm, _) = generate_parquet_metadata(
+            &col_infos,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )
+        .unwrap();
+        let initial_size = initial_pm.len() as u64;
+        let initial_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
+        let committed_rows = initial_reader.row_group(0).unwrap().num_rows();
+        let committed_block = initial_reader.footer().row_group_block_offset(0).unwrap();
+        assert!(initial_reader.footer().index_row_count().is_none());
+
+        let mut inserted_rg = thrift_meta.row_groups[0].clone();
+        for col in &mut inserted_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 10_000;
+            }
+        }
+        let shifted_rgs = vec![inserted_rg, thrift_meta.row_groups[0].clone()];
+
+        let result = update_parquet_metadata(
+            &initial_pm,
+            initial_size,
+            initial_size,
+            &shifted_rgs,
+            200,
+            60,
+            &[],
+            0,
+            SeqTxn::UNSET,
+        )
+        .unwrap();
+        let mut full_file = initial_pm.clone();
+        full_file.extend_from_slice(&result.bytes);
+        full_file[qdb_parquet_meta::types::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..qdb_parquet_meta::types::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&result.new_file_size.to_le_bytes());
+
+        let reader = ParquetMetaReader::from_file_size(&full_file, result.new_file_size).unwrap();
+        assert!(reader.verify_checksum().is_ok());
+        assert_eq!(reader.row_group_count(), 2);
+        let footer = reader.footer();
+        // the shifted row group reuses the committed block and keeps index rows [0, n)
+        assert_eq!(footer.row_group_block_offset(1).unwrap(), committed_block);
+        assert_eq!(footer.row_group_index_row_lo(1).unwrap(), Some(0));
+        // the inserted row group takes [n, 2n)
+        assert_eq!(
+            footer.row_group_index_row_lo(0).unwrap(),
+            Some(committed_rows)
+        );
+        assert_eq!(footer.index_row_count(), Some(2 * committed_rows));
     }
 
     #[test]
