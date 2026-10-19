@@ -184,7 +184,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                 PageFrame frame;
                 RecordMetadata metadata = recordCursorFactory.getMetadata();
                 while ((frame = pageFrameCursor.next()) != null) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     final boolean isParquet = frame.getFormat() == PartitionFormat.PARQUET;
                     if (isParquet) {
                         if (parquetColumns == null) {

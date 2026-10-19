@@ -355,7 +355,7 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     public long touchRowGroup(DirectIntList columns, int rowGroup, SqlExecutionCircuitBreaker circuitBreaker, long memoryTrackerAddr) {
         long pages = 0;
         for (long i = 0; i < columns.size(); i += 2) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final int column = columns.get(i);
             final long offset = parquetMetaReader.getChunkByteRangeStart(rowGroup, column);
             final long size = parquetMetaReader.getChunkTotalCompressed(rowGroup, column);

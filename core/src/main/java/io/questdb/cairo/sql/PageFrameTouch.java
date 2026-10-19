@@ -47,7 +47,7 @@ public final class PageFrameTouch {
         // at the next boundary, so a short tail on the last page is not missed.
         for (long offset = pageSize - address % pageSize; offset < size; offset += pageSize) {
             if ((pages & 63) == 0) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             sum += Unsafe.getByte(address + offset);
             pages++;
