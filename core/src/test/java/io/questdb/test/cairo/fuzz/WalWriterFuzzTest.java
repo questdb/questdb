@@ -186,6 +186,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testConvertPartitionToParquet() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
 
         setFuzzProbabilities(
                 0.01,
@@ -220,6 +221,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // Creates WAL table in parquet format and keeps then run all parquet supported operations.
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
         setCreateWalAsParquet(true);
 
         setFuzzProbabilities(
@@ -254,6 +256,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testConvertPartitionToParquetWithCoveringIndex() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
 
         setFuzzProbabilities(
                 0.01,

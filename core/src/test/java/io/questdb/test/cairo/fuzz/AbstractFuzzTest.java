@@ -85,6 +85,16 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return 50 + rnd.nextInt(9951);
     }
 
+    /**
+     * Row groups of 4..32 rows. Fuzz parquet partitions hold tens of rows each, so with these they
+     * span several row groups, and an O3 merge into them can update the file in place. With a
+     * single row group per partition, every such merge rewrites the file and the in-place update
+     * path - which keeps the partition's index files in place - is never fuzzed.
+     */
+    public static int getRndSmallParquetRowGroupSize(Rnd rnd) {
+        return 4 + rnd.nextInt(29);
+    }
+
     public static long getRndPartitionCompactionCheckInterval(Rnd rnd) {
         // 70% of runs: near-zero, so PartitionCompactionScanJob's cool-off is bypassed and it
         // sweeps on effectively every drain() call - the interesting, bug-finding regime that
