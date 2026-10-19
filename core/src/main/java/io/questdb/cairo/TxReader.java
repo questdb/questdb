@@ -408,6 +408,10 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
+    public int getPartitionDeltaCount() {
+        return partitionDeltaCount;
+    }
+
     public long getPartitionFloor(long timestamp) {
         return partitionFloorMethod != null
                 ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE)

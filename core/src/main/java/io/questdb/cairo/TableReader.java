@@ -101,9 +101,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> columns;
     private boolean hasActiveColumns;
     private boolean hasParquetPartitions;
-    // Lets destroyPartitionFrameStates() skip its walk over every partition when
-    // no state opened since the last walk, e.g. on each pool return.
-    private boolean hasPartitionFrameStates;
     private ObjList<IndexReader> indexes;
     private @Nullable MemoryTracker memoryTracker;
     private int openPartitionCount;
@@ -114,6 +111,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int partitionCount;
     private PartitionFrameStateFactory partitionFrameStateFactory;
     private LongList partitionFrameStates;
+    // The lowest partition with a state, so that destroyPartitionFrameStates() walks from it only,
+    // e.g. on each pool return. Integer.MAX_VALUE when no state opened since the last walk.
+    private int partitionFrameStatesLo = Integer.MAX_VALUE;
     private long rowCount;
     // Per-checkout scan profile -- controls kernel page-cache hints and
     // post-checkout partition retention. Reset to DEFAULT by goPassive() on
@@ -487,8 +487,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     public long getLogicalRowCount() {
         long rows = rowCount;
         if (hasAnyDelta()) {
-            for (int i = 0; i < partitionCount; i++) {
+            // Late writes land in the newest cold partitions, so the walk starts at the newest
+            // partition and stops after the last of the has_delta partitions that TxReader counts.
+            for (int i = partitionCount - 1, deltaCount = txFile.getPartitionDeltaCount(); i > -1 && deltaCount > 0; i--) {
                 if (txFile.getPartitionHasDelta(i)) {
+                    deltaCount--;
                     final long baseRows = getPartitionRowCountFromMetadata(i);
                     rows = Math.addExact(rows, getLogicalPartitionRowCount(i, baseRows) - baseRows);
                 }
@@ -1409,7 +1412,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         final long state = partitionFrameStateFactory.open(this, partitionIndex, getSeqTxn());
         partitionFrameStates.setQuick(partitionIndex, state);
-        hasPartitionFrameStates = true;
+        partitionFrameStatesLo = Math.min(partitionFrameStatesLo, partitionIndex);
         return state;
     }
 
@@ -1439,13 +1442,16 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void destroyPartitionFrameStates() {
-        if (!hasPartitionFrameStates || partitionFrameStateFactory == null || partitionFrameStates == null) {
+        if (partitionFrameStateFactory == null || partitionFrameStates == null) {
             return;
         }
-        for (int i = 0, n = partitionCount; i < n; i++) {
-            destroyPartitionFrameState(i);
+        for (int i = partitionFrameStatesLo, n = partitionCount; i < n; i++) {
+            // Stores only to the slots that hold a state, so the walk reads the other slots only.
+            if (partitionFrameStates.getQuick(i) != 0) {
+                destroyPartitionFrameState(i);
+            }
         }
-        hasPartitionFrameStates = false;
+        partitionFrameStatesLo = Integer.MAX_VALUE;
     }
 
     private void init() {
@@ -1883,6 +1889,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
+        // Partition inserts and deletes shift indexes, so reload() and goPassive() destroy the states first.
+        assert partitionFrameStatesLo == Integer.MAX_VALUE;
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
         boolean truncateHappened = txFile.getTruncateVersion() != prevTruncateVersion;
         if (txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
