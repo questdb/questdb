@@ -2690,6 +2690,44 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOverflowingThresholdFollowsEngineArithmetic() throws Exception {
+        // dateadd() wraps when the offset overflows (questdb/questdb#7980), and a policy applies the
+        // wrapped value just as a SELECT or DROP PARTITION WHERE does: 200M days back from 2024-01-01
+        // is 38996-08-24, so every row expires. A clock-based threshold is not proven to advance, so
+        // cleanup leaves the rows on disk. A constant one is deterministic, so cleanup deletes them.
+        assertMemoryLeak(() -> {
+            currentMicros = MicrosTimestampDriver.floor("2024-01-05T12:00:00.000000Z");
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')""");
+            execute("create materialized view mv as (select * from base) partition by day");
+            drainWalAndMatViewQueues();
+            assertQuery("select dateadd('d', -200000000, '2024-01-01'::timestamp) t")
+                    .expectSize().noLeakCheck().returns("t\n38996-08-24T08:01:49.551616Z\n");
+
+            execute("alter materialized view mv set expire rows when ts < dateadd('d', -200000000, now())");
+            drainWalAndMatViewQueues();
+            assertQuery("select count() from mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n0\n");
+            assertQuery("select expire_enforcement from materialized_views() where view_name = 'mv'")
+                    .noRandomAccess().noLeakCheck().returns("expire_enforcement\nFILTER_ONLY\n");
+            runCleanup("mv");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t3\n");
+
+            execute("alter materialized view mv set expire rows when ts < dateadd('d', -200000000, '2024-01-01'::timestamp)");
+            drainWalAndMatViewQueues();
+            assertQuery("select count() from mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n0\n");
+            assertQuery("select expire_enforcement from materialized_views() where view_name = 'mv'")
+                    .noRandomAccess().noLeakCheck().returns("expire_enforcement\nFILTER_AND_RECLAIM\n");
+            runCleanup("mv");
+            // Cleanup never sweeps the active partition, so only 01-03 keeps its row.
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n1\t1\n");
+        });
+    }
+
+    @Test
     public void testTtlAndScalarPredicateComposeUnderCleanup() throws Exception {
         // Both deletions run against the same view: TTL drops the 01-01 partition, the monotonic WHEN
         // predicate hides everything before 01-04 and cleanup reclaims the 01-03 partition holding it.

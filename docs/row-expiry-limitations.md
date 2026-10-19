@@ -209,6 +209,40 @@ for it, so the row expires. `KEEP HIGHEST/LOWEST` keeps NULL rows. Under
   mean something other than its text.
 - **Pinned by:** `MatViewExpireRowsTest.testExpireScalarNullRowsFollowPredicateTruthValue`.
 
+### Arithmetic that overflows wraps
+
+A policy evaluates its predicate with the engine's own functions, so arithmetic
+that overflows wraps as it does in any other statement. `dateadd()` with a
+fixed unit and an offset past the timestamp range returns an unrelated
+timestamp ([questdb/questdb#7980](https://github.com/questdb/questdb/issues/7980)):
+`dateadd('d', -200000000, '2024-01-01'::timestamp)` is
+`38996-08-24T08:01:49.551616Z`, so `WHEN ts < dateadd('d', -200000000, now())`
+expires every row. A micro timeline overflows beyond about 292,000 years of `d`
+or `w`; a nano timeline overflows beyond about 292 years of `m`, `h`, `d` or `w`.
+`timestamp ± long` and `long` arithmetic wrap too.
+
+What the wrapped value costs depends on the policy:
+
+- A threshold that reads the clock is not proven to advance, so the policy is
+  `FILTER_ONLY`. Reads hide the rows, and `DROP EXPIRE` brings them back.
+- A constant threshold is deterministic, so the policy is `FILTER_AND_RECLAIM`
+  and cleanup deletes the rows it hides, except in the active partition.
+- A threshold that fits its own timeline but not the view's, such as a
+  `TIMESTAMP` threshold before 1677-09-21 on a `TIMESTAMP_NS` view, fails every
+  read with `inconvertible value`.
+
+Read and cleanup always agree: cleanup never deletes a row a read shows.
+
+- **Why accepted:** the engine defines overflow per function, and
+  `ALTER TABLE ... DROP PARTITION WHERE` with the same predicate drops the same
+  data. Checking a policy's arithmetic separately would need a second evaluator
+  whose results can differ from the functions every read runs. The fix belongs
+  in `dateadd()`: once it returns NULL on overflow, a constant threshold is
+  rejected at DDL as NULL, and a clock threshold expires nothing.
+- **Pinned by:** `MatViewExpireRowsTest.testOverflowingThresholdFollowsEngineArithmetic`.
+- **Follow-up:** [questdb/questdb#7980](https://github.com/questdb/questdb/issues/7980).
+  The test changes when it is fixed.
+
 ### Cleanup classification is conservative
 
 `SqlCompilerImpl.validateExpiryPredicateOnMetadata` reclaims only under a
