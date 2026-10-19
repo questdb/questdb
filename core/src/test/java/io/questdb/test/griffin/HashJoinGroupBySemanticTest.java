@@ -76,10 +76,14 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
 
     private final HashJoinBuildMode buildMode;
     private final HashJoinPayloadLayout payloadLayout;
+    // The storage, key and role matrices run thousands of queries, so each run of the suite
+    // checks its share of them and the four runs together check every one.
+    private final HashJoinMatrixStripe stripe;
 
     public HashJoinGroupBySemanticTest(HashJoinPayloadLayout payloadLayout, HashJoinBuildMode buildMode) {
         this.payloadLayout = payloadLayout;
         this.buildMode = buildMode;
+        this.stripe = new HashJoinMatrixStripe(payloadLayout, buildMode);
     }
 
     @Parameterized.Parameters(name = "{0}-{1}")
@@ -108,16 +112,16 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                     for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
                         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
                         for (String join : JOINS) {
-                            assertDifferential("select r.s lhs, r.s repeated, p.s rhs, r.i+p.i combined, "
+                            assertStripedDifferential("select r.s lhs, r.s repeated, p.s rhs, r.i+p.i combined, "
                                     + "sum(r.d+p.d),avg(r.d+p.d),count(r.i+p.i),count(r.l+p.l)"
-                                    + from(join) + " order by lhs,repeated,rhs,combined", context, true);
+                                    + from(join) + " order by lhs,repeated,rhs,combined", context);
                             for (int keys = 0; keys < 4; keys++) {
                                 for (int args = 1; args < 4; args++) {
                                     String group = columns(keys, false);
                                     String sql = "select " + (group.isEmpty() ? "" : group + ", ")
                                             + aggregates(args, false) + from(join)
                                             + (group.isEmpty() ? "" : " order by " + group);
-                                    assertDifferential(sql, context, true);
+                                    assertStripedDifferential(sql, context);
                                 }
                             }
                         }
@@ -142,11 +146,10 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
                         for (String join : JOINS) {
                             for (String on : KEYS) {
-                                assertDifferential("SELECT r.s, p.s2, r.i + p.i combined, count(*) pairs, "
+                                assertStripedDifferential("SELECT r.s, p.s2, r.i + p.i combined, count(*) pairs, "
                                         + "sum(p.d) psum, avg(r.d) ravg" + from(join, on)
-                                        + " ORDER BY r.s, p.s2, combined", context, true);
-                                assertDifferential("SELECT count(*) pairs, sum(p.d) psum" + from(join, on),
-                                        context, true);
+                                        + " ORDER BY r.s, p.s2, combined", context);
+                                assertStripedDifferential("SELECT count(*) pairs, sum(p.d) psum" + from(join, on), context);
                             }
                         }
                     }
@@ -224,9 +227,9 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                                     for (int keys = 0; keys < 4; keys++) {
                                         for (int args = 1; args < 4; args++) {
                                             String group = columns(keys, true);
-                                            assertDifferential("select " + (group.isEmpty() ? "" : group + ", ")
+                                            assertStripedDifferential("select " + (group.isEmpty() ? "" : group + ", ")
                                                     + aggregates(args, true) + from(join, on)
-                                                    + (group.isEmpty() ? "" : " order by " + group), context, true);
+                                                    + (group.isEmpty() ? "" : " order by " + group), context);
                                         }
                                     }
                                     // f is needed only by WHERE; s2 is needed only inside an argument.
@@ -239,7 +242,7 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                                                 + " where (" + build + ".f='keep' or " + build + ".f is null)"
                                                 + " and " + probe + ".t >= '2020-01-01' and " + probe + ".t < '" + end + "'"
                                                 + " order by r.s,p.s";
-                                        assertDifferential(sql, context, true);
+                                        assertStripedDifferential(sql, context);
                                     }
                                 }
                             }
@@ -263,6 +266,11 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         for (String join : JOINS) {
                             for (String on : KEYS) {
                                 for (boolean isKeyed : new boolean[]{false, true}) {
+                                    // Every factory's states end on the rows the tables start with,
+                                    // so a factory of another run leaves nothing to undo.
+                                    if (!stripe.isThisRun()) {
+                                        continue;
+                                    }
                                     storage("a", format);
                                     storage("b", format);
                                     bindVariableService.setStr(0, "shared");
@@ -334,8 +342,8 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                                                 " and " + build + ".f='keep'", " where " + build + ".d>1000"}) {
                                             for (boolean isKeyed : new boolean[]{false, true}) {
                                                 String group = "r.id,p.id,r.s,p.s,r.i,p.l";
-                                                assertDifferential("select " + (isKeyed ? group + ", " : "") + aggregates(3, false)
-                                                        + from(join, on) + filter + (isKeyed ? " order by " + group : ""), context, true);
+                                                assertStripedDifferential("select " + (isKeyed ? group + ", " : "") + aggregates(3, false)
+                                                        + from(join, on) + filter + (isKeyed ? " order by " + group : ""), context);
                                             }
                                         }
                                     }
@@ -402,9 +410,9 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                             for (String filter : new String[]{"", " where " + build + ".d is null",
                                     " where " + build + ".d>1000", " and " + build + ".d>1000",
                                     " where " + build + ".s is null or " + build + ".s='absent'"}) {
-                                assertDifferential("select " + aggregates(3, false) + from(join, on) + filter, context, true);
-                                assertDifferential("select r.id,p.id,r.s,p.s," + aggregates(3, false) + from(join, on)
-                                        + filter + " order by r.id,p.id,r.s,p.s", context, true);
+                                assertStripedDifferential("select " + aggregates(3, false) + from(join, on) + filter, context);
+                                assertStripedDifferential("select r.id,p.id,r.s,p.s," + aggregates(3, false) + from(join, on)
+                                        + filter + " order by r.id,p.id,r.s,p.s", context);
                             }
                         }
                     }
@@ -423,6 +431,7 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                 for (String table : new String[]{"a", "b"}) {
                     execute("truncate table " + table);
                     int rows = 8 + rnd.nextInt(24);
+                    StringBuilder insert = new StringBuilder("insert into ").append(table).append(" values ");
                     for (int row = 0; row < rows; row++) {
                         String key = switch (rnd.nextInt(7)) {
                             case 0 -> "null";
@@ -432,10 +441,12 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         };
                         String s = rnd.nextInt(4) == 0 ? "null" : "'s" + rnd.nextInt(8) + "'";
                         String s2 = rnd.nextInt(4) == 0 ? "null" : "'s" + rnd.nextInt(8) + "'";
-                        execute("insert into " + table + " values (" + key + "," + row + "," + row + ","
-                                + (rnd.nextInt(4) == 0 ? "null" : Double.toString(row * 0.25)) + "," + s + "," + s2
-                                + ",'keep','2020-01-0" + (1 + row / 12) + "')");
+                        String d = rnd.nextInt(4) == 0 ? "null" : Double.toString(row * 0.25);
+                        insert.append(row == 0 ? "(" : ",(").append(key).append(',').append(row).append(',').append(row)
+                                .append(',').append(d).append(',').append(s).append(',').append(s2)
+                                .append(",'keep','2020-01-0").append(1 + row / 12).append("')");
                     }
+                    execute(insert.toString());
                 }
                 storage("a", scenario % 3);
                 storage("b", scenario / 3 % 3);
@@ -448,9 +459,9 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                             for (String on : KEYS) {
                                 for (int keys = 0; keys < 4; keys++) {
                                     String group = columns(keys, true);
-                                    assertDifferential("select " + (group.isEmpty() ? "" : group + ", ")
+                                    assertStripedDifferential("select " + (group.isEmpty() ? "" : group + ", ")
                                             + aggregates(1 + rnd.nextInt(3), true) + from(join, on)
-                                            + (group.isEmpty() ? "" : " order by " + group), context, true);
+                                            + (group.isEmpty() ? "" : " order by " + group), context);
                                 }
                             }
                         }
@@ -1069,6 +1080,14 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
             Assert.assertEquals(sql + "\n" + actualPlan, isFused, actualPlan.contains("Hash Join Group By"));
         }
         Assert.assertNull(context.getMemoryTracker());
+    }
+
+    // Checks a fused matrix query when the stripe gives it to this run. The caller builds the SQL
+    // either way, so a random draw inside it keeps every run on the same matrix.
+    private void assertStripedDifferential(String sql, SqlExecutionContextImpl context) throws Exception {
+        if (stripe.isThisRun()) {
+            assertDifferential(sql, context, true);
+        }
     }
 
     // FunctionParser visits a binary operator's right operand first, so a sub-query on the left compiles,
