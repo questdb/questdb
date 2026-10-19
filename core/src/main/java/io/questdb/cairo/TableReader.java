@@ -101,6 +101,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> columns;
     private boolean hasActiveColumns;
     private boolean hasParquetPartitions;
+    // Lets destroyPartitionFrameStates() skip its walk over every partition when
+    // no state opened since the last walk, e.g. on each pool return.
+    private boolean hasPartitionFrameStates;
     private ObjList<IndexReader> indexes;
     private @Nullable MemoryTracker memoryTracker;
     private int openPartitionCount;
@@ -1406,6 +1409,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         final long state = partitionFrameStateFactory.open(this, partitionIndex, getSeqTxn());
         partitionFrameStates.setQuick(partitionIndex, state);
+        hasPartitionFrameStates = true;
         return state;
     }
 
@@ -1435,12 +1439,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void destroyPartitionFrameStates() {
-        if (partitionFrameStateFactory == null || partitionFrameStates == null) {
+        if (!hasPartitionFrameStates || partitionFrameStateFactory == null || partitionFrameStates == null) {
             return;
         }
         for (int i = 0, n = partitionCount; i < n; i++) {
             destroyPartitionFrameState(i);
         }
+        hasPartitionFrameStates = false;
     }
 
     private void init() {
