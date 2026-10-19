@@ -130,9 +130,8 @@ public class MultiJoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: a
-                                                Materialize
-                                                    Hash Right Outer Join Light
-                                                      condition: c.x=b.x
+                                                Hash Right Outer Join Light
+                                                  condition: c.x=b.x
                             """)
                     .returns("""
                             ax	bx	cx	dx	qx
@@ -991,16 +990,15 @@ public class MultiJoinTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: b
-                                    Materialize
-                                        Hash Right Outer Join Light
-                                          condition: d.k=c.k
+                                    Hash Right Outer Join Light
+                                      condition: d.k=c.k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                        Hash
                                             PageFrame
                                                 Row forward scan
-                                                Frame forward scan on: c
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: d
+                                                Frame forward scan on: d
                             """)
                     .returns("""
                             ak	bk	ck	dk
@@ -1051,16 +1049,15 @@ public class MultiJoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: b
-                                        Materialize
-                                            Hash Full Outer Join Light
-                                              condition: d.k=c.k
+                                        Hash Full Outer Join Light
+                                          condition: d.k=c.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                            Hash
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: c
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: d
+                                                    Frame forward scan on: d
                             """,
                     """
                             ak	bk	ck	dk
@@ -1151,16 +1148,15 @@ public class MultiJoinTest extends AbstractCairoTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: b
-                                            Materialize
-                                                Hash Full Outer Join Light
-                                                  condition: d.k=c.k
+                                            Hash Full Outer Join Light
+                                              condition: d.k=c.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                                Hash
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: c
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: d
+                                                        Frame forward scan on: d
                             """,
                     """
                             ak	bk	ck	dk
@@ -1985,16 +1981,15 @@ public class MultiJoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: d
-                                        Materialize
-                                            Hash Right Outer Join Light
-                                              condition: b2.k=d2.k
+                                        Hash Right Outer Join Light
+                                          condition: b2.k=d2.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: d
+                                            Hash
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: d
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: b
+                                                    Frame forward scan on: b
                             """)
                     .returns(expected);
             assertQuery("SELECT ak, bk, ck, dk, d2k, b2k FROM (SELECT a.k ak, b.k bk FROM a JOIN b ON a.k = b.k) "

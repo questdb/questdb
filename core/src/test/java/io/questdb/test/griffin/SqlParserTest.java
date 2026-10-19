@@ -10546,24 +10546,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             SelectedRecord
                                 Cross Join
-                                    Cross Join
-                                        AsOf Join Fast
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: d
-                                        Materialize
-                                            Hash Join Light
-                                              condition: e.id=b.id
+                                    Hash Join Light
+                                      condition: e.id=b.id
+                                        Cross Join
+                                            AsOf Join Fast
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: b
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: e
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: d
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: e
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: c
