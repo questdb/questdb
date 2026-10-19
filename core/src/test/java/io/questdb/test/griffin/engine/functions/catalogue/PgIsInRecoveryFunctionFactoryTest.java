@@ -31,27 +31,23 @@ public class PgIsInRecoveryFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgIsInRecoveryFunc() throws Exception {
-        assertQuery(
-                "pg_is_in_recovery\n" +
-                        "false\n",
-                "select pg_is_in_recovery();",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select pg_is_in_recovery();")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        pg_is_in_recovery
+                        false
+                        """);
     }
 
     @Test
     public void testPrefixedPgIsInRecoveryFunc() throws Exception {
-        assertQuery(
-                "pg_is_in_recovery\n" +
-                        "false\n",
-                "select pg_catalog.pg_is_in_recovery();",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select pg_catalog.pg_is_in_recovery();")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        pg_is_in_recovery
+                        false
+                        """);
     }
 }

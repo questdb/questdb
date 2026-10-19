@@ -55,19 +55,28 @@ import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory
 public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
     private static final RecordMetadata METADATA;
+    // the view a SHOW written in a view reads the materialized view through, see
+    // SqlExecutionContext.isTableFunctionVisible()
+    protected final SqlExecutionContext.TableFunctionView tableFunctionView;
     protected final TableToken tableToken;
     protected final int tokenPosition;
-    private final ShowCreateMatViewCursor cursor = new ShowCreateMatViewCursor();
+    private ShowCreateMatViewCursor cursor = new ShowCreateMatViewCursor();
 
-    public ShowCreateMatViewRecordCursorFactory(TableToken tableToken, int tokenPosition) {
+    public ShowCreateMatViewRecordCursorFactory(
+            TableToken tableToken,
+            int tokenPosition,
+            SqlExecutionContext.TableFunctionView tableFunctionView
+    ) {
         super(METADATA);
         this.tableToken = tableToken;
         this.tokenPosition = tokenPosition;
+        this.tableFunctionView = tableFunctionView;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        return cursor.of(executionContext, tableToken, tokenPosition);
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        return cursor.of(executionContext, tableToken, tokenPosition, tableFunctionView);
     }
 
     @Override
@@ -83,8 +92,16 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateMatViewCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public static class ShowCreateMatViewCursor implements NoRandomAccessRecordCursor {
@@ -130,11 +147,22 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         public ShowCreateMatViewCursor of(
                 SqlExecutionContext executionContext,
                 TableToken tableToken,
-                int tokenPosition
+                int tokenPosition,
+                SqlExecutionContext.TableFunctionView tableFunctionView
         ) throws SqlException {
+            // Compilation already hid the view from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated.
+            if (!executionContext.isTableFunctionVisible(tableToken, tableFunctionView)) {
+                throw SqlException.matViewDoesNotExist(tokenPosition, tableToken.getTableName());
+            }
             this.tableToken = tableToken;
             this.executionContext = executionContext;
 
+            // The token is resolved from the synchronously loaded registry, but the
+            // metadata cache is hydrated lazily; hydrate this materialized view on demand
+            // (matviews have a _meta file and are cached) so we do not report it as
+            // non-existent during the startup hydration window.
+            executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
                 if (table == null) {
@@ -241,9 +269,9 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 }
                 sink.putAscii(')');
             }
-            sink.putAscii(" AS (\n")
-                    .put(viewDefinition.getMatViewSql())
-                    .putAscii('\n');
+            sink.putAscii(" AS (\n");
+            ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getMatViewSql());
+            sink.putAscii('\n');
             sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
             ttlToSink(sink);
             inVolumeToSink(configuration, table, sink);

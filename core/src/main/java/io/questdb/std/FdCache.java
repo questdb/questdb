@@ -166,6 +166,9 @@ public class FdCache {
                 sink.put(',');
             }
             sink.put(key);
+            if (value != null && value.path != null) {
+                sink.put('=').put(value.path);
+            }
         });
         return sink.toString();
     }
@@ -294,7 +297,9 @@ public class FdCache {
                 Utf8String path = Utf8String.newInstance(lpsz);
                 holder = createFdCacheRecord(path, mmapKeyGenerator.getAndIncrement());
                 holder.osFd = osFd;
-                openFdMapByPath.putAt(keyIndex, lpsz, holder);
+                // Reuse the same Utf8String for the map key so putAt picks the
+                // Utf8String overload and skips its own newInstance() copy.
+                openFdMapByPath.putAt(keyIndex, path, holder);
             }
         } else {
             holder = openFdMapByPath.valueAtQuick(keyIndex);

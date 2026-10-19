@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class TruncateUncachedSymbolTest extends AbstractCairoTest {
@@ -74,24 +73,19 @@ public class TruncateUncachedSymbolTest extends AbstractCairoTest {
                             "    6\n" +
                             ");");
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "positions",
-                            sink,
-                            "time\tuuid\tlatitude\tlongitude\thash1\thash2\thash3\thash4\thash5\thash6\thash1i\thash2i\thash3i\thash4i\thash5i\thash6i\n" +
-                                    "2020-01-08T17:55:42.000000Z\t123e4567-e89b-12d3-a456-426614174000\t54.1803268\t7.8889438\tu\tu1\tu1t\tu1ts\tu1ts5\tu1ts5x\t1\t2\t3\t4\t5\t6\n"
-                    );
+                    assertQuery("positions")
+                            .noLeakCheck()
+                            .timestamp("time")
+                            .expectSize()
+                            .returns("time\tuuid\tlatitude\tlongitude\thash1\thash2\thash3\thash4\thash5\thash6\thash1i\thash2i\thash3i\thash4i\thash5i\thash6i\n" +
+                                    "2020-01-08T17:55:42.000000Z\t123e4567-e89b-12d3-a456-426614174000\t54.1803268\t7.8889438\tu\tu1\tu1t\tu1ts\tu1ts5\tu1ts5x\t1\t2\t3\t4\t5\t6\n");
 
                     execute("truncate table positions");
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "positions",
-                            sink,
-                            "time\tuuid\tlatitude\tlongitude\thash1\thash2\thash3\thash4\thash5\thash6\thash1i\thash2i\thash3i\thash4i\thash5i\thash6i\n"
-                    );
+                    assertQuery("positions")
+                            .noLeakCheck()
+                            .timestamp("time")
+                            .returns("time\tuuid\tlatitude\tlongitude\thash1\thash2\thash3\thash4\thash5\thash6\thash1i\thash2i\thash3i\thash4i\thash5i\thash6i\n");
                 }
         );
     }

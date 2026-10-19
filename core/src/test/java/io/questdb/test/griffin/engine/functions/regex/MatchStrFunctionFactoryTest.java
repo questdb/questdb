@@ -38,12 +38,10 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_str() name from long_sequence(2000))");
-            assertQuery(
-                    "name\n",
-                    "select * from x where name ~ null",
-                    false,
-                    true
-            );
+            assertQuery("select * from x where name ~ null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("name\n");
         });
     }
 
@@ -63,25 +61,27 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "name\n" +
-                    "HZTCQXJOQ\n" +
-                    "LXJNZ\n" +
-                    "TXJBQVYTY\n" +
-                    "XJSJ\n" +
-                    "YMUJXJ\n" +
-                    "MEJXJN\n" +
-                    "PRXJOPHLL\n" +
-                    "GYMXJ\n" +
-                    "XJKL\n" +
-                    "HQXVXJQ\n" +
-                    "UIXJO\n" +
-                    "VXJCPF\n" +
-                    "SVXJHXBY\n" +
-                    "ICFOQEVPXJ\n" +
-                    "XJWJJSRNZL\n" +
-                    "HXJULSPH\n" +
-                    "IPCBXJG\n" +
-                    "XJN\n";
+            final String expected = """
+                    name
+                    HZTCQXJOQ
+                    LXJNZ
+                    TXJBQVYTY
+                    XJSJ
+                    YMUJXJ
+                    MEJXJN
+                    PRXJOPHLL
+                    GYMXJ
+                    XJKL
+                    HQXVXJQ
+                    UIXJO
+                    VXJCPF
+                    SVXJHXBY
+                    ICFOQEVPXJ
+                    XJWJJSRNZL
+                    HXJULSPH
+                    IPCBXJG
+                    XJN
+                    """;
             execute("create table x as (select rnd_str() name from long_sequence(2000))");
 
             try (RecordCursorFactory factory = select("select * from x where name ~ 'XJ'")) {
@@ -96,10 +96,12 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStrWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "name\n" +
-                    "NGST\n" +
-                    "NGVP\n" +
-                    "NGTDNKSBXM\n";
+            final String expected = """
+                    name
+                    NGST
+                    NGVP
+                    NGTDNKSBXM
+                    """;
             execute("create table x as (select rnd_str(4,10,1) name from long_sequence(2000))");
 
             try (RecordCursorFactory factory = select("select * from x where name ~ '^NG.*'")) {

@@ -30,8 +30,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -46,7 +48,7 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampType(args.getQuick(0).getType()));
     }
 
-    public static class Func extends TimestampFunction implements ArithmeticBinaryFunction {
+    public static class Func extends TimestampFunction implements ArithmeticBinaryFunction, MonotonicTimestampFunction {
         private final Function left;
         private final Function right;
 
@@ -73,14 +75,36 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
+            // The right operand is a LONG (signature "-(Nl)"), so read it with getLong().
+            // Calling getTimestamp() here breaks for operands whose getTimestamp() is unsupported,
+            // e.g. a CHAR constant implicitly cast to LONG ("now() - '1'"), which threw
+            // UnsupportedOperationException. This mirrors AddLongToTimestampFunctionFactory.
             long l = left.getTimestamp(rec);
-            long r = right.getTimestamp(rec);
+            long r = right.getLong(rec);
 
             if (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL) {
                 return l - r;
             }
 
             return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public Function getTimestampArg() {
+            return left;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            if (!right.isConstant()) {
+                return NONE;
+            }
+            final long k = right.getLong(null);
+            if (k == Numbers.LONG_NULL) {
+                return NONE;
+            }
+            // g(ts) = ts - k, so the constant shift is -k
+            return MonotonicTimestampFunction.invertConstantShift(io, -k, shiftInputCeiling(getType()));
         }
 
         @Override

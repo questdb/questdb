@@ -33,10 +33,17 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
+import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoinCursor {
     protected final Map joinKeyMap;
     protected final LongChain slaveChain;
+    // Owned by the factory; the cursor releases its native caches on close()
+    // and binds the per-query tracker before the subclass calls initSources().
+    @Nullable
+    private final SymbolTranslatingRecord translatingRecord;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean isMapBuilt;
     protected boolean isOpen;
@@ -47,12 +54,14 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
     public AbstractHashOuterJoinLightRecordCursor(
             int columnSplit,
             Map joinKeyMap,
-            LongChain slaveChain
+            LongChain slaveChain,
+            @Nullable SymbolTranslatingRecord translatingRecord
     ) {
         super(columnSplit);
-        isOpen = true;
+        isOpen = false;
         this.joinKeyMap = joinKeyMap;
         this.slaveChain = slaveChain;
+        this.translatingRecord = translatingRecord;
     }
 
     @Override
@@ -61,6 +70,7 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
             isOpen = false;
             joinKeyMap.close();
             slaveChain.close();
+            Misc.free(translatingRecord);
             super.close();
         }
     }
@@ -96,7 +106,7 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             MapKey key = keyMap.withKey();
             key.put(keyRecord, recordSink);
@@ -119,7 +129,7 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             MapKey key = keyMap.withKey();
             key.put(keyRecord, recordSink);
@@ -133,14 +143,25 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
         }
     }
 
-    protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    // A subclass opens its own state and calls ofWithoutAdopt() before it adopts the cursors into
+    // masterCursor and slaveCursor, which it does last. When of() throws, the factory's getCursor()
+    // catch frees the child cursors and then closes this cursor, so a cursor that had already adopted
+    // them would free them twice.
+    protected abstract void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException;
+
+    // Sets up the per-run join state from the master/slave cursors without adopting them into the owned
+    // fields, letting a filtered subclass run its throwing filter.init() and adopt the cursors last.
+    protected void ofWithoutAdopt(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
+            slaveChain.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
             slaveChain.reopen();
+            joinKeyMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
             joinKeyMap.reopen();
         }
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
+        if (translatingRecord != null) {
+            translatingRecord.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+        }
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         masterRecord = masterCursor.getRecord();
         slaveRecord = slaveCursor.getRecordB();

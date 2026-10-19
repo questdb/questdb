@@ -128,8 +128,8 @@ public class WebSocketFrameParser {
         }
 
         // Parse first two bytes
-        int byte0 = Unsafe.getUnsafe().getByte(buf) & 0xFF;
-        int byte1 = Unsafe.getUnsafe().getByte(buf + 1) & 0xFF;
+        int byte0 = Unsafe.getByte(buf) & 0xFF;
+        int byte1 = Unsafe.getByte(buf + 1) & 0xFF;
 
         // Check reserved bits (must be 0 unless extension negotiated)
         if ((byte0 & RSV_BITS) != 0) {
@@ -176,8 +176,8 @@ public class WebSocketFrameParser {
                 state = STATE_NEED_MORE;
                 return 0;
             }
-            int high = Unsafe.getUnsafe().getByte(buf + 2) & 0xFF;
-            int low = Unsafe.getUnsafe().getByte(buf + 3) & 0xFF;
+            int high = Unsafe.getByte(buf + 2) & 0xFF;
+            int low = Unsafe.getByte(buf + 3) & 0xFF;
             payloadLength = (high << 8) | low;
 
             // Strict mode: reject non-minimal encodings
@@ -194,7 +194,7 @@ public class WebSocketFrameParser {
                 state = STATE_NEED_MORE;
                 return 0;
             }
-            payloadLength = Long.reverseBytes(Unsafe.getUnsafe().getLong(buf + 2));
+            payloadLength = Long.reverseBytes(Unsafe.getLong(buf + 2));
 
             // Strict mode: reject non-minimal encodings
             if (isStrictMode && payloadLength <= 65535) {
@@ -234,10 +234,10 @@ public class WebSocketFrameParser {
                 return 0;
             }
             // Read mask key in network byte order (big-endian) per RFC 6455
-            maskKey = ((Unsafe.getUnsafe().getByte(buf + offset) & 0xFF) << 24)
-                    | ((Unsafe.getUnsafe().getByte(buf + offset + 1) & 0xFF) << 16)
-                    | ((Unsafe.getUnsafe().getByte(buf + offset + 2) & 0xFF) << 8)
-                    | (Unsafe.getUnsafe().getByte(buf + offset + 3) & 0xFF);
+            maskKey = ((Unsafe.getByte(buf + offset) & 0xFF) << 24)
+                    | ((Unsafe.getByte(buf + offset + 1) & 0xFF) << 16)
+                    | ((Unsafe.getByte(buf + offset + 2) & 0xFF) << 8)
+                    | (Unsafe.getByte(buf + offset + 3) & 0xFF);
             offset += 4;
         } else {
             maskKey = 0;
@@ -304,23 +304,23 @@ public class WebSocketFrameParser {
 
         // Process 8-byte chunks
         while (i + 8 <= len) {
-            long value = Unsafe.getUnsafe().getLong(buf + i);
-            Unsafe.getUnsafe().putLong(buf + i, value ^ longMask);
+            long value = Unsafe.getLong(buf + i);
+            Unsafe.putLong(buf + i, value ^ longMask);
             i += 8;
         }
 
         // Process 4-byte chunk if remaining
         if (i + 4 <= len) {
-            int value = Unsafe.getUnsafe().getInt(buf + i);
-            Unsafe.getUnsafe().putInt(buf + i, value ^ nativeMask);
+            int value = Unsafe.getInt(buf + i);
+            Unsafe.putInt(buf + i, value ^ nativeMask);
             i += 4;
         }
 
         // Process remaining bytes - extract mask byte in big-endian order
         while (i < len) {
-            byte b = Unsafe.getUnsafe().getByte(buf + i);
+            byte b = Unsafe.getByte(buf + i);
             int maskByte = (maskKey >>> ((3 - ((int) i & 3)) << 3)) & 0xFF;
-            Unsafe.getUnsafe().putByte(buf + i, (byte) (b ^ maskByte));
+            Unsafe.putByte(buf + i, (byte) (b ^ maskByte));
             i++;
         }
     }

@@ -22,6 +22,9 @@
  *
  ******************************************************************************/
 
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x600 /* WSAPoll is Vista+ */
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mstcpip.h>
@@ -300,6 +303,27 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
         (JNIEnv *e, jclass cl, jint fd) {
     int c;
     return (jboolean) (recv((SOCKET) fd, (char *) &c, 1, 0) < 1);
+}
+
+// Windows reports a peer FIN via WSAPoll's POLLHUP even behind still-buffered data -- a property of
+// the AFD disconnect-state bit, not of documented WSAPoll wording (which implies a graceful FIN
+// arrives as POLLRDNORM). It is therefore validated empirically: NetTest.testIsPeerDisconnected and
+// the PGWire/QWP disconnect tests run on Windows CI (no OS skip) against a FIN-behind-a-buffered-byte
+// close. POLLRDNORM stays out of the mask by design, so a merely-readable socket (e.g. a pipelined
+// request) never reads as a hangup -- do not reintroduce it. Fail-safe: if POLLHUP ever stops
+// firing, the probe reads "connected" and detection falls back to query.timeout, never a false abort.
+JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
+        (JNIEnv *e, jclass cl, jint fd) {
+    WSAPOLLFD pfd;
+    pfd.fd = (SOCKET) fd;
+    pfd.events = POLLRDNORM;
+    pfd.revents = 0;
+    const int n = WSAPoll(&pfd, 1, 0);
+    if (n == SOCKET_ERROR) {
+        // WSAPoll rejects an invalid handle with WSAENOTSOCK instead of reporting POLLNVAL.
+        return (jboolean) (WSAGetLastError() == WSAENOTSOCK);
+    }
+    return (jboolean) (n > 0 && (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send

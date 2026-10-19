@@ -32,12 +32,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexBuilder;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
@@ -51,9 +53,12 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -80,6 +85,8 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyExportFactory;
 import io.questdb.griffin.engine.ops.CopyImportFactory;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -108,6 +115,7 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.BytecodeAssembler;
@@ -135,12 +143,14 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.TABLE_KIND_REGULAR_TABLE;
 import static io.questdb.griffin.SqlKeywords.*;
@@ -165,6 +175,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    // Raised from two places: once on the parsed model, where it has to win over the more general
+    // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
+    // introduces. Shared so the two cannot drift apart.
+    private static final String UPDATE_WITH_JOIN_NOT_SUPPORTED = "UPDATE statements with join are not supported yet for WAL tables";
     private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
@@ -202,7 +216,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
     private final ObjList<CharSequence> views = new ObjList<>();
-    private final ObjectPool<WindowExpression> windowExpressionPool;
     protected CharSequence sqlText;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
@@ -226,7 +239,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
             this.queryModelWrapperPool = new ObjectPool<>(QueryModelWrapper.FACTORY, 2);
-            this.windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
+            ObjectPool<WindowExpression> windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
             this.compiledQuery = new CompiledQueryImpl(engine);
             this.characterStore = new CharacterStore(
                     configuration.getSqlCharacterStoreCapacity(),
@@ -236,7 +249,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
             this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
-            this.codeGenerator = new SqlCodeGenerator(configuration, functionParser, postOrderTreeTraversalAlgo, queryColumnPool, sqlNodePool);
+            this.codeGenerator = new SqlCodeGenerator(configuration, functionParser, postOrderTreeTraversalAlgo, queryColumnPool, sqlNodePool, this, path);
             this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
             // we have cyclical dependency here
@@ -346,7 +359,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final Record record = cursor.getRecord();
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
             TableWriter.Row row = writer.newRow();
             copier.copy(context, record, row);
             row.append();
@@ -467,8 +480,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (batchCallback.preCompile(this, sqlText)) {
                     // ok, the callback wants us to compile this query, let's go!
 
-                    // re-position lexer pointer to where sqlText just began
-                    lexer.backTo(position, null);
+                    // Re-position the lexer to where sqlText begins, and make that the point that
+                    // lexer.restart() rewinds to. A retry, in generateSelectWithRetries() or below,
+                    // must re-parse this statement, not the batch's first one.
+                    lexer.of(batchText, position, batchText.length());
                     compileInner(executionContext, sqlText, true);
 
                     // consume residual text, such as semicolon
@@ -515,6 +530,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case OperationCodes.DROP_TABLE -> executeDropTable((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_VIEW -> executeDropView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_MAT_VIEW -> executeDropMatView((GenericDropOperation) op, executionContext);
+            case OperationCodes.CREATE_LIVE_VIEW ->
+                    executeCreateLiveView((CreateLiveViewOperation) op, executionContext);
+            case OperationCodes.DROP_LIVE_VIEW -> executeDropLiveView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_ALL -> executeDropAllTables((DropAllOperation) op, executionContext);
             default ->
                     throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
@@ -558,6 +576,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public RecordCursorFactory generateSelectWithoutRetries(
+            @Transient IQueryModel queryModel,
+            @Transient SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException {
+        // Through generateSelectOneShot(), so that a subclass's wrapping of a plan covers this one.
+        return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
+    }
+
+    @Override
     public BytecodeAssembler getAsm() {
         return asm;
     }
@@ -569,6 +597,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
+    }
+
+    @TestOnly
+    public int getWhereClauseParserPoolSizeForTesting() {
+        return codeGenerator.getWhereClauseParserPoolSizeForTesting();
     }
 
     @Override
@@ -587,6 +620,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
+    }
+
+    @Override
+    public ExpressionNode parseExpression(CharSequence expression) throws SqlException {
+        clear();
+        lexer.of(expression);
+        // Stamp the flag rather than inherit whatever the last parse() left behind.
+        // Both callers hand in a live view's stored ANCHOR EXPRESSION, which is a
+        // scalar expression and carries no ANCHOR clause of its own, so the clause
+        // stays refused here exactly as it is for any other bare expression.
+        parser.setAnchorAllowed(false);
+        return parser.expr(lexer, (IQueryModel) null, this);
+    }
+
+    @TestOnly
+    public void setUnionSymbolProjectionTestHook(@Nullable SqlCodeGenerator.UnionSymbolProjectionTestHook hook) {
+        codeGenerator.setUnionSymbolProjectionTestHook(hook);
     }
 
     @TestOnly
@@ -634,7 +684,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
         if (converter == null) {
             while (cursor.hasNext()) {
-                context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
                 TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
                 copier.copy(context, record, row);
                 row.append();
@@ -648,7 +698,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } else {
             while (cursor.hasNext()) {
-                context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
                 TableWriter.Row row = writer.newRow(converter.convert(record.getTimestamp(cursorTimestampIndex)));
                 copier.copy(context, record, row);
                 row.append();
@@ -683,7 +733,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(timestampDriver.implicitCast(record.getStrA(cursorTimestampIndex)));
             copier.copy(context, record, row);
@@ -718,7 +768,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final Record record = cursor.getRecord();
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(timestampDriver.implicitCastVarchar(record.getVarcharA(cursorTimestampIndex)));
             copier.copy(context, record, row);
@@ -761,6 +811,90 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return indexValueBlockSize;
     }
 
+    /**
+     * Returns the {@code LITERAL} table source reachable from {@code model} that is not
+     * {@code targetTableName}, or {@code null} when every table the model names is the target. The
+     * target's own name may occur any number of times - an UPDATE reads and writes the same table,
+     * and a sub-query may name it again - so this counts distinct sources, not occurrences. Names
+     * are compared the way the name registry itself compares them, case-insensitively, so a
+     * differently-spelled or quoted reference to the target is still the target.
+     * <p>
+     * Only a literal source is examined here. {@code SqlParser#parseSelectFrom} records a model's
+     * source as either a {@code LITERAL}/{@code CONSTANT} name or a {@code FUNCTION} call and
+     * rejects anything else outright, and a function source has to return a cursor
+     * ({@code TableUtils#createCursorFunction}) - so a function source is caught, wherever it
+     * stands, by the cursor-function rejection in {@link #generateUpdate} instead. That split is
+     * deliberate: a table name is only comparable to the target in the model, while a function is
+     * only classifiable once instantiated.
+     * <p>
+     * A {@code SHOW} model is skipped for the same reason. Its table name expression is an argument
+     * and not always a table - {@code SHOW USER bob} names a user, {@code SHOW GROUPS g} a group -
+     * and several kinds set none at all, so the name here answers neither question. Every one of
+     * them materialises a cursor in {@code SqlOptimiser#parseFunctionAndEnumerateColumns}, which is
+     * where they are caught, with a message that does not have to guess what the name denotes.
+     * <p>
+     * The traversal is the same one {@code SqlCodeGenerator} uses to reach every model of a compiled
+     * query: down the nested-model chain, into each join model, into the union branch, and into the
+     * sub-query hanging off each expression model. That last one is what carries a scalar sub-query,
+     * an {@code IN (SELECT ...)} that was not rewritten into a join, and everything nested inside
+     * them; {@code IQueryModel#getExpressionModels()} is populated by the parser
+     * ({@code ExpressionTreeBuilder#onNode}) and survives code generation, which matters because
+     * {@code WhereClauseParser} may by then have lifted the sub-query out of the WHERE clause it was
+     * written in. A CTE needs no separate case: the parser inlines it as a nested model wherever it
+     * is referenced ({@code SqlParser#parseSelectFrom}).
+     */
+    private static ExpressionNode findForeignTableSource(IQueryModel model, CharSequence targetTableName) {
+        IQueryModel m = model;
+        do {
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null
+                    && tableNameExpr.type == ExpressionNode.LITERAL
+                    && m.getSelectModelType() != IQueryModel.SELECT_MODEL_SHOW
+                    && !Chars.equalsIgnoreCase(targetTableName, unquote(tableNameExpr.token))) {
+                return tableNameExpr;
+            }
+
+            final ObjList<ExpressionNode> expressionModels = m.getExpressionModels();
+            for (int i = 0, n = expressionModels.size(); i < n; i++) {
+                // null once the optimiser has converted the sub-query into a join; the join model
+                // below then carries the same table.
+                final IQueryModel expressionModel = expressionModels.getQuick(i).queryModel;
+                if (expressionModel != null) {
+                    final ExpressionNode foreignSource = findForeignTableSource(expressionModel, targetTableName);
+                    if (foreignSource != null) {
+                        return foreignSource;
+                    }
+                }
+            }
+
+            // index 0 is the model itself
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                final ExpressionNode foreignSource = findForeignTableSource(joinModels.getQuick(i), targetTableName);
+                if (foreignSource != null) {
+                    return foreignSource;
+                }
+            }
+
+            final IQueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                final ExpressionNode foreignSource = findForeignTableSource(unionModel, targetTableName);
+                if (foreignSource != null) {
+                    return foreignSource;
+                }
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+        return null;
+    }
+
+    private static CharSequence formatPartitionName(TableReader reader, long partitionTimestamp) {
+        final StringSink sink = Misc.getThreadLocalSink();
+        PartitionBy.setSinkForPartition(sink, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTimestamp);
+        return sink;
+    }
+
     private static boolean isIPv4UpdateCast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4)
                 || (from == ColumnType.IPv4 && to == ColumnType.STRING)
@@ -768,8 +902,173 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
     }
 
+    /**
+     * The compile-time partition layout checks (reject*On*Partitions) only gate statements a user
+     * submits. They are skipped when:
+     * <ul>
+     *     <li>the statement is re-compiled to apply a WAL transaction (non-structural ALTERs such as
+     *     ADD INDEX, and UPDATE, travel the WAL as SQL text, on the primary and on every replica).
+     *     The transaction was already acknowledged; the apply-time check reports the failure;</li>
+     *     <li>the node is read-only. The statement is refused by the read-only gate anyway, and
+     *     "replica access is read-only" is the error the user must see;</li>
+     *     <li>the operator allowed all partition operations
+     *     ({@code cairo.sql.all.partition.operations.allowed}). The statement then fails when
+     *     applied, as it did before these checks existed;</li>
+     *     <li>the target is a view. A view has no partitions and no reader; the view
+     *     modification check rejects the statement with "cannot modify view".</li>
+     * </ul>
+     */
+    private static boolean isPartitionLayoutCheckSkipped(SqlExecutionContext executionContext, TableToken tableToken) {
+        final CairoEngine engine = executionContext.getCairoEngine();
+        return tableToken.isView()
+                || executionContext.isWalApplication()
+                || engine.isReadOnlyMode()
+                || engine.getConfiguration().isAllPartitionOperationsAllowed();
+    }
+
     private static boolean isTimestampUpdateCast(int from, int to) {
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
+    }
+
+    /**
+     * Rejects ALTER ... ADD INDEX on a table that has a remotely-served (cold storage) partition.
+     * Such a partition has no local data file to build the index from, so the ADD INDEX would fail
+     * when applied - and on a WAL table that failure suspends the table. Rejecting the statement at
+     * compile time keeps the table healthy and gives the user an immediate error.
+     */
+    private static void rejectAddIndexOnColdPartitions(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionRemotelyServed(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot add index, table has partitions in cold storage [table=").put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; an index cannot be built over partitions whose data is only in remote storage");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects ALTER ... ALTER COLUMN ... TYPE on a table that has a read-only partition, which
+     * includes every partition in cold storage. A type change rewrites the column in every
+     * partition, and conversions such as the one to SYMBOL first have to decode a parquet partition
+     * back to native; neither is possible for a read-only partition, so {@code TableWriter} refuses
+     * the change when it is applied - and on a WAL table that failure suspends the table. Rejecting
+     * the statement at compile time keeps the table healthy and gives the user an immediate error.
+     */
+    private static void rejectChangeColumnTypeOnReadOnlyPartitions(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionReadOnly(i)) {
+                    final boolean isCold = txFile.isPartitionRemotelyServed(i);
+                    throw SqlException.position(position)
+                            .put(isCold
+                                    ? "cannot change column type, table has partitions in cold storage [table="
+                                    : "cannot change column type, table has read-only partitions [table=")
+                            .put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put(isCold
+                                    ? "]; column data of partitions in cold storage cannot be rewritten"
+                                    : "]; column data of read-only partitions cannot be rewritten");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects UPDATE on a WAL table that has a parquet-format partition, including partitions in cold
+     * storage. Parquet partitions are read-only; an UPDATE reaching one fails when applied, which on
+     * a WAL table suspends the table because an acknowledged UPDATE can never be skipped. Rejecting
+     * the statement at compile time keeps the table healthy and gives the user an immediate error.
+     * <p>
+     * Only called for WAL tables. A non-WAL UPDATE executes synchronously: {@code UpdateOperatorImpl}
+     * rejects it only when it reaches a parquet partition, and rolls it back, so an UPDATE restricted
+     * to native partitions keeps working there.
+     * <p>
+     * Skipped on the WAL apply path: an UPDATE already sequenced keeps its apply-time semantics,
+     * which {@code UpdateOperatorImpl} still enforces per updated partition.
+     */
+    private static void rejectUpdateOnParquetPartitions(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            if (!reader.hasParquetPartitions()) {
+                return;
+            }
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionParquet(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot update table with parquet partitions [table=").put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; parquet partitions, including partitions in cold storage, are read-only");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects a WAL {@code UPDATE} that names any table other than the one it targets.
+     * <p>
+     * A WAL UPDATE is recorded as SQL text and re-executed on every node that applies it, so it may
+     * only read what re-execution is guaranteed to see identically. Its own target qualifies: the
+     * apply job holds that table's writer and applies seqTxn in order, so the table stands at
+     * exactly seqTxn-1 on every node. No other table does - sequencing is per-table and there is no
+     * cross-table barrier - and unlike the RNG seed and the clock, which the WAL event carries
+     * precisely so that replay is identical, nothing pins a second table's watermark. Left to run,
+     * such a statement would write different rows on different nodes and nothing would notice,
+     * because replication tracks seqTxn progress and not content.
+     * <p>
+     * This covers the tables the model names. The other way into node-local state is a cursor
+     * function, which names nothing in the model; {@link #generateUpdate} rejects those.
+     * <p>
+     * This runs while the execution model is compiled, ahead of code generation. Column-level
+     * authorization is applied as the update factory is generated, so on a WAL table this rejection
+     * reaches the caller before any permission check can deny the statement: a user lacking SELECT
+     * on the referenced columns sees the shape error rather than an access-denied one. The non-WAL
+     * path does not reach here and still reports the permission failure first.
+     * <p>
+     * Called only off the WAL apply path. A statement of this shape sequenced by an older build has
+     * to keep applying after an upgrade; refusing it there would suspend every table still holding
+     * one, which is a worse outcome than the divergence this prevents.
+     */
+    private static void rejectWalUpdateAcrossTables(IQueryModel updateQueryModel, TableToken tableToken) throws SqlException {
+        // UPDATE ... FROM is the other route to a second table and has always been rejected, further
+        // down in generateUpdate(). Its message is the more specific of the two, so raise it here
+        // rather than let the general one claim the shape first; generateUpdate() keeps its own copy
+        // of the check for the joins the optimiser derives from other shapes.
+        if (updateQueryModel.getNestedModel().containsJoin()) {
+            throw SqlException.position(0).put(UPDATE_WITH_JOIN_NOT_SUPPORTED);
+        }
+        final ExpressionNode foreignSource = findForeignTableSource(updateQueryModel, tableToken.getTableName());
+        if (foreignSource != null) {
+            throw SqlException.position(0)
+                    .put("UPDATE statements that reference another table are not supported for WAL tables [table=")
+                    .put(unquote(foreignSource.token))
+                    .put("]; the statement is replicated as SQL and re-executed on every node, and the referenced table is not synchronised with this one, so nodes could write different data");
+        }
     }
 
     private int addColumnWithType(
@@ -813,7 +1112,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int indexValueBlockCapacity;
         final boolean cache;
         int symbolCapacity;
-        final boolean indexed;
+        byte indexType = IndexType.NONE;
 
         if (
                 ColumnType.isSymbol(columnType)
@@ -862,12 +1161,38 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
-            indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
+            boolean indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
+            boolean indexTypeExplicit = false;
             if (indexed) {
                 tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && isTypeKeyword(tok)) {
+                    indexTypeExplicit = true;
+                    tok = expectToken(lexer, "index type name");
+                    indexType = IndexType.valueOf(tok);
+                    if (indexType == IndexType.NONE) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                    }
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && IndexType.isPosting(indexType)) {
+                        if (SqlKeywords.isDeltaKeyword(tok)) {
+                            indexType = IndexType.POSTING_DELTA;
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else if (SqlKeywords.isEfKeyword(tok)) {
+                            indexType = IndexType.POSTING_EF;
+                            tok = SqlUtil.fetchNext(lexer);
+                        }
+                    }
+                } else {
+                    indexType = configuration.getDefaultSymbolIndexType();
+                }
             }
 
             if (Chars.equalsLowerCaseAsciiNc("capacity", tok)) {
+                if (indexed && !indexTypeExplicit) {
+                    indexType = IndexType.BITMAP;
+                } else if (indexed && indexType != IndexType.BITMAP) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
+                }
                 tok = expectToken(lexer, "symbol index capacity");
 
                 try {
@@ -892,7 +1217,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             cache = configuration.getDefaultSymbolCacheFlag();
             indexValueBlockCapacity = configuration.getIndexValueBlockSize();
             symbolCapacity = configuration.getDefaultSymbolCapacity();
-            indexed = false;
         }
 
         if (addColumn != null) {
@@ -902,7 +1226,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     columnType,
                     Numbers.ceilPow2(symbolCapacity),
                     cache,
-                    indexed,
+                    indexType,
                     Numbers.ceilPow2(indexValueBlockCapacity),
                     false
             );
@@ -912,7 +1236,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableAddColumn(
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
             TableRecordMetadata tableMetadata
@@ -1009,13 +1333,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
-                addColumnSuffix(securityContext, tok, tableToken, alterOperationBuilder);
+                addColumnSuffix(executionContext, tok, tableToken, alterOperationBuilder);
                 compiledQuery.ofAlter(alterOperationBuilder.build());
                 return;
             }
         } while (true);
 
-        addColumnSuffix(securityContext, null, tableToken, alterOperationBuilder);
+        addColumnSuffix(executionContext, null, tableToken, alterOperationBuilder);
         compiledQuery.ofAlter(alterOperationBuilder.build());
         if (alterOperationBuilder.getExtraStrInfo().size() == 0) {
             // there is no column to add, set the done flag to avoid execution of the query
@@ -1024,7 +1348,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableChangeColumnType(
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
             int columnNamePosition,
@@ -1055,12 +1379,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
             }
         }
-        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
+        executionContext.getSecurityContext().authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
+        rejectChangeColumnTypeOnReadOnlyPartitions(executionContext, tableToken, tableNamePosition);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private void alterTableChangeSymbolCapacity(
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
             int columnNamePosition,
@@ -1072,7 +1397,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (columnName != null) {
             columnNames.add(columnName);
         }
-        securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, columnNames);
+        executionContext.getSecurityContext().authorizeAlterTableAlterSymbolCapacity(tableToken, columnNames);
 
         final int existingColumnType = tableMetadata.getColumnType(columnIndex);
         if (!ColumnType.isSymbol(existingColumnType)) {
@@ -1120,7 +1445,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 ColumnType.SYMBOL,
                 Numbers.ceilPow2(symbolCapacity),
                 configuration.getDefaultSymbolCacheFlag(), // ignored
-                false, // ignored
+                IndexType.NONE, // ignored
                 Numbers.ceilPow2(configuration.getIndexValueBlockSize()), // ignored
                 false // ignored
         );
@@ -1129,13 +1454,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableColumnAddIndex(
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
             int columnNamePosition,
             CharSequence columnName,
             TableRecordMetadata metadata,
-            int indexValueBlockSize
+            int indexValueBlockSize,
+            byte indexType,
+            @Nullable ObjList<CharSequence> coveringColumnNames,
+            @Nullable IntList coveringColumnPositions
     ) throws SqlException {
         final int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
@@ -1147,6 +1475,52 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(columnNamePosition).put("indexes are only supported for symbol type [column=").put(columnName).put(", type=").put(ColumnType.nameOf(type)).put(']');
         }
 
+        if (coveringColumnNames != null) {
+            for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                CharSequence covName = coveringColumnNames.get(i);
+                // Positions list is parallel to names; when callers pass null
+                // (internal re-use) we report the column-name position as a
+                // best-effort fallback rather than 0.
+                int covPos = coveringColumnPositions != null ? coveringColumnPositions.getQuick(i) : columnNamePosition;
+                int covIdx = metadata.getColumnIndexQuiet(covName);
+                if (covIdx == -1) {
+                    throw SqlException.$(covPos, "INCLUDE column does not exist [column=").put(covName).put(']');
+                }
+                if (covIdx == columnIndex) {
+                    throw SqlException.$(covPos, "INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+                }
+                for (int j = 0; j < i; j++) {
+                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(j)) == covIdx) {
+                        throw SqlException.$(covPos, "duplicate column in INCLUDE [column=").put(covName).put(']');
+                    }
+                }
+            }
+        }
+
+        // Auto-append the designated timestamp on POSTING indexes, but only
+        // when the user gave an INCLUDE clause with at least one column. A bare
+        // ALTER TABLE ... ADD INDEX TYPE POSTING (no INCLUDE) is a plain,
+        // non-covering posting index; the timestamp is auto-added only to round
+        // out an explicit covering set, never to turn a non-covering index into
+        // a covering one on its own.
+        if (IndexType.isPosting(indexType) && configuration.isPostingIndexAutoIncludeTimestamp()
+                && coveringColumnNames != null && coveringColumnNames.size() > 0) {
+            int tsIndex = metadata.getTimestampIndex();
+            if (tsIndex >= 0 && tsIndex != columnIndex) {
+                CharSequence tsName = metadata.getColumnName(tsIndex);
+                boolean isTimestampAlreadyIncluded = false;
+                for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
+                        isTimestampAlreadyIncluded = true;
+                        break;
+                    }
+                }
+                if (!isTimestampAlreadyIncluded) {
+                    coveringColumnNames.add(tsName);
+                }
+            }
+        }
+
         if (indexValueBlockSize == -1) {
             indexValueBlockSize = configuration.getIndexValueBlockSize();
         }
@@ -1156,14 +1530,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableToken,
                 metadata.getTableId(),
                 columnName,
-                Numbers.ceilPow2(indexValueBlockSize)
+                Numbers.ceilPow2(indexValueBlockSize),
+                indexType,
+                coveringColumnNames
         );
-        securityContext.authorizeAlterTableAddIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
+        // Authorize against the indexed column only. Covering INCLUDE columns
+        // are not part of the ADD INDEX privilege; passing them here would let
+        // an enterprise ACL conflate INDEX and READ permissions.
+        columnNames.clear();
+        columnNames.add(columnName);
+        executionContext.getSecurityContext().authorizeAlterTableAddIndex(tableToken, columnNames);
+        rejectAddIndexOnColdPartitions(executionContext, tableToken, tableNamePosition);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private void alterTableColumnCacheFlag(
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
             int columnNamePosition,
@@ -1187,12 +1569,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             alterOperationBuilder.ofRemoveCacheSymbol(tableNamePosition, tableToken, metadata.getTableId(), columnName);
         }
 
-        securityContext.authorizeAlterTableAlterColumnCache(tableToken, alterOperationBuilder.getExtraStrInfo());
+        executionContext.getSecurityContext().authorizeAlterTableAlterColumnCache(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private void alterTableColumnDropIndex(
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
             int columnNamePosition,
@@ -1210,7 +1592,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         alterOperationBuilder.ofDropIndex(tableNamePosition, tableToken, metadata.getTableId(), columnName, columnNamePosition);
-        securityContext.authorizeAlterTableDropIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
+        executionContext.getSecurityContext().authorizeAlterTableDropIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1283,7 +1665,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableDropColumn(
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
             TableRecordMetadata metadata
@@ -1317,7 +1699,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } while (true);
 
-        securityContext.authorizeAlterTableDropColumn(tableToken, dropColumnStatement.getExtraStrInfo());
+        executionContext.getSecurityContext().authorizeAlterTableDropColumn(tableToken, dropColumnStatement.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1497,7 +1879,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableRenameColumn(
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
             TableRecordMetadata metadata
@@ -1552,14 +1934,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } while (true);
 
-        securityContext.authorizeAlterTableRenameColumn(tableToken, alterOperationBuilder.getExtraStrInfo());
+        executionContext.getSecurityContext().authorizeAlterTableRenameColumn(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
-            engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
-            executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
+            if (!executionContext.isValidationOnly()) {
+                // Clear the runtime hard-suspend entry before resuming so the resume re-notification
+                // is not swallowed. A config-listed table stays suspended until removed from config.
+                engine.removeWalApplySuspended(tableToken);
+                engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
+                executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
+            }
             compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)
@@ -1569,6 +1956,53 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             ex.position(tableNamePosition);
             throw ex;
         }
+        if (!executionContext.isValidationOnly()) {
+            try {
+                engine.getMatViewStateStore().reenqueuePendingOnResume(tableToken);
+            } catch (Throwable th) {
+                // The resume itself durably succeeded; a redelivery enqueue failure must not fail
+                // the statement. The store's retry flags keep the surviving facets discoverable by
+                // the next refresh-job tick.
+                LOG.error().$("could not redeliver pending materialized view work after resume [table=").$(tableToken)
+                        .$(", ex=").$(th)
+                        .I$();
+            }
+        }
+    }
+
+    private void alterTableSetFormat(
+            TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        final int formatPos = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "'parquet' or 'native'");
+        final int format;
+        if (isParquetKeyword(tok)) {
+            format = TableUtils.TABLE_FORMAT_PARQUET;
+        } else if (isNativeKeyword(tok)) {
+            format = TableUtils.TABLE_FORMAT_NATIVE;
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
+        }
+        if (format == TableUtils.TABLE_FORMAT_PARQUET) {
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                if (!PartitionBy.isPartitioned(metadata.getPartitionBy())) {
+                    throw SqlException.$(formatPos, "FORMAT PARQUET is only supported on partitioned tables");
+                }
+                if (!metadata.isWalEnabled()) {
+                    throw SqlException.$(formatPos, "FORMAT PARQUET is only supported on WAL tables");
+                }
+            }
+            if (tableToken.isMatView()) {
+                throw SqlException.$(formatPos, "FORMAT PARQUET is not supported on materialized views");
+            }
+        }
+        final AlterOperationBuilder setFormat = alterOperationBuilder.ofSetTableFormat(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                format
+        );
+        compiledQuery.ofAlter(setFormat.build());
     }
 
     private void alterTableSetParam(
@@ -1601,7 +2035,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableSetParquetEncoding(
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
             CharSequence columnName,
@@ -1623,7 +2057,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnName,
                 parquetEncodingConfig
         );
-        securityContext.authorizeAlterTableSetParquetSettings(tableToken);
+        executionContext.getSecurityContext().authorizeAlterTableSetParquetSettings(tableToken);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1633,16 +2067,58 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableToken tableToken,
             byte walFlag
     ) throws SqlException {
+        if (engine.isReadOnlyMode()) {
+            // SET TYPE writes the _convert marker via createConvertFile during compilation,
+            // outside the engine writer chokepoint, so the per-statement ingress write-gate (which
+            // runs after compile() for parse-time-executed statements) cannot stop it. Refuse the
+            // instant the node is read-only. This eager check also orders before the auth call:
+            // isReadOnlyMode() flips first, while a connection's security context may still be the
+            // PRIMARY one that authorizeAlterTableSetType() would accept, so the check must precede
+            // the auth call. The eager check alone does not close the demote window though -- a
+            // demote landing between here and the marker write would still strand the marker on a
+            // demoting node; the role-switch read-lock hold around the write below is what closes it.
+            throw CairoException.readOnlyAccess();
+        }
         executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
         try {
             try (TableReader reader = engine.getReader(tableToken)) {
                 if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                     throw SqlException.$(pos, "Cannot convert non-partitioned table");
                 }
+                // Converting a WAL table to non-WAL is intentionally allowed even when the
+                // table is FORMAT PARQUET or has parquet partitions. This is a very useful
+                // operational workaround for a "poison pill" WAL transaction (one that keeps
+                // failing to apply and suspends the whole table): convert the table to non-WAL
+                // to discard the WAL and its sequencer, then convert it back to WAL. Blocking
+                // the conversion would take that escape hatch away. Parquet partitions stay
+                // parquet and remain readable; converting back to WAL restores normal parquet
+                // ingestion.
             }
 
-            path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-            TableUtils.createConvertFile(ff, path, walFlag);
+            if (!executionContext.isValidationOnly()) {
+                // Demote write-fence for the parse-time SET TYPE marker write. The eager check above
+                // ran while the node was still PRIMARY, but createConvertFile externalizes the
+                // _convert marker (acted on at the next restart to flip the table's WAL<->non-WAL
+                // format); a demote landing between that eager check and here would write the marker
+                // on an already-demoting node, where at restart it would convert the now-replica
+                // table's format and diverge from the primary. Hold the role-switch READ lock across
+                // an authoritative in-lock isReadOnlyMode() re-check and the write: either the flip
+                // ran first (refuse) or this runs fully as PRIMARY while the flip's write acquire
+                // waits. The fence is a no-op for pure-OSS deployments (uncontended read lock, static
+                // flag).
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    if (engine.isReadOnlyMode()) {
+                        throw CairoException.readOnlyAccess();
+                    }
+                    engine.fireRoleSwitchMintObserver();
+                    path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                    TableUtils.createConvertFile(ff, path, walFlag);
+                } finally {
+                    lock.unlock();
+                }
+            }
             compiledQuery.ofTableSetType();
         } catch (CairoException e) {
             throw SqlException.position(pos)
@@ -1653,8 +2129,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
         try {
-            engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
-            executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            if (!executionContext.isValidationOnly()) {
+                engine.addWalApplySuspended(tableToken);
+                engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
+                executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            }
             compiledQuery.ofTableSuspend();
         } catch (CairoException ex) {
             LOG.critical().$("table suspend failed [table=").$(tableToken)
@@ -1694,7 +2173,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
                 // test the cursor, if no exception thrown viewSql is working
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                // Nobody is handed the row this reads, so the open is flagged like the probe in
+                // executeCreateView: an audited view in the new body must not record a read.
+                final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                executionContext.setMetadataProbe(true);
+                final RecordCursor cursor;
+                try {
+                    cursor = factory.getCursor(executionContext);
+                } finally {
+                    executionContext.setMetadataProbe(wasMetadataProbe);
+                }
+                try (cursor) {
                     cursor.hasNext();
                 }
             }
@@ -1708,13 +2197,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         executionContext.getSecurityContext().authorizeAlterView(viewToken);
-        engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
+        if (!executionContext.isValidationOnly()) {
+            engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
+        }
         compiledQuery.ofAlterView();
     }
 
-    private TableToken authorizeCompileView(SecurityContext securityContext, CompileViewModel model) {
+    private TableToken authorizeCompileView(SqlExecutionContext executionContext, CompileViewModel model) {
         final CharSequence viewName = unquote(model.getTableName());
-        final TableToken tt = engine.getTableTokenIfExists(viewName);
+        // an object the principal may not see fails exactly like a missing one, before the kind check
+        final TableToken tt = executionContext.getVisibleTableTokenIfExists(viewName);
         if (tt == null) {
             throw CairoException.viewDoesNotExist(viewName);
         }
@@ -1722,55 +2214,57 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw CairoException.nonCritical().put(viewName).put(" is not a view");
         }
 
-        securityContext.authorizeViewCompile(tt);
+        executionContext.getSecurityContext().authorizeViewCompile(tt);
         return tt;
     }
 
-    private CharSequence authorizeInsertForCopy(SecurityContext securityContext, ExportModel model) {
+    private CharSequence authorizeInsertForCopy(SqlExecutionContext executionContext, ExportModel model) {
         final CharSequence tableName = unquote(model.getTableName());
         final TableToken tt = engine.getTableTokenIfExists(tableName);
         if (tt != null) {
             // for existing table user have to have INSERT permission
             // if the table is to be created, later we will check for CREATE TABLE permission instead
-            securityContext.authorizeInsert(tt);
+            executionContext.getSecurityContext().authorizeInsert(tt);
         }
         return tableName;
     }
 
-    private void authorizeSelectForCopy(SecurityContext securityContext, ExportModel model) {
+    private void authorizeSelectForCopy(SqlExecutionContext executionContext, ExportModel model) {
         final CharSequence tableName = unquote(model.getTableName());
         final TableToken tt = engine.verifyTableName(tableName);
         if (tt != null) {
-            securityContext.authorizeSelectOnAnyColumn(tt);
+            // a table the principal may not see fails exactly like a missing one does in verifyTableName()
+            if (!executionContext.getSecurityContext().isTableVisible(tt)) {
+                throw CairoException.tableDoesNotExist(tableName);
+            }
+            executionContext.getSecurityContext().authorizeSelectOnAnyColumn(tt);
         }
     }
 
-    private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
-        final CharSequence name = executionModel.getTableName();
-        final TableToken tableToken = engine.getTableTokenIfExists(name);
-        if (tableToken != null && tableToken.isMatView()) {
-            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
-        }
-    }
-
-    private void checkMatViewModification(TableToken tableToken) throws SqlException {
-        if (tableToken != null && tableToken.isMatView()) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("cannot modify materialized view [view=").put(tableToken.getTableName()).put(']');
-        }
-    }
-
+    // COPY FROM creates the table when it is missing, so its target collides with any existing object,
+    // visible or not, the way CREATE TABLE does.
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
         final TableToken tableToken = engine.getTableTokenIfExists(name);
-        if (tableToken != null && tableToken.isView()) {
-            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify view [view=").put(name).put(']');
-        }
+        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
     }
 
     private void checkViewModification(TableToken tableToken) throws SqlException {
-        if (tableToken != null && tableToken.isView()) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("cannot modify view [view=").put(tableToken.getTableName()).put(']');
+        checkViewModification(tableToken, lexer.lastTokenPosition());
+    }
+
+    private void checkViewModification(TableToken tableToken, int position) throws SqlException {
+        if (tableToken == null || tableToken.getType() == TableToken.Type.TABLE) {
+            return;
         }
+        throw SqlException.position(position).put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=").put(tableToken.getTableName()).put(']');
+    }
+
+    // For statements that modify an existing table: an object the principal may not see is not disclosed
+    // as a view here, and the statement goes on to fail like it does for a missing table.
+    private void checkVisibleViewModification(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(executionModel.getTableName());
+        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
     }
 
     private void clearExceptSqlText() {
@@ -1790,29 +2284,50 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok) && !isViewKeyword(tok))) {
+        if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok) && !isLiveKeyword(tok) && !isViewKeyword(tok))) {
             compileAlterExt(executionContext, tok);
             return;
         }
 
         if (isTableKeyword(tok)) {
-            if (executionContext.isValidationOnly()) {
-                compiledQuery.ofAlter(null);
-                return;
-            }
             compileAlterTable(executionContext);
         } else if (isMaterializedKeyword(tok)) {
-            if (executionContext.isValidationOnly()) {
-                compiledQuery.ofAlter(null);
-                return;
-            }
             compileAlterMatView(executionContext);
+        } else if (isLiveKeyword(tok)) {
+            compileAlterLiveView(executionContext);
         } else {
-            if (executionContext.isValidationOnly()) {
-                compiledQuery.ofAlterView();
-                return;
-            }
             compileAlterView(executionContext);
+        }
+    }
+
+    /**
+     * {@code ALTER LIVE VIEW <name> RESUME|SUSPEND WAL}. Mirrors compileAlterMatView.
+     * <p>
+     * A live view is a WAL table, so a failing inline apply suspends it like any other, and
+     * hasPendingLiveViewApply then skips it until an operator RESUMEs. That recovery was
+     * unreachable: compileAlterTable rejects every ALTER on a non-TABLE token up front, and no
+     * ALTER LIVE VIEW grammar existed - so an idle view stayed suspended, serving a stale prefix,
+     * with DROP + recreate the only escape.
+     * <p>
+     * Only the WAL-control verbs live here; the structural ones stay rejected, since a live view's
+     * schema is a function of its SELECT.
+     */
+    private void compileAlterLiveView(SqlExecutionContext executionContext) throws SqlException {
+        expectKeyword(lexer, "view");
+        final int liveViewNamePosition = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "live view name");
+        assertNameIsQuotedOrNotAKeyword(tok, liveViewNamePosition);
+        final TableToken liveViewToken = tableExistsOrFail(liveViewNamePosition, unquote(tok), executionContext);
+        if (!liveViewToken.isLiveView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "live view name expected");
+        }
+        tok = expectToken(lexer, "'resume' or 'suspend'");
+        if (isResumeKeyword(tok)) {
+            parseResumeWal(liveViewToken, liveViewNamePosition, executionContext);
+        } else if (isSuspendKeyword(tok)) {
+            parseSuspendWal(liveViewToken, liveViewNamePosition, executionContext);
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'resume' or 'suspend' expected");
         }
     }
 
@@ -1822,20 +2337,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "materialized view name");
         assertNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final CharSequence matViewName = unquote(tok);
+        // Before any resolution, for the same reason as in compileAlterTable. A mat view cannot be
+        // renamed, but DROP + CREATE can still hand its name to a different view between the ALTER
+        // being sequenced and WAL-applied, and only the writer knows which view the statement meant.
+        executionContext.setStatementTargetTableName(matViewName);
         final TableToken matViewToken = viewExistsOrFail(matViewName, executionContext, SqlException.matViewDoesNotExist(matViewNamePosition, matViewName));
         if (!matViewToken.isMatView()) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
         }
-        final SecurityContext securityContext = executionContext.getSecurityContext();
-        final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (viewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
         }
 
         try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
             tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok))) {
-                compileAlterMatViewExt(securityContext, tok, matViewToken, matViewNamePosition);
+            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isRebaseKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok))) {
+                compileAlterMatViewExt(executionContext, tok, matViewToken, matViewNamePosition);
                 return;
             }
             if (isAlterKeyword(tok)) {
@@ -1852,7 +2370,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = expectToken(lexer, "'symbol capacity', 'add index' or 'drop index'");
                 if (SqlKeywords.isSymbolKeyword(tok)) {
                     alterTableChangeSymbolCapacity(
-                            securityContext,
+                            executionContext,
                             matViewNamePosition,
                             matViewToken,
                             columnNamePosition,
@@ -1875,21 +2393,53 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     final int indexValueBlockSize;
                     final boolean sizeInferred;
+                    byte indexType = configuration.getDefaultSymbolIndexType();
+                    boolean indexTypeExplicit = false;
 
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || isSemicolon(tok)) {
                         indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
                         sizeInferred = true;
                     } else {
-                        if (!SqlKeywords.isCapacityKeyword(tok)) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'capacity' keyword expected");
+                        // ADD INDEX TYPE POSTING [DELTA|EF]
+                        if (isTypeKeyword(tok)) {
+                            indexTypeExplicit = true;
+                            tok = expectToken(lexer, "index type name");
+                            byte parsedType = IndexType.valueOf(tok);
+                            if (parsedType == IndexType.NONE) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                            }
+                            indexType = parsedType;
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && IndexType.isPosting(indexType)) {
+                                if (SqlKeywords.isDeltaKeyword(tok)) {
+                                    indexType = IndexType.POSTING_DELTA;
+                                    tok = SqlUtil.fetchNext(lexer);
+                                } else if (SqlKeywords.isEfKeyword(tok)) {
+                                    indexType = IndexType.POSTING_EF;
+                                    tok = SqlUtil.fetchNext(lexer);
+                                }
+                            }
                         }
-                        tok = expectToken(lexer, "index capacity value");
-                        try {
-                            indexValueBlockSize = Numbers.parseInt(tok);
-                            sizeInferred = false;
-                        } catch (NumericException e) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "index capacity value must be numeric");
+                        if (tok == null || isSemicolon(tok)) {
+                            indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
+                            sizeInferred = true;
+                        } else {
+                            if (!SqlKeywords.isCapacityKeyword(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'capacity' keyword expected");
+                            }
+                            if (!indexTypeExplicit) {
+                                indexType = IndexType.BITMAP;
+                            } else if (indexType != IndexType.BITMAP) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
+                            }
+                            tok = expectToken(lexer, "index capacity value");
+                            try {
+                                indexValueBlockSize = Numbers.parseInt(tok);
+                                sizeInferred = false;
+                            } catch (NumericException e) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "index capacity value must be numeric");
+                            }
                         }
                     }
 
@@ -1900,13 +2450,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             .I$();
 
                     alterTableColumnAddIndex(
-                            securityContext,
+                            executionContext,
                             matViewNamePosition,
                             matViewToken,
                             columnNamePosition,
                             columnName,
                             tableMetadata,
-                            indexValueBlockSize
+                            indexValueBlockSize,
+                            indexType,
+                            null,
+                            null
                     );
                 } else if (SqlKeywords.isDropKeyword(tok)) {
                     expectKeyword(lexer, "index");
@@ -1917,7 +2470,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
 
                     alterTableColumnDropIndex(
-                            securityContext,
+                            executionContext,
                             matViewNamePosition,
                             matViewToken,
                             columnNamePosition,
@@ -1930,7 +2483,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } else if (isSetKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || (!isTtlKeyword(tok) && !isRefreshKeyword(tok))) {
-                    compileAlterMatViewSetExt(securityContext, tok, matViewToken, matViewNamePosition);
+                    compileAlterMatViewSetExt(executionContext, tok, matViewToken, matViewNamePosition);
                     return;
                 }
                 if (isTtlKeyword(tok)) {
@@ -1939,7 +2492,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
                         // SET REFRESH LIMIT
-                        securityContext.authorizeAlterMatViewSetRefreshLimit(matViewToken);
+                        executionContext.getSecurityContext().authorizeAlterMatViewSetRefreshLimit(matViewToken);
                         final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
                         final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
                                 matViewNamePosition,
@@ -1950,7 +2503,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         compiledQuery.ofAlter(setRefreshLimit.build());
                     } else if (isImmediateKeyword(tok) || isManualKeyword(tok) || isEveryKeyword(tok) || isPeriodKeyword(tok)) {
                         // SET REFRESH [IMMEDIATE | MANUAL | EVERY <interval>] ...
-                        securityContext.authorizeAlterMatViewSetRefreshType(matViewToken);
+                        executionContext.getSecurityContext().authorizeAlterMatViewSetRefreshType(matViewToken);
                         int refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
                         int every = 0;
                         char everyUnit = 0;
@@ -2114,6 +2667,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
+            } else if (isRebaseKeyword(tok)) {
+                parseRebaseWal(matViewToken, matViewNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
                 parseSuspendWal(matViewToken, matViewNamePosition, executionContext);
             }
@@ -2133,17 +2688,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = expectToken(lexer, "table name");
         assertNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
-        final TableToken tableToken = tableExistsOrFail(tableNamePosition, unquote(tok), executionContext);
+        final CharSequence targetTableName = unquote(tok);
+        // Before any resolution, for the same reason as in compileExecutionModel0's UPDATE case.
+        executionContext.setStatementTargetTableName(targetTableName);
+        final TableToken tableToken = tableExistsOrFailForWal(tableNamePosition, targetTableName, executionContext);
         checkViewModification(tableToken);
-        checkMatViewModification(tableToken);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(tableToken)) {
             tok = expectToken(lexer, ALTER_TABLE_EXPECTED_TOKEN_DESCR);
 
             if (isAddKeyword(tok)) {
-                securityContext.authorizeAlterTableAddColumn(tableToken);
-                alterTableAddColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
+                executionContext.getSecurityContext().authorizeAlterTableAddColumn(tableToken);
+                alterTableAddColumn(executionContext, tableNamePosition, tableToken, tableMetadata);
             } else if (isConvertKeyword(tok)) {
                 tok = expectToken(lexer, "'partition'");
                 if (!isPartitionKeyword(tok)) {
@@ -2157,10 +2714,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final int action;
                 if (isParquetKeyword(tok)) {
                     action = PartitionAction.CONVERT_TO_PARQUET;
-                    securityContext.authorizeAlterTableConvertPartitionToParquet(tableToken);
+                    executionContext.getSecurityContext().authorizeAlterTableConvertPartitionToParquet(tableToken);
                 } else if (isNativeKeyword(tok)) {
                     action = PartitionAction.CONVERT_TO_NATIVE;
-                    securityContext.authorizeAlterTableConvertPartitionToNative(tableToken);
+                    executionContext.getSecurityContext().authorizeAlterTableConvertPartitionToNative(tableToken);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
                 }
@@ -2168,26 +2725,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } else if (isDropKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || (!isColumnKeyword(tok) && !isPartitionKeyword(tok))) {
-                    compileAlterTableDropExt(securityContext, tok, tableToken, tableNamePosition);
+                    compileAlterTableDropExt(executionContext, tok, tableToken, tableNamePosition);
                     return;
                 }
                 if (isColumnKeyword(tok)) {
-                    alterTableDropColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
+                    alterTableDropColumn(executionContext, tableNamePosition, tableToken, tableMetadata);
                 } else if (isPartitionKeyword(tok)) {
-                    securityContext.authorizeAlterTableDropPartition(tableToken);
+                    executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
                 }
             } else if (isRenameKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
                 if (isColumnKeyword(tok)) {
-                    alterTableRenameColumn(securityContext, tableNamePosition, tableToken, tableMetadata);
+                    alterTableRenameColumn(executionContext, tableNamePosition, tableToken, tableMetadata);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
                 }
             } else if (isAttachKeyword(tok)) {
                 tok = expectToken(lexer, "'partition'");
                 if (isPartitionKeyword(tok)) {
-                    securityContext.authorizeAlterTableAttachPartition(tableToken);
+                    executionContext.getSecurityContext().authorizeAlterTableAttachPartition(tableToken);
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.ATTACH, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
@@ -2195,7 +2752,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } else if (isDetachKeyword(tok)) {
                 tok = expectToken(lexer, "'partition'");
                 if (isPartitionKeyword(tok)) {
-                    securityContext.authorizeAlterTableDetachPartition(tableToken);
+                    executionContext.getSecurityContext().authorizeAlterTableDetachPartition(tableToken);
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DETACH, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
@@ -2207,7 +2764,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (isPartitionKeyword(tok)) {
                         tok = expectToken(lexer, "'list'");
                         if (isListKeyword(tok)) {
-                            securityContext.authorizeAlterTableDropPartition(tableToken);
+                            executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
                             alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, lexer.lastTokenPosition(), PartitionAction.FORCE_DROP);
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'list' expected");
@@ -2235,11 +2792,72 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         expectKeyword(lexer, "index");
                         tok = SqlUtil.fetchNext(lexer);
                         int indexValueCapacity = -1;
+                        byte indexType = configuration.getDefaultSymbolIndexType();
+                        boolean indexTypeExplicit = false;
+                        ObjList<CharSequence> coveringColumnNames = null;
+                        IntList coveringColumnPositions = null;
 
-                        if (tok != null && (!isSemicolon(tok))) {
-                            if (!isCapacityKeyword(tok)) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
-                            } else {
+                        if (tok != null && !isSemicolon(tok)) {
+                            // ADD INDEX TYPE POSTING [DELTA|EF]
+                            if (isTypeKeyword(tok)) {
+                                indexTypeExplicit = true;
+                                tok = expectToken(lexer, "index type name");
+                                byte parsedType = IndexType.valueOf(tok);
+                                if (parsedType == IndexType.NONE) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                                }
+                                indexType = parsedType;
+                                tok = SqlUtil.fetchNext(lexer);
+                                // Handle sub-tokens DELTA and EF for POSTING index type
+                                if (tok != null && IndexType.isPosting(indexType)) {
+                                    if (SqlKeywords.isDeltaKeyword(tok)) {
+                                        indexType = IndexType.POSTING_DELTA;
+                                        tok = SqlUtil.fetchNext(lexer);
+                                    } else if (SqlKeywords.isEfKeyword(tok)) {
+                                        indexType = IndexType.POSTING_EF;
+                                        tok = SqlUtil.fetchNext(lexer);
+                                    }
+                                }
+                            }
+                            // tok might be INCLUDE, CAPACITY, semicolon, or null
+                            if (tok != null && !isSemicolon(tok) && SqlKeywords.isIncludeKeyword(tok)) {
+                                if (!indexTypeExplicit) {
+                                    indexType = IndexType.POSTING;
+                                } else if (!IndexType.isPosting(indexType)) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "INCLUDE is only supported for POSTING index type");
+                                }
+                                coveringColumnNames = new ObjList<>();
+                                coveringColumnPositions = new IntList();
+                                tok = expectToken(lexer, "'('");
+                                if (!Chars.equals(tok, '(')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
+                                }
+                                tok = expectToken(lexer, "column name");
+                                if (Chars.equals(tok, ')')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "at least one column name expected in INCLUDE");
+                                }
+                                do {
+                                    coveringColumnNames.add(GenericLexer.immutableOf(unquote(tok)));
+                                    coveringColumnPositions.add(lexer.lastTokenPosition());
+                                    tok = expectToken(lexer, "',' or ')'");
+                                    if (Chars.equals(tok, ',')) {
+                                        tok = expectToken(lexer, "column name");
+                                    }
+                                } while (!Chars.equals(tok, ')'));
+                                if (!Chars.equals(tok, ')')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
+                                }
+                                tok = SqlUtil.fetchNext(lexer);
+                            }
+                            if (tok != null && !isSemicolon(tok)) {
+                                if (!isCapacityKeyword(tok)) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
+                                }
+                                if (!indexTypeExplicit) {
+                                    indexType = IndexType.BITMAP;
+                                } else if (indexType != IndexType.BITMAP) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
+                                }
                                 tok = expectToken(lexer, "capacity value");
                                 try {
                                     indexValueCapacity = Numbers.parseInt(tok);
@@ -2253,13 +2871,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         alterTableColumnAddIndex(
-                                securityContext,
+                                executionContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnNamePosition,
                                 columnName,
                                 tableMetadata,
-                                indexValueCapacity
+                                indexValueCapacity,
+                                indexType,
+                                coveringColumnNames,
+                                coveringColumnPositions
                         );
                     } else if (isDropKeyword(tok)) {
                         tok = expectToken(lexer, "'index'");
@@ -2269,7 +2890,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
                             }
                             alterTableColumnDropIndex(
-                                    securityContext,
+                                    executionContext,
                                     tableNamePosition,
                                     tableToken,
                                     columnNamePosition,
@@ -2281,7 +2902,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
                     } else if (isCacheKeyword(tok)) {
                         alterTableColumnCacheFlag(
-                                securityContext,
+                                executionContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnNamePosition,
@@ -2291,7 +2912,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                     } else if (isNoCacheKeyword(tok)) {
                         alterTableColumnCacheFlag(
-                                securityContext,
+                                executionContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnNamePosition,
@@ -2301,7 +2922,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                     } else if (isTypeKeyword(tok)) {
                         alterTableChangeColumnType(
-                                securityContext,
+                                executionContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnNamePosition,
@@ -2311,7 +2932,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                     } else if (isSymbolKeyword(tok)) {
                         alterTableChangeSymbolCapacity(
-                                securityContext,
+                                executionContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnNamePosition,
@@ -2323,7 +2944,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         tok = expectToken(lexer, "'parquet'");
                         if (isParquetKeyword(tok)) {
                             alterTableSetParquetEncoding(
-                                    securityContext,
+                                    executionContext,
                                     tableNamePosition,
                                     tableToken,
                                     columnName,
@@ -2341,12 +2962,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isSetKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok))) {
-                    compileAlterTableSetExt(securityContext, tok, tableToken, tableNamePosition);
+                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok) && !isFormatKeyword(tok))) {
+                    compileAlterTableSetExt(executionContext, tok, tableToken, tableNamePosition);
                     return;
                 }
                 if (isParamKeyword(tok)) {
-                    securityContext.authorizeAlterTableSetParam(tableToken);
+                    executionContext.getSecurityContext().authorizeAlterTableSetParam(tableToken);
                     final int paramNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "param name");
                     final CharSequence paramName = GenericLexer.immutableOf(tok);
@@ -2359,6 +2980,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 } else if (isTtlKeyword(tok)) {
                     alterTableOrMatViewSetTtl(tableToken, tableNamePosition, tableMetadata);
+                } else if (isFormatKeyword(tok)) {
+                    alterTableSetFormat(tableToken, tableNamePosition, tableMetadata);
                 } else if (isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (isBypassKeyword(tok)) {
@@ -2376,10 +2999,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(tableToken, tableNamePosition, executionContext);
+            } else if (isRebaseKeyword(tok)) {
+                parseRebaseWal(tableToken, tableNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
                 parseSuspendWal(tableToken, tableNamePosition, executionContext);
             } else if (isSquashKeyword(tok)) {
-                securityContext.authorizeAlterTableDropPartition(tableToken);
+                executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
                 tok = expectToken(lexer, "'partitions'");
                 if (isPartitionsKeyword(tok)) {
                     compiledQuery.ofAlter(alterOperationBuilder.ofSquashPartitions(tableNamePosition, tableToken).build());
@@ -2402,9 +3027,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
                 }
             } else if (isEnableKeyword(tok)) {
-                compileAlterTableEnableExt(securityContext, tok, tableToken, tableNamePosition);
+                compileAlterTableEnableExt(executionContext, tok, tableToken, tableNamePosition);
             } else if (isDisableKeyword(tok)) {
-                compileAlterTableDisableExt(securityContext, tok, tableToken, tableNamePosition);
+                compileAlterTableDisableExt(executionContext, tok, tableToken, tableNamePosition);
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
             }
@@ -2440,6 +3065,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int viewSqlPosition = lexer.getPosition();
         final String viewSql = parser.parseViewSql(lexer, this);
+        if (isAuditedView(viewToken)) {
+            // The new body keeps the view's audited flag, so its AUDITED declarations are held to
+            // what a read of the view needs, here rather than on every read that follows.
+            validateAuditedViewBody(viewToken, parser.getViewSqlModel(), executionContext);
+        }
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
@@ -2566,9 +3196,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
-    private RecordCursorFactory compileCopyFrom(SecurityContext securityContext, ExportModel model) throws SqlException {
+    private RecordCursorFactory compileCopyFrom(SqlExecutionContext executionContext, ExportModel model) throws SqlException {
         assert !model.isCancel();
-        final CharSequence tableName = authorizeInsertForCopy(securityContext, model);
+        final CharSequence tableName = authorizeInsertForCopy(executionContext, model);
 
         if (model.getTimestampColumnName() == null
                 && ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
@@ -2591,7 +3221,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
-    private RecordCursorFactory compileCopyTo(SecurityContext securityContext, ExportModel model, CharSequence sqlText) throws SqlException {
+    private RecordCursorFactory compileCopyTo(SqlExecutionContext executionContext, ExportModel model, CharSequence sqlText) throws SqlException {
         assert !model.isCancel();
 
         if (engine.getConfiguration().isReadOnlyInstance()) {
@@ -2603,7 +3233,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         if (model.getTableName() != null) {
-            authorizeSelectForCopy(securityContext, model);
+            authorizeSelectForCopy(executionContext, model);
         }
 
         if (!model.isParquetFormat()) {
@@ -2613,7 +3243,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return new CopyExportFactory(
                 engine,
                 model,
-                securityContext,
+                executionContext.getSecurityContext(),
                 sqlText
         );
     }
@@ -2656,9 +3286,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence tableName = unquote(tok);
-                // define operation to make sure we generate correct errors in case of syntax check failure
-                final TableToken tt = executionContext.getTableTokenIfExists(tableName);
-                if (tt != null && (tt.isView() || tt.isMatView())) {
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(tableName);
+                if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
+                    // Live views are rejected here as well as at execute time, so DROP TABLE on
+                    // one fails the compile-only /validate endpoint too. Keep the message
+                    // identical to the execute-time one so the user-visible contract is unchanged.
+                    if (tt.isLiveView()) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "table name expected, got live view name: ").put(tableName);
+                    }
                     throw SqlException.$(lexer.lastTokenPosition(), "table name expected, got view or materialized view name");
                 }
                 dropOperationBuilder.clear();
@@ -2695,15 +3332,54 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence viewName = GenericLexer.unquote(tok);
-                // define operation to make sure we generate correct errors in case of syntax check failure
-                final TableToken tt = executionContext.getTableTokenIfExists(viewName);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(viewName);
                 if (tt != null && !tt.isView()) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "view name expected, got table or materialized view name");
+                    throw SqlException.$(lexer.lastTokenPosition(), "view name expected, got ").put(tt.getType().keyword()).put(" name");
                 }
                 dropOperationBuilder.clear();
                 dropOperationBuilder.setOperationCode(OperationCodes.DROP_VIEW);
                 dropOperationBuilder.setEntityName(viewName);
                 dropOperationBuilder.setEntityNamePosition(viewNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
+                // DROP LIVE VIEW [ IF EXISTS ] name [;]
+            } else if (isLiveKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isViewKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected VIEW");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] live-view-name");
+                }
+                boolean hasIfExists = false;
+                int liveViewNamePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS live-view-name");
+                    }
+                    hasIfExists = true;
+                    liveViewNamePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast();
+                }
+
+                tok = expectToken(lexer, "live view name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence liveViewName = GenericLexer.unquote(tok);
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_LIVE_VIEW);
+                dropOperationBuilder.setEntityName(liveViewName);
+                dropOperationBuilder.setEntityNamePosition(liveViewNamePosition);
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
@@ -2738,10 +3414,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence matViewName = unquote(tok);
-                // define operation to make sure we generate correct errors in case of syntax check failure
-                final TableToken tt = executionContext.getTableTokenIfExists(matViewName);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(matViewName);
                 if (tt != null && !tt.isMatView()) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table or view name");
+                    throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got ").put(tt.getType().keyword()).put(" name");
                 }
                 dropOperationBuilder.clear();
                 dropOperationBuilder.setOperationCode(OperationCodes.DROP_MAT_VIEW);
@@ -2789,7 +3466,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return explainModel;
             }
         } catch (Throwable e) {
-            if (generateCompileViewEvents) {
+            // Model compilation optimises but never generates, so a throw here - the INSERT column
+            // count check, UPDATE column validation, an authorization failure - can leave cursor
+            // functions the optimiser instantiated for FROM/JOIN table functions with no owner.
+            optimiser.freeTableFactoriesInFlight(e);
+            if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
                 enqueueCompileViews(model);
             }
             throw e;
@@ -2807,15 +3488,45 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     lightlyValidateInsertModel(insertModel);
                 }
-                final TableToken tableToken = engine.getTableTokenIfExists(insertModel.getTableName());
+                // a table the principal may not see authorizes exactly like a missing one
+                final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(insertModel.getTableName());
                 executionContext.getSecurityContext().authorizeInsert(tableToken);
                 return insertModel;
             }
             case ExecutionModel.UPDATE:
                 final IQueryModel queryModel = (IQueryModel) model;
+                // Must precede every resolution below, including the nested model's own scan inside
+                // optimiseUpdate(): the target name occurs twice in an UPDATE, as the target and as
+                // the scanned table, and on the WAL apply path both must resolve to the writer's
+                // table while any other table in the statement resolves normally.
+                executionContext.setStatementTargetTableName(queryModel.getTableName());
                 TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
+                // a table the principal may not see fails exactly like a missing one does in
+                // getTableToken(), before its metadata is read
+                if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+                    throw CairoException.tableDoesNotExist(queryModel.getTableName());
+                }
                 try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
+                    // Before optimiseUpdate(), which is what fixes the check to this spot rather
+                    // than to generateUpdate() where the WAL join rejection lives: optimising an
+                    // UPDATE rewrites its model into fresh instances that no longer carry the
+                    // parser's record of which sub-queries the statement contains.
+                    if (metadata.isWalEnabled() && !executionContext.isWalApplication()) {
+                        rejectWalUpdateAcrossTables(queryModel, tableToken);
+                        // Opens the window generateUpdate() closes. It has to start here rather than
+                        // at code generation because optimiseUpdate() already instantiates the
+                        // cursor function of a FROM source and caches it on the model
+                        // (SqlOptimiser#parseFunctionAndEnumerateColumns), so by code generation time
+                        // that one is never instantiated again. Everything instantiated between here
+                        // and there belongs to this statement.
+                        functionParser.resetCursorFunctionInstantiated();
+                    }
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
+                    // After optimiseUpdate(), which authorizes the statement, so an unauthorized
+                    // user sees the permission failure rather than the partition layout.
+                    if (metadata.isWalEnabled()) {
+                        rejectUpdateOnParquetPartitions(executionContext, tableToken, queryModel.getModelPosition());
+                    }
                     return model;
                 }
             default:
@@ -2842,6 +3553,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (createMatViewBuilder.getQueryModel() != null) {
                     final IQueryModel selectModel = optimiser.optimise(createMatViewBuilder.getQueryModel(), executionContext, this);
                     createMatViewBuilder.setSelectModel(selectModel);
+                }
+                return model;
+            case ExecutionModel.CREATE_LIVE_VIEW:
+                // Authorize for parity with CREATE MAT VIEW so a restricted user cannot probe a plan
+                // they may not create. Then optimise like the two arms above: falling through with
+                // the raw parser model made generateExplain() codegen an unoptimised SELECT, which
+                // trips "wtf? ts" under -ea and an AIOOBE without - an Error escaping compile(),
+                // i.e. a 500 on HTTP/pgwire instead of a plan.
+                //
+                // The live-view codegen flag is armed in generateExplain, not here: nothing in
+                // SqlOptimiser reads isLiveViewCompile(), so arming it around this call alone would
+                // leave it false for the code generation that actually reads it.
+                executionContext.getSecurityContext().authorizeLiveViewCreate();
+                final CreateLiveViewOperationBuilder createLiveViewBuilder = (CreateLiveViewOperationBuilder) model;
+                if (createLiveViewBuilder.getQueryModel() != null) {
+                    final IQueryModel selectModel = optimiser.optimise(createLiveViewBuilder.getQueryModel(), executionContext, this);
+                    createLiveViewBuilder.setSelectModel(selectModel);
                 }
                 return model;
         }
@@ -2875,7 +3603,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
-                QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                // An executor that leaves compiledQuery at NONE gave up and fell back to the
+                // execution model below (e.g. compileCreate() bails out for every CREATE
+                // TABLE/VIEW/MATERIALIZED VIEW that isn't CREATE OR REPLACE VIEW). That fallback
+                // path owns completion logging for the statement -- either directly in
+                // compileUsingModel(), or later when the built Operation actually executes (e.g.
+                // executeCreateTable()). Logging "fin" here too would double-log completion.
+                if (compiledQuery.getType() != CompiledQuery.NONE) {
+                    QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                }
             } catch (Throwable th) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if
@@ -2900,6 +3636,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private InsertOperation compileInsert(InsertModel insertModel, SqlExecutionContext executionContext) throws SqlException {
         // todo: consider moving this method to InsertModel
+        // A connection authorized while the node was PRIMARY keeps a read-write security
+        // context across an in-place demote. Check the live engine state before touching the
+        // table registry, so the caller sees "replica access is read-only" rather than
+        // "table does not exist" when the table has not yet been replicated to this node.
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.readOnlyAccess();
+        }
         final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
         InsertOperationImpl insertOperation = null;
         Function timestampFunction = null;
@@ -3023,6 +3766,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private InsertOperation compileInsertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        // A connection authorized while the node was PRIMARY keeps a read-write security
+        // context across an in-place demote. Check the live engine state before touching the
+        // table registry, so the caller sees "replica access is read-only" rather than
+        // "table does not exist" when the table has not yet been replicated to this node.
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.readOnlyAccess();
+        }
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
         TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
@@ -3193,22 +3943,40 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
             final IQueryModel queryModel;
+            final boolean cacheable;
             try {
-                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-                if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                    throw SqlException.$(startPos, "SELECT query expected");
+                try {
+                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                        throw SqlException.$(startPos, "SELECT query expected");
+                    }
+                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                    // The optimiser created the FROM/JOIN cursor functions and the SHOW statements while
+                    // non-deterministic functions were still allowed, so FunctionParser did not check them
+                    // for the materialized view yet.
+                    functionParser.getExecutionRequirements().checkStoredView(executionContext);
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    throw e;
                 }
-                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
-            } catch (SqlException e) {
-                e.setPosition(e.getPosition() + selectTextPosition);
-                throw e;
+                createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                // See compileUsingModel(): read before generation, so a throw here cannot orphan the generated
+                // factory tree, and the read cannot land on a model the retry path has already recycled. Inside
+                // this try on purpose -- a throw must still free the table factories optimise() left in flight.
+                cacheable = queryModel.isCacheable();
+            } catch (Throwable th) {
+                // Rejecting the query after optimise() returned leaves the cursor functions it
+                // instantiated for FROM/JOIN table functions unowned: generation, which takes them over,
+                // has not run yet, and this throw skips generateSelectWithRetries below, whose
+                // generateSelectOneShot() would otherwise sweep them.
+                optimiser.freeTableFactoriesInFlight(th);
+                throw th;
             }
-            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
 
             final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setAllowNonDeterministicFunction(false);
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -3245,7 +4013,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         final CharSequence matViewName = unquote(tok);
-        final TableToken matViewToken = executionContext.getTableTokenIfExists(matViewName);
+        // an object the principal may not see fails exactly like a missing one, before the kind check
+        final TableToken matViewToken = executionContext.getVisibleTableTokenIfExists(matViewName);
         if (matViewToken == null) {
             throw SqlException.matViewDoesNotExist(lexer.lastTokenPosition(), matViewName);
         }
@@ -3253,14 +4022,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
         }
 
-        final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (matViewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist or is not ready for refresh");
         }
         final TimestampDriver driver = matViewDefinition.getBaseTableTimestampDriver();
 
-        tok = expectToken(lexer, "'full' or 'incremental' or 'range'");
+        tok = expectToken(lexer, "'full' or 'incremental' or 'range' or 'stats'");
         final boolean fullRefresh = isFullKeyword(tok);
+        // STATS is a sentinel for "reset the cost-model EMA values" -- not a
+        // data refresh. Handled inline here rather than through the refresh
+        // queue because it's a synchronous metadata-only operation.
+        final boolean isStatsReset = SqlKeywords.isStatsKeyword(tok);
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
         if (isRangeKeyword(tok)) {
@@ -3281,8 +4054,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (from > to) {
                 throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
             }
-        } else if (!fullRefresh && !isIncrementalKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' or 'range' expected");
+        } else if (!fullRefresh && !isStatsReset && !isIncrementalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'full', 'incremental', 'range' or 'stats' expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -3290,11 +4063,43 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to refresh materialized view");
         }
 
+        executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
         if (!executionContext.isValidationOnly()) {
-            executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
-
+            if (engine.isReadOnlyMode()) {
+                // A connection authorized while the node was PRIMARY keeps a read-write security
+                // context across an in-place demote, so authorizeMatViewRefresh above still passes.
+                // Refuse the instant the node goes read-only, mirroring the per-statement write gates
+                // on the pg-wire and HTTP /exec paths -- otherwise this enqueues an async refresh that
+                // writes to a node that is already demoting and loses the write once it settles.
+                throw CairoException.readOnlyAccess();
+            }
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
-            if (fullRefresh) {
+            if (isStatsReset) {
+                final MatViewState viewState = matViewStateStore.getViewState(matViewToken);
+                if (viewState != null) {
+                    if (viewState.tryLock()) {
+                        try {
+                            viewState.refreshStats();
+                        } finally {
+                            // This stats reset is a lock-holder like any refresh: its unlock must finalize an
+                            // invalidation that deferred during the hold. See MatViewRefreshJob#finalizeAndUnlock.
+                            // The finalize releases the latch before any wake enqueue, and the stats reset itself
+                            // durably succeeded, so a wake enqueue failure must not fail the statement (mirroring
+                            // ALTER TABLE RESUME WAL). The store's retry flags keep the deferred facets
+                            // discoverable by the next refresh-job tick.
+                            try {
+                                MatViewRefreshJob.finalizeAndUnlock(engine, matViewStateStore, matViewToken, viewState, false);
+                            } catch (Throwable th) {
+                                LOG.error().$("could not deliver deferred materialized view work after stats reset [view=").$(matViewToken)
+                                        .$(", ex=").$(th)
+                                        .I$();
+                            }
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "materialized view is currently refreshing, retry stats reset later");
+                    }
+                }
+            } else if (fullRefresh) {
                 matViewStateStore.enqueueFullRefresh(matViewToken);
             } else if (from != Numbers.LONG_NULL) {
                 matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
@@ -3306,12 +4111,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileReindex(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-
-        if (executionContext.isValidationOnly()) {
-            compiledQuery.ofRepair();
-            return;
-        }
-
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !isTableKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "TABLE expected");
@@ -3328,7 +4127,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
 
         checkViewModification(tableToken);
-        checkMatViewModification(tableToken);
 
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
@@ -3377,7 +4175,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnNames.add(columnName);
             }
             executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
-            indexBuilder.reindex(partition, columnName);
+            if (!executionContext.isValidationOnly()) {
+                indexBuilder.reindex(partition, columnName);
+            }
         }
         compiledQuery.ofRepair();
     }
@@ -3421,12 +4221,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileTruncate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-
-        if (executionContext.isValidationOnly()) {
-            compiledQuery.ofTruncate();
-            return;
-        }
-
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
 
@@ -3468,19 +4262,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = unquote(tok);
                 }
 
-                final TableToken tableToken = executionContext.getTableTokenIfExists(tok);
+                // a table the principal may not see truncates exactly like a missing one, IF EXISTS included
+                final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(tok);
                 if (tableToken == null && !hasIfExists) {
                     throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tok).put(']');
                 }
                 if (tableToken != null) {
                     checkViewModification(tableToken);
-                    checkMatViewModification(tableToken);
                     executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
-                    try {
-                        tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
-                    } catch (CairoException e) {
-                        LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
-                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
+                    // Validation parses and resolves the table but must not acquire the writer
+                    // (which locks the table) or truncate any data.
+                    if (!executionContext.isValidationOnly()) {
+                        try {
+                            tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
+                        } catch (CairoException e) {
+                            if (e.isAuthorizationError()) {
+                                // A read-only refusal (e.g. a demoted replica) already carries the
+                                // clean, actionable message; surface it as-is instead of masking it
+                                // behind the generic "could not be truncated" wrap.
+                                throw e;
+                            }
+                            LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
+                            throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
+                        }
                     }
                 }
 
@@ -3522,7 +4326,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final TableWriterAPI writer = tableWriters.getQuick(i);
                     try {
                         if (writer.getMetadata().isWalEnabled()) {
-                            writer.truncateSoft();
+                            // Demote write-fence for the parse-time TRUNCATE mint. The writer was
+                            // acquired while the node was still PRIMARY (the eager getTableWriterAPI
+                            // gate passed), but truncateSoft() externalizes a replicated WAL sequencer
+                            // txn; a demote landing between that eager gate and here would mint on an
+                            // already-demoting node whose uploader is gone, acknowledging a truncate the
+                            // peer never receives. Hold the role-switch READ lock across an authoritative
+                            // in-lock isReadOnlyMode() re-check and truncateSoft(): either the flip ran
+                            // first (refuse, the finally below frees the still-uncommitted writers) or
+                            // this runs fully as PRIMARY while the flip's write acquire waits. The fence
+                            // is a no-op for pure-OSS deployments (uncontended read lock, static flag).
+                            if (engine.isReadOnlyMode()) {
+                                throw CairoException.readOnlyAccess();
+                            }
+                            final Lock lock = engine.getRoleSwitchReadLock();
+                            lock.lock();
+                            try {
+                                if (engine.isReadOnlyMode()) {
+                                    throw CairoException.readOnlyAccess();
+                                }
+                                engine.fireRoleSwitchMintObserver();
+                                writer.truncateSoft();
+                            } finally {
+                                lock.unlock();
+                            }
                         } else {
                             TableToken tableToken = writer.getTableToken();
                             if (engine.lockReaders(tableToken)) {
@@ -3567,7 +4394,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             executionModel = compileExecutionModel(executionContext);
             switch (executionModel.getModelType()) {
-                case ExecutionModel.QUERY:
+                case ExecutionModel.QUERY: {
+                    // Read the flag BEFORE generating. Arguments evaluate left to right, so reading it in the
+                    // argument list would run it on a model that generation may already have discarded --
+                    // generateSelectWithRetries() recompiles the execution model on a retry, and
+                    // clearExceptSqlText() recycles this one back into the model pool -- and any throw there
+                    // would orphan the generated factory tree, which is nobody's to close once the reference
+                    // is lost. Nothing in generation sets the flag (only the optimiser does, which has
+                    // already run), so hoisting it does not change the value.
+                    final boolean cacheable = ((IQueryModel) executionModel).isCacheable();
                     compiledQuery.ofSelect(
                             generateSelectWithRetries(
                                     (IQueryModel) executionModel,
@@ -3575,9 +4410,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     executionContext,
                                     generateProgressLogger
                             ),
-                            ((IQueryModel) executionModel).isCacheable()
+                            cacheable
                     );
                     break;
+                }
                 case ExecutionModel.CREATE_TABLE:
                     compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel)
                             .build(this, executionContext, sqlText));
@@ -3590,13 +4426,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel)
                             .build(this, executionContext, sqlText));
                     break;
+                case ExecutionModel.CREATE_LIVE_VIEW:
+                    compiledQuery.ofCreateLiveView(((CreateLiveViewOperationBuilder) executionModel)
+                            .build(sqlText));
+                    break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     if (executionModel.getTableName() != null) {
                         assert executionModel.getModelType() == ExecutionModel.COPY;
                         if (((ExportModel) executionModel).getType() == COPY_TYPE_FROM) {
                             checkViewModification(executionModel);
-                            checkMatViewModification(executionModel);
                         }
                     }
                     copy(executionContext, (ExportModel) executionModel);
@@ -3606,8 +4445,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (!executionContext.isValidationOnly()) {
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                        checkViewModification(executionModel);
-                        checkMatViewModification(executionModel);
+                        checkVisibleViewModification(executionModel, executionContext);
                         final RenameTableModel rtm = (RenameTableModel) executionModel;
                         engine.rename(
                                 executionContext.getSecurityContext(),
@@ -3623,8 +4461,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.UPDATE:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                    checkViewModification(executionModel);
-                    checkMatViewModification(executionModel);
+                    checkVisibleViewModification(executionModel, executionContext);
                     final IQueryModel updateQueryModel = (IQueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -3645,8 +4482,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 default:
-                    checkViewModification(executionModel);
-                    checkMatViewModification(executionModel);
+                    checkVisibleViewModification(executionModel, executionContext);
                     final InsertModel insertModel = (InsertModel) executionModel;
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {
@@ -3668,8 +4504,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (Throwable th) {
             if (executionModel != null) {
-                freeTableNameFunctions(executionModel.getQueryModel());
+                try {
+                    SqlCodeGenerator.freeTableNameFunctions(executionModel.getQueryModel(), th);
+                } catch (Throwable cleanupFailure) {
+                    if (cleanupFailure != th) {
+                        th.addSuppressed(cleanupFailure);
+                    }
+                }
             }
+            // A throw between optimisation and generation leaves open the table functions of the
+            // models the walk above does not reach.
+            optimiser.freeUnclaimedTableFactories(th);
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
 
@@ -3684,10 +4529,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         boolean partitionsKeyword = isPartitionsKeyword(tok);
         if (partitionsKeyword || isTableKeyword(tok)) {
             tok = expectToken(lexer, "table name");
-            if (executionContext.isValidationOnly()) {
-                compiledQuery.ofVacuum();
-                return;
-            }
             assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
@@ -3695,12 +4536,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (eol == null || Chars.equals(eol, ';')) {
                 final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
                 checkViewModification(tableToken);
-                checkMatViewModification(tableToken);
                 try (TableReader rdr = executionContext.getReader(tableToken)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
                         executionContext.getSecurityContext().authorizeTableVacuum(rdr.getTableToken());
-                        if (!TableUtils.schedulePurgeO3Partitions(
+                        // Validation parses, resolves the table and checks it is partitioned, but
+                        // must not schedule any purge work.
+                        if (!executionContext.isValidationOnly() && !TableUtils.schedulePurgeO3Partitions(
                                 messageBus,
                                 rdr.getTableToken(),
                                 rdr.getMetadata().getTimestampType(),
@@ -3715,7 +4557,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } else if (partitionsKeyword) {
                         throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' is not partitioned");
                     }
-                    vacuumColumnVersions.run(rdr);
+                    if (!executionContext.isValidationOnly()) {
+                        vacuumColumnVersions.run(rdr);
+                    }
                     compiledQuery.ofVacuum();
                 }
             } else {
@@ -3727,7 +4571,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileView(SqlExecutionContext executionContext, CompileViewModel compileViewModel) throws SqlException {
-        final TableToken viewToken = authorizeCompileView(executionContext.getSecurityContext(), compileViewModel);
+        final TableToken viewToken = authorizeCompileView(executionContext, compileViewModel);
 
         final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
         if (viewDefinition == null) {
@@ -3742,7 +4586,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // it should point to the name of the view in 'COMPILE VIEW viewName'
             throw SqlException.$(compileViewModel.getTableNameExpr().position, e.getFlyweightMessage());
         } finally {
-            engine.getViewStateStore().enqueueCompile(viewToken);
+            if (!executionContext.isValidationOnly()) {
+                engine.getViewStateStore().enqueueCompile(viewToken);
+            }
         }
         compiledQuery.ofCompileView();
     }
@@ -3774,20 +4620,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
             final IQueryModel queryModel;
+            final boolean cacheable;
             try {
-                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-                if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                    throw SqlException.$(startPos, "SELECT query expected");
+                try {
+                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                        throw SqlException.$(startPos, "SELECT query expected");
+                    }
+                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    throw e;
                 }
-                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
-            } catch (SqlException e) {
-                e.setPosition(e.getPosition() + selectTextPosition);
-                throw e;
+                createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                // Same read-before-generation rule as compileMatViewQuery, and inside the same try for the
+                // same reason: a throw must free the table factories optimise() left in flight.
+                cacheable = queryModel.isCacheable();
+            } catch (Throwable th) {
+                // Same ownership window as compileMatViewQuery: optimise() has attached the FROM/JOIN
+                // cursor functions to the model and generation has not taken them over yet.
+                optimiser.freeTableFactoriesInFlight(th);
+                throw th;
             }
-            createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
 
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -3801,7 +4658,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void copy(SqlExecutionContext executionContext, ExportModel exportModel) throws SqlException {
         if (!exportModel.isCancel() && Chars.equalsLowerCaseAscii(exportModel.getFileName().token, "stdin")) {
             // no-op implementation
-            authorizeInsertForCopy(executionContext.getSecurityContext(), exportModel);
+            authorizeInsertForCopy(executionContext, exportModel);
             compiledQuery.ofCopyRemote();
         } else {
             final RecordCursorFactory copyFactory;
@@ -3809,9 +4666,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 copyFactory = compileCopyCancel(executionContext, exportModel);
             } else {
                 if (exportModel.getType() == COPY_TYPE_FROM) {
-                    copyFactory = compileCopyFrom(executionContext.getSecurityContext(), exportModel);
+                    copyFactory = compileCopyFrom(executionContext, exportModel);
                 } else {
-                    copyFactory = compileCopyTo(executionContext.getSecurityContext(), exportModel, sqlText);
+                    copyFactory = compileCopyTo(executionContext, exportModel, sqlText);
                 }
             }
             compiledQuery.ofPseudoSelect(copyFactory);
@@ -3927,6 +4784,65 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private boolean executeCreateLiveView(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final long sqlId = queryRegistry.register(op.getSqlText(), executionContext);
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, op.getSqlText(), executionContext, false);
+        try {
+            executionContext.getSecurityContext().authorizeLiveViewCreate();
+            // Reject a name already taken up front, mirroring CREATE MATERIALIZED VIEW so
+            // the collision wording names the offending kind:
+            //   - a table / regular view / materialized view collision is always an error
+            //     ("table or view with the requested name already exists"), even under
+            //     IF NOT EXISTS - otherwise the shared create helper silently no-ops the
+            //     IF NOT EXISTS branch and a user is left believing a live view exists when
+            //     the name is actually a plain table;
+            //   - a same-kind live-view collision without IF NOT EXISTS reports "live view
+            //     already exists" (mirroring "materialized view already exists") instead of
+            //     the generic "table exists" createLiveView would otherwise surface.
+            // A same-kind IF NOT EXISTS is a no-op, as it is for CREATE MATERIALIZED VIEW. It returns
+            // before createLiveView compiles the body: a live view an earlier release created may use
+            // functions that CREATE now rejects, and replaying its DDL must keep working. The no-op in
+            // createLiveView still covers a live view created concurrently after this check.
+            final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
+            if (existingToken != null) {
+                if (!existingToken.isLiveView()) {
+                    throw SqlException.$(op.getViewNamePosition(), "table or view with the requested name already exists");
+                }
+                if (!op.isIgnoreIfExists()) {
+                    throw SqlException.$(op.getViewNamePosition(), "live view already exists");
+                }
+                QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+                return false;
+            }
+            // validate base table exists and is WAL; a base table the principal may not see fails like a
+            // missing one, before the checks below can disclose what kind of object it is
+            final TableToken baseTableToken = executionContext.getVisibleTableTokenIfExists(op.getBaseTableName());
+            if (baseTableToken == null) {
+                throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
+            }
+            if (!engine.isWalTable(baseTableToken)) {
+                throw SqlException.$(op.getBaseTableNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
+            }
+            if (baseTableToken.isLiveView()) {
+                // Live-on-live composition is not supported; live views may
+                // become composable once the apply pipeline supports LV-as-base.
+                // Position at the base table name.
+                throw SqlException.$(op.getBaseTableNamePosition(),
+                        "live views are not allowed as base tables in V1 [name=").put(op.getBaseTableName()).put(']');
+            }
+
+            engine.createLiveView(op, baseTableToken, executionContext);
+            QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+            return true;
+        } catch (Throwable th) {
+            QueryProgress.logError(th, sqlId, op.getSqlText(), executionContext, beginNanos);
+            throw th;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
+        }
+    }
+
     private boolean executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
         if (createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE
                 && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_TIMER
@@ -3979,7 +4895,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             compileMatViewQuery(executionContext, createMatViewOp);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
-                            newCursor = newFactory.getCursor(executionContext);
+                            // Opened to validate the metadata, and closed with no row read. Flagged
+                            // like the probe in executeCreateView, so that an audited view in the
+                            // SELECT does not record a read that never happened.
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            executionContext.setMetadataProbe(true);
+                            try {
+                                newCursor = newFactory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(wasMetadataProbe);
+                            }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
@@ -4049,8 +4974,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
                 final TableToken tt = executionContext.getTableTokenIfExists(createTableOp.getTableName());
-                if (tt != null && (tt.isView() || tt.isMatView())) {
-                    throw SqlException.$(createTableOp.getTableNamePosition(), "view or materialized view with the requested name already exists");
+                if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
+                    // Mirrors executeCreateLiveView: a cross-kind collision is always an error, even
+                    // under IF NOT EXISTS. Letting a live view satisfy IF NOT EXISTS would silently
+                    // no-op the CREATE and leave the user believing a plain table exists when the
+                    // name is actually a live view.
+                    throw SqlException.$(createTableOp.getTableNamePosition(), tt.isLiveView()
+                            ? "live view with the requested name already exists"
+                            : "view or materialized view with the requested name already exists");
                 }
                 if (createTableOp.ignoreIfExists()) {
                     createTableOp.updateOperationFutureTableToken(tt);
@@ -4116,46 +5047,54 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         final RecordMetadata metadata = factory.getMetadata();
                         createTableOp.validateAndUpdateMetadataFromSelect(metadata, factory.getScanDirection());
                         boolean keepLock = !createTableOp.isWalEnabled();
-
-                        // todo: test create table if exists with select
-                        tableToken = engine.createTable(
-                                executionContext.getSecurityContext(),
-                                mem,
-                                path,
-                                createTableOp.ignoreIfExists(),
-                                createTableOp,
-                                keepLock,
-                                volumeAlias != null,
-                                createTableOp.getTableKind()
-                        );
-
+                        // A kept lock belongs to the carrier thread, so the copy must not suspend and resume elsewhere.
+                        final SuspensionScope.CarrierScope suspensionScope = keepLock ? SuspensionScope.scope() : null;
+                        final SuspensionScope.Mode previousMode = keepLock ? SuspensionScope.enterBlocking(suspensionScope) : null;
                         try {
-                            copyTableDataAndUnlock(
-                                    executionContext,
-                                    tableToken,
-                                    createTableOp.isWalEnabled(),
-                                    cursor,
-                                    metadata,
-                                    createTableOp.getBatchSize(),
-                                    createTableOp.getBatchO3MaxLag(),
-                                    createTableOp.getCopyDataProgressReporter()
+                            // todo: test create table if exists with select
+                            tableToken = engine.createTable(
+                                    executionContext.getSecurityContext(),
+                                    mem,
+                                    path,
+                                    createTableOp.ignoreIfExists(),
+                                    createTableOp,
+                                    keepLock,
+                                    volumeAlias != null,
+                                    createTableOp.getTableKind()
                             );
-                        } catch (Throwable e) {
-                            if (e instanceof CairoException ce) {
-                                ce.position(position);
-                                LogRecord record = LOG.error()
-                                        .$("could not create table as select [message=").$safe(ce.getFlyweightMessage());
-                                if (!ce.isCancellation()) {
-                                    record.$(", errno=").$(ce.getErrno());
+
+                            try {
+                                copyTableDataAndUnlock(
+                                        executionContext,
+                                        tableToken,
+                                        createTableOp.isWalEnabled(),
+                                        cursor,
+                                        metadata,
+                                        createTableOp.getBatchSize(),
+                                        createTableOp.getBatchO3MaxLag(),
+                                        createTableOp.getCopyDataProgressReporter()
+                                );
+                            } catch (Throwable e) {
+                                if (e instanceof CairoException ce) {
+                                    ce.position(position);
+                                    LogRecord record = LOG.error()
+                                            .$("could not create table as select [message=").$safe(ce.getFlyweightMessage());
+                                    if (!ce.isCancellation()) {
+                                        record.$(", errno=").$(ce.getErrno());
+                                    }
+                                    record.I$();
+                                } else {
+                                    LOG.error().$("could not create table as select [message=").$safe(e instanceof FlyweightMessageContainer
+                                            ? ((FlyweightMessageContainer) e).getFlyweightMessage() : e.getMessage()).I$();
                                 }
-                                record.I$();
-                            } else {
-                                LOG.error().$("could not create table as select [message=").$safe(e instanceof FlyweightMessageContainer
-                                        ? ((FlyweightMessageContainer) e).getFlyweightMessage() : e.getMessage()).I$();
+                                engine.dropTableOrViewOrMatView(path, tableToken);
+                                engine.unlockTableName(tableToken);
+                                throw e;
                             }
-                            engine.dropTableOrViewOrMatView(path, tableToken);
-                            engine.unlockTableName(tableToken);
-                            throw e;
+                        } finally {
+                            if (keepLock) {
+                                SuspensionScope.restoreMode(suspensionScope, previousMode);
+                            }
                         }
                     }
                     createTableOp.updateOperationFutureTableToken(tableToken);
@@ -4163,7 +5102,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     try {
                         if (createTableOp.getLikeTableName() != null) {
-                            TableToken likeTableToken = executionContext.getTableTokenIfExists(createTableOp.getLikeTableName());
+                            // LIKE copies the schema of the table, so a table the principal may not see
+                            // fails exactly like a missing one
+                            final TableToken likeTableToken = executionContext.getVisibleTableTokenIfExists(createTableOp.getLikeTableName());
                             if (likeTableToken == null) {
                                 throw SqlException
                                         .$(createTableOp.getLikeTableNamePosition(), "table does not exist [table=")
@@ -4264,7 +5205,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             compileViewQuery(executionContext, createViewOp);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
-                            newCursor = newFactory.getCursor(executionContext);
+                            // This cursor exists to report column types, not to hand anyone rows.
+                            // Flag it so that an audited view in the SELECT does not record a read.
+                            // The flag covers the cursor open only: the compile above runs with it
+                            // clear, so whatever consumes it has to emit at open, not at generate.
+                            // Restored rather than cleared - any execution context may set this, so
+                            // an outer probe has to survive an inner one.
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            executionContext.setMetadataProbe(true);
+                            try {
+                                newCursor = newFactory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(wasMetadataProbe);
+                            }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
@@ -4327,17 +5280,38 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         boolean hasDroppedAny = false;
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             tableToken = tableTokenBucket.get(i);
-            if (!tableToken.isSystem()) {
+            // An object the principal may not see is left alone like one that does not exist: the
+            // failure report below names every object the drop could not remove.
+            if (!tableToken.isSystem() && securityContext.isTableVisible(tableToken)) {
                 final String tableName = tableToken.getTableName();
                 try {
-                    if (tableToken.isView()) {
+                    if (tableToken.isLiveView()) {
+                        securityContext.authorizeLiveViewDrop(tableToken);
+                    } else if (tableToken.isView()) {
                         securityContext.authorizeViewDrop(tableToken);
+                        if (isAuditedView(tableToken)) {
+                            securityContext.authorizeAuditView();
+                        }
                     } else if (tableToken.isMatView()) {
                         securityContext.authorizeMatViewDrop(tableToken);
                     } else {
                         securityContext.authorizeTableDrop(tableToken);
+                        // Same veto executeDropTable applies. DROP ALL TABLES skips system tables,
+                        // which an undroppable table need not be, so without this the one route
+                        // that drops every table at once would be the route around the veto. The
+                        // throw lands in dropAllTablesFailures below, so the rest still drop.
+                        engine.checkTableDroppable(tableToken);
                     }
-                    engine.dropTableOrViewOrMatView(path, tableToken);
+                    if (tableToken.isLiveView()) {
+                        // A live view carries state the generic drop does not know about:
+                        // the registry entry, the dependents graph edge and the durable
+                        // _lv.drop sentinel. It also has to fence the refresh worker before
+                        // the table teardown. dropLiveView does all of that and calls
+                        // dropTableOrViewOrMatView itself.
+                        engine.dropLiveView(tableName, securityContext);
+                    } else {
+                        engine.dropTableOrViewOrMatView(path, tableToken);
+                    }
                     hasDroppedAny = true;
                     op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableToken);
                 } catch (Exception e) {
@@ -4364,11 +5338,39 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return hasDroppedAny;
     }
 
+    private boolean executeDropLiveView(GenericDropOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final String name = op.getEntityName();
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(name);
+        if (tableToken != null && !tableToken.isLiveView()) {
+            throw SqlException.$(op.getEntityNamePosition(), "live view name expected [name=").put(name).put(']');
+        }
+        // Determine existence from the durable LV token, NOT the registry instance. When the
+        // live-view feature is disabled at restart, buildViewGraphs loads the token (and _lv stays
+        // on disk) but deliberately registers no instance - an unattended one would pin the base
+        // WAL floor forever. Gating the drop on a non-null instance would leave such a view
+        // undroppable: a plain DROP threw "does not exist" and DROP ... IF EXISTS silently no-opped.
+        if (tableToken == null) {
+            if (op.ifExists()) {
+                return false;
+            }
+            throw SqlException.$(op.getEntityNamePosition(), "live view does not exist [name=").put(name).put(']');
+        }
+        // Authorize against the token resolved above (already null-checked, so the enterprise
+        // per-object ACL dereference is safe). engine.dropLiveView is null-instance-safe: it
+        // re-authorizes, stamps the _lv.drop sentinel, and performs the full on-disk teardown
+        // whether or not a refresh instance is registered.
+        executionContext.getSecurityContext().authorizeLiveViewDrop(tableToken);
+        engine.dropLiveView(name, executionContext.getSecurityContext());
+        return true;
+    }
+
     private boolean executeDropMatView(
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return false;
@@ -4376,7 +5378,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.matViewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
         if (!tableToken.isMatView()) {
-            throw SqlException.$(op.getEntityNamePosition(), "materialized view name expected, got table name");
+            throw SqlException.$(op.getEntityNamePosition(), "materialized view name expected, got ").put(tableToken.getType().keyword()).put(" name");
         }
         sqlExecutionContext.getSecurityContext().authorizeMatViewDrop(tableToken);
 
@@ -4403,17 +5405,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return false;
             }
             throw SqlException.tableDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
-        if (tableToken.isMatView()) {
-            throw SqlException.$(op.getEntityNamePosition(), "table name expected, got materialized view name: ").put(op.getEntityName());
+        if (tableToken.getType() != TableToken.Type.TABLE) {
+            throw SqlException.$(op.getEntityNamePosition(), "table name expected, got ").put(tableToken.getType().keyword()).put(" name: ").put(op.getEntityName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
+        engine.checkTableDroppable(tableToken);
 
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
@@ -4438,7 +5442,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return false;
@@ -4446,12 +5451,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.viewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
         if (!tableToken.isView()) {
-            throw SqlException.$(op.getEntityNamePosition(), "view name expected, got table name");
+            throw SqlException.$(op.getEntityNamePosition(), "view name expected, got ").put(tableToken.getType().keyword()).put(" name");
         }
         if (tableToken.isSystem()) {
             throw SqlException.$(op.getEntityNamePosition(), "cannot drop a system view");
         }
         sqlExecutionContext.getSecurityContext().authorizeViewDrop(tableToken);
+        if (isAuditedView(tableToken)) {
+            // Dropping is the only route by which an audited view loses its marking, so it is gated
+            // like setting it. Redefinition is not such a route: ALTER VIEW and CREATE OR REPLACE
+            // VIEW over an existing view both land in ViewGraph.updateView - compileCreate
+            // intercepts the latter and executes it as an alter - and that carries the current flag
+            // forward rather than taking one from the statement. Only a CREATE over a name that
+            // does not exist yet sets the flag from the statement, and there is nothing to lose
+            // there. Asserted by ViewAuditTest.testRedefiningAnAuditedViewKeepsTheFlag.
+            sqlExecutionContext.getSecurityContext().authorizeAuditView();
+        }
 
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
@@ -4523,27 +5538,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return affectedPartitions;
     }
 
-    private void freeTableNameFunctions(IQueryModel queryModel) {
-        if (queryModel == null) {
-            return;
-        }
-
-        do {
-            final ObjList<IQueryModel> joinModels = queryModel.getJoinModels();
-            if (joinModels.size() > 1) {
-                for (int i = 1, n = joinModels.size(); i < n; i++) {
-                    freeTableNameFunctions(joinModels.getQuick(i));
-                }
-            }
-
-            Misc.free(queryModel.getTableNameFunction());
-            queryModel.setTableNameFunction(null);
-        } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.isOptimisable());
-    }
-
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
-        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
-            IQueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
+        final ExecutionModel innerModel = model.getInnerExecutionModel();
+        if (innerModel.getModelType() == ExecutionModel.UPDATE) {
+            IQueryModel updateQueryModel = innerModel.getQueryModel();
             final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
             final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
                     updateQueryModel.getUpdateTableToken(),
@@ -4552,9 +5550,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     executionContext
             );
             return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
-        } else {
-            return codeGenerator.generateExplain(model, executionContext);
         }
+        final IQueryModel queryModel = innerModel.getQueryModel();
+        if (queryModel == null) {
+            return codeGenerator.generateExplain(model, null);
+        }
+        // ExplainPlanFactory opens the cursor of the plan it prints, which runs the plan's
+        // sub-queries, and the plan can print what they read. So the plan is generated the way the
+        // statement generates it, through generateSelectOneShot(): what a subclass wraps a plan
+        // in there, such as Enterprise's audit of view reads, wraps this one too.
+        final RecordCursorFactory factory;
+        if (innerModel.getModelType() == ExecutionModel.CREATE_LIVE_VIEW) {
+            // Arm the live-view compile flag around CODE GENERATION, which is the only thing that
+            // reads it: SqlCodeGenerator (the symbol partition-key sink, anchor collection),
+            // WhereClauseParser (a SqlCodeGenerator field - it suppresses indexed-symbol filters
+            // for a live view) and CompiledFilterIRSerializer. SqlOptimiser never reads it, so
+            // arming it only around optimise() in compileExplainExecutionModel0 left it false here
+            // and printed a plan the real CREATE never generates (an indexed symbol scan). Mirrors
+            // the arm CairoEngine.createLiveView wraps its compile() in.
+            executionContext.setLiveViewCompile(true);
+            try {
+                factory = generateSelectOneShot(queryModel, executionContext, false);
+            } finally {
+                executionContext.setLiveViewCompile(false);
+            }
+        } else {
+            factory = generateSelectOneShot(queryModel, executionContext, false);
+        }
+        return codeGenerator.generateExplain(model, factory);
     }
 
     private UpdateOperation generateUpdate(IQueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
@@ -4577,6 +5600,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             updateColumnNames.add(updateMetadata.getColumnName(i));
         }
 
+        final int liveWalProgressPosition = functionParser.getExecutionRequirements().getPosition(
+                SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS
+        );
+        if (!executionContext.isWalApplication() && liveWalProgressPosition >= 0) {
+            recordCursorFactory.close();
+            throw SqlException.position(liveWalProgressPosition)
+                    .put("UPDATE cannot require live WAL progress");
+        }
+
         if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
             return new UpdateOperation(
                     updateTableToken,
@@ -4590,7 +5622,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             recordCursorFactory.close();
 
             if (selectQueryModel.containsJoin()) {
-                throw SqlException.position(0).put("UPDATE statements with join are not supported yet for WAL tables");
+                throw SqlException.position(0).put(UPDATE_WITH_JOIN_NOT_SUPPORTED);
+            }
+
+            // The second half of the cross-table rejection begun in compileExecutionModel0(): the
+            // tables a WAL UPDATE may read are checked there, on the names in the model, and the
+            // node-local state it may read is checked here, on the functions the statement actually
+            // instantiated. A cursor-typed function reads a table it names through the execution
+            // context (table_partitions, table_columns, wal_transactions), a node-local file
+            // (read_parquet), or this process's own state (all_tables, tables, query_activity,
+            // reader_pool, memory_metrics, ...) - none of which the WAL event pins the way it pins
+            // the RNG seed and the clock, so re-execution on another node can compute other rows.
+            // The purely generative ones, long_sequence and generate_series, are refused with the
+            // rest: telling them apart needs a list of names, and three rounds of this guard showed
+            // that a list of names is what goes stale.
+            //
+            // Keyed on the instantiated function's type rather than on the factory or the name,
+            // because one name can be both: sleep(long) is a cursor while sleep(boolean) is a plain
+            // boolean, and only the cursor one is a hazard. That is also what makes the check
+            // position-independent - a FROM source, a projected column and a predicate operand all
+            // reach FunctionParser#checkAndCreateFunction - which the earlier per-position checks
+            // were not.
+            if (functionParser.isCursorFunctionInstantiated()) {
+                throw SqlException.position(0)
+                        .put("UPDATE statements that read a cursor function are not supported for WAL tables")
+                        .put("; the statement is replicated as SQL and re-executed on every node, and a cursor function reads a table or node-local state that is not synchronised with this one, so nodes could write different data");
             }
 
             return new UpdateOperation(
@@ -4723,6 +5779,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
+    private boolean isAuditedView(TableToken tableToken) {
+        if (!tableToken.isView()) {
+            return false;
+        }
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(tableToken);
+        return viewDefinition != null && viewDefinition.isAudited();
+    }
+
     private boolean isCompatibleColumnTypeChange(int from, int to) {
         return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
     }
@@ -4818,6 +5882,49 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterOperationBuilder.setParquetConversionOptions(bloomFilterColumns, fpp);
     }
 
+    private void parseRebaseWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'wal'");
+        if (!isWalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+        }
+        if (!engine.isWalTable(tableToken)) {
+            throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+        }
+        tok = SqlUtil.fetchNext(lexer);
+        String targetDir = null;
+        if (tok != null && !Chars.equals(tok, ';')) {
+            // ALTER TABLE <t> REBASE WAL INTO '<dirName>': the replica-side variant. Instead of minting a
+            // fresh dir, it reconstructs the table into the primary's already-chosen rebased dir so the
+            // replica follows the primary's rebase past a poison-pill WAL transaction.
+            if (!isIntoKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'into' expected");
+            }
+            tok = expectToken(lexer, "target directory name");
+            targetDir = unquote(tok).toString();
+            try {
+                TableUtils.getTableIdFromTableDir(targetDir);
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid rebase target directory [dir=").put(targetDir).put(']');
+            }
+            if (Chars.indexOf(targetDir, '/') != -1 || Chars.indexOf(targetDir, '\\') != -1 || Chars.contains(targetDir, "..")) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid rebase target directory [dir=").put(targetDir).put(']');
+            }
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+            }
+        }
+        executionContext.getSecurityContext().authorizeRebaseWal(tableToken);
+        if (!executionContext.isValidationOnly()) {
+            if (targetDir == null) {
+                engine.rebaseWalTable(tableToken);
+            } else {
+                engine.rebaseWalTableInto(tableToken, targetDir);
+            }
+        }
+        compiledQuery.ofRebaseWal();
+    }
+
     private void parseResumeWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = expectToken(lexer, "'wal'");
         if (!isWalKeyword(tok)) {
@@ -4846,6 +5953,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         executionContext.getSecurityContext().authorizeResumeWal(tableToken);
+        if (fromTxn > 0) {
+            // Only a positive transaction can skip anything, see TableSequencerAPI.resumeTable().
+            engine.checkTableResumableFromTxn(tableToken, tableNamePosition);
+        }
         alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
     }
 
@@ -4856,9 +5967,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         if (!engine.isWalTable(tableToken)) {
             throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
-        }
-        if (!configuration.isDevModeEnabled()) {
-            throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
         }
 
         ErrorTag errorTag = ErrorTag.NONE;
@@ -4893,16 +6001,58 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
             }
         }
+        executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
+        engine.checkTableSuspendable(tableToken, tableNamePosition);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
     }
 
+    // A table the principal may not see fails exactly like a missing one, before the statement reads
+    // any of its metadata, e.g. validates the column names of an INSERT against it. ALTER TABLE uses
+    // tableExistsOrFailForWal(), which also lets WAL recovery name such a table.
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
         }
-        TableToken token = executionContext.getTableTokenIfExists(tableName);
+        final TableToken token = executionContext.getVisibleTableTokenIfExists(tableName);
         if (token == null) {
             throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        return token;
+    }
+
+    private TableToken tableExistsOrFailForWal(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
+        if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final TableToken token = executionContext.getTableTokenIfExists(tableName);
+        if (token == null) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final SecurityContext securityContext = executionContext.getSecurityContext();
+        if (!securityContext.isTableVisible(token)) {
+            // Only WAL recovery can name an otherwise invisible table. Check permission before
+            // reading its kind or metadata; an unauthorized caller still sees a missing table.
+            final CharSequence action = SqlUtil.fetchNext(lexer);
+            try {
+                if (action != null && isResumeKeyword(action)) {
+                    securityContext.authorizeResumeWal(token);
+                } else if (action != null && isRebaseKeyword(action)) {
+                    securityContext.authorizeRebaseWal(token);
+                } else if (action != null && isSuspendKeyword(action)) {
+                    securityContext.authorizeSuspendWal(token);
+                } else {
+                    throw SqlException.tableDoesNotExist(position, tableName);
+                }
+            } catch (CairoException e) {
+                if (!e.isAuthorizationError()) {
+                    throw e;
+                }
+                throw SqlException.tableDoesNotExist(position, tableName);
+            } finally {
+                if (action != null) {
+                    lexer.unparseLast();
+                }
+            }
         }
         return token;
     }
@@ -4916,11 +6066,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         model.setQueryModel(queryModel);
     }
 
+    // A view the principal may not see fails exactly like a missing one, see tableExistsOrFail().
     private TableToken viewExistsOrFail(CharSequence viewName, SqlExecutionContext executionContext, SqlException notExistException) throws SqlException {
         if (executionContext.getTableStatus(path, viewName) != TableUtils.TABLE_EXISTS) {
             throw notExistException;
         }
-        TableToken viewToken = executionContext.getTableTokenIfExists(viewName);
+        final TableToken viewToken = executionContext.getVisibleTableTokenIfExists(viewName);
         if (viewToken == null) {
             throw notExistException;
         }
@@ -4969,7 +6120,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     protected void addColumnSuffix(
-            @Transient SecurityContext securityContext,
+            @Transient SqlExecutionContext executionContext,
             @Nullable CharSequence tok,
             TableToken tableToken,
             AlterOperationBuilder alterOperationBuilder
@@ -4996,22 +6147,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'view' expected");
+            throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
         }
-        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
     }
 
-    protected void compileAlterMatViewExt(SecurityContext securityContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
-        LOG.debug().$("'alter' or 'resume' or 'suspend' expected [matViewToken=").$(matViewToken)
+    protected void compileAlterMatViewExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'alter' or 'resume' or 'suspend' or 'set' expected [matViewToken=").$(matViewToken)
                 .$(", matViewNamePosition=").$(matViewNamePosition)
                 .$(']').$();
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'alter' or 'resume' or 'suspend' expected");
+            throw SqlException.$(lexer.getPosition(), "'alter' or 'resume' or 'suspend' or 'set' expected");
         }
-        throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' expected");
+        throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' or 'set' expected");
     }
 
-    protected void compileAlterMatViewSetExt(SecurityContext securityContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+    protected void compileAlterMatViewSetExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
         LOG.debug().$("'ttl' or 'refresh' expected [matViewToken=").$(matViewToken)
                 .$(", matViewNamePosition=").$(matViewNamePosition)
                 .$(']').$();
@@ -5021,7 +6172,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
     }
 
-    protected void compileAlterTableDisableExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+    protected void compileAlterTableDisableExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
         LOG.debug().$(ALTER_TABLE_EXPECTED_TOKEN_DESCR).$(" expected [tableToken=").$(tableToken)
                 .$(", tableNamePosition=").$(tableNamePosition)
                 .$(']').$();
@@ -5031,7 +6182,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
     }
 
-    protected void compileAlterTableDropExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+    protected void compileAlterTableDropExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
         LOG.debug().$("'column' or 'partition' expected [tableToken=").$(tableToken)
                 .$(", tableNamePosition=").$(tableNamePosition)
                 .$(']').$();
@@ -5041,7 +6192,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
     }
 
-    protected void compileAlterTableEnableExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+    protected void compileAlterTableEnableExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
         LOG.debug().$(ALTER_TABLE_EXPECTED_TOKEN_DESCR).$(" expected [tableToken=").$(tableToken)
                 .$(", tableNamePosition=").$(tableNamePosition)
                 .$(']').$();
@@ -5051,14 +6202,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
     }
 
-    protected void compileAlterTableSetExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+    protected void compileAlterTableSetExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
         LOG.debug().$("'param', 'ttl' or 'type' expected [tableToken=").$(tableToken)
                 .$(", tableNamePosition=").$(tableNamePosition)
                 .$(']').$();
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'param', 'ttl' or 'type' expected");
+            throw SqlException.$(lexer.getPosition(), "'param', 'ttl', 'format' or 'type' expected");
         }
-        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl' or 'type' expected");
+        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl', 'format' or 'type' expected");
     }
 
     protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -5090,7 +6241,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assertNameIsQuotedOrNotAKeyword(tok, viewNamePosition);
         final CharSequence viewName = unquote(tok);
 
-        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        // a view the principal may not see is left to CREATE VIEW like a missing one, where its name
+        // collides the way any taken name does
+        final TableToken viewToken = executionContext.getVisibleTableTokenIfExists(viewName);
         if (viewToken == null) {
             // view does not exist yet
             // just bail out and let CREATE VIEW handle it
@@ -5111,7 +6264,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         final int viewSqlPosition = lexer.getPosition();
-        final String viewSql = parser.parseViewSql(lexer, this);
+        final String viewSql = parser.parseViewSql(lexer, this, executionContext, viewToken);
+        if (isAuditedView(viewToken)) {
+            // The new body keeps the view's audited flag, so its AUDITED declarations are held to
+            // what a read of the view needs, here rather than on every read that follows.
+            validateAuditedViewBody(viewToken, parser.getViewSqlModel(), executionContext);
+        }
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
@@ -5132,12 +6290,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return new AlterOperationBuilder();
     }
 
+    /**
+     * Exposed so that a subclass can compile expressions the base compiler captured but does not
+     * itself consume - the audited-view parameters, which Enterprise turns into functions.
+     */
+    protected FunctionParser getFunctionParser() {
+        return functionParser;
+    }
+
     protected RecordCursorFactory generateSelectOneShot(
             IQueryModel selectQueryModel,
             SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
-        RecordCursorFactory factory = codeGenerator.generate(selectQueryModel, executionContext);
+        RecordCursorFactory factory = null;
+        try {
+            factory = codeGenerator.generate(selectQueryModel, executionContext);
+            // Generation has taken over the table functions of the models the plan reads. The
+            // optimiser also opened the table function of every model it optimised and the plan
+            // does not read, and nothing else closes those.
+            CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
+        } catch (Throwable th) {
+            // The generator's cleanup of a failed attempt closes only the table functions it can
+            // walk to from the model it was given.
+            optimiser.freeUnclaimedTableFactories(th);
+            Misc.free(factory, th);
+            throw th;
+        }
         ObjList<ViewDefinition> views = selectQueryModel.getReferencedViews();
         if (views.size() > 0) {
             factory = new StaleViewCheckFactory(factory, views, engine);
@@ -5208,6 +6387,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("backup", this::compileBackup);
     }
 
+    /**
+     * Checks the body {@code ALTER VIEW} or {@code CREATE OR REPLACE VIEW} gives an audited view,
+     * before it replaces the current one. The model is the body as parsed from the statement, so
+     * positions in it are the statement's. A no-op here: Enterprise, which consumes the AUDITED
+     * declarations, overrides it to refuse the ones no read of the view could audit.
+     */
+    protected void validateAuditedViewBody(
+            TableToken viewToken,
+            IQueryModel viewModel,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+    }
+
     @FunctionalInterface
     public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException;
@@ -5263,12 +6455,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             for (short j = ColumnType.DECIMAL8; j <= ColumnType.DECIMAL256; j++) {
                 addSupportedConversion(i, j);
             }
-            // We only allow types that are accurately representable to be converted directly, others should use explicit
-            // casting.
-            addSupportedConversion(ColumnType.BYTE, i);
-            addSupportedConversion(ColumnType.SHORT, i);
-            addSupportedConversion(ColumnType.INT, i);
-            addSupportedConversion(ColumnType.LONG, i);
+            // Integer -> DECIMAL is supported on both the native and parquet paths; the reverse
+            // direction (DECIMAL -> {BYTE, SHORT, INT, LONG}) is not implemented in either the
+            // C++ converter kernel or the Rust parquet decoder, so register it one-way only.
+            // DOUBLE and FLOAT go both ways, but only on the native path: ConvertOperatorImpl
+            // rewrites a parquet partition to native before converting it.
+            columnConversionSupport[ColumnType.BYTE][i] = true;
+            columnConversionSupport[ColumnType.SHORT][i] = true;
+            columnConversionSupport[ColumnType.INT][i] = true;
+            columnConversionSupport[ColumnType.LONG][i] = true;
+            addSupportedConversion(i, ColumnType.DOUBLE, ColumnType.FLOAT);
             addSupportedConversion(i, ColumnType.STRING, ColumnType.VARCHAR);
             addSupportedConversion(ColumnType.STRING, i);
             addSupportedConversion(ColumnType.VARCHAR, i);

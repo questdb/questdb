@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
@@ -66,7 +67,7 @@ public class TestTableReferenceOutOfDateFunctionFactory implements FunctionFacto
     }
 
     private static class TestTableReferenceOutOfDateCursorFactory extends AbstractRecordCursorFactory {
-        private final DirectIntList mem = new DirectIntList(42, MemoryTag.NATIVE_DEFAULT);
+        private DirectIntList mem = new DirectIntList(42, MemoryTag.NATIVE_DEFAULT);
 
         public TestTableReferenceOutOfDateCursorFactory(RecordMetadata metadata) {
             super(metadata);
@@ -89,8 +90,16 @@ public class TestTableReferenceOutOfDateFunctionFactory implements FunctionFacto
 
         @Override
         protected void _close() {
-            super._close();
-            Misc.free(mem);
+            final DirectIntList mem = this.mem;
+            this.mem = null;
+            Throwable failure = null;
+            try {
+                super._close();
+            } catch (Throwable th) {
+                failure = th;
+            }
+            failure = Misc.freeBestEffort(failure, mem);
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 }

@@ -26,6 +26,8 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHandler;
@@ -45,19 +47,20 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.AbstractTest;
+import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertEventually;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.net.HttpURLConnection.HTTP_OK;
 import static org.junit.Assert.assertTrue;
 
-public class HttpServerTest extends AbstractTest {
+public class HttpServerTest extends AbstractBootstrapTest {
     private static final String SUCCESS = "Success";
     private static final Utf8String SUCCESS_UTF8 = new Utf8String(SUCCESS);
 
@@ -82,6 +85,69 @@ public class HttpServerTest extends AbstractTest {
                 assertExecRequest(httpClient, "/noHandler", 400, "No request handler for URI: /noHandler\r\n");
             }
         }
+    }
+
+    @Test
+    public void testRebaseWalOverHttpExec() throws Exception {
+        createDummyConfiguration();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain main = startWithEnvVariables(
+                            // REBASE WAL requires hard suspension to actually block writes.
+                            PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED.getEnvVarName(), "true"
+                    );
+                    TestHttpClient httpClient = new TestHttpClient()
+            ) {
+                ddl(httpClient, main, "create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+                dml(httpClient, main, "insert into t values" +
+                        " ('2024-01-01T00:00:00.000000Z', 1)," +
+                        " ('2024-01-02T00:00:00.000000Z', 2)," +
+                        " ('2024-01-03T00:00:00.000000Z', 3)");
+
+                // Wait for the WAL to apply before suspending so the count is deterministic.
+                assertEventually(() -> count(httpClient, main, 3));
+
+                // Rebase requires the table to be hard-suspended first.
+                ddl(httpClient, main, "alter table t suspend wal");
+                // The line under test: this used to NPE at response dispatch over HTTP.
+                ddl(httpClient, main, "alter table t rebase wal");
+
+                // Applied data is preserved and the rebased table is live and writable over HTTP.
+                assertEventually(() -> count(httpClient, main, 3));
+                dml(httpClient, main, "insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
+                assertEventually(() -> count(httpClient, main, 4));
+            }
+        });
+    }
+
+    private static void count(TestHttpClient httpClient, ServerMain main, int expected) {
+        exec(
+                httpClient,
+                main,
+                "{\"query\":\"select count() from t\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[" + expected + "]],\"count\":1}",
+                "select count() from t"
+        );
+    }
+
+    private static void ddl(TestHttpClient httpClient, ServerMain main, String sql) {
+        exec(httpClient, main, "{\"ddl\":\"OK\"}", sql);
+    }
+
+    private static void dml(TestHttpClient httpClient, ServerMain main, String sql) {
+        exec(httpClient, main, "{\"dml\":\"OK\"}", sql);
+    }
+
+    private static void exec(TestHttpClient httpClient, ServerMain main, String expectedResponse, String sql) {
+        httpClient.assertGet(
+                "/exec",
+                expectedResponse,
+                sql,
+                "localhost",
+                main.getHttpServerPort(),
+                null,
+                null,
+                null
+        );
     }
 
     private void assertExecRequest(

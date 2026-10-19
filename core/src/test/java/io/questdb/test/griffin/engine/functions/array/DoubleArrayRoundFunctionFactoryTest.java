@@ -28,6 +28,7 @@ package io.questdb.test.griffin.engine.functions.array;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -199,44 +200,43 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
     public void testPosScalePosValueParallel() throws Exception {
         execute("create table tmp as (select rnd_symbol('a','b','v') sym, rnd_double_array(1,0) book from long_sequence(10000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, round(sum(array_sum(round(book,2))),2) from tmp group by sym order by 1";
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                sql,
-                                sink,
-                                """
-                                        sym\tround
-                                        a\t9688.69
-                                        b\t9938.03
-                                        v\t9898.59
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce(
                                         """
-                        );
+                                                sym\tround
+                                                a\t9688.69
+                                                b\t9938.03
+                                                v\t9898.59
+                                                """
+                                );
 
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
-                                        Encode sort light
-                                          keys: [sym]
-                                            VirtualRecord
-                                              functions: [sym,round(sum,2)]
-                                                Async Group By workers: 4
-                                                  keys: [sym]
-                                                  values: [sum(array_sum(roundbook))]
-                                                  filter: null
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: tmp
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan(
                                         """
-                        );
+                                                Encode sort light
+                                                  keys: [sym]
+                                                    VirtualRecord
+                                                      functions: [sym,round(sum,2)]
+                                                        Async Group By workers: 4
+                                                          keys: [sym]
+                                                          values: [sum(array_sum(roundbook))]
+                                                          filter: null
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: tmp
+                                                """
+                                );
                     },
                     configuration,
                     LOG

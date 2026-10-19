@@ -25,4 +25,3 @@
 extern crate core;
 pub extern crate jni;
 mod sqllogictest;
-

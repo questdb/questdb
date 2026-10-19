@@ -26,12 +26,26 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 
 /**
  * Stands for functions that represent a physical table column, such as {@link IntColumn}.
  * Should not be implemented by types that can't be used for columns, e.g. {@link IntervalColumn}.
  */
 public interface ColumnFunction extends Function {
+
+    /**
+     * Returns the underlying {@link ColumnFunction} of {@code f}, peeling any
+     * {@link MemoizerFunction} wrappers the SQL code generator inserts when an
+     * alias is referenced more than once. Returns {@code null} if {@code f} is
+     * not a column reference.
+     */
+    static ColumnFunction unwrap(Function f) {
+        while (f instanceof MemoizerFunction mf) {
+            f = mf.getArg();
+        }
+        return f instanceof ColumnFunction cf ? cf : null;
+    }
 
     /**
      * Returns index of the column in the table metadata.

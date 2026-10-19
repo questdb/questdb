@@ -24,14 +24,142 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
 
 public class UnionTest extends AbstractCairoTest {
+
+    @Test
+    public void testAggregateOverUnionAllLegacyFlagReintroducesCrash() throws Exception {
+        // The cairo.sql.legacy.union.column.propagation flag restores the pre-fix by-name emit,
+        // which reintroduces the column-count divergence so the otherwise-fixed query fails again
+        // with an AssertionError during code generation. Guards the rollback switch against
+        // silently becoming a no-op. Reset the flag in finally so it cannot leak into other tests
+        // in this class (overrides are otherwise only cleared at @AfterClass).
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, "true");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table u1 (a symbol, close double)");
+                execute("create table u2 (a symbol, close double)");
+                execute("insert into u1 values ('x', 1.0), ('y', 2.0)");
+                execute("insert into u2 values ('z', 3.0)");
+
+                final String unionSql = "select a, close price from u1 union all select a, close price from u2";
+                boolean threw = false;
+                try (RecordCursorFactory ignored = select("select count() from (" + unionSql + ")")) {
+                    // unreachable: the legacy by-name emit diverges the branch column counts
+                } catch (AssertionError e) {
+                    threw = true;
+                }
+                Assert.assertTrue("legacy flag should restore the by-name emit and reintroduce the crash", threw);
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, "false");
+        }
+    }
+
+    @Test
+    public void testAggregateOverUnionAllOfLatestOn() throws Exception {
+        // Regression test: an aggregate (count/sum) over a UNION ALL of LATEST ON
+        // sub-queries used to crash with an AssertionError in SqlCodeGenerator
+        // (columnCount == metadataB.getColumnCount()). Top-down column pruning over
+        // the union chain pruned one branch down to just the LATEST ON partition key
+        // while leaving the others with all projected columns, so the union sides
+        // diverged in column count. Not specific to count() - any aggregate that
+        // prunes the projection triggers it.
+        assertMemoryLeak(() -> {
+            for (int i = 1; i <= 4; i++) {
+                execute("create table t" + i + " (tvId symbol, close double, timestamp timestamp) timestamp(timestamp) partition by day wal");
+            }
+            // t1: A -> latest close 11, B -> 20  (2 rows after LATEST ON)
+            execute("insert into t1 values " +
+                    "('A', 10.0, '2024-01-01T00:00:01.000000Z'), " +
+                    "('A', 11.0, '2024-01-01T00:00:02.000000Z'), " +
+                    "('B', 20.0, '2024-01-01T00:00:01.000000Z')");
+            // t2: C -> 30  (1 row)
+            execute("insert into t2 values ('C', 30.0, '2024-01-01T00:00:01.000000Z')");
+            // t3: D -> latest close 41  (1 row)
+            execute("insert into t3 values " +
+                    "('D', 40.0, '2024-01-01T00:00:01.000000Z'), " +
+                    "('D', 41.0, '2024-01-01T00:00:02.000000Z')");
+            // t4: E -> 50  (1 row)
+            execute("insert into t4 values ('E', 50.0, '2024-01-01T00:00:01.000000Z')");
+            drainWalQueue();
+
+            final String unionSql =
+                    "SELECT tvId, close price, timestamp mts FROM t1 LATEST ON timestamp PARTITION BY tvId " +
+                            "UNION ALL " +
+                            "SELECT tvId, close price, timestamp mts FROM t2 LATEST ON timestamp PARTITION BY tvId " +
+                            "UNION ALL " +
+                            "SELECT tvId, close price, timestamp mts FROM t3 LATEST ON timestamp PARTITION BY tvId " +
+                            "UNION ALL " +
+                            "SELECT tvId, close price, timestamp mts FROM t4 LATEST ON timestamp PARTITION BY tvId";
+
+            // 2 + 1 + 1 + 1 = 5 rows
+            assertQuery("select count() from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            5
+                            """);
+            // 11 + 20 + 30 + 41 + 50 = 152
+            assertQuery("select sum(price) from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            152.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testAggregateOverUnionAllWithAliasMismatch() throws Exception {
+        // Minimal root-cause regression test: the crash is driven by alias divergence between
+        // UNION ALL branches, not by LATEST ON (which only forces the CHOOSE-wrapper structure).
+        // Here one column is aliased (close -> price) and one is not (a). The old by-name emit
+        // matched only the same-named column (a) into the sibling, pruning it to 1 column while
+        // the head kept 2, so the union sides diverged in column count under count()/sum().
+        assertMemoryLeak(() -> {
+            execute("create table u1 (a symbol, close double)");
+            execute("create table u2 (a symbol, close double)");
+            execute("insert into u1 values ('x', 1.0), ('y', 2.0)");
+            execute("insert into u2 values ('z', 3.0)");
+
+            final String unionSql =
+                    "select a, close price from u1 " +
+                            "union all " +
+                            "select a, close price from u2";
+
+            // 2 + 1 = 3 rows
+            assertQuery("select count() from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            3
+                            """);
+            // 1 + 2 + 3 = 6
+            assertQuery("select sum(price) from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            6.0
+                            """);
+        });
+    }
 
     @Test
     public void testExcept() throws Exception {
@@ -43,19 +171,16 @@ public class UnionTest extends AbstractCairoTest {
             execute("insert into events2 values ('bobby', 'grp1', 'flash')");
             execute("insert into events2 values ('stewy', 'grp1', 'flash')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'
+                    except
+                    select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'""")
+                    .noLeakCheck()
+                    .returns("""
                             groupid\tcontact
                             grp1\tamy
                             grp1\tbobby
-                            """,
-                    """
-                            select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'
-                            except
-                            select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'""",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -70,9 +195,9 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21', 1
                     except
                     select '2020-04-22', 2""";
-            try (RecordCursorFactory rcf = select(query1)) {
-                assertCursor(expected1, rcf, true, false);
-            }
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .returns(expected1);
 
             final String expected2 = """
                     a\tb
@@ -82,9 +207,9 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21' a, 1 b
                     except
                     select '2020-04-22', 2""";
-            try (RecordCursorFactory rcf = select(query2)) {
-                assertCursor(expected2, rcf, true, false);
-            }
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -105,18 +230,15 @@ public class UnionTest extends AbstractCairoTest {
             execute("insert into events2 values ('2', 'grp1', 'stand')");
             execute("insert into events2 values ('1', 'grp1', 'flash')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select contact, eventid from events1 where eventid in ('flash', 'sit')
+                    except
+                    select contact, eventid from events2 where eventid in ('flash')""")
+                    .noLeakCheck()
+                    .returns("""
                             contact\teventid
                             5\tsit
-                            """,
-                    """
-                            select contact, eventid from events1 where eventid in ('flash', 'sit')
-                            except
-                            select contact, eventid from events2 where eventid in ('flash')""",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -144,7 +266,9 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(20) x)"
             );
 
-            assertQueryNoLeakCheck("""
+            assertQuery("(x union y) where i = 0 order by t")
+                    .noLeakCheck()
+                    .returns("""
                             t\ti
                             \t0
                             BIKE\t0
@@ -152,10 +276,7 @@ public class UnionTest extends AbstractCairoTest {
                             CAR\t0
                             PLANE\t0
                             VAN\t0
-                            """,
-                    "(x union y) where i = 0 order by t",
-                    null,
-                    true);
+                            """);
         });
     }
 
@@ -169,18 +290,15 @@ public class UnionTest extends AbstractCairoTest {
             execute("insert into events2 values ('bobby', 'grp1', 'flash')");
             execute("insert into events2 values ('stewy', 'grp1', 'flash')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'
+                    intersect
+                    select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'""")
+                    .noLeakCheck()
+                    .returns("""
                             groupid\tcontact
                             grp1\tstewy
-                            """,
-                    """
-                            select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'
-                            intersect
-                            select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'""",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -195,9 +313,9 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21', 1
                     intersect
                     select '2020-04-21', 1""";
-            try (RecordCursorFactory rcf = select(query1)) {
-                assertCursor(expected1, rcf, true, false);
-            }
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .returns(expected1);
 
             final String expected2 = """
                     a\tb
@@ -207,9 +325,9 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21' a, 1 b
                     intersect
                     select '2020-04-21', 1""";
-            try (RecordCursorFactory rcf = select(query2)) {
-                assertCursor(expected2, rcf, true, false);
-            }
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -228,70 +346,81 @@ public class UnionTest extends AbstractCairoTest {
             }
             sink.put(')');
 
-            assertQuery("cnt\n" + expectedCount + "\n", sink.toString(), null, false, true);
+            assertQuery(sink.toString())
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n" + expectedCount + "\n");
         });
 
     }
 
     @Test
     public void testMultiSetOperationIsLeftAssociative() throws Exception {
-        assertQuery("x\n1\n",
-                "select 2 x " +
-                        "union all " +
-                        "select 1  " +
-                        "intersect " +
-                        "select 1 from long_sequence(1)", null, null, false, false);
+        assertQuery("select 2 x " +
+                "union all " +
+                "select 1  " +
+                "intersect " +
+                "select 1 from long_sequence(1)")
+                .ddl(null)
+                .noRandomAccess()
+                .returns("x\n1\n");
     }
 
     @Test
     public void testMultiSetOperationWithLimitIsLeftAssociative() throws Exception {
-        assertQuery("x\n3\n",
-                "select 1 x " +
-                        "except " +
-                        "select 1  " +
-                        "union all " +
-                        "select 3 from long_sequence(1) limit 1", null, null, false, false);
+        assertQuery("select 1 x " +
+                "except " +
+                "select 1  " +
+                "union all " +
+                "select 3 from long_sequence(1) limit 1")
+                .ddl(null)
+                .noRandomAccess()
+                .returns("x\n3\n");
     }
 
     @Test
     public void testMultiSetOperationWithOrderByIsLeftAssociative() throws Exception {
-        assertQuery("x\n1\n",
-                "select 2 x " +
-                        "union all " +
-                        "select 1  " +
-                        "intersect " +
-                        "select 1 from long_sequence(1) order by 1", null, null);
+        assertQuery("select 2 x " +
+                "union all " +
+                "select 1  " +
+                "intersect " +
+                "select 1 from long_sequence(1) order by 1")
+                .ddl(null)
+                .returns("x\n1\n");
     }
 
     @Test
     public void testNestedSetOperationWithOrderByAndLimit() throws Exception {
-        assertQuery("x\n0\n2\n",
-                "select * from (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
-                        "intersect " +
-                        "select * from (select x from long_sequence(4) order by x limit 2) " +
-                        "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+        assertQuery("select * from (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
+                "intersect " +
+                "select * from (select x from long_sequence(4) order by x limit 2) " +
+                "union all " +
+                "select x-1 from long_sequence(1) order by 1 limit 2")
+                .ddl(null)
+                .returns("x\n0\n2\n");
     }
 
     @Test
     public void testNestedSetOperationWithOrderExpressionByAndLimit() throws Exception {
-        assertQuery("x\n0\n2\n",
-                "select * from (select 1 x union all select 2 union all select 3 from long_sequence(1) order by abs(x) desc limit 2) " +
-                        "intersect " +
-                        "select * from (select x from long_sequence(4) order by x limit 2) " +
-                        "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+        assertQuery("select * from (select 1 x union all select 2 union all select 3 from long_sequence(1) order by abs(x) desc limit 2) " +
+                "intersect " +
+                "select * from (select x from long_sequence(4) order by x limit 2) " +
+                "union all " +
+                "select x-1 from long_sequence(1) order by 1 limit 2")
+                .ddl(null)
+                .returns("x\n0\n2\n");
     }
 
     @Test
     public void testNestedSetOperationWithOrderExpressionByAndLimit2() throws Exception {
-        assertQuery("x\n0\n2\n",
-                "select * from " +
-                        "(select 1 x union all select 2 union all select 3 from long_sequence(1) order by x*2 desc limit 2) " +
-                        "intersect " +
-                        "select * from (select x from long_sequence(4) order by x*2 limit 2) " +
-                        "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+        assertQuery("select * from " +
+                "(select 1 x union all select 2 union all select 3 from long_sequence(1) order by x*2 desc limit 2) " +
+                "intersect " +
+                "select * from (select x from long_sequence(4) order by x*2 limit 2) " +
+                "union all " +
+                "select x-1 from long_sequence(1) order by 1 limit 2")
+                .ddl(null)
+                .returns("x\n0\n2\n");
     }
 
     @Test
@@ -308,16 +437,14 @@ public class UnionTest extends AbstractCairoTest {
                     "null::date as colF;");
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("foo;")
+                    .noLeakCheck()
+                    .timestampAsc("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF
                             2025-04-09T17:20:00.000000Z\tnull\tnull\t\tnull\tnull\t
-                            """,
-                    "foo;",
-                    "ts###ASC",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -335,16 +462,14 @@ public class UnionTest extends AbstractCairoTest {
                     "cast(null as float) as colF;");
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("foo;")
+                    .noLeakCheck()
+                    .timestampAsc("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF
                             2025-04-09T17:20:00.000000Z\tnull\t\t\tnull\tnull\t
-                            """,
-                    "foo;",
-                    "ts###ASC",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -362,16 +487,14 @@ public class UnionTest extends AbstractCairoTest {
                     "null::int as colF;");
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("foo;")
+                    .noLeakCheck()
+                    .timestampAsc("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF
                             2025-04-09T17:20:00.000000Z\tnull\tnull\t\t\tnull\t
-                            """,
-                    "foo;",
-                    "ts###ASC",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -389,16 +512,14 @@ public class UnionTest extends AbstractCairoTest {
                     "null::long as colF;");
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("foo;")
+                    .noLeakCheck()
+                    .timestampAsc("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF
                             2025-04-09T17:20:00.000000Z\tnull\tnull\t\t\tnull\t
-                            """,
-                    "foo;",
-                    "ts###ASC",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -416,16 +537,14 @@ public class UnionTest extends AbstractCairoTest {
                     "null::timestamp as colF;");
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("foo;")
+                    .noLeakCheck()
+                    .timestampAsc("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF
                             2025-04-09T17:20:00.000000Z\tnull\tnull\t\tnull\tnull\t
-                            """,
-                    "foo;",
-                    "ts###ASC",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -443,178 +562,248 @@ public class UnionTest extends AbstractCairoTest {
                     "null::timestamp_ns as colF;");
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("foo;")
+                    .noLeakCheck()
+                    .timestampAsc("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF
                             2025-04-09T17:20:00.000000Z\tnull\tnull\t\tnull\tnull\t
-                            """,
-                    "foo;",
-                    "ts###ASC",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
     @Test
     public void testOrderByIsNotIgnoredInExceptsSecondSubquery() throws Exception {
-        assertQuery("""
+        assertQuery("select * from " +
+                "(" +
+                "  (select sym, max(x) from x order by sym limit 0,2)" +
+                "  except " +
+                "  (select sym, max(x) from x order by sym limit 2,4)" +
+                ");")
+                .ddl("create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );")
+                .returns("""
                         sym\tmax
                         GWFFYUDEYY\t99
                         RXPEHNRXGZ\t100
-                        """,
-                "select * from " +
-                        "(" +
-                        "  (select sym, max(x) from x order by sym limit 0,2)" +
-                        "  except " +
-                        "  (select sym, max(x) from x order by sym limit 2,4)" +
-                        ");",
-                "create table x as (" +
-                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
-                        "  from long_sequence(100) );",
-                null, true, false);
+                        """);
     }
 
     @Test
     public void testOrderByIsNotIgnoredInExceptsThirdSubquery() throws Exception {
-        assertQuery("""
+        assertQuery("select * from " +
+                "(" +
+                "  (select sym, max(x) from x order by sym limit 0,2)" +
+                "  except " +
+                "  (select sym, max(x) from x order by sym limit 2,3)" +
+                "  except " +
+                "  (select sym, max(x) from x order by sym limit 3,4)" +
+                ");")
+                .ddl("create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );")
+                .returns("""
                         sym\tmax
                         GWFFYUDEYY\t99
                         RXPEHNRXGZ\t100
-                        """,
-                "select * from " +
-                        "(" +
-                        "  (select sym, max(x) from x order by sym limit 0,2)" +
-                        "  except " +
-                        "  (select sym, max(x) from x order by sym limit 2,3)" +
-                        "  except " +
-                        "  (select sym, max(x) from x order by sym limit 3,4)" +
-                        ");",
-                "create table x as (" +
-                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
-                        "  from long_sequence(100) );",
-                null, true, false);
+                        """);
     }
 
     @Test
     public void testOrderByIsNotIgnoredInIntersectsSecondSubquery() throws Exception {
-        assertQuery("sym\tmax\n",
-                "select * from " +
-                        "(" +
-                        "  (select sym, max(x) from x order by sym limit 0,2)" +
-                        "  intersect " +
-                        "  (select sym, max(x) from x order by sym limit 2,4)" +
-                        ");",
-                "create table x as (" +
+        assertQuery("select * from " +
+                "(" +
+                "  (select sym, max(x) from x order by sym limit 0,2)" +
+                "  intersect " +
+                "  (select sym, max(x) from x order by sym limit 2,4)" +
+                ");")
+                .ddl("create table x as (" +
                         "  select x, rnd_symbol(4, 10, 10, 0) sym " +
-                        "  from long_sequence(100) );",
-                null, true, false);
+                        "  from long_sequence(100) );")
+                .returns("sym\tmax\n");
     }
 
     @Test
     public void testOrderByIsNotIgnoredInIntersectsThirdSubquery() throws Exception {
-        assertQuery("sym\tmax\n",
-                "select * from " +
-                        "(" +
-                        "  (select sym, max(x) from x order by sym limit 0,2)" +
-                        "  intersect " +
-                        "  (select sym, max(x) from x order by sym limit 2,3)" +
-                        "  intersect " +
-                        "  (select sym, max(x) from x order by sym limit 3,4)" +
-                        ");",
-                "create table x as (" +
+        assertQuery("select * from " +
+                "(" +
+                "  (select sym, max(x) from x order by sym limit 0,2)" +
+                "  intersect " +
+                "  (select sym, max(x) from x order by sym limit 2,3)" +
+                "  intersect " +
+                "  (select sym, max(x) from x order by sym limit 3,4)" +
+                ");")
+                .ddl("create table x as (" +
                         "  select x, rnd_symbol(4, 10, 10, 0) sym " +
-                        "  from long_sequence(100) );",
-                null, true, false);
+                        "  from long_sequence(100) );")
+                .returns("sym\tmax\n");
     }
 
     @Test
     public void testOrderByIsNotIgnoredInUnionAllsSecondSubquery() throws Exception {
-        assertQuery("""
+        assertQuery("select * from " +
+                "(" +
+                "  (select sym, max(x) from x order by sym limit 0,2)" +
+                "  union all" +
+                "  (select sym, max(x) from x order by sym limit 2,4)" +
+                ");")
+                .ddl("create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sym\tmax
                         GWFFYUDEYY\t99
                         RXPEHNRXGZ\t100
                         SXUXIBBTGP\t88
                         VTJWCPSWHY\t97
-                        """,
-                "select * from " +
-                        "(" +
-                        "  (select sym, max(x) from x order by sym limit 0,2)" +
-                        "  union all" +
-                        "  (select sym, max(x) from x order by sym limit 2,4)" +
-                        ");",
-                "create table x as (" +
-                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
-                        "  from long_sequence(100) );",
-                null, false, true);
+                        """);
     }
 
 
     @Test
     public void testOrderByIsNotIgnoredInUnionAllsThirdSubquery() throws Exception {
-        assertQuery("""
+        assertQuery("select * from " +
+                "(" +
+                "  (select sym, max(x) from x order by sym limit 0,2)" +
+                "  union all" +
+                "  (select sym, max(x) from x order by sym limit 2,3) " +
+                "  union all " +
+                "  (select sym, max(x) from x order by sym limit 3,4)" +
+                ");")
+                .ddl("create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sym\tmax
                         GWFFYUDEYY\t99
                         RXPEHNRXGZ\t100
                         SXUXIBBTGP\t88
                         VTJWCPSWHY\t97
-                        """,
-                "select * from " +
-                        "(" +
-                        "  (select sym, max(x) from x order by sym limit 0,2)" +
-                        "  union all" +
-                        "  (select sym, max(x) from x order by sym limit 2,3) " +
-                        "  union all " +
-                        "  (select sym, max(x) from x order by sym limit 3,4)" +
-                        ");",
-                "create table x as (" +
-                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
-                        "  from long_sequence(100) );",
-                null, false, true);
+                        """);
     }
 
     @Test
     public void testOrderByIsNotIgnoredInUnionsSecondSubquery() throws Exception {
-        assertQuery("""
+        assertQuery("select * from " +
+                "(" +
+                "  (select sym, max(x) from x order by sym limit 0,2)" +
+                "  union " +
+                "  (select sym, max(x) from x order by sym limit 2,4)" +
+                ");")
+                .ddl("create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );")
+                .noRandomAccess()
+                .returns("""
                         sym\tmax
                         GWFFYUDEYY\t99
                         RXPEHNRXGZ\t100
                         SXUXIBBTGP\t88
                         VTJWCPSWHY\t97
-                        """,
-                "select * from " +
-                        "(" +
-                        "  (select sym, max(x) from x order by sym limit 0,2)" +
-                        "  union " +
-                        "  (select sym, max(x) from x order by sym limit 2,4)" +
-                        ");",
-                "create table x as (" +
-                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
-                        "  from long_sequence(100) );",
-                null, false, false);
+                        """);
     }
 
     @Test
     public void testOrderByIsNotIgnoredInUnionsThirdSubquery() throws Exception {
-        assertQuery("""
+        assertQuery("select * from " +
+                "(" +
+                "  (select sym, max(x) from x order by sym limit 0,2)" +
+                "  union " +
+                "  (select sym, max(x) from x order by sym limit 2,3)" +
+                "  union " +
+                "  (select sym, max(x) from x order by sym limit 3,4)" +
+                ");")
+                .ddl("create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );")
+                .noRandomAccess()
+                .returns("""
                         sym\tmax
                         GWFFYUDEYY\t99
                         RXPEHNRXGZ\t100
                         SXUXIBBTGP\t88
                         VTJWCPSWHY\t97
-                        """,
-                "select * from " +
-                        "(" +
-                        "  (select sym, max(x) from x order by sym limit 0,2)" +
-                        "  union " +
-                        "  (select sym, max(x) from x order by sym limit 2,3)" +
-                        "  union " +
-                        "  (select sym, max(x) from x order by sym limit 3,4)" +
-                        ");",
-                "create table x as (" +
-                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
-                        "  from long_sequence(100) );",
-                null, false, false);
+                        """);
+    }
+
+    @Test
+    public void testSetOperationNestedInLaterBranchWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation in a later branch of another one
+            // apply to the whole inner set operation, whichever set operations the two are.
+            final String top1 = "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 DESC LIMIT 1";
+            assertQuery("SELECT -1L v UNION SELECT -2L UNION SELECT * FROM (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            3
+                            """);
+            assertQuery("SELECT 3L v UNION ALL SELECT 2L EXCEPT SELECT * FROM (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            2
+                            """);
+            assertQuery("SELECT 1L v UNION ALL SELECT 3L INTERSECT SELECT * FROM (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            3
+                            """);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION SELECT v FROM t ORDER BY 1 DESC LIMIT 1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            3
+                            """);
+            assertQuery("""
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT * FROM (SELECT v FROM t EXCEPT SELECT v FROM t WHERE v = 1 ORDER BY 1 DESC LIMIT 1)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            3
+                            """);
+            assertQuery("""
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT * FROM (SELECT v FROM t WHERE v > 1 INTERSECT SELECT v FROM t ORDER BY 1 LIMIT 1)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            2
+                            """);
+        });
     }
 
     @Test
@@ -663,19 +852,15 @@ public class UnionTest extends AbstractCairoTest {
                         .replace("#CLAUSE" + i + "#", "order by x desc")
                         .replace("#CLAUSE" + (i + 1) % 2 + "#", "");
 
-                assertException(orderQuery,
-                        (i == 0 ? 16 : 43),
-                        "unexpected token 'order'"
-                );
+                assertQuery(orderQuery)
+                        .fails((i == 0 ? 16 : 43), "unexpected token 'order'");
 
                 String limitQuery = template.replace("#SET#", setOperation)
                         .replace("#CLAUSE" + i + "#", "limit 1        ")
                         .replace("#CLAUSE" + (i + 1) % 2 + "#", "");
 
-                assertException(limitQuery,
-                        (i == 0 ? 16 : 43),
-                        "unexpected token 'limit'"
-                );
+                assertQuery(limitQuery)
+                        .fails((i == 0 ? 16 : 43), "unexpected token 'limit'");
             }
         }
     }
@@ -775,9 +960,10 @@ public class UnionTest extends AbstractCairoTest {
             );
 
 
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -803,9 +989,11 @@ public class UnionTest extends AbstractCairoTest {
                     " long_sequence(10))"
             );
 
-            try (RecordCursorFactory factory = select("select * from x union all y")) {
-                assertCursor(expected2, factory, false, true);
-            }
+            assertQuery("select * from x union all y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -821,9 +1009,11 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21', 1
                     union all
                     select '2020-04-22', 2""";
-            try (RecordCursorFactory rcf = select(query1)) {
-                assertCursor(expected1, rcf, false, true);
-            }
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected1);
 
             final String expected2 = """
                     a\tb
@@ -834,9 +1024,11 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21' a, 1 b
                     union all
                     select '2020-04-22', 2""";
-            try (RecordCursorFactory rcf = select(query2)) {
-                assertCursor(expected2, rcf, false, true);
-            }
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -876,9 +1068,10 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(7) x)"
             );
 
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -889,9 +1082,10 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(7) x)"
             ); // produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
-            try (RecordCursorFactory factory = select("select distinct t from x union all y order by t")) {
-                assertCursor(expected2, factory, true, true);
-            }
+            assertQuery("select distinct t from x union all y order by t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -944,9 +1138,10 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(7) x)"
             );
 
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -964,19 +1159,18 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(13) x)"
             ); // produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
-            try (
-                    RecordCursorFactory factory = select(
-                            "select t from (" +
-                                    "select * from (select distinct t from x order by 1) " +
-                                    "union all " +
-                                    "y " +
-                                    "union all " +
-                                    "z " +
-                                    ")"
-                    )
-            ) {
-                assertCursor(expected2, factory, false, true);
-            }
+            assertQuery(
+                    "select t from (" +
+                            "select * from (select distinct t from x order by 1) " +
+                            "union all " +
+                            "y " +
+                            "union all " +
+                            "z " +
+                            ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -1004,94 +1198,101 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(5) x)"
             );
 
-            assertSql("""
-                    typeof\tt
-                    STRING\tCAR
-                    STRING\tCAR
-                    STRING\tVAN
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tBICYCLE
-                    STRING\tPLANE
-                    STRING\tBICYCLE
-                    STRING\tBICYCLE
-                    STRING\tSCOOTER
-                    STRING\tBICYCLE
-                    STRING\tBICYCLE
-                    """, "select typeof(t), t from (select t from x union all y)");
-
-            assertSql("""
-                    typeof\tt
-                    STRING\tBICYCLE
-                    STRING\tBICYCLE
-                    STRING\tBICYCLE
-                    STRING\tBICYCLE
-                    STRING\tBICYCLE
-                    STRING\tCAR
-                    STRING\tCAR
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tSCOOTER
-                    STRING\tVAN
-                    """, "select typeof(t), t from (select t from x union all y order by t)");
-
-            assertSql("""
-                    typeof\tt
-                    STRING\tBICYCLE
-                    STRING\tBICYCLE
-                    STRING\tBICYCLE
-                    STRING\tBICYCLE
-                    STRING\tBICYCLE
-                    STRING\tCAR
-                    STRING\tCAR
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tPLANE
-                    STRING\tSCOOTER
-                    STRING\tVAN
-                    """, "select typeof(t), t from (select t from x union all y) order by t");
-
-            assertQueryNoLeakCheck("""
+            assertQuery("select typeof(t), t from (select t from x union all y)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             typeof\tt
-                            STRING\tBICYCLE
-                            STRING\tSCOOTER
-                            """,
-                    "select typeof(t), t from (select t from x union all y union y except x) order by t",
-                    null,
-                    true);
+                            SYMBOL\tCAR
+                            SYMBOL\tCAR
+                            SYMBOL\tVAN
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tPLANE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tSCOOTER
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            """);
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select typeof(t), t from (select t from x union all y order by t)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             typeof\tt
-                            STRING\tCAR
-                            STRING\tVAN
-                            STRING\tPLANE
-                            STRING\tBICYCLE
-                            STRING\tSCOOTER
-                            STRING\t
-                            STRING\tBUS
-                            """,
-                    "select typeof(t), t from (x union y union z)",
-                    null,
-                    false
-            );
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tCAR
+                            SYMBOL\tCAR
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tSCOOTER
+                            SYMBOL\tVAN
+                            """);
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select typeof(t), t from (select t from x union all y) order by t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             typeof\tt
-                            STRING\tCAR
-                            STRING\tVAN
-                            STRING\tPLANE
-                            """,
-                    "select typeof(t), t from (x union y union z intersect x)",
-                    null,
-                    false
-            );
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tCAR
+                            SYMBOL\tCAR
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tSCOOTER
+                            SYMBOL\tVAN
+                            """);
+
+            assertQuery("select typeof(t), t from (select t from x union all y union y except x) order by t")
+                    .noLeakCheck()
+                    .returns("""
+                            typeof\tt
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tSCOOTER
+                            """);
+
+            assertQuery("select typeof(t), t from (x union y union z)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            typeof\tt
+                            SYMBOL\tCAR
+                            SYMBOL\tVAN
+                            SYMBOL\tPLANE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tSCOOTER
+                            SYMBOL\t
+                            SYMBOL\tBUS
+                            """);
+
+            assertQuery("select typeof(t), t from (x union y union z intersect x)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            typeof\tt
+                            SYMBOL\tCAR
+                            SYMBOL\tVAN
+                            SYMBOL\tPLANE
+                            """);
         });
     }
 
@@ -1148,19 +1349,17 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(13) x)"
             ); // produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
-            try (
-                    RecordCursorFactory factory = select(
-                            "select t from (" +
-                                    "select distinct t from x " +
-                                    "union all " +
-                                    "y " +
-                                    "union all " +
-                                    "z " +
-                                    ")  order by 1"
-                    )
-            ) {
-                assertCursor(expected2, factory, true, true);
-            }
+            assertQuery(
+                    "select t from (" +
+                            "select distinct t from x " +
+                            "union all " +
+                            "y " +
+                            "union all " +
+                            "z " +
+                            ")  order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -1254,9 +1453,10 @@ public class UnionTest extends AbstractCairoTest {
             );
 
 
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -1305,9 +1505,10 @@ public class UnionTest extends AbstractCairoTest {
                     " long_sequence(4))"
             );
 
-            try (RecordCursorFactory factory = select("select * from x union y union z")) {
-                assertCursor(expected2, factory, false, false);
-            }
+            assertQuery("select * from x union y union z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected2);
         });
     }
 
@@ -1403,9 +1604,10 @@ public class UnionTest extends AbstractCairoTest {
             );
 
 
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -1456,9 +1658,10 @@ public class UnionTest extends AbstractCairoTest {
                     " long_sequence(24))"
             );
 
-            try (RecordCursorFactory factory = select("select * from x union all y union z")) {
-                assertCursor(expected2, factory, false, false);
-            }
+            assertQuery("select * from x union all y union z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected2);
         });
     }
 
@@ -1478,22 +1681,20 @@ public class UnionTest extends AbstractCairoTest {
                       from long_sequence(3)
                     )""");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select sym1 from table1\s
+                    union distinct
+                    select str3 from table3""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             sym1
                             1
                             2
                             3
                             4
                             5
-                            """,
-                    """
-                            select sym1 from table1\s
-                            union distinct
-                            select str3 from table3""",
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1519,24 +1720,20 @@ public class UnionTest extends AbstractCairoTest {
 
             // UNION DISTINCT should deduplicate 'common' value
             // Result should have 5 unique values, not 6
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select col from (" +
+                    "  select col from t_varchar " +
+                    "  union distinct " +
+                    "  select col from t_symbol" +
+                    ") order by col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             common
                             sym_a
                             sym_b
                             varchar_2
                             varchar_3
-                            """,
-                    "select col from (" +
-                            "  select col from t_varchar " +
-                            "  union distinct " +
-                            "  select col from t_symbol" +
-                            ") order by col",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1546,17 +1743,807 @@ public class UnionTest extends AbstractCairoTest {
             execute("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
             execute("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
 
-            assertQuery("""
+            assertQuery("select typeof(s), s, sum(val) from (x1 union all x2)")
+                    .expectSize()
+                    .returns("""
                             typeof\ts\tsum
-                            STRING\tb\t9.711630235623893
-                            STRING\ta\t4.567523321042871
-                            STRING\tc\t6.077503835152431
-                            """,
-                    "select typeof(s), s, sum(val) from (x1 union all x2)",
-                    null,
-                    true,
-                    true
-            );
+                            SYMBOL\tb\t9.711630235623893
+                            SYMBOL\ta\t4.567523321042871
+                            SYMBOL\tc\t6.077503835152431
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInJoinLateralWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation that a lateral join reads apply to
+            // the whole set operation, once per row of the join's left side. For the row t1.v the
+            // branches return 1 to t1.v and 11 to t1.v + 10, so the largest value is t1.v + 10.
+            assertQuery("""
+                    SELECT t1.v, t2.v
+                    FROM t t1
+                    JOIN LATERAL (
+                        SELECT v FROM t WHERE v <= t1.v
+                        UNION ALL
+                        SELECT v + 10 FROM t WHERE v <= t1.v
+                        ORDER BY v DESC
+                        LIMIT 1
+                    ) t2
+                    ORDER BY t1.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            v\tv1
+                            1\t11
+                            2\t12
+                            3\t13
+                            """);
+            // a row of the left side for which both branches are empty
+            assertQuery("""
+                    SELECT t1.v, t2.v
+                    FROM t t1
+                    LEFT JOIN LATERAL (
+                        SELECT v FROM t WHERE v < t1.v
+                        UNION ALL
+                        SELECT v + 10 FROM t WHERE v < t1.v
+                        ORDER BY v DESC
+                        LIMIT 1
+                    ) t2 ON true
+                    ORDER BY t1.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            v\tv1
+                            1\tnull
+                            2\t11
+                            3\t12
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInJoinRejectsOrderByAliasOfLastBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY of a set operation that a join reads applies to the whole set
+            // operation, which takes its column names from its first branch. The ORDER BY cannot
+            // name an alias that only the last branch declares, and can name the first branch's.
+            assertQuery("SELECT * FROM t t1 JOIN (SELECT v FROM t UNION ALL SELECT v w FROM t ORDER BY w DESC LIMIT 1) t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .fails(78, "Invalid column: w");
+            assertQuery("SELECT * FROM t t1 JOIN (SELECT v w FROM t UNION ALL SELECT v FROM t ORDER BY w DESC LIMIT 1) t2 ON t1.v = t2.w")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tw
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInJoinWithLimitOrOrderByAlone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // A trailing LIMIT without an ORDER BY, and a trailing ORDER BY without a LIMIT, of a
+            // set operation that a join reads apply to the whole set operation, the same as the
+            // two together.
+            final String rows = "SELECT v FROM t UNION ALL SELECT v + 10 FROM t";
+            // LIMIT alone
+            assertQuery("SELECT * FROM t t1 CROSS JOIN (" + rows + " LIMIT 2) t2 ORDER BY t1.v, t2.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tv1
+                            1\t1
+                            1\t2
+                            2\t1
+                            2\t2
+                            3\t1
+                            3\t2
+                            """);
+            // a negative LIMIT alone
+            assertQuery("SELECT * FROM t t1 CROSS JOIN (" + rows + " LIMIT -2) t2 ORDER BY t1.v, t2.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tv1
+                            1\t12
+                            1\t13
+                            2\t12
+                            2\t13
+                            3\t12
+                            3\t13
+                            """);
+            // ORDER BY alone: an outer ORDER BY would hide the order the set operation returns its
+            // rows in, so the join's left side has one row instead.
+            assertQuery("SELECT t2.v FROM long_sequence(1) CROSS JOIN (" + rows + " ORDER BY 1 DESC) t2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            13
+                            12
+                            11
+                            3
+                            2
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInJoinWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation that a join reads apply to the
+            // whole set operation, in a positional and in a named spelling alike, and whichever
+            // branch of an outer set operation the join sits in.
+            final String top1 = "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 DESC LIMIT 1";
+            final String joinRow = """
+                    v\tv1
+                    3\t3
+                    """;
+            assertQuery("SELECT * FROM t t1 JOIN (" + top1 + ") t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(joinRow);
+            assertQuery("SELECT * FROM t t1 JOIN (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1) t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(joinRow);
+            assertQuery("WITH c AS (" + top1 + ") SELECT * FROM t t1 JOIN c t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(joinRow);
+            assertQuery("SELECT * FROM t t1 LEFT JOIN (" + top1 + ") t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1
+                            1\tnull
+                            2\tnull
+                            3\t3
+                            """);
+            assertQuery("SELECT * FROM t t1 CROSS JOIN (" + top1 + ") t2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tv1
+                            1\t3
+                            2\t3
+                            3\t3
+                            """);
+            assertQuery("SELECT 0L v, 0L v1 UNION ALL SELECT * FROM t t1 JOIN (" + top1 + ") t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1
+                            0\t0
+                            3\t3
+                            """);
+            assertQuery("""
+                    SELECT 0L v, 0L v1
+                    UNION ALL
+                    SELECT -1L, -1L
+                    UNION ALL
+                    SELECT * FROM t t1
+                    JOIN (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1) t2 ON t1.v = t2.v
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1
+                            0\t0
+                            -1\t-1
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInLaterBranchWithDifferentColumnCount() throws Exception {
+        assertMemoryLeak(() -> {
+            // A set operation inside the second or a later branch of another one, reached through
+            // the branch's nested or join models, gets the column count check the first branch's
+            // gets.
+            final String error = "queries have different number of columns";
+            assertQuery("SELECT * FROM (SELECT 1 a, 2 b, 3 c UNION ALL (SELECT 1 a, 2 b, 3 c UNION ALL SELECT 1 a, 2 b))")
+                    .noLeakCheck()
+                    .fails(78, error);
+            assertQuery("WITH c0 AS (SELECT 1 a, 2 b), c1 AS (SELECT 1 a, 2 b, 3 c), c2 AS (SELECT * FROM c1 UNION ALL SELECT * FROM c0) SELECT * FROM c1 UNION ALL SELECT * FROM c2")
+                    .noLeakCheck()
+                    .fails(94, error);
+            assertQuery("SELECT 1 a, 2 b UNION ALL SELECT * FROM (SELECT 1 a) x CROSS JOIN (SELECT 2 b UNION ALL SELECT 2 b, 3 c) y")
+                    .noLeakCheck()
+                    .fails(88, error);
+            assertQuery("SELECT 1 a, 2 b UNION ALL SELECT 1 a, 2 b UNION ALL (SELECT 1 a, 2 b EXCEPT SELECT 3 a)")
+                    .noLeakCheck()
+                    .fails(76, error);
+            assertQuery("SELECT 1 a, 2 b UNION (SELECT 1 a, 2 b INTERSECT SELECT 3 a)")
+                    .noLeakCheck()
+                    .fails(49, error);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInLaterBranchWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            execute("CREATE VIEW top1_view AS (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1)");
+            drainWalAndViewQueues();
+            // The trailing ORDER BY and LIMIT of a set operation apply to the whole set operation,
+            // not to its last branch, whichever branch of an outer set operation reads it, and
+            // however that branch reads it: through a sub-query, brackets, a CTE, a declared
+            // sub-query or a view.
+            final String top1 = "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 DESC LIMIT 1";
+            final String expected = """
+                    v
+                    -1
+                    -2
+                    3
+                    """;
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Union All
+                                Union All
+                                    VirtualRecord
+                                      functions: [-1L]
+                                        long_sequence count: 1
+                                    VirtualRecord
+                                      functions: [-2L]
+                                        long_sequence count: 1
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    Encode sort
+                                      keys: [v desc]
+                                        Union All
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("WITH top1 AS (" + top1 + ") SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM top1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("WITH top1 AS (" + top1 + ") SELECT -1L v UNION ALL SELECT * FROM top1 UNION ALL SELECT * FROM top1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            3
+                            3
+                            """);
+            assertQuery("DECLARE @top1 := (" + top1 + ") SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM @top1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM top1_view")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT * FROM (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            // a fourth branch
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT -3L UNION ALL SELECT * FROM (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            -3
+                            3
+                            """);
+            // a later branch of a set operation that sits in a later branch itself
+            assertQuery("""
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT * FROM (SELECT -3L v UNION ALL SELECT -4L UNION ALL SELECT * FROM (""" + top1 + "))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            -3
+                            -4
+                            3
+                            """);
+            // LIMIT alone
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION ALL SELECT v + 10 FROM t LIMIT 2)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            1
+                            2
+                            """);
+            // ORDER BY alone
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION ALL SELECT v + 10 FROM t ORDER BY 1 DESC)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            13
+                            12
+                            11
+                            3
+                            2
+                            1
+                            """);
+            // the outer set operation keeps its own trailing ORDER BY and LIMIT
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (" + top1 + ") ORDER BY 1 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            3
+                            -1
+                            """);
+            // A bracketed last branch scopes its ORDER BY and LIMIT to itself, in a later branch
+            // of an outer set operation as well.
+            assertQuery("""
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT * FROM (SELECT v FROM t UNION ALL (SELECT v FROM t ORDER BY 1 DESC LIMIT 1))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            1
+                            2
+                            3
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInLaterBranchWithPositionalOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a', 1), ('b', 2), ('a', 3)");
+            // A positional ORDER BY in a bracketed branch of a set operation resolves against
+            // that branch and applies to it alone, whether that set operation sits in the first
+            // branch of another one or in a later branch. A trailing ORDER BY of a whole set
+            // operation that a later branch reads is in testUnionNestedInLaterBranchWithOrderByAndLimit.
+            assertQuery("SELECT * FROM (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 2 DESC LIMIT 1)) UNION ALL SELECT 'x' s, 0L l")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\tl
+                            a\t1
+                            b\t2
+                            a\t3
+                            a\t3
+                            x\t0
+                            """);
+            assertQuery("SELECT 'x' s, 0L l UNION ALL SELECT * FROM (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 2 DESC LIMIT 1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\tl
+                            x\t0
+                            a\t1
+                            b\t2
+                            a\t3
+                            a\t3
+                            """);
+            assertQuery("""
+                    WITH c AS (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 2 DESC LIMIT 1))
+                    SELECT * FROM c
+                    UNION ALL
+                    SELECT * FROM c
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\tl
+                            a\t1
+                            b\t2
+                            a\t3
+                            a\t3
+                            a\t1
+                            b\t2
+                            a\t3
+                            a\t3
+                            """);
+            assertQuery("SELECT 'x' s, 0L l UNION ALL (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 3))")
+                    .noLeakCheck()
+                    .fails(88, "order column position is out of range [max=2]");
+        });
+    }
+
+    @Test
+    public void testUnionNestedInMiddleBranchWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation apply to the whole set operation
+            // also when a middle branch of an outer one reads it: a branch that comes after the
+            // second one and has more branches after it.
+            final String top1 = "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 DESC LIMIT 1";
+            final String thirdOfFour = """
+                    v
+                    -1
+                    -2
+                    3
+                    -3
+                    """;
+            final String fourthOfFive = """
+                    v
+                    -1
+                    -2
+                    -3
+                    3
+                    -4
+                    """;
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (" + top1 + ") UNION ALL SELECT -3L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Union All
+                                Union All
+                                    Union All
+                                        VirtualRecord
+                                          functions: [-1L]
+                                            long_sequence count: 1
+                                        VirtualRecord
+                                          functions: [-2L]
+                                            long_sequence count: 1
+                                    Limit value: 1 skip-rows: 0 take-rows: 1
+                                        Encode sort
+                                          keys: [v desc]
+                                            Union All
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                                VirtualRecord
+                                  functions: [-3L]
+                                    long_sequence count: 1
+                            """)
+                    .returns(thirdOfFour);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT -3L UNION ALL SELECT * FROM (" + top1 + ") UNION ALL SELECT -4L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(fourthOfFive);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL (" + top1 + ") UNION ALL SELECT -3L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(thirdOfFour);
+            assertQuery("WITH top1 AS (" + top1 + ") SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM top1 UNION ALL SELECT -3L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(thirdOfFour);
+            assertQuery("WITH top1 AS (" + top1 + """
+                    )
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT -3L
+                    UNION ALL
+                    SELECT * FROM top1
+                    UNION ALL
+                    SELECT -4L
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(fourthOfFive);
+            // an outer UNION
+            assertQuery("SELECT -1L v UNION SELECT -2L UNION SELECT * FROM (" + top1 + ") UNION SELECT -3L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(thirdOfFour);
+            // a join in the middle branch reads the set operation
+            assertQuery("""
+                    SELECT 0L v, 0L v1
+                    UNION ALL
+                    SELECT -1L, -1L
+                    UNION ALL
+                    SELECT * FROM t t1 JOIN (""" + top1 + """
+                    ) t2 ON t1.v = t2.v
+                    UNION ALL
+                    SELECT -2L, -2L
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1
+                            0\t0
+                            -1\t-1
+                            3\t3
+                            -2\t-2
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInRightAndFullJoinWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation that a right or a full join reads
+            // apply to the whole set operation. The join reads 4 and 3 from it, and keeps the 4,
+            // which no row of its left side matches.
+            final String top2 = "SELECT v FROM t UNION ALL SELECT v + 1 FROM t ORDER BY 1 DESC LIMIT 2";
+            assertQuery("SELECT * FROM t t1 RIGHT JOIN (" + top2 + ") t2 ON t1.v = t2.v ORDER BY t2.v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tv1
+                            3\t3
+                            null\t4
+                            """);
+            assertQuery("SELECT * FROM t t1 FULL JOIN (" + top2 + ") t2 ON t1.v = t2.v ORDER BY coalesce(t1.v, t2.v)")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tv1
+                            1\tnull
+                            2\tnull
+                            3\t3
+                            null\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInSecondJoinWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation that the second join of a query
+            // reads apply to the whole set operation, the same as when the first join reads it.
+            final String top1 = "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 DESC LIMIT 1";
+            final String joinRow = """
+                    v\tv1\tv2
+                    3\t3\t3
+                    """;
+            assertQuery("SELECT * FROM t t1 JOIN t t2 ON t1.v = t2.v JOIN (" + top1 + ") t3 ON t1.v = t3.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: t3.v=t1.v
+                                    Hash Join Light
+                                      condition: t2.v=t1.v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                    Hash
+                                        Limit value: 1 skip-rows: 0 take-rows: 1
+                                            Encode sort
+                                              keys: [v desc]
+                                                Union All
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t
+                            """)
+                    .returns(joinRow);
+            assertQuery("WITH c AS (" + top1 + ") SELECT * FROM t t1 JOIN t t2 ON t1.v = t2.v JOIN c t3 ON t1.v = t3.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(joinRow);
+            assertQuery("SELECT * FROM t t1 LEFT JOIN t t2 ON t1.v = t2.v LEFT JOIN (" + top1 + ") t3 ON t1.v = t3.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1\tv2
+                            1\t1\tnull
+                            2\t2\tnull
+                            3\t3\t3
+                            """);
+            assertQuery("SELECT * FROM t t1 CROSS JOIN t t2 CROSS JOIN (" + top1 + ") t3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tv1\tv2
+                            1\t1\t3
+                            1\t2\t3
+                            1\t3\t3
+                            2\t1\t3
+                            2\t2\t3
+                            2\t3\t3
+                            3\t1\t3
+                            3\t2\t3
+                            3\t3\t3
+                            """);
+            // the first join and the second join read a set operation each
+            assertQuery("SELECT * FROM t t1 JOIN (" + top1 + """
+                    ) t2 ON t1.v = t2.v
+                    JOIN (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 LIMIT 1) t3 ON t1.v = t3.v + 2
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1\tv2
+                            3\t3\t1
+                            """);
+            // the second join of a later branch of an outer set operation
+            assertQuery("SELECT 0L v, 0L v1, 0L v2 UNION ALL SELECT * FROM t t1 JOIN t t2 ON t1.v = t2.v JOIN (" + top1 + ") t3 ON t1.v = t3.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1\tv2
+                            0\t0\t0
+                            3\t3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInTimeSeriesJoinWithLimitHasNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ts1 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE ts2 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // A UNION ALL has no designated timestamp, and its trailing LIMIT, which applies to
+            // the whole set operation, gives it none, so a time-series join rejects it on either
+            // side. The error points at the start of the bracketed sub-query, where it also points
+            // for a hand-written SELECT * FROM (<set operation>) LIMIT 3.
+            final String error = "TIMESTAMP column is required but not provided";
+            final String ts1Rows = """
+                    SELECT v, ts FROM ts1
+                    UNION ALL
+                    SELECT v + 1, ts FROM ts1
+                    """;
+            final String ts2Rows = """
+                    SELECT v, ts FROM ts2
+                    UNION ALL
+                    SELECT v + 1, ts FROM ts2
+                    """;
+            // the right side of the join, and last the hand-written spelling of the ASOF JOIN
+            assertQuery("SELECT a.v, b.v FROM ts1 a ASOF JOIN (" + ts2Rows + "LIMIT 3) b")
+                    .noLeakCheck()
+                    .fails(38, error);
+            assertQuery("SELECT a.v, b.v FROM ts1 a LT JOIN (" + ts2Rows + "LIMIT 3) b")
+                    .noLeakCheck()
+                    .fails(36, error);
+            assertQuery("SELECT a.v, b.v FROM ts1 a SPLICE JOIN (" + ts2Rows + "LIMIT 3) b")
+                    .noLeakCheck()
+                    .fails(40, error);
+            assertQuery("SELECT a.v, b.v FROM ts1 a ASOF JOIN (SELECT * FROM (" + ts2Rows + ") LIMIT 3) b")
+                    .noLeakCheck()
+                    .fails(38, error);
+            // the left side of the join, and the hand-written spelling of it
+            assertQuery("SELECT a.v, b.v FROM (" + ts1Rows + "LIMIT 3) a ASOF JOIN ts2 b")
+                    .noLeakCheck()
+                    .fails(22, error);
+            assertQuery("SELECT a.v, b.v FROM (SELECT * FROM (" + ts1Rows + ") LIMIT 3) a ASOF JOIN ts2 b")
+                    .noLeakCheck()
+                    .fails(22, error);
+            // a CTE: the error points at the set operation inside the CTE's definition
+            assertQuery("WITH c AS (" + ts2Rows + "LIMIT 3) SELECT a.v, b.v FROM ts1 a ASOF JOIN c b")
+                    .noLeakCheck()
+                    .fails(11, error);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInTimeSeriesJoinWithOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ts1 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE ts2 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ts1 VALUES
+                        (1, '2024-01-01T00:00:01'),
+                        (2, '2024-01-01T00:00:02'),
+                        (3, '2024-01-01T00:00:03'),
+                        (4, '2024-01-01T00:00:04')
+                    """);
+            execute("""
+                    INSERT INTO ts2 VALUES
+                        (10, '2024-01-01T00:00:00'),
+                        (20, '2024-01-01T00:00:02'),
+                        (30, '2024-01-01T00:00:03'),
+                        (40, '2024-01-01T00:00:05')
+                    """);
+            // The trailing ORDER BY of a set operation that a time-series join reads applies to
+            // the whole set operation, and gives the join the timestamp order it requires. The
+            // two branches return the rows of ts2 out of that order, so the ordered set operation
+            // holds the rows of ts2 in the order of ts2, and each join returns the rows it returns
+            // when it reads ts2 itself.
+            final String ts2Rows = """
+                    SELECT v, ts FROM ts2 WHERE v > 20
+                    UNION ALL
+                    SELECT v, ts FROM ts2 WHERE v <= 20
+                    ORDER BY ts
+                    """;
+            assertQuery("SELECT a.v, b.v FROM ts1 a ASOF JOIN (" + ts2Rows + ") b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tv1
+                            1\t10
+                            2\t20
+                            3\t30
+                            4\t30
+                            """);
+            assertQuery("SELECT a.v, b.v FROM ts1 a LT JOIN (" + ts2Rows + ") b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tv1
+                            1\t10
+                            2\t10
+                            3\t20
+                            4\t30
+                            """);
+            assertQuery("SELECT a.v, b.v FROM ts1 a SPLICE JOIN (" + ts2Rows + ") b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1
+                            null\t10
+                            1\t10
+                            2\t20
+                            3\t30
+                            4\t30
+                            4\t40
+                            """);
         });
     }
 
@@ -1576,22 +2563,20 @@ public class UnionTest extends AbstractCairoTest {
                       from long_sequence(3)
                     )""");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select sym1 from table1\s
+                    union
+                    select str3 from table3""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             sym1
                             1
                             2
                             3
                             4
                             5
-                            """,
-                    """
-                            select sym1 from table1\s
-                            union
-                            select str3 from table3""",
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1618,8 +2603,13 @@ public class UnionTest extends AbstractCairoTest {
 
             // UNION should coerce SYMBOL to VARCHAR
             // Verify the actual data and type - result type should be VARCHAR
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select typeof(col), col from (" +
+                    "  select col from t_varchar " +
+                    "  union " +
+                    "  select col from t_symbol" +
+                    ") order by col")
+                    .noLeakCheck()
+                    .returns("""
                             typeof\tcol
                             VARCHAR\tsym_a
                             VARCHAR\tsym_b
@@ -1627,16 +2617,7 @@ public class UnionTest extends AbstractCairoTest {
                             VARCHAR\tvarchar_1
                             VARCHAR\tvarchar_2
                             VARCHAR\tvarchar_3
-                            """,
-                    "select typeof(col), col from (" +
-                            "  select col from t_varchar " +
-                            "  union " +
-                            "  select col from t_symbol" +
-                            ") order by col",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1663,65 +2644,65 @@ public class UnionTest extends AbstractCairoTest {
                     "UNION ALL " +
                     "(SELECT max(timestamp) FROM trades);";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(limitQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Union All
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                                Limit value: -1 skip-rows: 2 take-rows: 1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """)
+                    .returns("""
                             timestamp
                             2022-03-08T18:03:57.609765Z
                             2022-03-10T18:03:57.609765Z
-                            """,
-                    limitQuery,
-                    null,
-                    false,
-                    true);
+                            """);
 
-            assertPlanNoLeakCheck(limitQuery, """
-                    Union All
-                        Limit value: 1 skip-rows: 0 take-rows: 1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trades
-                        Limit value: -1 skip-rows: 2 take-rows: 1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trades
-                    """);
-
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("(SELECT min(timestamp) timestamp FROM trades) " +
+                    "UNION ALL " +
+                    "(SELECT max(timestamp) FROM trades);")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             timestamp
                             2022-03-08T18:03:57.609765Z
                             2022-03-10T18:03:57.609765Z
-                            """,
-                    "(SELECT min(timestamp) timestamp FROM trades) " +
-                            "UNION ALL " +
-                            "(SELECT max(timestamp) FROM trades);",
-                    null,
-                    false,
-                    true);
+                            """);
 
-            assertPlanNoLeakCheck(groupQuery, """
-                    Union All
-                        Limit value: 1 skip-rows: 0 take-rows: 1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trades
-                        Limit value: 1 skip-rows: 0 take-rows: 1
-                            SelectedRecord
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: trades
-                    """);
+            assertQuery(groupQuery)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Union All
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    SelectedRecord
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: trades
+                            """);
         });
     }
 
     @Test
     public void testWithClauseWithSetOperationAndOrderByAndLimit() throws Exception {
-        assertQuery("x\n0\n2\n",
-                "with q as  (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
-                        "select * from q " +
-                        "intersect " +
-                        "select * from (select x from long_sequence(4) order by x limit 2) " +
-                        "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+        assertQuery("with q as  (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
+                "select * from q " +
+                "intersect " +
+                "select * from (select x from long_sequence(4) order by x limit 2) " +
+                "union all " +
+                "select x-1 from long_sequence(1) order by 1 limit 2")
+                .ddl(null)
+                .returns("x\n0\n2\n");
     }
 }

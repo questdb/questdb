@@ -54,11 +54,11 @@ public abstract class AbstractDoubleArrayElemGroupByFunctionTest extends Abstrac
 
     @Test
     public void testSingleArgIdentityFromSubquery() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "arr\n[1.0,2.0]\n",
-                "SELECT " + funcName() + "(arr) arr FROM (SELECT ARRAY[1.0, 2.0] arr)",
-                null, false, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT " + funcName() + "(arr) arr FROM (SELECT ARRAY[1.0, 2.0] arr)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arr\n[1.0,2.0]\n"));
     }
 
     protected void assertGroupBy(String expected, String... rows) throws Exception {
@@ -71,49 +71,30 @@ public abstract class AbstractDoubleArrayElemGroupByFunctionTest extends Abstrac
             for (String row : rows) {
                 execute("INSERT INTO tab VALUES (" + row + ")");
             }
-            assertQueryNoLeakCheck(
-                    "arr\n" + expected + "\n",
-                    "SELECT " + funcName() + "(arr) arr FROM tab",
-                    null, false, true
-            );
+            assertQuery("SELECT " + funcName() + "(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n" + expected + "\n");
         });
     }
 
-    protected void assertKeyedGroupBy(String expected, String[][] groups) throws Exception {
-        assertKeyedGroupByTyped("DOUBLE[]", expected, groups);
+    protected void assertKeyedGroupBy(String[][] groups) throws Exception {
+        assertKeyedGroupByTyped(groups);
     }
 
-    protected void assertKeyedGroupByTyped(String columnType, String expected, String[][] groups) throws Exception {
+    protected void assertKeyedGroupByTyped(String[][] groups) throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (grp INT, arr " + columnType + ")");
+            execute("CREATE TABLE tab (grp INT, arr DOUBLE[])");
             for (String[] group : groups) {
                 for (int i = 1; i < group.length; i++) {
                     execute("INSERT INTO tab VALUES (" + group[0] + ", " + group[i] + ")");
                 }
             }
-            assertQueryNoLeakCheck(
-                    expected,
-                    "SELECT grp, " + funcName() + "(arr) arr FROM tab ORDER BY grp",
-                    null, true, true
-            );
-        });
-    }
-
-    protected void assertSampleBy(String expected, String[][] timestampedRows) throws Exception {
-        assertSampleByTyped("DOUBLE[]", expected, timestampedRows);
-    }
-
-    protected void assertSampleByTyped(String columnType, String expected, String[][] timestampedRows) throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, arr " + columnType + ") TIMESTAMP(ts) PARTITION BY DAY");
-            for (String[] row : timestampedRows) {
-                execute("INSERT INTO tab VALUES ('" + row[0] + "', " + row[1] + ")");
-            }
-            assertQueryNoLeakCheck(
-                    expected,
-                    "SELECT ts, " + funcName() + "(arr) arr FROM tab SAMPLE BY 1h",
-                    "ts", true, true
-            );
+            assertQuery("SELECT grp, " + funcName() + "(arr) arr FROM tab ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("grp\tarr\n1\t[2.0,4.0]\n2\t[null,4.0]\n");
         });
     }
 }

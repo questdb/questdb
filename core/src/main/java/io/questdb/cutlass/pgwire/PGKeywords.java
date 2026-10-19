@@ -32,13 +32,13 @@ public class PGKeywords {
             return false;
         }
         long i = lpsz;
-        return Unsafe.getUnsafe().getByte(i++) == 'o'
-                && Unsafe.getUnsafe().getByte(i++) == 'p'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i++) == 'i'
-                && Unsafe.getUnsafe().getByte(i++) == 'o'
-                && Unsafe.getUnsafe().getByte(i++) == 'n'
-                && Unsafe.getUnsafe().getByte(i) == 's';
+        return Unsafe.getByte(i++) == 'o'
+                && Unsafe.getByte(i++) == 'p'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == 'i'
+                && Unsafe.getByte(i++) == 'o'
+                && Unsafe.getByte(i++) == 'n'
+                && Unsafe.getByte(i) == 's';
     }
 
     public static boolean isUser(long lpsz, long len) {
@@ -46,10 +46,10 @@ public class PGKeywords {
             return false;
         }
         long i = lpsz;
-        return Unsafe.getUnsafe().getByte(i++) == 'u'
-                && Unsafe.getUnsafe().getByte(i++) == 's'
-                && Unsafe.getUnsafe().getByte(i++) == 'e'
-                && Unsafe.getUnsafe().getByte(i) == 'r';
+        return Unsafe.getByte(i++) == 'u'
+                && Unsafe.getByte(i++) == 's'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i) == 'r';
     }
 
     //"-c statement_timeout="
@@ -58,26 +58,26 @@ public class PGKeywords {
             return false;
         }
         long i = lpsz;
-        return Unsafe.getUnsafe().getByte(i++) == '-'
-                && Unsafe.getUnsafe().getByte(i++) == 'c'
-                && Unsafe.getUnsafe().getByte(i++) == ' '
-                && Unsafe.getUnsafe().getByte(i++) == 's'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i++) == 'a'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i++) == 'e'
-                && Unsafe.getUnsafe().getByte(i++) == 'm'
-                && Unsafe.getUnsafe().getByte(i++) == 'e'
-                && Unsafe.getUnsafe().getByte(i++) == 'n'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i++) == '_'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i++) == 'i'
-                && Unsafe.getUnsafe().getByte(i++) == 'm'
-                && Unsafe.getUnsafe().getByte(i++) == 'e'
-                && Unsafe.getUnsafe().getByte(i++) == 'o'
-                && Unsafe.getUnsafe().getByte(i++) == 'u'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i) == '=';
+        return Unsafe.getByte(i++) == '-'
+                && Unsafe.getByte(i++) == 'c'
+                && Unsafe.getByte(i++) == ' '
+                && Unsafe.getByte(i++) == 's'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == 'a'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 'm'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 'n'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == '_'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == 'i'
+                && Unsafe.getByte(i++) == 'm'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 'o'
+                && Unsafe.getByte(i++) == 'u'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i) == '=';
     }
 }

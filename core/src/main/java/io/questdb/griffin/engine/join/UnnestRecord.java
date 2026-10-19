@@ -85,6 +85,20 @@ public class UnnestRecord implements Record {
         return sources.getQuick(srcIdx).getArray(srcCol, arrayIndex, columnType);
     }
 
+    @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        return col < split
+                ? baseRecord.getArrayDimLen(col, columnType, dim)
+                : Record.super.getArrayDimLen(col, columnType, dim);
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        return col < split
+                ? baseRecord.getArrayDouble1d2d(col, columnType, idx0, idx1)
+                : Record.super.getArrayDouble1d2d(col, columnType, idx0, idx1);
+    }
+
     // BINARY is not a supported unnest column type; col is always a base table column.
     @Override
     public BinarySequence getBin(int col) {

@@ -50,8 +50,11 @@ public abstract class CompareDecimal256Function extends NegatableBooleanFunction
     @Override
     public boolean getBool(Record rec) {
         left.getDecimal256(rec, decimalLeft);
-        decimalLeft.setScale(leftScale);
         right.getDecimal256(rec, decimalRight);
+        if (decimalLeft.isNull() || decimalRight.isNull()) {
+            return negated && decimalLeft.isNull() == decimalRight.isNull();
+        }
+        decimalLeft.setScale(leftScale);
         decimalRight.setScale(rightScale);
         return negated != exec();
     }

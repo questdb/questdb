@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -53,20 +54,18 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private final int columnIndex;
     private final Comparator<SymbolFunctionRowCursorFactory> comparator;
     private final Comparator<SymbolFunctionRowCursorFactory> comparatorDesc;
-    private final PageFrameRecordCursorImpl cursor;
     private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
     // Points at the next factory to be reused.
     private final int[] cursorFactoriesIdx; // used to disable unneeded factories if there are duplicate excluded keys
-    private final boolean dynamicExcludedKeys;
     private final IntHashSet excludedKeys = new IntHashSet();
-    private final Function filter;
     private final boolean followedOrderByAdvice;
     private final boolean heapCursorUsed;
-    private final IntHashSet includedKeys = new IntHashSet();
     private final int indexDirection;
-    private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private final int maxSymbolNotEqualsCount;
     private final int orderDirection;
+    private PageFrameRecordCursorImpl cursor;
+    private Function filter;
+    private ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private StaticSymbolTable symbolMapReader;
 
     public FilterOnExcludedValuesRecordCursorFactory(
@@ -89,20 +88,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         this.orderDirection = orderDirection;
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
-        final int nKeyValues = keyValues.size();
-        boolean dynamicValues = false;
-        for (int i = 0; i < nKeyValues; i++) {
-            if (!keyValues.getQuick(i).isConstant()) {
-                dynamicValues = true;
-                break;
-            }
-        }
-        dynamicExcludedKeys = dynamicValues;
         keyExcludedValueFunctions.addAll(keyValues);
         this.columnIndex = columnIndex;
         this.filter = filter;
         cursorFactoriesIdx = new int[]{0};
-        cursorFactories = new ObjList<>(nKeyValues);
+        cursorFactories = new ObjList<>(keyValues.size());
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
             heapCursorUsed = false;
             cursor = new PageFrameRecordCursorImpl(
@@ -142,14 +132,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     }
 
     public void recalculateIncludedValues(PageFrameCursor pageFrameCursor) {
-        cursorFactoriesIdx[0] = cursorFactories.size();
+        cursorFactoriesIdx[0] = 0;
         excludedKeys.clear();
-        if (dynamicExcludedKeys) {
-            // In case of bind variable excluded values that may change between
-            // query executions the sets have to be subtracted from scratch.
-            includedKeys.clear();
-            cursorFactoriesIdx[0] = 0;
-        }
         try {
             symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
 
@@ -159,17 +143,14 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                 excludedKeys.add(symbolMapReader.keyOf(value));
             }
 
-            // Append new keys to the included set filtering out the excluded ones.
-            // Note: both includedKeys and cursorFactories are guaranteed to be monotonically
-            // growing in terms of the collection size.
+            // TRUNCATE can reassign symbol keys, so a previous execution's key set cannot be reused.
             for (int k = 0, n = symbolMapReader.getSymbolCount(); k < n; k++) {
-                if (!excludedKeys.contains(k) && includedKeys.add(k)) {
+                if (!excludedKeys.contains(k)) {
                     upsertRowCursorFactory(k);
                 }
             }
 
-            if (symbolMapReader.containsNullValue()
-                    && !excludedKeys.contains(SymbolTable.VALUE_IS_NULL) && includedKeys.add(SymbolTable.VALUE_IS_NULL)) {
+            if (symbolMapReader.containsNullValue() && !excludedKeys.contains(SymbolTable.VALUE_IS_NULL)) {
                 // If the table contains null values, and they're not excluded, we need to include
                 // them to the result set to match the behavior of the NOT IN() SQL function.
                 upsertRowCursorFactory(SymbolTable.VALUE_IS_NULL);
@@ -211,12 +192,22 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         return true;
     }
 
+    /**
+     * Orders two per-symbol cursor factories by their symbol value.
+     * <p>
+     * The two sides must come from {@code valueOf} and {@code valueBOf}: an
+     * uncached symbol map answers {@code valueOf} with a single flyweight bound to
+     * its char memory, so reading both sides through it hands the comparator the
+     * same object twice, which compares equal for every pair and leaves the
+     * factories in symbol-key order. {@code valueBOf} is the second flyweight that
+     * exists for exactly this.
+     */
     private int compareStrFunctions(SymbolFunctionRowCursorFactory a, SymbolFunctionRowCursorFactory b) {
-        return Chars.compare(symbolMapReader.valueOf(a.getSymbolKey()), symbolMapReader.valueOf(b.getSymbolKey()));
+        return Chars.compare(symbolMapReader.valueOf(a.getSymbolKey()), symbolMapReader.valueBOf(b.getSymbolKey()));
     }
 
     private int compareStrFunctionsDesc(SymbolFunctionRowCursorFactory a, SymbolFunctionRowCursorFactory b) {
-        return Chars.compareDescending(symbolMapReader.valueOf(a.getSymbolKey()), symbolMapReader.valueOf(b.getSymbolKey()));
+        return Chars.compareDescending(symbolMapReader.valueOf(a.getSymbolKey()), symbolMapReader.valueBOf(b.getSymbolKey()));
     }
 
     private void upsertRowCursorFactory(int symbolKey) {
@@ -227,13 +218,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             return;
         }
 
-        // Create a new factory.
         final SymbolFunctionRowCursorFactory rowCursorFactory;
         if (filter == null) {
             rowCursorFactory = new SymbolIndexRowCursorFactory(
                     columnIndex,
                     symbolKey,
-                    false,
                     indexDirection,
                     null
             );
@@ -242,7 +231,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                     columnIndex,
                     symbolKey,
                     filter,
-                    false,
                     indexDirection,
                     null
             );
@@ -253,10 +241,24 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(filter);
-        Misc.free(cursor);
-        Misc.freeObjList(keyExcludedValueFunctions);
+        final PageFrameRecordCursorImpl cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final ObjList<Function> keyExcludedValueFunctions = this.keyExcludedValueFunctions;
+        this.keyExcludedValueFunctions = null;
+        final var rowCursorFactory = cursor != null ? cursor.getRowCursorFactory() : null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, rowCursorFactory);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, keyExcludedValueFunctions);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

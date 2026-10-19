@@ -127,7 +127,7 @@ public class BlockFileWriter implements Closeable {
     }
 
     public long getVersionVolatile() {
-        return Unsafe.getUnsafe().getLongVolatile(null, file.getPageAddress(0) + HEADER_VERSION_OFFSET);
+        return Unsafe.getLongVolatile(file.getPageAddress(0) + HEADER_VERSION_OFFSET);
     }
 
     public void of(@Transient final LPSZ path) {
@@ -167,7 +167,7 @@ public class BlockFileWriter implements Closeable {
     }
 
     private void setVersionVolatile(final long version) {
-        Unsafe.getUnsafe().putLongVolatile(null, file.getPageAddress(0) + HEADER_VERSION_OFFSET, version);
+        Unsafe.putLongVolatile(file.getPageAddress(0) + HEADER_VERSION_OFFSET, version);
     }
 
     // Depends on the state of memory, blockOffset and blockCount from the outer scope
@@ -204,7 +204,7 @@ public class BlockFileWriter implements Closeable {
             if (value != null) {
                 final long len = value.length();
                 long addr = memory.appendAddressFor(payloadOffset + offset, len + Long.BYTES);
-                Unsafe.getUnsafe().putLong(addr, len);
+                Unsafe.putLong(addr, len);
                 value.copyTo(addr + Long.BYTES, 0, len);
             } else {
                 memory.putNullBin();

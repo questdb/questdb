@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.arr.ArrayView;
@@ -421,6 +422,11 @@ public class RecordToRowCopierBenchmark {
         }
 
         @Override
+        public byte getColumnIndexType(int columnIndex) {
+            return IndexType.NONE;
+        }
+
+        @Override
         public int getTimestampIndex() {
             return -1; // No timestamp column
         }
@@ -509,7 +515,15 @@ public class RecordToRowCopierBenchmark {
         }
 
         @Override
+        public void putDecimalChar(int columnIndex, char decimalValue) {
+        }
+
+        @Override
         public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
+        }
+
+        @Override
+        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
         }
 
         @Override
@@ -589,11 +603,11 @@ public class RecordToRowCopierBenchmark {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
         }
 
         @Override

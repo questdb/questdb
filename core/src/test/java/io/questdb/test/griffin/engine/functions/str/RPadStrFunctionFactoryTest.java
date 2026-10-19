@@ -95,13 +95,14 @@ public class RPadStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testABProtocol() throws SqlException {
+    public void testABProtocol() throws Exception {
         execute("create table x as (select rnd_str(1, 40, 0) s from long_sequence(100))");
-        assertSql(
-                "count\n" +
-                        "100\n",
-                "select count (*) from x where rpad(s, 20, '.') = rpad(s, 20, '.')"
-        );
+        assertQuery("select count (*) from x where rpad(s, 20, '.') = rpad(s, 20, '.')")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" +
+                        "100\n");
     }
 
     @Override

@@ -95,11 +95,8 @@ public abstract class AbstractDoubleArrayElemFunctionTest extends AbstractCairoT
     public void testNDimsMismatch1dPlus2d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (a DOUBLE[], b DOUBLE[][])");
-            assertException(
-                    "SELECT " + funcName() + "(a, b) FROM tab",
-                    7,
-                    "dimension"
-            );
+            assertQuery("SELECT " + funcName() + "(a, b) FROM tab")
+                    .fails(7, "dimension");
         });
     }
 
@@ -107,11 +104,8 @@ public abstract class AbstractDoubleArrayElemFunctionTest extends AbstractCairoT
     public void testNDimsMismatch2dPlus3d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (a DOUBLE[][], b DOUBLE[][][])");
-            assertException(
-                    "SELECT " + funcName() + "(a, b) FROM tab",
-                    7,
-                    "dimension"
-            );
+            assertQuery("SELECT " + funcName() + "(a, b) FROM tab")
+                    .fails(7, "dimension");
         });
     }
 
@@ -133,30 +127,18 @@ public abstract class AbstractDoubleArrayElemFunctionTest extends AbstractCairoT
     @Test
     public void testSingleArgResolvesToGroupBy() throws Exception {
         String sql = "SELECT " + funcName() + "(ARRAY[1.0, 2.0])";
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                funcName() + "\n[1.0,2.0]\n",
-                sql, null, false, true
-        ));
+        assertMemoryLeak(() -> assertQuery(sql)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(funcName() + "\n[1.0,2.0]\n"));
     }
 
     protected void assertElemWise(String expected, String... arrayArgs) throws Exception {
         String sql = "SELECT " + funcName() + "(" + String.join(", ", arrayArgs) + ")";
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                funcName() + "\n" + expected + "\n",
-                sql, null, true, true
-        ));
-    }
-
-    protected void assertElemWiseFromTable(String expected, String ddl, String[] inserts, String selectSql) throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddl);
-            for (String insert : inserts) {
-                execute(insert);
-            }
-            assertQueryNoLeakCheck(
-                    funcName() + "\n" + expected + "\n",
-                    selectSql, null, true, true
-            );
-        });
+        assertMemoryLeak(() -> assertQuery(sql)
+                .noLeakCheck()
+                .expectSize()
+                .returns(funcName() + "\n" + expected + "\n"));
     }
 }

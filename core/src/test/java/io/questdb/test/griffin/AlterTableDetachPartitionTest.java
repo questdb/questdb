@@ -29,13 +29,18 @@ import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -67,9 +72,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -79,6 +86,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static io.questdb.cairo.AttachDetachStatus.*;
 import static io.questdb.cairo.TableUtils.*;
@@ -109,6 +118,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         return Arrays.asList(new Object[][]{
                 {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
+    }
+
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
     }
 
     @Test
@@ -172,12 +188,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     3
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
@@ -223,26 +241,30 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     3
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
 
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertFailure("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", DETACH_ERR_COPY_META.name());
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z
                             2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z
                             2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
         });
     }
 
@@ -281,12 +303,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     3
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
@@ -298,15 +322,163 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             );
 
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z
                             2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z
                             2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
         });
+    }
+
+    @Test
+    public void testAttachNativePartitionAfterTruncateRestoresSymbolNullFlag() throws Exception {
+        assertAttachPartitionAfterTruncateRestoresSymbolNullFlag(false, true, true);
+    }
+
+    @Test
+    public void testAttachRestoresDetachedDirWhenSymbolScanFails() throws Exception {
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(false, false);
+    }
+
+    @Test
+    public void testAttachRestoresDetachedDirWhenSymbolScanFailsAfterWriterRecreation() throws Exception {
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(false, true);
+    }
+
+    @Test
+    public void testAttachRestoresDetachedDirWhenSymbolScanFailsInCopyMode() throws Exception {
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(true, false);
+    }
+
+    @Test
+    public void testAttachParquetNullRecoveryKeepsNonNullSiblingFalse() throws Exception {
+        assertAttachParquetNullRecoveryKeepsNonNullSiblingFalse(true);
+    }
+
+    @Test
+    public void testAttachParquetNullRecoveryKeepsNonNullSiblingFalseWithoutStatistics() throws Exception {
+        assertAttachParquetNullRecoveryKeepsNonNullSiblingFalse(false);
+    }
+
+    @Test
+    public void testAttachParquetNullRecoveryUsesStatisticsOnlyForNoNulls() throws Exception {
+        assertAttachParquetWithoutNulls(true);
+    }
+
+    @Test
+    public void testAttachParquetWithoutStatisticsWithoutNulls() throws Exception {
+        assertAttachParquetWithoutNulls(false);
+    }
+
+    @Test
+    public void testAttachParquetPartitionAfterTruncateRestoresSymbolNullFlag() throws Exception {
+        assertAttachPartitionAfterTruncateRestoresSymbolNullFlag(true, true, true);
+    }
+
+    @Test
+    public void testAttachParquetPartitionRestoresSymbolNullFlagsAcrossRowGroupsAndColumnIds() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", dropped INT, x INT, s SYMBOL, t SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 0, 1, NULL, NULL),
+                        ('2024-01-01T01:00:00Z', 0, 2, NULL, NULL),
+                        ('2024-01-01T02:00:00Z', 0, 3, 'A', 'B'),
+                        ('2024-01-01T03:00:00Z', 0, 4, 'A', 'B'),
+                        ('2024-01-02T00:00:00Z', 0, 5, 'A', 'B')
+                    """);
+            execute("ALTER TABLE tab DROP COLUMN dropped");
+            execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE tab RENAME COLUMN s TO sym");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            execute("TRUNCATE TABLE tab");
+            execute("INSERT INTO tab VALUES ('2024-01-02T00:00:00Z', 6, 'A', 'B')");
+            Assert.assertFalse(containsSymbolNullValue("tab", "sym"));
+            Assert.assertFalse(containsSymbolNullValue("tab", "t"));
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            engine.clear();
+            assertQuery("SELECT x, sym, t FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\tt\n1\t\t\n2\t\t\n3\tA\tB\n4\tA\tB\n6\tA\tB\n");
+            assertQuery("SELECT x, sym FROM tab LATEST ON ts PARTITION BY sym")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\tsym\n2\t\n6\tA\n");
+            assertQuery("SELECT x, t FROM tab LATEST ON ts PARTITION BY t")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\tt\n2\t\n6\tB\n");
+            Assert.assertTrue(containsSymbolNullValue("tab", "sym"));
+            Assert.assertTrue(containsSymbolNullValue("tab", "t"));
+        });
+    }
+
+    @Test
+    public void testAttachParquetPartitionWithNullsOnWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 1, NULL),
+                        ('2024-01-01T01:00:00Z', 2, NULL),
+                        ('2024-01-02T00:00:00Z', 3, 'A')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            execute("TRUNCATE TABLE tab");
+            drainWalQueue();
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            engine.clear();
+            try (TableReader reader = getReader("tab")) {
+                Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+            }
+            assertQuery("SELECT x, s FROM tab LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n2\t\n");
+            Assert.assertTrue(containsSymbolNullValue("tab", "s"));
+        });
+    }
+
+    @Test
+    public void testAttachParquetPartitionWithoutMetadataAfterTruncateRestoresSymbolNullFlag() throws Exception {
+        assertAttachPartitionAfterTruncateRestoresSymbolNullFlag(true, false, true);
+    }
+
+    @Test
+    public void testAttachParquetPartitionWithoutNullsPreservesSymbolNullFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 1, 'A'),
+                        ('2024-01-01T01:00:00Z', 2, 'A'),
+                        ('2024-01-01T02:00:00Z', 3, 'B'),
+                        ('2024-01-01T03:00:00Z', 4, 'B'),
+                        ('2024-01-02T00:00:00Z', 5, 'C')
+                    """);
+            execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            execute("TRUNCATE TABLE tab KEEP SYMBOL MAPS");
+            Assert.assertFalse(containsSymbolNullValue("tab", "s"));
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            engine.clear();
+            Assert.assertFalse(containsSymbolNullValue("tab", "s"));
+            assertQuery("SELECT x, s FROM tab LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n2\tA\n4\tB\n");
+        });
+    }
+
+    @Test
+    public void testAttachParquetPartitionWithoutStatisticsAfterTruncateRestoresSymbolNullFlag() throws Exception {
+        assertAttachPartitionAfterTruncateRestoresSymbolNullFlag(true, true, false);
     }
 
     @Test
@@ -323,8 +495,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("insert into " + tableName + " values ('foobar', '2020-01-02T23:59:59')");
 
-            assertSql(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+            assertQuery("select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
                             """
                                     first\tsym
                                     2020-01-01T07:59:59.666666Z\tCPSW
@@ -338,9 +512,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2020-01-01T15:59:59.333333332Z\tHYRX
                             2020-01-01T23:59:58.999999998Z\t
                             2020-01-02T23:59:59.000000000Z\tfoobar
-                            """,
-                    "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """);
 
             execute("alter table " + tableName + " detach partition list '2020-01-01'");
 
@@ -350,8 +522,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("alter table " + tableName + " attach partition list '2020-01-01'");
 
             // No symbols are present.
-            assertSql(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+            assertQuery("select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
                             """
                                     first\tsym
                                     2020-01-01T07:59:59.666666Z\t
@@ -363,9 +537,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2020-01-01T07:59:59.666666666Z\t
                             2020-01-01T15:59:59.333333332Z\t
                             2020-01-01T23:59:58.999999998Z\t
-                            """,
-                    "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """);
         });
     }
 
@@ -385,8 +557,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("insert into " + tableName + " values ('foobar', '2020-01-02T23:59:59')");
 
-            assertSql(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+            assertQuery("select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
                             """
                                     first\tsym
                                     2020-01-01T07:59:59.666666Z\tCPSW
@@ -400,9 +574,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2020-01-01T15:59:59.333333332Z\tHYRX
                             2020-01-01T23:59:58.999999998Z\t
                             2020-01-02T23:59:59.000000000Z\tfoobar
-                            """,
-                    "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """);
 
             execute("alter table " + tableName + " detach partition list '2020-01-01'");
 
@@ -412,8 +584,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("alter table " + tableName + " attach partition list '2020-01-01'");
 
             // All symbols are kept.
-            assertSql(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? """
+            assertQuery("select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? """
                             first\tsym
                             2020-01-01T07:59:59.666666Z\tCPSW
                             2020-01-01T15:59:59.333332Z\tHYRX
@@ -424,8 +598,190 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                     2020-01-01T07:59:59.666666666Z\tCPSW
                                     2020-01-01T15:59:59.333333332Z\tHYRX
                                     2020-01-01T23:59:58.999999998Z\t
-                                    """, "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                                    """);
+        });
+    }
+
+    @Test
+    public void testAttachPartitionReadsSymbolNullFlagFromIndex() throws Exception {
+        final SymbolDataMapFailingFilesFacade ff = new SymbolDataMapFailingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            for (byte indexType : new byte[]{IndexType.BITMAP, IndexType.POSTING}) {
+                for (boolean hasNulls : new boolean[]{true, false}) {
+                    execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL INDEX TYPE " + IndexType.nameOf(indexType)
+                            + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-01T01:00:00Z', 2, " + (hasNulls ? "NULL" : "'B'")
+                            + "), ('2024-01-01T02:00:00Z', 3, 'A'), ('2024-01-02T00:00:00Z', 4, 'C')");
+                    execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                    unsetSymbolNullFlag("tab", "sym");
+                    renameDetachedToAttachable("tab", "2024-01-01");
+                    ff.isFailing = true;
+                    try {
+                        execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+                    } finally {
+                        ff.isFailing = false;
+                    }
+                    Assert.assertEquals(hasNulls, containsSymbolNullValue("tab", "sym"));
+                    assertQuery("SELECT x, sym FROM tab LATEST ON ts PARTITION BY sym")
+                            .noLeakCheck().inferRandomAccess().sizeMayVary()
+                            .returns(hasNulls ? "x\tsym\n2\t\n3\tA\n4\tC\n" : "x\tsym\n2\tB\n3\tA\n4\tC\n");
+                    execute("DROP TABLE tab");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionScansSymbolDataWhenIndexIsIncomplete() throws Exception {
+        assertMemoryLeak(() -> {
+            for (byte indexType : new byte[]{IndexType.BITMAP, IndexType.POSTING}) {
+                execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL INDEX TYPE " + IndexType.nameOf(indexType)
+                        + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("""
+                        INSERT INTO tab VALUES
+                            ('2024-01-01T00:00:00Z', 1, 'A'),
+                            ('2024-01-01T01:00:00Z', 2, 'B'),
+                            ('2024-01-01T02:00:00Z', 3, NULL),
+                            ('2024-01-02T00:00:00Z', 4, 'C')
+                        """);
+                execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                unsetSymbolNullFlag("tab", "sym");
+                try (
+                        Path path = new Path();
+                        IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration)
+                ) {
+                    path.of(configuration.getDbRoot()).concat(engine.verifyTableName("tab")).concat("2024-01-01").put(DETACHED_DIR_MARKER);
+                    indexWriter.of(path, "sym", COLUMN_NAME_TXN_NONE);
+                    indexWriter.rollbackValues(1);
+                }
+                renameDetachedToAttachable("tab", "2024-01-01");
+                execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+                Assert.assertTrue(containsSymbolNullValue("tab", "sym"));
+                assertQuery("SELECT x, sym FROM tab")
+                        .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\t\n4\tC\n");
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionScansSymbolDataWhenIndexIsUnreadable() throws Exception {
+        final SymbolIndexOpenFailingFilesFacade ff = new SymbolIndexOpenFailingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            for (byte indexType : new byte[]{IndexType.BITMAP, IndexType.POSTING}) {
+                execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL INDEX TYPE " + IndexType.nameOf(indexType)
+                        + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("""
+                        INSERT INTO tab VALUES
+                            ('2024-01-01T00:00:00Z', 1, 'A'),
+                            ('2024-01-01T01:00:00Z', 2, NULL),
+                            ('2024-01-01T02:00:00Z', 3, 'A'),
+                            ('2024-01-02T00:00:00Z', 4, 'C')
+                        """);
+                execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                unsetSymbolNullFlag("tab", "sym");
+                renameDetachedToAttachable("tab", "2024-01-01");
+                ff.isFailing = true;
+                try {
+                    execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+                } finally {
+                    ff.isFailing = false;
+                }
+                Assert.assertTrue(containsSymbolNullValue("tab", "sym"));
+                assertQuery("SELECT x, sym FROM tab LATEST ON ts PARTITION BY sym")
+                        .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\tsym\n2\t\n3\tA\n4\tC\n");
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionSetsSymbolNullFlagForColumnTopRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1)");
+            execute("ALTER TABLE tab ADD COLUMN s SYMBOL");
+            execute("INSERT INTO tab VALUES ('2024-01-02T00:00:00Z', 2, 'A')");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            unsetSymbolNullFlag("tab", "s");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            Assert.assertTrue(containsSymbolNullValue("tab", "s"));
+            assertQuery("SELECT x, s FROM tab LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\t\n2\tA\n");
+        });
+    }
+
+    @Test
+    public void testAttachPartitionSetsSymbolNullFlagForNullKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1, NULL), ('2024-01-02T00:00:00Z', 2, 'A')");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            unsetSymbolNullFlag("tab", "s");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            Assert.assertTrue(containsSymbolNullValue("tab", "s"));
+            assertQuery("SELECT x, s FROM tab LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\t\n2\tA\n");
+        });
+    }
+
+    @Test
+    public void testAttachPartitionWithKnownSizeSkipsSymbolDataScan() throws Exception {
+        final SymbolDataOpenCountingFilesFacade ff = new SymbolDataOpenCountingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-01T01:00:00Z', 2, 'B'), ('2024-01-02T00:00:00Z', 3, 'C')");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            try (TableWriter writer = getWriter("tab")) {
+                ff.isCounting = true;
+                try {
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(timestampType.getDriver().parseFloorLiteral("2024-01-01"), 2));
+                } finally {
+                    ff.isCounting = false;
+                }
+            }
+            Assert.assertEquals(0, ff.dataOpenCount);
+            Assert.assertFalse(containsSymbolNullValue("tab", "sym"));
+            assertQuery("SELECT x, sym FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\tC\n");
+        });
+    }
+
+    @Test
+    public void testAttachPartitionWithoutMetadataReadsSymbolDataOnce() throws Exception {
+        final SymbolDataOpenCountingFilesFacade ff = new SymbolDataOpenCountingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            final String[][] attachedSymbols = {{"'A'", "NULL"}, {"'A'", "'B'"}, {"NULL", "NULL"}};
+            final String[] expected = {"x\tsym\n1\tA\n2\t\n3\tC\n", "x\tsym\n1\tA\n2\tB\n3\tC\n", "x\tsym\n2\t\n3\tC\n"};
+            for (int i = 0; i < attachedSymbols.length; i++) {
+                final boolean hasNulls = attachedSymbols[i][1].equals("NULL");
+                execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1, " + attachedSymbols[i][0] + "), ('2024-01-01T01:00:00Z', 2, "
+                        + attachedSymbols[i][1] + "), ('2024-01-02T00:00:00Z', 3, 'C')");
+                execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                unsetSymbolNullFlag("tab", "sym");
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(engine.verifyTableName("tab")).concat("2024-01-01").put(DETACHED_DIR_MARKER).concat(META_FILE_NAME);
+                    Assert.assertTrue(TestUtils.remove(path.$()));
+                }
+                renameDetachedToAttachable("tab", "2024-01-01");
+                ff.dataOpenCount = 0;
+                ff.isCounting = true;
+                try {
+                    execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+                } finally {
+                    ff.isCounting = false;
+                }
+                Assert.assertEquals(1, ff.dataOpenCount);
+                Assert.assertEquals(hasNulls, containsSymbolNullValue("tab", "sym"));
+                assertQuery("SELECT x, sym FROM tab LATEST ON ts PARTITION BY sym")
+                        .noLeakCheck().inferRandomAccess().sizeMayVary()
+                        .returns(expected[i]);
+                execute("DROP TABLE tab");
+            }
         });
     }
 
@@ -550,8 +906,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("alter table " + tableName + " detach partition list '2020-01-02', '2020-01-03'");
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(replaceTimestampSuffix("""
                             first\tstr
                             2020-01-01T00:28:47.990000Z\t
                             2020-01-04T00:19:59.000000Z\tb
@@ -559,14 +917,15 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2020-01-04T00:59:59.000000Z\tb
                             2020-01-04T01:39:59.000000Z\t
                             2020-01-04T05:19:59.000000Z\tc
-                            """), "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
 
             renameDetachedToAttachable(tableName, "2020-01-02", "2020-01-03");
             execute("alter table " + tableName + " attach partition list '2020-01-02', '2020-01-03'");
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(replaceTimestampSuffix("""
                             first\tstr
                             2020-01-01T00:28:47.990000Z\t
                             2020-01-02T00:57:35.480000Z\t
@@ -580,8 +939,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2020-01-04T00:59:59.000000Z\tb
                             2020-01-04T01:39:59.000000Z\t
                             2020-01-04T05:19:59.000000Z\tc
-                            """), "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
         });
     }
 
@@ -676,13 +1034,53 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     11\t11\t11\t2022-06-04T15:59:59.083333326Z
                     12\t12\t12\t2022-06-04T23:59:58.999999992Z
                     """;
-            assertQuery(expected, tableName, null, "ts", true, true);
+            assertQuery(tableName)
+                    .ddl(null)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
             renameDetachedToAttachable(tableName, timestampDay);
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
                     "could not attach partition [table=tabTimeTravel2, detachStatus=ATTACH_ERR_PARTITION_EXISTS"
             );
-            assertQuery(expected, tableName, null, "ts", true, true);
+            assertQuery(tableName)
+                    .ddl(null)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testCannotAttachParquetPartitionMissingDataFile() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabAttachNoParquetData";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+
+            // Evict the parquet data file, leaving only _pm, to mirror a remotely-served partition.
+            TableToken tableToken = engine.verifyTableName(tableName);
+            path.of(configuration.getDbRoot()).concat(tableToken)
+                    .concat("2022-06-01").put(configuration.getAttachPartitionSuffix())
+                    .concat(PARQUET_PARTITION_NAME).$();
+            Assert.assertTrue(Files.exists(path.$()));
+            Assert.assertTrue(Files.remove(path.$()));
+
+            assertFailure(
+                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'",
+                    "could not attach partition [table=" + tableName + ", detachStatus=ATTACH_ERR_MISSING_PARQUET_DATA"
+            );
         });
     }
 
@@ -708,6 +1106,43 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 "ALTER TABLE tab17 DETACH PARTITION LIST '2022-06-05'",
                 "could not detach partition [table=tab17, detachStatus=DETACH_ERR_ACTIVE"
         );
+    }
+
+    @Test
+    public void testCannotDetachRemotelyServedPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabDetachRemote";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+
+            try (TableWriter writer = getWriter(tableName)) {
+                TxWriter tx = writer.getTxWriter();
+                Assert.assertTrue(tx.isPartitionParquet(0));
+                tx.setPartitionParquetGenerated(0, false);
+                tx.setPartitionRemote(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+                Assert.assertTrue(tx.isPartitionRemotelyServed(0));
+            }
+
+            assertFailure(
+                    "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'",
+                    "could not detach partition [table=" + tableName + ", detachStatus=DETACH_ERR_REMOTE"
+            );
+
+            // The rejection left the partition attached and still remotely served.
+            try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertTrue(writer.getTxWriter().isPartitionRemotelyServed(0));
+            }
+        });
     }
 
     @Test
@@ -845,23 +1280,27 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             3
                     );
                     execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-                    assertSql(
-                            replaceTimestampSuffix("""
+                    assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .timestamp("ts")
+                            .returns(replaceTimestampSuffix("""
                                     first\tts
                                     2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z
-                                    """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-                    );
+                                    """));
 
                     for (int i = 0; i < 2; i++) {
                         execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
-                        assertSql(
-                                replaceTimestampSuffix("""
+                        assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .timestamp("ts")
+                                .returns(replaceTimestampSuffix("""
                                         first\tts
                                         2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z
                                         2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z
                                         2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z
-                                        """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-                        );
+                                        """));
                         execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
                     }
@@ -999,6 +1438,113 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
             assertContent(expected, tableName);
+        });
+    }
+
+    @Test
+    public void testDetachAttachParquetPartitionAfterRoundTrip() throws Exception {
+        // Reattach a parquet partition, then round-trip it through native and
+        // back to parquet. Both writes rewrite the _pm; the test asserts the
+        // final _pm resolves cleanly against the post-rewrite txn-encoded
+        // parquet file size and that the row content is preserved end-to-end.
+        assertMemoryLeak(() -> {
+            String tableName = "tab";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    1,
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
+            // Edit step: convert back to native and forward to parquet again.
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+
+            assertParquetPmResolvesAgainstTxn(tableName);
+
+            assertQuery("select count() from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n10\n");
+        });
+    }
+
+    @Test
+    public void testDetachAttachParquetPartitionResolvesFooterAgainstTxn() throws Exception {
+        // The basic detach/reattach survival check is at testDetachAttachParquetPartition;
+        // this one tightens the contract by opening the post-attach _pm
+        // through the production JNI path and calling resolveFooter with the
+        // exact parquet file size encoded in the post-attach _txn (not
+        // Long.MAX_VALUE). A regression that mishandles the MVCC chain across
+        // detach would surface here as a failed match rather than a row-count
+        // mismatch.
+        assertMemoryLeak(() -> {
+            String tableName = "tab";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    1,
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
+            assertParquetPmResolvesAgainstTxn(tableName);
+        });
+    }
+
+    @Test
+    public void testDetachAttachParquetPartitionWithMvccChain() throws Exception {
+        // After conversion to parquet, append O3 rows into the converted
+        // partition to extend the _pm MVCC chain (the writer appends a new
+        // footer rather than rewriting the file in place). Detach and
+        // reattach; the resolveFooter call against the latest txn-encoded
+        // parquet size must still succeed, proving the entire chain travels
+        // with the partition directory.
+        assertMemoryLeak(() -> {
+            String tableName = "tab";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    1,
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    20,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+
+            // O3 insert into the parquet partition forces a chain extension.
+            execute("INSERT INTO " + tableName + "(ts, i, l) VALUES('2022-06-01T00:00:00.000000Z', 999, 999)", sqlExecutionContext);
+
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
+            assertParquetPmResolvesAgainstTxn(tableName);
+
+            // Row content survived chain + detach + reattach.
+            assertQuery("select count() from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n21\n");
         });
     }
 
@@ -1354,23 +1900,27 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     3
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
 
             for (int i = 0; i < 2; i++) {
                 execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
-                assertSql(
-                        replaceTimestampSuffix("""
+                assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns(replaceTimestampSuffix("""
                                 first\tts
                                 2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z
                                 2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z
                                 2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z
-                                """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-                );
+                                """));
                 execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
             }
@@ -1397,14 +1947,22 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2
                     );
 
-                    assertSql(replaceTimestampSuffix("""
-                            count\tmin\tmax
-                            500\t2022-06-01T00:02:52.799000Z\t2022-06-01T23:59:59.500000Z
-                            """), "select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-01'");
-                    assertSql(replaceTimestampSuffix("""
-                            count\tmin\tmax
-                            500\t2022-06-02T00:02:52.299000Z\t2022-06-02T23:59:59.000000Z
-                            """), "select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-02'");
+                    assertQuery("select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-01'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns(replaceTimestampSuffix("""
+                                    count\tmin\tmax
+                                    500\t2022-06-01T00:02:52.799000Z\t2022-06-01T23:59:59.500000Z
+                                    """));
+                    assertQuery("select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-02'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns(replaceTimestampSuffix("""
+                                    count\tmin\tmax
+                                    500\t2022-06-02T00:02:52.299000Z\t2022-06-02T23:59:59.000000Z
+                                    """));
 
                     try (TableReader ignore = getReader(token)) {
                         // Split partition by committing O3 to "2022-06-01"
@@ -1419,10 +1977,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                     renameDetachedToAttachable(tableName, "2022-06-01");
                     execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                    assertSql(replaceTimestampSuffix("""
-                            min
-                            2022-06-01T00:02:52.799000Z
-                            """), "select min(ts) from " + tableName);
+                    assertQuery("select min(ts) from " + tableName)
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("min")
+                            .returns(replaceTimestampSuffix("""
+                                    min
+                                    2022-06-01T00:02:52.799000Z
+                                    """));
                 });
     }
 
@@ -2396,8 +2958,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                 writer.commit();
             }
-            assertQuery(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? """
+            assertQuery(tableName)
+                    .ddl(null)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? """
                             l\ti\tts
                             2802\t2802\t2022-06-01T00:00:00.000000Z
                             137\t137\t2022-06-01T09:59:59.999999Z
@@ -2424,10 +2989,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             10\t10\t2022-06-04T07:59:59.166666660Z
                             11\t11\t2022-06-04T15:59:59.083333326Z
                             12\t12\t2022-06-04T23:59:58.999999992Z
-                            """,
-                    tableName,
-                    null, "ts", true, true
-            );
+                            """);
 
             dropCurrentVersionOfPartition(tableName, timestampDay);
             renameDetachedToAttachable(tableName, timestampDay);
@@ -2714,7 +3276,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private void assertContent(String expected, String tableName) throws Exception {
         engine.clear();
         expected = replaceTimestampSuffix1(expected, timestampType.getTypeName());
-        assertQuery(expected, tableName, null, "ts", true, true);
+        assertQuery(tableName)
+                .ddl(null)
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertFailedAttachBecauseOfMetadata(
@@ -2798,6 +3364,282 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    private void assertAttachRestoresDetachedDirWhenSymbolScanFails(boolean isCopied, boolean isWriterRecreated) throws Exception {
+        final SymbolDataMapFailingFilesFacade ff = new SymbolDataMapFailingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, Boolean.toString(isCopied));
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 1, 'A'),
+                        ('2024-01-01T01:00:00Z', 2, 'B'),
+                        ('2024-01-02T00:00:00Z', 3, 'C')
+                    """);
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            ff.isFailing = true;
+            try {
+                assertFailure("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'", "could not mmap");
+            } finally {
+                ff.isFailing = false;
+            }
+            assertOnlyAttachableDir("tab", "2024-01-01");
+            if (isWriterRecreated) {
+                engine.releaseAllWriters();
+            }
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            assertQuery("SELECT x, sym FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\tC\n");
+        });
+    }
+
+    private static void assertOnlyAttachableDir(String tableName, String partitionName) throws IOException {
+        final java.nio.file.Path tablePath = java.nio.file.Path.of(configuration.getDbRoot().toString(), engine.verifyTableName(tableName).getDirName());
+        try (Stream<java.nio.file.Path> entries = java.nio.file.Files.list(tablePath)) {
+            final List<String> partitionDirs = entries
+                    .map(entry -> entry.getFileName().toString())
+                    .filter(name -> name.startsWith(partitionName))
+                    .collect(Collectors.toList());
+            Assert.assertEquals(List.of(partitionName + configuration.getAttachPartitionSuffix()), partitionDirs);
+        }
+    }
+
+    private void assertAttachParquetNullRecoveryKeepsNonNullSiblingFalse(boolean hasStatistics) throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, Boolean.toString(hasStatistics));
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", dropped INT, x INT, s SYMBOL, t SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 0, 1, 'A', 'B'),
+                        ('2024-01-01T01:00:00Z', 0, 2, 'A', 'B'),
+                        ('2024-01-01T02:00:00Z', 0, 3, 'A', 'B'),
+                        ('2024-01-01T03:00:00Z', 0, 4, 'A', 'B'),
+                        ('2024-01-01T04:00:00Z', 0, 5, 'A', NULL),
+                        ('2024-01-01T05:00:00Z', 0, 6, 'A', NULL),
+                        ('2024-01-02T00:00:00Z', 0, 7, 'A', 'B')
+                    """);
+            execute("ALTER TABLE tab DROP COLUMN dropped");
+            execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE tab RENAME COLUMN s TO sym");
+            execute("ALTER TABLE tab RENAME COLUMN t TO tail");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            assertDetachedSymbolStatistics(hasStatistics, new int[]{4, 2}, 3, 4);
+            execute("TRUNCATE TABLE tab");
+            execute("INSERT INTO tab VALUES ('2024-01-02T00:00:00Z', 8, 'A', 'B')");
+            Assert.assertFalse(containsSymbolNullValue("tab", "sym"));
+            Assert.assertFalse(containsSymbolNullValue("tab", "tail"));
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            engine.clear();
+            assertQuery("SELECT x, sym, tail FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\ttail\n1\tA\tB\n2\tA\tB\n3\tA\tB\n4\tA\tB\n5\tA\t\n6\tA\t\n8\tA\tB\n");
+            Assert.assertFalse(containsSymbolNullValue("tab", "sym"));
+            assertQuery("SELECT x, sym FROM tab LATEST ON ts PARTITION BY sym")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\tsym\n8\tA\n");
+            assertQuery("SELECT x, tail FROM tab LATEST ON ts PARTITION BY tail")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ttail\n6\t\n8\tB\n");
+            Assert.assertTrue(containsSymbolNullValue("tab", "tail"));
+        });
+    }
+
+    private void assertAttachParquetWithoutNulls(boolean hasStatistics) throws Exception {
+        final ParquetDataCountingFilesFacade ff = new ParquetDataCountingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, Boolean.toString(hasStatistics));
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 1, 'A'),
+                        ('2024-01-01T01:00:00Z', 2, 'B'),
+                        ('2024-01-01T02:00:00Z', 3, 'A'),
+                        ('2024-01-01T03:00:00Z', 4, 'B'),
+                        ('2024-01-02T00:00:00Z', 5, 'C')
+                    """);
+            execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            assertDetachedSymbolStatistics(hasStatistics, new int[]{4}, 2);
+            execute("TRUNCATE TABLE tab KEEP SYMBOL MAPS");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            ff.isCounting = true;
+            try {
+                execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            } finally {
+                ff.isCounting = false;
+            }
+            if (hasStatistics) {
+                Assert.assertEquals(0, ff.dataOpenCount);
+                Assert.assertEquals(0, ff.dataMapCount);
+            }
+            engine.clear();
+            Assert.assertFalse(containsSymbolNullValue("tab", "s"));
+            assertQuery("SELECT x, s FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\ts\n1\tA\n2\tB\n3\tA\n4\tB\n");
+            assertQuery("SELECT x, s FROM tab LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n3\tA\n4\tB\n");
+        });
+    }
+
+    private void assertDetachedSymbolStatistics(boolean hasStatistics, int[] rowGroupSizes, int... symbolIds) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName("tab"))
+                    .concat("2024-01-01").put(DETACHED_DIR_MARKER);
+            final int partitionPathLen = path.size();
+            final long dataSize = ff.length(path.concat(PARQUET_PARTITION_NAME).$());
+            path.trimTo(partitionPathLen).concat(PARQUET_METADATA_FILE_NAME);
+            final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), reader);
+            Assert.assertNotEquals(0, addr);
+            final long size = reader.getFileSize();
+            try {
+                Assert.assertTrue(reader.resolveFooter(dataSize));
+                Assert.assertEquals(rowGroupSizes.length, reader.getRowGroupCount());
+                for (int symbolId : symbolIds) {
+                    final int columnIndex = reader.getColumnIndexById(symbolId);
+                    Assert.assertTrue(columnIndex >= 0);
+                    for (int rg = 0; rg < rowGroupSizes.length; rg++) {
+                        Assert.assertEquals(rowGroupSizes[rg], reader.getRowGroupSize(rg));
+                        Assert.assertEquals(hasStatistics, (reader.getChunkStatFlags(rg, columnIndex) & 0x80) != 0);
+                    }
+                }
+            } finally {
+                reader.clear();
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+    }
+
+    private void assertAttachPartitionAfterTruncateRestoresSymbolNullFlag(boolean isParquet, boolean hasParquetMetadata, boolean hasStatistics) throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, Boolean.toString(hasStatistics));
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 1, NULL),
+                        ('2024-01-01T01:00:00Z', 2, NULL),
+                        ('2024-01-02T00:00:00Z', 3, 'A')
+                    """);
+            if (isParquet) {
+                execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            }
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            execute("TRUNCATE TABLE tab");
+            Assert.assertFalse(containsSymbolNullValue("tab", "s"));
+            if (!hasParquetMetadata) {
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(engine.verifyTableName("tab"))
+                            .concat("2024-01-01").put(DETACHED_DIR_MARKER).concat(PARQUET_METADATA_FILE_NAME);
+                    Assert.assertTrue(TestUtils.remove(path.$()));
+                }
+            }
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            engine.clear();
+            try (TableReader reader = getReader("tab")) {
+                Assert.assertEquals(isParquet, reader.getTxFile().isPartitionParquet(0));
+            }
+            assertQuery("SELECT x, s FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\ts\n1\t\n2\t\n");
+            assertQuery("SELECT x, s FROM tab LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary()
+                    .withPlanContaining("LatestByDeferredListValuesFiltered")
+                    .returns("x\ts\n2\t\n");
+            Assert.assertTrue(containsSymbolNullValue("tab", "s"));
+        });
+    }
+
+    private static class SymbolDataMapFailingFilesFacade extends TestFilesFacadeImpl {
+        private long dataFd = -1;
+        private boolean isFailing;
+
+        @Override
+        public boolean close(long fd) {
+            if (fd == dataFd) {
+                dataFd = -1;
+            }
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            if (fd == dataFd) {
+                return MAP_FAILED;
+            }
+            return super.mmap(fd, len, offset, flags, memoryTag);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            if (isFailing && Utf8s.endsWithAscii(name, "sym.d")) {
+                dataFd = fd;
+            }
+            return fd;
+        }
+    }
+
+    private static class SymbolIndexOpenFailingFilesFacade extends TestFilesFacadeImpl {
+        private boolean isFailing;
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isFailing && (Utf8s.endsWithAscii(name, "sym.k") || Utf8s.endsWithAscii(name, "sym.pk"))) {
+                return -1;
+            }
+            return super.openRO(name);
+        }
+    }
+
+    private static class SymbolDataOpenCountingFilesFacade extends TestFilesFacadeImpl {
+        private int dataOpenCount;
+        private boolean isCounting;
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isCounting && Utf8s.endsWithAscii(name, "sym.d")) {
+                dataOpenCount++;
+            }
+            return super.openRO(name);
+        }
+    }
+
+    private static class ParquetDataCountingFilesFacade extends TestFilesFacadeImpl {
+        private long dataFd = -1;
+        private int dataMapCount;
+        private int dataOpenCount;
+        private boolean isCounting;
+
+        @Override
+        public boolean close(long fd) {
+            if (fd == dataFd) {
+                dataFd = -1;
+            }
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            if (isCounting && fd == dataFd) {
+                dataMapCount++;
+            }
+            return super.mmap(fd, len, offset, flags, memoryTag);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            if (Utf8s.endsWithAscii(name, PARQUET_PARTITION_NAME)) {
+                dataFd = fd;
+                if (isCounting) {
+                    dataOpenCount++;
+                }
+            }
+            return fd;
+        }
+    }
+
     private void assertFailure(String tableName, String operation, String errorMsg) throws Exception {
         assertFailure(null, tableName, operation, errorMsg);
     }
@@ -2853,6 +3695,62 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         }
     }
 
+    private void assertParquetPmResolvesAgainstTxn(String tableName) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final TableToken token = engine.verifyTableName(tableName);
+
+        // Snapshot every parquet partition's identity + the txn-encoded
+        // parquet file size up front, then drop the reader so the _pm files
+        // are not held by the engine when we open them directly below.
+        long[] timestamps;
+        long[] nameTxns;
+        long[] parquetFileSizes;
+        try (TableReader reader = engine.getReader(token)) {
+            int parquetCount = 0;
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getTxFile().isPartitionParquet(i)) {
+                    parquetCount++;
+                }
+            }
+            Assert.assertTrue("table has at least one parquet partition", parquetCount > 0);
+            timestamps = new long[parquetCount];
+            nameTxns = new long[parquetCount];
+            parquetFileSizes = new long[parquetCount];
+            int idx = 0;
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getTxFile().isPartitionParquet(i)) {
+                    timestamps[idx] = reader.getTxFile().getPartitionTimestampByIndex(i);
+                    nameTxns[idx] = reader.getTxFile().getPartitionNameTxn(i);
+                    parquetFileSizes[idx] = reader.getTxFile().getPartitionParquetFileSize(i);
+                    idx++;
+                }
+            }
+        }
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseInactive();
+
+        for (int i = 0; i < timestamps.length; i++) {
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(p, timestampType.getTimestampType(), PartitionBy.DAY, timestamps[i], nameTxns[i]);
+                ParquetMetaFileReader pmReader = new ParquetMetaFileReader();
+                long addr = ParquetMetaFileReader.openAndMapRO(ff, p.$(), pmReader);
+                Assert.assertNotEquals("openAndMapRO on " + p, 0L, addr);
+                long size = pmReader.getFileSize();
+                try {
+                    Assert.assertTrue(
+                            "resolveFooter against txn parquetFileSize=" + parquetFileSizes[i] + " for " + p,
+                            pmReader.resolveFooter(parquetFileSizes[i])
+                    );
+                } finally {
+                    pmReader.clear();
+                    ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
+            }
+        }
+    }
+
     private void dropCurrentVersionOfPartition(String tableName, String partitionName) throws SqlException {
         engine.clear();
         // hide the detached partition
@@ -2900,7 +3798,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     private String replaceTimestampSuffix(String expected) {
-        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
+        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replace("Z\t", "000Z\t").replace("Z\n", "000Z\n") : expected;
     }
 
     private void runPartitionPurgeJobs() {

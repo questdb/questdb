@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class LnFunctionFactoryTest extends AbstractCairoTest {
@@ -46,13 +45,12 @@ public class LnFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void assertLog(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                engine,
-                sqlExecutionContext,
-                sql,
-                sink,
-                "ln\n" +
+        assertMemoryLeak(() -> assertQuery(sql)
+                .withEngine(engine)
+                .withContext(sqlExecutionContext)
+                .noLeakCheck()
+                .returnsOnce("ln\n" +
                         expected
-        ));
+                ));
     }
 }

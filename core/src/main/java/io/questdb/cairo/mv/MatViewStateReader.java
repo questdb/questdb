@@ -118,6 +118,11 @@ public class MatViewStateReader implements Mutable {
             @NotNull BlockFileReader reader,
             @NotNull TableToken matViewToken
     ) {
+        // Reset first: a reused reader must not carry later-block fields (lastPeriodHi,
+        // refreshIntervalsBaseTxn, refreshIntervals) from a previously-read view into a state file that
+        // omits those blocks (a pre-intervals-block legacy file). The of(MatViewDataInfo) and
+        // of(MatViewInvalidationInfo) siblings already fully repopulate; this block-file path must too.
+        clear();
         boolean matViewStateBlockFound = false;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {

@@ -41,14 +41,15 @@ import org.jetbrains.annotations.Nullable;
 
 public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mutable {
     public static final int EOL_LENGTH = Misc.EOL.length();
-    private final static int UTF8_BYTE_CLASS_BAD = -1;
-    private final static int UTF8_BYTE_CLASS_CONTINUATION = 0;
+    static final int UTF8_BYTE_CLASS_BAD = -1;
+    static final int UTF8_BYTE_CLASS_CONTINUATION = 0;
     protected final long address;
     protected final long lim;
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     protected long _wptr;
     private boolean done = false;
     private int level;
+    private int[] ryuE10;
 
     public LogRecordUtf8Sink(long address, long addressSize) {
         this.address = _wptr = address;
@@ -62,12 +63,29 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(address + index);
+        return Unsafe.getByte(address + index);
+    }
+
+    public int capacity() {
+        return (int) (lim - address);
     }
 
     @Override
     public void clear() {
         _wptr = address;
+        done = false;
+    }
+
+    /**
+     * Replaces the contents of this record with the bytes staged in the given
+     * sink. The staged bytes already follow this record's truncation rules when
+     * the staging capacity does not exceed {@link #capacity()}; a larger staged
+     * record gets cut at the capacity.
+     */
+    public void copyFrom(HeapLogRecordUtf8Sink src) {
+        final long len = Math.min(src.size(), lim - address);
+        Unsafe.copyMemory(src.buffer(), Unsafe.BYTE_OFFSET, null, address, len);
+        _wptr = address + len;
         done = false;
     }
 
@@ -116,7 +134,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
     public Utf8Sink put(byte b) {
         final long left = lim - _wptr - EOL_LENGTH;
         if (left >= 4) { // 4 is the maximum byte length for a UTF-8 character.
-            Unsafe.getUnsafe().putByte(_wptr++, b);
+            Unsafe.putByte(_wptr++, b);
             return this;
         }
 
@@ -148,7 +166,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         }
 
         if (left >= needed) {
-            Unsafe.getUnsafe().putByte(_wptr++, b);
+            Unsafe.putByte(_wptr++, b);
         } else {
             done = true;
         }
@@ -172,7 +190,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         final long size = hi - lo;
         if (rem >= size) {
             // Common case where the buffer fits the available space.
-            Unsafe.getUnsafe().copyMemory(lo, _wptr, size);
+            Unsafe.copyMemory(lo, _wptr, size);
             _wptr += size;
             return this;
         }
@@ -183,16 +201,24 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         // NOTE: The computed length may be negative.
         long safeLen = rem - 4;
         if (safeLen > 0) {
-            Unsafe.getUnsafe().copyMemory(lo, _wptr, safeLen);
+            Unsafe.copyMemory(lo, _wptr, safeLen);
             _wptr += safeLen;
         }
 
         safeLen = Math.max(0, safeLen);
         for (long i = safeLen; i < rem; i++) {
             // Copying the final few bytes one at a time ensures we don't write any partial codepoints.
-            put(Unsafe.getUnsafe().getByte(lo + i));
+            put(Unsafe.getByte(lo + i));
         }
         return this;
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     public void setLevel(int level) {
@@ -224,7 +250,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         return Utf8s.stringFromUtf8Bytes(address, _wptr);
     }
 
-    private static int utf8ByteClass(byte b) {
+    static int utf8ByteClass(byte b) {
         // Reference the table at:
         // https://en.wikipedia.org/wiki/UTF-8#Encoding
         if (b >= 0) {
@@ -263,7 +289,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
 
                 lookback:
                 for (; ptr >= boundary; --ptr) {
-                    final byte prev = Unsafe.getUnsafe().getByte(ptr);
+                    final byte prev = Unsafe.getByte(ptr);
                     multibyteLength = utf8ByteClass(prev);
                     switch (multibyteLength) {
                         case UTF8_BYTE_CLASS_BAD:

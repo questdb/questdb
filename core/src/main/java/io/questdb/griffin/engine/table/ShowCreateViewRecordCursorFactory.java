@@ -51,19 +51,27 @@ import org.jetbrains.annotations.NotNull;
 public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
     private static final RecordMetadata METADATA;
+    // the view a SHOW written in a view reads the view through, see SqlExecutionContext.isTableFunctionVisible()
+    protected final SqlExecutionContext.TableFunctionView tableFunctionView;
     protected final int tokenPosition;
     protected final TableToken viewToken;
-    private final ShowCreateViewCursor cursor = new ShowCreateViewCursor();
+    private ShowCreateViewCursor cursor = new ShowCreateViewCursor();
 
-    public ShowCreateViewRecordCursorFactory(TableToken viewToken, int tokenPosition) {
+    public ShowCreateViewRecordCursorFactory(
+            TableToken viewToken,
+            int tokenPosition,
+            SqlExecutionContext.TableFunctionView tableFunctionView
+    ) {
         super(METADATA);
         this.viewToken = viewToken;
         this.tokenPosition = tokenPosition;
+        this.tableFunctionView = tableFunctionView;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        return cursor.of(executionContext, viewToken, tokenPosition);
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        return cursor.of(executionContext, viewToken, tokenPosition, tableFunctionView);
     }
 
     @Override
@@ -79,8 +87,16 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateViewCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public static class ShowCreateViewCursor implements NoRandomAccessRecordCursor {
@@ -125,16 +141,28 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
         public ShowCreateViewCursor of(
                 SqlExecutionContext executionContext,
                 TableToken viewToken,
-                int tokenPosition
+                int tokenPosition,
+                SqlExecutionContext.TableFunctionView tableFunctionView
         ) throws SqlException {
+            // Compilation already hid the view from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated.
+            if (!executionContext.isTableFunctionVisible(viewToken, tableFunctionView)) {
+                throw SqlException.viewDoesNotExist(tokenPosition, viewToken.getTableName());
+            }
             this.viewToken = viewToken;
             this.executionContext = executionContext;
+            // The view token is resolved from the synchronously loaded table registry
+            // (SqlParserCallback.getViewToken), which already guarantees the view exists
+            // and is a view. Do NOT treat a metadata-cache miss as "view does not exist":
+            // plain views have no _meta file, are skipped by the startup hydrator, and
+            // hydrateTableOnDemand() no-ops on views, so only the async ViewCompilerJob
+            // ever caches them. Gating on the cache would report a registered view as
+            // missing during the startup / embedded window (the bug fixed for SHOW CREATE
+            // TABLE/MATERIALIZED VIEW). Read the cache best-effort to keep the staleness
+            // guard when the view is warm; the definition itself is read from disk below.
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.view = metadataRO.getTable(viewToken);
-                if (this.view == null) {
-                    throw SqlException.$(tokenPosition, "view does not exist [view=")
-                            .put(viewToken.getTableName()).put(']');
-                } else if (!viewToken.equals(view.getTableToken())) {
+                if (this.view != null && !viewToken.equals(view.getTableToken())) {
                     throw TableReferenceOutOfDateException.of(viewToken);
                 }
             }
@@ -190,9 +218,15 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
                     .put(viewToken.getTableName())
                     .putAscii("' AS ( ")
                     .putAscii('\n');
-            sink.put(viewDefinition.getViewSql());
+            ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getViewSql());
             sink.putAscii('\n');
             sink.putAscii(')');
+            if (viewDefinition.isAudited()) {
+                // Emitted before putAdditional(), so the statement reads
+                // `... ) WITH AUDIT <whatever Enterprise appends>;`. WITH AUDIT is an Enterprise
+                // clause, so this ordering has to match the grammar that parses it back.
+                sink.putAscii(" WITH AUDIT");
+            }
             putAdditional();
             sink.putAscii(';');
         }

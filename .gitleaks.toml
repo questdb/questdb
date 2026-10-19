@@ -1,3 +1,9 @@
+# Extend the built-in ruleset rather than replacing it. A config that declares
+# only an allowlist silently drops every default rule, leaving the scan unable
+# to detect anything at all.
+[extend]
+useDefault = true
+
 [allowlist]
   description = "Exclude test source directories (false positives from test credentials/tokens)"
   paths = [

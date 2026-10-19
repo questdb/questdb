@@ -131,20 +131,18 @@ public class DoubleArrayElemSumFunctionFactoryTest extends AbstractDoubleArrayEl
 
     @Test
     public void testAllNullArrays() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_sum\nnull\n",
-                "SELECT array_elem_sum(null::double[], null::double[])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_sum(null::double[], null::double[])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_sum\nnull\n"));
     }
 
     @Test
     public void testDifferentLengths() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_sum\n[4.0,6.0,5.0]\n",
-                "SELECT array_elem_sum(ARRAY[1.0, 2.0], ARRAY[3.0, 4.0, 5.0])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_sum(ARRAY[1.0, 2.0], ARRAY[3.0, 4.0, 5.0])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_sum\n[4.0,6.0,5.0]\n"));
     }
 
     @Test
@@ -152,30 +150,27 @@ public class DoubleArrayElemSumFunctionFactoryTest extends AbstractDoubleArrayEl
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (a DOUBLE[], b DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0], ARRAY[3.0, 4.0])");
-            assertQueryNoLeakCheck(
-                    "array_elem_sum\n[4.0,6.0]\n",
-                    "SELECT array_elem_sum(a, b) FROM tab",
-                    null, true, true
-            );
+            assertQuery("SELECT array_elem_sum(a, b) FROM tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("array_elem_sum\n[4.0,6.0]\n");
         });
     }
 
     @Test
     public void testNanElements() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_sum\n[1.0,2.0]\n",
-                "SELECT array_elem_sum(ARRAY[1.0, null], ARRAY[null, 2.0])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_sum(ARRAY[1.0, null], ARRAY[null, 2.0])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_sum\n[1.0,2.0]\n"));
     }
 
     @Test
     public void testOneNullArray() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_sum\n[1.0,2.0]\n",
-                "SELECT array_elem_sum(null::double[], ARRAY[1.0, 2.0])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_sum(null::double[], ARRAY[1.0, 2.0])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_sum\n[1.0,2.0]\n"));
     }
 
     @Test
@@ -225,11 +220,10 @@ public class DoubleArrayElemSumFunctionFactoryTest extends AbstractDoubleArrayEl
 
     @Test
     public void testThreeArraysSameLength() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_sum\n[9.0,12.0]\n",
-                "SELECT array_elem_sum(ARRAY[1.0, 2.0], ARRAY[3.0, 4.0], ARRAY[5.0, 6.0])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_sum(ARRAY[1.0, 2.0], ARRAY[3.0, 4.0], ARRAY[5.0, 6.0])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_sum\n[9.0,12.0]\n"));
     }
 
     @Test
@@ -275,10 +269,9 @@ public class DoubleArrayElemSumFunctionFactoryTest extends AbstractDoubleArrayEl
 
     @Test
     public void testTwoArraysSameLength() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_sum\n[4.0,6.0]\n",
-                "SELECT array_elem_sum(ARRAY[1.0, 2.0], ARRAY[3.0, 4.0])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_sum(ARRAY[1.0, 2.0], ARRAY[3.0, 4.0])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_sum\n[4.0,6.0]\n"));
     }
 }

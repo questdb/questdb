@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
@@ -43,7 +42,7 @@ import static io.questdb.test.tools.TestUtils.createSqlExecutionCtx;
 
 public class InsertAsSelectTest extends AbstractCairoTest {
     @Test
-    public void testInsertAsSelectStrToDecimal() throws SqlException {
+    public void testInsertAsSelectStrToDecimal() throws Exception {
         try {
             ColumnType.makeUtf16DefaultString();
 
@@ -68,25 +67,29 @@ public class InsertAsSelectTest extends AbstractCairoTest {
             drainWalQueue();
 
             // check
-            assertSql("d\n" +
-                            "1.000\n" +
-                            "2.000\n" +
-                            "3.000\n" +
-                            "4.000\n" +
-                            "5.000\n" +
-                            "6.000\n" +
-                            "7.000\n" +
-                            "8.000\n" +
-                            "9.000\n" +
-                            "10.000\n",
-                    "select d from target");
+            assertQuery("select d from target")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d
+                            1.000
+                            2.000
+                            3.000
+                            4.000
+                            5.000
+                            6.000
+                            7.000
+                            8.000
+                            9.000
+                            10.000
+                            """);
         } finally {
             ColumnType.resetStringToDefault();
         }
     }
 
     @Test
-    public void testInsertAsSelectStringToVarChar() throws SqlException {
+    public void testInsertAsSelectStringToVarChar() throws Exception {
         try {
             ColumnType.makeUtf16DefaultString();
 
@@ -184,11 +187,15 @@ public class InsertAsSelectTest extends AbstractCairoTest {
         doneLatch.await();
         Assert.assertNull(insertException.get());
         drainWalQueue();
-        assertSql("count\n100\n", "select count(*) from target");
+        assertQuery("select count(*) from target")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n100\n");
     }
 
     @Test
-    public void testSelectAsInsertManyColumns() throws SqlException {
+    public void testSelectAsInsertManyColumns() throws Exception {
         createTableManyCols("main");
         createTableManyCols("temp");
 
@@ -196,7 +203,7 @@ public class InsertAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectAsInsertManyColumnsWithUnion() throws SqlException {
+    public void testSelectAsInsertManyColumnsWithUnion() throws Exception {
         createTableManyCols("main");
         createTableManyCols("temp");
 

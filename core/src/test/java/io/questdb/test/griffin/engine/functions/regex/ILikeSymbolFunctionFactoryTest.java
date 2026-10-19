@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.functions.regex.AbstractLikeSymbolFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -65,23 +66,125 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableCaseEquivalentRebindReusesSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('Apex'), ('beta')");
+
+            try {
+                for (int mode = 0; mode < 2; mode++) {
+                    final boolean isParallelFilterEnabled = mode == 0;
+                    sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
+                    try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ILIKE $1")) {
+                        AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                        AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                        try {
+                            bindVariableService.setStr(0, "A%");
+                            drain(factory);
+                            Assert.assertEquals(1, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                            bindVariableService.setStr(0, "a%");
+                            drain(factory);
+                            Assert.assertEquals(
+                                    "a case-equivalent ILIKE rebind must reuse the matched keys [parallel="
+                                            + isParallelFilterEnabled + ']',
+                                    1,
+                                    AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                            );
+
+                            drain(factory);
+                            Assert.assertEquals(
+                                    "an unchanged lower-case ILIKE bind must reuse the matched keys [parallel="
+                                            + isParallelFilterEnabled + ']',
+                                    1,
+                                    AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                            );
+
+                            bindVariableService.setStr(0, null);
+                            drain(factory);
+                            bindVariableService.setStr(0, "");
+                            drain(factory);
+                            Assert.assertEquals(1, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                            bindVariableService.setStr(0, "a%");
+                            drain(factory);
+                            Assert.assertEquals(2, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                            execute("INSERT INTO x VALUES ('" + (isParallelFilterEnabled ? "amber" : "atlas") + "')");
+                            drain(factory);
+                            Assert.assertEquals(
+                                    "a changed dictionary must invalidate case-insensitive matched keys [parallel="
+                                            + isParallelFilterEnabled + ']',
+                                    3,
+                                    AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                            );
+                        } finally {
+                            AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableUpperCaseRetainedFactoryReusesSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT rnd_symbol(20_000, 8, 12, 0) sym FROM long_sequence(20_000))");
+
+            bindVariableService.setStr(0, "A%");
+            try {
+                for (int mode = 0; mode < 2; mode++) {
+                    final boolean isParallelFilterEnabled = mode == 0;
+                    sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
+                    try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ILIKE $1")) {
+                        AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                        AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                        try {
+                            for (int i = 0; i < 3; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    while (cursor.hasNext()) {
+                                        // drain the cursor
+                                    }
+                                }
+                            }
+                            Assert.assertEquals(
+                                    "an unchanged upper-case ILIKE bind and dictionary must reuse the matched keys [parallel="
+                                            + isParallelFilterEnabled + ']',
+                                    1,
+                                    AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                            );
+                        } finally {
+                            AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
     public void testEmptyLike() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as symbol) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as symbol) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as symbol) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as symbol) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as symbol) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as symbol) as name from long_sequence(1)
+                            )"""
             );
-            assertSql(
-                    "name\n",
-                    "select * from x where name ilike ''"
-            );
+            assertQuery("select * from x where name ilike ''")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -89,20 +192,20 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     public void testInvalidRegex() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as symbol) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as symbol) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as symbol) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as symbol) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as symbol) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as symbol) as name from long_sequence(1)
+                            )"""
             );
-            assertSql(
-                    "name\n",
-                    "select * from x where name ilike '[][n'"
-            );
+            assertQuery("select * from x where name ilike '[][n'")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -110,21 +213,23 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     public void testLikeCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as symbol) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as symbol) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as symbol) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as symbol) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as symbol) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as symbol) as name from long_sequence(1)
+                            )"""
             );
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name ilike 'aBcGe'"
-            );
+            assertQuery("select * from x where name ilike 'aBcGe'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            ABCGE
+                            """);
         });
     }
 
@@ -158,106 +263,116 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLikePercentageAtEnd() throws Exception {
         assertMemoryLeak(() -> {
-            String sql = "create table x as (\n" +
-                    "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
-                    ")";
+            String sql = """
+                    create table x as (
+                    select cast('ABCGE' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('SBDHDJ' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('BDGDGGG' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('AAAAVVV' as symbol) as name from long_sequence(1)
+                    )""";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name ilike 'AbC%'"
-            );
+            assertQuery("select * from x where name ilike 'AbC%'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            ABCGE
+                            """);
         });
     }
 
     @Test
     public void testLikePercentageAtStart() throws Exception {
         assertMemoryLeak(() -> {
-            String sql = "create table x as (\n" +
-                    "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
-                    ")";
+            String sql = """
+                    create table x as (
+                    select cast('ABCGE' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('SBDHDJ' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('BDGDGGG' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('AAAAVVV' as symbol) as name from long_sequence(1)
+                    )""";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "BDGDGGG\n",
-                    "select * from x where name ilike '%GgG'"
-            );
+            assertQuery("select * from x where name ilike '%GgG'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            BDGDGGG
+                            """);
         });
     }
 
     @Test
     public void testLikePercentageAtStartAndEnd() throws Exception {
         assertMemoryLeak(() -> {
-            String sql = "create table x as (\n" +
-                    "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
-                    ")";
+            String sql = """
+                    create table x as (
+                    select cast('ABCGE' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('SBDHDJ' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('BDGDGGG' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('AAAAVVV' as symbol) as name from long_sequence(1)
+                    )""";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name ilike '%BcG%'"
-            );
+            assertQuery("select * from x where name ilike '%BcG%'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            ABCGE
+                            """);
         });
     }
 
     @Test
     public void testLikeStringUnderscoreAtStartAndEnd() throws Exception {
         assertMemoryLeak(() -> {
-            String sql = "create table x as (\n" +
-                    "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
-                    ")";
+            String sql = """
+                    create table x as (
+                    select cast('ABCGE' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('SBDHDJ' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('BDGDGGG' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('AAAAVVV' as symbol) as name from long_sequence(1)
+                    )""";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name ilike '_BC__'"
-            );
+            assertQuery("select * from x where name ilike '_BC__'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            ABCGE
+                            """);
         });
     }
 
     @Test
     public void testLikeUnderscoreAndPercentage() throws Exception {
         assertMemoryLeak(() -> {
-            String sql = "create table x as (\n" +
-                    "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as symbol) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
-                    ")";
+            String sql = """
+                    create table x as (
+                    select cast('ABCGE' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('SBDHDJ' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('BDGDGGG' as symbol) as name from long_sequence(1)
+                    union
+                    select cast('AAAAVVV' as symbol) as name from long_sequence(1)
+                    )""";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n" +
-                            "SBDHDJ\n",
-                    "select * from x where name ilike '_B%'"
-            );
+            assertQuery("select * from x where name ilike '_B%'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            ABCGE
+                            SBDHDJ
+                            """);
         });
     }
 
@@ -265,23 +380,26 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('a','b','c') name from long_sequence(10))");
-            assertException("select * from x where name ilike rnd_str('foo','bar')", 33, "use constant or bind variable");
+            assertQuery("select * from x where name ilike rnd_str('foo','bar')")
+                    .fails(33, "use constant or bind variable");
         });
     }
 
     @Test
     public void testNonStaticSymbolTable() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "name\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n";
+            final String expected = """
+                    name
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    """;
             execute("create table x as (select rnd_str('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
 
             try (RecordCursorFactory factory = select("(select name::symbol name from x) where name ilike '%Op%'")) {
@@ -297,22 +415,23 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('a', 'BC', 'h', 'H', 'k') name from long_sequence(20))");
-            assertSql(
-                    "name\n" +
-                            "a\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "k\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "k\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "a\n" +
-                            "k\n",
-                    "select * from x where not name ilike 'H'"
-            );
+            assertQuery("select * from x where not name ilike 'H'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            a
+                            BC
+                            BC
+                            k
+                            BC
+                            BC
+                            BC
+                            k
+                            BC
+                            BC
+                            a
+                            k
+                            """);
         });
     }
 
@@ -320,16 +439,17 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeStringMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('kk', 'xJ', 'Xj', 'GU', 'XJ') name from long_sequence(20))");
-            assertSql(
-                    "name\n" +
-                            "kk\n" +
-                            "GU\n" +
-                            "GU\n" +
-                            "GU\n" +
-                            "GU\n" +
-                            "kk\n",
-                    "select * from x where not name ilike 'XJ'"
-            );
+            assertQuery("select * from x where not name ilike 'XJ'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            kk
+                            GU
+                            GU
+                            GU
+                            GU
+                            kk
+                            """);
         });
     }
 
@@ -337,28 +457,28 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
-            assertQuery(
-                    "name\n",
-                    "select * from x where name ilike null",
-                    false,
-                    true
-            );
+            assertQuery("select * from x where name ilike null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("name\n");
         });
     }
 
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "name\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n";
+            final String expected = """
+                    name
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    """;
             execute("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
 
             try (RecordCursorFactory factory = select("select * from x where name ilike '%OP%'")) {
@@ -408,7 +528,17 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    private void drain(RecordCursorFactory factory) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            while (cursor.hasNext()) {
+                // drain the cursor
+            }
+        }
+    }
+
     private void assertLike(String expected, String query) throws Exception {
-        assertQueryNoLeakCheck(expected, query, null, true, false);
+        assertQuery(query)
+                .noLeakCheck()
+                .returns(expected);
     }
 }

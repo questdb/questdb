@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -95,9 +96,9 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
                 }
                 boolean leftNeedsConvert = arg0Type != timestampType;
                 if (leftNeedsConvert) {
-                    return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType), arg0Type);
+                    return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType), argPositions.getQuick(1), arg0Type);
                 } else {
-                    return new TimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType));
+                    return new TimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType), argPositions.getQuick(1));
                 }
             case ColumnType.STRING:
                 return new StrCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
@@ -111,8 +112,8 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
     private static class LeftConvertTimestampCursorFunc extends TimestampCursorFunc {
         private final int leftTimestampType;
 
-        public LeftConvertTimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver, int leftTimestampType) {
-            super(factory, leftFunc, rightFunc, driver);
+        public LeftConvertTimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver, int rightPos, int leftTimestampType) {
+            super(factory, leftFunc, rightFunc, driver, rightPos);
             this.leftTimestampType = leftTimestampType;
         }
 
@@ -178,6 +179,7 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
+                    ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
                     epoch = Numbers.LONG_NULL;
                 }
@@ -221,14 +223,16 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
         protected final Function leftFunc;
         private final RecordCursorFactory factory;
         private final Function rightFunc;
+        private final int rightPos;
         protected long epoch;
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
-        public TimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver) {
+        public TimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver, int rightPos) {
             this.factory = factory;
             this.leftFunc = leftFunc;
             this.rightFunc = rightFunc;
+            this.rightPos = rightPos;
             this.driver = driver;
         }
 
@@ -261,6 +265,7 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     epoch = driver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
+                    ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
                     epoch = Numbers.LONG_NULL;
                 }
@@ -352,6 +357,7 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
+                    ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
                     epoch = Numbers.LONG_NULL;
                 }

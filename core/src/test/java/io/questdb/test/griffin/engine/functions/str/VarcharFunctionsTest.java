@@ -25,354 +25,502 @@
 package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableWriter;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.nio.charset.StandardCharsets;
 
 public class VarcharFunctionsTest extends AbstractCairoTest {
 
     @Test
+    public void testDateAndTimestampConversionsWithConservativeAsciiFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id int, ts_value varchar, date_value varchar, pg_date_value varchar)");
+
+            Utf8String timestamp = asciiWithoutFlag("2026-07-22 13:17:26.136");
+            Utf8String date = asciiWithoutFlag("2026-07-22");
+            Assert.assertFalse(timestamp.isAscii());
+            Assert.assertFalse(date.isAscii());
+
+            try (TableWriter writer = getWriter("x")) {
+                TableWriter.Row row = writer.newRow();
+                row.putInt(0, 1);
+                row.putVarchar(1, timestamp);
+                row.putVarchar(2, date);
+                row.putVarchar(3, date);
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 2);
+                row.putVarchar(1, new Utf8String("2026年07月22日 13:17:26.136"));
+                row.putVarchar(2, new Utf8String("2026年07月22日"));
+                row.putVarchar(3, new Utf8String("é"));
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 3);
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 4);
+                row.putVarchar(1, asciiWithoutFlag("22 Jul 2026 13:17:26.136"));
+                row.putVarchar(2, asciiWithoutFlag("22 Jul 2026"));
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 5);
+                row.putVarchar(1, new Utf8String("2026-07-22 13:17:26 Réunion Time"));
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 6);
+                row.putVarchar(1, malformedUtf8("2026年07月22日 13:17:26.136"));
+                row.putVarchar(2, malformedUtf8("2026年07月22日"));
+                row.putVarchar(3, malformedUtf8("2026-07-22"));
+                row.append();
+                writer.commit();
+            }
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') ts,
+                        to_timestamp_ns(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') ts_ns,
+                        to_date(date_value, 'yyyy-MM-dd') d,
+                        to_pg_date(pg_date_value) pg
+                    from x where id = 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tts_ns\td\tpg
+                            2026-07-22T13:17:26.136000Z\t2026-07-22T13:17:26.136000000Z\t2026-07-22T00:00:00.000Z\t2026-07-22T00:00:00.000Z
+                            """);
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'yyyy年MM月dd日 HH:mm:ss.SSS') ts,
+                        to_date(date_value, 'yyyy年MM月dd日') d,
+                        to_pg_date(pg_date_value) is null pg_null
+                    from x where id = 2
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts\td\tpg_null
+                            2026-07-22T13:17:26.136000Z\t2026-07-22T00:00:00.000Z\ttrue
+                            """);
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'dd MMM yyyy HH:mm:ss.SSS') ts,
+                        to_timestamp_ns(ts_value, 'dd MMM yyyy HH:mm:ss.SSS') ts_ns,
+                        to_date(date_value, 'dd MMM yyyy') d
+                    from x where id = 4
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tts_ns\td
+                            2026-07-22T13:17:26.136000Z\t2026-07-22T13:17:26.136000000Z\t2026-07-22T00:00:00.000Z
+                            """);
+
+            assertQuery("""
+                    select to_timestamp(ts_value, 'yyyy-MM-dd HH:mm:ss z') ts
+                    from x where id = 5
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts
+                            2026-07-22T09:17:26.000000Z
+                            """);
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') is null ts_null,
+                        to_timestamp_ns(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') is null ts_ns_null,
+                        to_date(date_value, 'yyyy-MM-dd') is null d_null,
+                        to_pg_date(pg_date_value) is null pg_null
+                    from x where id = 3
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts_null\tts_ns_null\td_null\tpg_null
+                            true\ttrue\ttrue\ttrue
+                            """);
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'yyyy年MM月dd日 HH:mm:ss.SSS') is null ts_null,
+                        to_timestamp_ns(ts_value, 'yyyy年MM月dd日 HH:mm:ss.SSS') is null ts_ns_null,
+                        to_date(date_value, 'yyyy年MM月dd日') is null d_null,
+                        to_pg_date(pg_date_value) is null pg_null,
+                        cast(ts_value as string) is null str_null,
+                        cast(ts_value as symbol) is null sym_null
+                    from x where id = 6
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts_null\tts_ns_null\td_null\tpg_null\tstr_null\tsym_null
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue
+                            """);
+        });
+    }
+
+    @Test
     public void testLength() throws Exception {
-        assertQuery(
-                // This argument doesn't assert any meaningful result, the cols are different at this point:
-                "count\n200\n",
-                "select count() from x where length(v_str) <> length(v_varchar)",
-                "create table x as (" +
-                        "select rnd_varchar(" +
-                        "'㮾劈渁ꑿ朰怲㔂퉮꾾桠云澆ⵥ⥤貚뛺퉧᧖晔姬䶡㭫ᆳҗ㋶\u1ADC㛚ᶎ\u0BFF㈲ꡭဦ㽋㫃䗬\u1ACC캱䬚焌㊈晎ꉰ瑟⿄䓔⒑ꬂ뗖麻䩕녏핥⊆',\n" +
-                        "'臑죐涕驠녃馀蚯㆙ࡀ詈韮⋊Ზ晻켏問᳡蔹\u20C8᧲㋳歭퐴顯赤쐙葦鬶凕㯅迧㾤恲넦┊兊',\n" +
-                        "'苻읺ꃻ籬璻㯹쐙儱쥺宎荎䴵晚㱎綦๒䮚要嫶ꤡ籘Ȏ犦\u0E7A➛\uAAFB嬃谉鎷죸ᣛਡ溶࣭㷠禐꣔',\n" +
-                        "'ೖ֩黡莟ꀱ푕㰆Ⳅꔻ᳅䈋\u0019㟛즈ǆ㏆帮ꪏᤌ四䞾凙㤶᧚煍 \u09B1건᧮傋否쾙걗Ե䔽鸃愘ᖈ㡑氤띕ㄶ\u0BE3榞╅骥Ӑ䮄溉콽㣡됥કⵗ呦',\n" +
-                        "'쫪쾜앻쾾麠☫븐ᮖ䀿ӝ롗湝',\n" +
-                        "'잖㇕ꕲ뉨펷釾閦餌飓竃̟湰ϻ\u0CDF됗摡添Į༇匋鍘ả뎃礦鈨돓쾶▆٫礤㣪뼕핶喘㑺ꤸ뉙샪豧䰅䳮䭘쮆錭й㤩⎪颜貝鐷',\n" +
-                        "'Ẉள뗙틾訃棯ꚭʸ\u0CD0籱愱阆뉮꒰뎼',\n" +
-                        "'룩隺쳃봬찂ϝ싵\u245B諑箥몞陼庛刐䪪团㒯ꁅЭ뫛눤➲댦ᯤᲃ⭮䝚ꡌ窀텴瘪次꿨ډ叭㜳⪞纎䷲㺽쾍⋍\u0084埆淶㿜䣃₪췪⸂渂떄\u0A56㖉䩳甓䨰慡璾鄵墀ꃢ봶撉䮗᥍䰈',\n" +
-                        "'님鏰\uAB0F캫듅歨⁽瘘ꑨ漬뛡혝둟樢굸',\n" +
-                        "'ꕅ덻∫\u09CF⼺蝑㝌酵䰈✟쫃믴靉ᐩ龺燤匂핷妺拊퐂툺计鉃맏奖넆唩ῷŸ祖䢻뵚麼ꎃ睾얧苖㟗⭇ᶹఱ勠찀ቬ㑅阻푪Ⱕ褁ⴵ抯⯪麷',\n" +
-                        "'轇㯋鱝덡簽麽ᴠ媐ᝮ効홻㩽㧓捣荹◁胂萗负琀ୀ\u0B29氏ⲗ渹\u0A44⧕谞㉎迱霌묫銊돴厎뵚궡ῒ딠濖ඃ緎㸦㷴ꎖ왆ሯធ\u19AE샇㻉뢖苛',\n" +
-                        "'斄ꕴ牐㽅駬쒀ꫵ䫝୍賬♨翲艆䪲捲茨稡냨ख혢⸺⚻쬆툜৷ᦞ觯ꖪꆪ狢ꓨ돷䜳䓃䷡◌饇䃛ኄ멩潛\u0A00箶瞯ᯭㅦ೮徑䴔\u05CC硎뾏궄᧱밋؟멆懅풨㙛㛔橧좣냜媽',\n" +
-                        "'싼슐듯쬼㊛⥇᪭椙梱㱇툚戋戧\u0A52䶧ฯ宂픁\u1316鱈眃⑲炢递邞ᚇべ禗㮆䅏䯽낼禼샜轞묏⺹캔\u2068⬶䗬騂Ȏ䔅杵셶嶑栄ᗫ㹺퇧浣莓单⮉챴䳻⣭椞㎰㵇➣ꮾ昈콱贔',\n" +
-                        "'頁䛂퇹憹鏂웾Ὡ㓜购픖⺑뢈귈뽐셵글뼫諀蔞⸢䎤ἐ펒ⱎ❩峛퍒穜㊊儔鞴笏㋙篣把撖祱鲆䕬ῥ걨欞ힶ癫⚨㌿졽ᇌ䩳៓쯀삜▵ː괝',\n" +
-                        "'ウ穿举괧⃗㆗閔℄榱걓꒫쪲\uA87F๕咞똍ኆᚍ靱歈꿘⹌박ꈻ㦸埇婅⯱鴩넮힠墆ḅ幛豵傾cㄵࣃ껑㉱腼纤椒ꊆ磘⾮⎰棡櫀뚷ଡᚠ킥㾽鳬⭾ڴ䗠㰯ꚼ䘵虸忇띔䱉℣쌋ꛉ㯼䖀ꋜꇬᆺ⨛胢\u1AF1㼫',\n" +
-                        "'쪍萫\u0098暌荏尿艴ꯑꛫ컎䇝ǌ敆֭豨∨\u05CB喀뺌즂꺒웴辐ኒ렺᭼鹼ꮌ拠',\n" +
-                        "'箲䂍ꁐ耵붃⢜穣菜뀍៘藟띻㴬ḁᝄ係愵',\n" +
-                        "'載巒ꈬ轿⁝䯰ȃ⼂\u0D80뿺穂偓泵唺꣫㯂幒⇄쳎떂\u09B5賭≂礣綦ꀦᖮ飰ᑺ仱⩃䰒ⷘ쨷翻佹',\n" +
-                        "'窑읽Ը兼너潭砸簠ꎹ颴ퟹ鶡矤謍嵛쇌띄哻ཛ닚흼劁㩰읏亄哨坩輓睘묊ᩔꍉԛᕋ㣞顤힕',\n" +
-                        "'웈된轭云㘊홤ヸꐔ苩⩩㲍광稷섷↮ꊨ肆锖⹀㥝菔뇃렔录ꛃ뗰瞉⟙✣ᅷ◀的뜦莱ݶ㔲緲쏮\u009FḜ妒㫯姧ꀥѯ轗䜬쒺呉続ꚋ멵㴴嗳㈕뺋嬇䉆',\n" +
-                        "'⼝ࣞаꔭ叒扠혦裖컌目瘋㜄篊쇳㪒╸㑧횙빍㑢㫪骞鵌놊붒戯ꓰ兢ꊘ䎇✵嚸ř璜꽯놁彽芳䎾慐㣅⾛ⁱ팗劁虮ẙമ쟑礽鞧⾖⳩ࣹ\u0B7D훅▮痬Ⴕ铂鲱뼰ᣇ',\n" +
-                        "'랊劫㐌㯼굞ᑾ¾۟♉룝㱝뎰鸏主Щ',\n" +
-                        "'ಝ㞃ꑻ؎刀膸駞蕳ⳍ짣ᦕ꾮⎿휋뽁駄\uAAFCᇤꭦǈꙆ쒨ஂ귓ඞ渇ᦱ㋴짿᳨皴欝沽埏팯᪓㾊瀘♂婑殶귽읊뺈졎앟᱉ဤᢂ佭ી폕귉豭⋙낁鱶尨晦䞌㗵\u200F좏譗朠삏귿䋰漾睺㕚栅骂猈朅蚬砰',\n" +
-                        "'㉠ꇊᎏ栍헁예匋ଵ䭗ꁲ␢ೠ鱶ꐭ핋⥩쒒탹쁰諲ೱ깏冔ȴ㭪珵䄃\u17FDힱ萪',\n" +
-                        "'崨귅ꯟ枖傖뚼沄㽕쇯\uAAFB❰䬊틒귖䡩綞좐趵ミ婱꼮ኄ䟹ݸ௨挑冱⿕䀍湹ూ㢻趪ꭳ屃㕴笠헝㴱埡꞊羇티봃ꫢãꂩ鿟獘嬃楍븽⒉굌櫇梋뒜籑過띟馇ꪇ뙓钩튆鍇婉ꇦꞳ險튗맽魷൴큒먗쉾碶烙'" +
-                        ") v_varchar, '' v_str" +
-                        " from long_sequence(200))",
-                null,
-                "update x set v_str = v_varchar",
-                // This is the actual assertion, all lengths must be equal:
-                "count\n0\n",
-                false,
-                true,
-                false
-        );
+        assertQuery("select count() from x where length(v_str) <> length(v_varchar)")
+                .ddl("""
+                        create table x as (\
+                        select rnd_varchar(\
+                        '㮾劈渁ꑿ朰怲㔂퉮꾾桠云澆ⵥ⥤貚뛺퉧᧖晔姬䶡㭫ᆳҗ㋶\u1ADC㛚ᶎ\u0BFF㈲ꡭဦ㽋㫃䗬\u1ACC캱䬚焌㊈晎ꉰ瑟⿄䓔⒑ꬂ뗖麻䩕녏핥⊆',
+                        '臑죐涕驠녃馀蚯㆙ࡀ詈韮⋊Ზ晻켏問᳡蔹\u20C8᧲㋳歭퐴顯赤쐙葦鬶凕㯅迧㾤恲넦┊兊',
+                        '苻읺ꃻ籬璻㯹쐙儱쥺宎荎䴵晚㱎綦๒䮚要嫶ꤡ籘Ȏ犦\u0E7A➛\uAAFB嬃谉鎷죸ᣛਡ溶࣭㷠禐꣔',
+                        'ೖ֩黡莟ꀱ푕㰆Ⳅꔻ᳅䈋\u0019㟛즈ǆ㏆帮ꪏᤌ四䞾凙㤶᧚煍 \u09B1건᧮傋否쾙걗Ե䔽鸃愘ᖈ㡑氤띕ㄶ\u0BE3榞╅骥Ӑ䮄溉콽㣡됥કⵗ呦',
+                        '쫪쾜앻쾾麠☫븐ᮖ䀿ӝ롗湝',
+                        '잖㇕ꕲ뉨펷釾閦餌飓竃̟湰ϻ\u0CDF됗摡添Į༇匋鍘ả뎃礦鈨돓쾶▆٫礤㣪뼕핶喘㑺ꤸ뉙샪豧䰅䳮䭘쮆錭й㤩⎪颜貝鐷',
+                        'Ẉள뗙틾訃棯ꚭʸ\u0CD0籱愱阆뉮꒰뎼',
+                        '룩隺쳃봬찂ϝ싵\u245B諑箥몞陼庛刐䪪团㒯ꁅЭ뫛눤➲댦ᯤᲃ⭮䝚ꡌ窀텴瘪次꿨ډ叭㜳⪞纎䷲㺽쾍⋍\u0084埆淶㿜䣃₪췪⸂渂떄\u0A56㖉䩳甓䨰慡璾鄵墀ꃢ봶撉䮗᥍䰈',
+                        '님鏰\uAB0F캫듅歨⁽瘘ꑨ漬뛡혝둟樢굸',
+                        'ꕅ덻∫\u09CF⼺蝑㝌酵䰈✟쫃믴靉ᐩ龺燤匂핷妺拊퐂툺计鉃맏奖넆唩ῷŸ祖䢻뵚麼ꎃ睾얧苖㟗⭇ᶹఱ勠찀ቬ㑅阻푪Ⱕ褁ⴵ抯⯪麷',
+                        '轇㯋鱝덡簽麽ᴠ媐ᝮ効홻㩽㧓捣荹◁胂萗负琀ୀ\u0B29氏ⲗ渹\u0A44⧕谞㉎迱霌묫銊돴厎뵚궡ῒ딠濖ඃ緎㸦㷴ꎖ왆ሯធ\u19AE샇㻉뢖苛',
+                        '斄ꕴ牐㽅駬쒀ꫵ䫝୍賬♨翲艆䪲捲茨稡냨ख혢⸺⚻쬆툜৷ᦞ觯ꖪꆪ狢ꓨ돷䜳䓃䷡◌饇䃛ኄ멩潛\u0A00箶瞯ᯭㅦ೮徑䴔\u05CC硎뾏궄᧱밋؟멆懅풨㙛㛔橧좣냜媽',
+                        '싼슐듯쬼㊛⥇᪭椙梱㱇툚戋戧\u0A52䶧ฯ宂픁\u1316鱈眃⑲炢递邞ᚇべ禗㮆䅏䯽낼禼샜轞묏⺹캔\u2068⬶䗬騂Ȏ䔅杵셶嶑栄ᗫ㹺퇧浣莓单⮉챴䳻⣭椞㎰㵇➣ꮾ昈콱贔',
+                        '頁䛂퇹憹鏂웾Ὡ㓜购픖⺑뢈귈뽐셵글뼫諀蔞⸢䎤ἐ펒ⱎ❩峛퍒穜㊊儔鞴笏㋙篣把撖祱鲆䕬ῥ걨欞ힶ癫⚨㌿졽ᇌ䩳៓쯀삜▵ː괝',
+                        'ウ穿举괧⃗㆗閔℄榱걓꒫쪲\uA87F๕咞똍ኆᚍ靱歈꿘⹌박ꈻ㦸埇婅⯱鴩넮힠墆ḅ幛豵傾cㄵࣃ껑㉱腼纤椒ꊆ磘⾮⎰棡櫀뚷ଡᚠ킥㾽鳬⭾ڴ䗠㰯ꚼ䘵虸忇띔䱉℣쌋ꛉ㯼䖀ꋜꇬᆺ⨛胢\u1AF1㼫',
+                        '쪍萫\u0098暌荏尿艴ꯑꛫ컎䇝ǌ敆֭豨∨\u05CB喀뺌즂꺒웴辐ኒ렺᭼鹼ꮌ拠',
+                        '箲䂍ꁐ耵붃⢜穣菜뀍៘藟띻㴬ḁᝄ係愵',
+                        '載巒ꈬ轿⁝䯰ȃ⼂\u0D80뿺穂偓泵唺꣫㯂幒⇄쳎떂\u09B5賭≂礣綦ꀦᖮ飰ᑺ仱⩃䰒ⷘ쨷翻佹',
+                        '窑읽Ը兼너潭砸簠ꎹ颴ퟹ鶡矤謍嵛쇌띄哻ཛ닚흼劁㩰읏亄哨坩輓睘묊ᩔꍉԛᕋ㣞顤힕',
+                        '웈된轭云㘊홤ヸꐔ苩⩩㲍광稷섷↮ꊨ肆锖⹀㥝菔뇃렔录ꛃ뗰瞉⟙✣ᅷ◀的뜦莱ݶ㔲緲쏮\u009FḜ妒㫯姧ꀥѯ轗䜬쒺呉続ꚋ멵㴴嗳㈕뺋嬇䉆',
+                        '⼝ࣞаꔭ叒扠혦裖컌目瘋㜄篊쇳㪒╸㑧횙빍㑢㫪骞鵌놊붒戯ꓰ兢ꊘ䎇✵嚸ř璜꽯놁彽芳䎾慐㣅⾛ⁱ팗劁虮ẙമ쟑礽鞧⾖⳩ࣹ\u0B7D훅▮痬Ⴕ铂鲱뼰ᣇ',
+                        '랊劫㐌㯼굞ᑾ¾۟♉룝㱝뎰鸏主Щ',
+                        'ಝ㞃ꑻ؎刀膸駞蕳ⳍ짣ᦕ꾮⎿휋뽁駄\uAAFCᇤꭦǈꙆ쒨ஂ귓ඞ渇ᦱ㋴짿᳨皴欝沽埏팯᪓㾊瀘♂婑殶귽읊뺈졎앟᱉ဤᢂ佭ી폕귉豭⋙낁鱶尨晦䞌㗵\u200F좏譗朠삏귿䋰漾睺㕚栅骂猈朅蚬砰',
+                        '㉠ꇊᎏ栍헁예匋ଵ䭗ꁲ␢ೠ鱶ꐭ핋⥩쒒탹쁰諲ೱ깏冔ȴ㭪珵䄃\u17FDힱ萪',
+                        '崨귅ꯟ枖傖뚼沄㽕쇯\uAAFB❰䬊틒귖䡩綞좐趵ミ婱꼮ኄ䟹ݸ௨挑冱⿕䀍湹ూ㢻趪ꭳ屃㕴笠헝㴱埡꞊羇티봃ꫢãꂩ鿟獘嬃楍븽⒉굌櫇梋뒜籑過띟馇ꪇ뙓钩튆鍇婉ꇦꞳ險튗맽魷൴큒먗쉾碶烙'\
+                        ) v_varchar, '' v_str\
+                         from long_sequence(200))""")
+                .mutateWith("update x set v_str = v_varchar")
+                .noRandomAccess()
+                .expectSize()
+                .returns(
+                        // This argument doesn't assert any meaningful result, the cols are different at this point:
+                        "count\n200\n",
+                        // This is the actual assertion, all lengths must be equal:
+                        "count\n0\n");
     }
 
     @Test
     public void testLtrim() throws Exception {
-        assertQuery(
-                "k\tltrim\n" +
-                        "  abc\tabc\n" +
-                        "  abc\tabc\n" +
-                        "abc  \tabc  \n" +
-                        "   \t\n" +
-                        "   \t\n",
-                "select k, ltrim(k) from x",
-                "create table x as (select rnd_varchar('  abc', 'abc  ', '   ') k from long_sequence(5))",
-                null, true, true
-        );
+        assertQuery("select k, ltrim(k) from x")
+                .ddl("create table x as (select rnd_varchar('  abc', 'abc  ', '   ') k from long_sequence(5))")
+                .expectSize()
+                .returns("""
+                        k\tltrim
+                          abc\tabc
+                          abc\tabc
+                        abc  \tabc \s
+                           \t
+                           \t
+                        """);
     }
 
     @Test
     public void testPosition() throws Exception {
-        assertQuery(
-                "k\tposition\n" +
-                        "xa\t2\n" +
-                        "aax\t1\n" +
-                        "xx\t0\n" +
-                        "\t0\n" +
-                        "xx\t0\n",
-                "select k, position(k, 'a') from x",
-                "create table x as (select rnd_varchar('xa', 'xx', 'aax', '') k from long_sequence(5))",
-                null, true, true);
+        assertQuery("select k, position(k, 'a') from x")
+                .ddl("create table x as (select rnd_varchar('xa', 'xx', 'aax', '') k from long_sequence(5))")
+                .expectSize()
+                .returns("""
+                        k\tposition
+                        xa\t2
+                        aax\t1
+                        xx\t0
+                        \t0
+                        xx\t0
+                        """);
     }
 
     @Test
     public void testReplace() throws Exception {
-        assertQuery(
-                "k\treplace\n" +
-                        "xa\txb\n" +
-                        "aax\tbbx\n" +
-                        "xx\txx\n" +
-                        "\t\n" +
-                        "xx\txx\n",
-                "select k, replace(k, 'a', 'b') from x",
-                "create table x as (select rnd_varchar('xa', 'xx', 'aax', '') k from long_sequence(5))",
-                null, true, true);
+        assertQuery("select k, replace(k, 'a', 'b') from x")
+                .ddl("create table x as (select rnd_varchar('xa', 'xx', 'aax', '') k from long_sequence(5))")
+                .expectSize()
+                .returns("""
+                        k\treplace
+                        xa\txb
+                        aax\tbbx
+                        xx\txx
+                        \t
+                        xx\txx
+                        """);
     }
 
     @Test
     public void testReplaceConstant() throws Exception {
-        assertQuery(
-                "replace\n" +
-                        "som\n",
-                "select replace('tom'::varchar, 't'::varchar, 's'::varchar) from x",
-                "create table x as (select x from long_sequence(1))",
-                null, true, true);
+        assertQuery("select replace('tom'::varchar, 't'::varchar, 's'::varchar) from x")
+                .ddl("create table x as (select x from long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        replace
+                        som
+                        """);
     }
 
     @Test
     public void testReplaceConstantFirstArgNull() throws Exception {
-        assertQuery(
-                "replace\n" +
-                        "null\n",
-                "select replace(NULL, 't'::varchar, 's'::varchar) from x",
-                "create table x as (select x from long_sequence(1))",
-                null, true, true);
+        assertQuery("select replace(NULL, 't'::varchar, 's'::varchar) from x")
+                .ddl("create table x as (select x from long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        replace
+                        null
+                        """);
     }
 
     @Test
     public void testReplaceConstantSecondArgEmpty() throws Exception {
-        assertQuery(
-                "replace\n" +
-                        "tom\n",
-                "select replace('tom'::varchar, ''::varchar, 's'::varchar) from x",
-                "create table x as (select x from long_sequence(1))",
-                null, true, true);
+        assertQuery("select replace('tom'::varchar, ''::varchar, 's'::varchar) from x")
+                .ddl("create table x as (select x from long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        replace
+                        tom
+                        """);
     }
 
     @Test
     public void testReplaceConstantSecondArgNull() throws Exception {
-        assertQuery(
-                "replace\n" +
-                        "\n",
-                "select replace('tom'::varchar, NULL, 's'::varchar) from x",
-                "create table x as (select x from long_sequence(1))",
-                null, true, true);
+        assertQuery("select replace('tom'::varchar, NULL, 's'::varchar) from x")
+                .ddl("create table x as (select x from long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        replace
+                        
+                        """);
     }
 
     @Test
     public void testReplaceConstantThirdArgEmpty() throws Exception {
-        assertQuery(
-                "replace\n" +
-                        "om\n",
-                "select replace('tom'::varchar, 't'::varchar, ''::varchar) from x",
-                "create table x as (select x from long_sequence(1))",
-                null, true, true);
+        assertQuery("select replace('tom'::varchar, 't'::varchar, ''::varchar) from x")
+                .ddl("create table x as (select x from long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        replace
+                        om
+                        """);
     }
 
     @Test
     public void testReplaceConstantThirdArgNull() throws Exception {
-        assertQuery(
-                "replace\n" +
-                        "\n",
-                "select replace('tom'::varchar, 't'::varchar, NULL) from x",
-                "create table x as (select x from long_sequence(1))",
-                null, true, true);
+        assertQuery("select replace('tom'::varchar, 't'::varchar, NULL) from x")
+                .ddl("create table x as (select x from long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        replace
+                        
+                        """);
     }
 
     @Test
     public void testRtrim() throws Exception {
-        assertQuery(
-                "k\trtrim\n" +
-                        "  abc\t  abc\n" +
-                        "  abc\t  abc\n" +
-                        "abc  \tabc\n" +
-                        "   \t\n" +
-                        "   \t\n",
-                "select k, rtrim(k) from x",
-                "create table x as (select rnd_varchar('  abc', 'abc  ', '   ') k from long_sequence(5))",
-                null, true, true
-        );
+        assertQuery("select k, rtrim(k) from x")
+                .ddl("create table x as (select rnd_varchar('  abc', 'abc  ', '   ') k from long_sequence(5))")
+                .expectSize()
+                .returns("""
+                        k\trtrim
+                          abc\t  abc
+                          abc\t  abc
+                        abc  \tabc
+                           \t
+                           \t
+                        """);
     }
 
     @Test
     public void testStartsWithLongPrefix() throws Exception {
-        assertQuery(
-                "k\tstarts_with\n" +
-                        "xabcdefghijk\tfalse\n" +
-                        "xabcdefghijk\tfalse\n" +
-                        "abcdefghijx\tfalse\n" +
-                        "xx\tfalse\n" +
-                        "xx\tfalse\n" +
-                        "xx\tfalse\n" +
-                        "abcdefghij\tfalse\n" +
-                        "abcdefghijx\tfalse\n" +
-                        "xabcdefghijk\tfalse\n" +
-                        "ab\tfalse\n" +
-                        "ab\tfalse\n" +
-                        "abcdefghij\tfalse\n" +
-                        "ab\tfalse\n" +
-                        "abcdefghijx\tfalse\n" +
-                        "abcdefghijx\tfalse\n" +
-                        "xabcdefghijk\tfalse\n" +
-                        "xabcdefghijk\tfalse\n" +
-                        "abcdefghijx\tfalse\n" +
-                        "abcdefghijkx\ttrue\n" +
-                        "ab\tfalse\n",
-                "select k, starts_with(k, 'abcdefghijk') from x",
-                "create table x as (select rnd_varchar(" +
+        assertQuery("select k, starts_with(k, 'abcdefghijk') from x")
+                .ddl("create table x as (select rnd_varchar(" +
                         "'xabcdefghijk', 'abcdefghijx', 'abcdefghij', 'abcdefghijkx', 'ab', 'xx'" +
-                        ") k from long_sequence(20))",
-                null, true, true
-        );
+                        ") k from long_sequence(20))")
+                .expectSize()
+                .returns("""
+                        k\tstarts_with
+                        xabcdefghijk\tfalse
+                        xabcdefghijk\tfalse
+                        abcdefghijx\tfalse
+                        xx\tfalse
+                        xx\tfalse
+                        xx\tfalse
+                        abcdefghij\tfalse
+                        abcdefghijx\tfalse
+                        xabcdefghijk\tfalse
+                        ab\tfalse
+                        ab\tfalse
+                        abcdefghij\tfalse
+                        ab\tfalse
+                        abcdefghijx\tfalse
+                        abcdefghijx\tfalse
+                        xabcdefghijk\tfalse
+                        xabcdefghijk\tfalse
+                        abcdefghijx\tfalse
+                        abcdefghijkx\ttrue
+                        ab\tfalse
+                        """);
     }
 
     @Test
     public void testStartsWithMidsizePrefix() throws Exception {
-        assertQuery(
-                "k\tstarts_with\n" +
-                        "xabcdefgh\tfalse\n" +
-                        "abcdefg\tfalse\n" +
-                        "xx\tfalse\n" +
-                        "abcdefghxxxx\ttrue\n" +
-                        "abcdefghx\ttrue\n" +
-                        "abcdefg\tfalse\n" +
-                        "abcdefgx\tfalse\n" +
-                        "ab\tfalse\n" +
-                        "abcdefghx\ttrue\n" +
-                        "xabcdefgh\tfalse\n" +
-                        "abcdefghx\ttrue\n" +
-                        "xx\tfalse\n" +
-                        "abcdefg\tfalse\n" +
-                        "abcdefghx\ttrue\n" +
-                        "ab\tfalse\n" +
-                        "ab\tfalse\n" +
-                        "ab\tfalse\n" +
-                        "xabcdefgh\tfalse\n" +
-                        "abcdefg\tfalse\n" +
-                        "xabcdefgh\tfalse\n",
-                "select k, starts_with(k, 'abcdefgh') from x",
-                "create table x as (select rnd_varchar(" +
+        assertQuery("select k, starts_with(k, 'abcdefgh') from x")
+                .ddl("create table x as (select rnd_varchar(" +
                         "'xabcdefgh', 'abcdefgx', 'abcdefg', 'abcdefghx', 'abcdefghxxxx', 'ab', 'xx'" +
-                        ") k from long_sequence(20))",
-                null, true, true
-        );
+                        ") k from long_sequence(20))")
+                .expectSize()
+                .returns("""
+                        k\tstarts_with
+                        xabcdefgh\tfalse
+                        abcdefg\tfalse
+                        xx\tfalse
+                        abcdefghxxxx\ttrue
+                        abcdefghx\ttrue
+                        abcdefg\tfalse
+                        abcdefgx\tfalse
+                        ab\tfalse
+                        abcdefghx\ttrue
+                        xabcdefgh\tfalse
+                        abcdefghx\ttrue
+                        xx\tfalse
+                        abcdefg\tfalse
+                        abcdefghx\ttrue
+                        ab\tfalse
+                        ab\tfalse
+                        ab\tfalse
+                        xabcdefgh\tfalse
+                        abcdefg\tfalse
+                        xabcdefgh\tfalse
+                        """);
     }
 
     @Test
     public void testStartsWithShortPrefix() throws Exception {
-        assertQuery(
-                "k\tstarts_with\n" +
-                        "xabcde\tfalse\n" +
-                        "abcde\ttrue\n" +
-                        "xx\tfalse\n" +
-                        "abcdexxxx\ttrue\n" +
-                        "abcdex\ttrue\n" +
-                        "abcde\ttrue\n" +
-                        "abcdx\tfalse\n" +
-                        "ab\tfalse\n" +
-                        "abcdex\ttrue\n" +
-                        "xabcde\tfalse\n" +
-                        "abcdex\ttrue\n" +
-                        "xx\tfalse\n" +
-                        "abcde\ttrue\n" +
-                        "abcdex\ttrue\n" +
-                        "ab\tfalse\n" +
-                        "ab\tfalse\n" +
-                        "ab\tfalse\n" +
-                        "xabcde\tfalse\n" +
-                        "abcde\ttrue\n" +
-                        "xabcde\tfalse\n",
-                "select k, starts_with(k, 'abcde') from x",
-                "create table x as (select rnd_varchar(" +
+        assertQuery("select k, starts_with(k, 'abcde') from x")
+                .ddl("create table x as (select rnd_varchar(" +
                         "'xabcde', 'abcdx', 'abcde', 'abcdex', 'abcdexxxx', 'ab', 'xx'" +
-                        ") k from long_sequence(20))",
-                null, true, true
-        );
+                        ") k from long_sequence(20))")
+                .expectSize()
+                .returns("""
+                        k\tstarts_with
+                        xabcde\tfalse
+                        abcde\ttrue
+                        xx\tfalse
+                        abcdexxxx\ttrue
+                        abcdex\ttrue
+                        abcde\ttrue
+                        abcdx\tfalse
+                        ab\tfalse
+                        abcdex\ttrue
+                        xabcde\tfalse
+                        abcdex\ttrue
+                        xx\tfalse
+                        abcde\ttrue
+                        abcdex\ttrue
+                        ab\tfalse
+                        ab\tfalse
+                        ab\tfalse
+                        xabcde\tfalse
+                        abcde\ttrue
+                        xabcde\tfalse
+                        """);
     }
 
     @Test
     public void testStrpos() throws Exception {
-        assertQuery(
-                "k\tstrpos\n" +
-                        "xa\t2\n" +
-                        "aax\t1\n" +
-                        "xx\t0\n" +
-                        "\t0\n" +
-                        "xx\t0\n",
-                "select k, strpos(k, 'a') from x",
-                "create table x as (select rnd_varchar('xa', 'xx', 'aax', '') k from long_sequence(5))",
-                null, true, true);
+        assertQuery("select k, strpos(k, 'a') from x")
+                .ddl("create table x as (select rnd_varchar('xa', 'xx', 'aax', '') k from long_sequence(5))")
+                .expectSize()
+                .returns("""
+                        k\tstrpos
+                        xa\t2
+                        aax\t1
+                        xx\t0
+                        \t0
+                        xx\t0
+                        """);
     }
 
     @Test
     public void testToDate() throws Exception {
-        assertQuery(
-                "c\n" +
-                        "1999-07-05\n",
-                "select c from x where to_date(c, 'yyyy-MM-dd') = to_date('1999-07-05', 'yyyy-MM-dd')",
-                "create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))",
-                null, true, false
-        );
+        assertQuery("select c from x where to_date(c, 'yyyy-MM-dd') = to_date('1999-07-05', 'yyyy-MM-dd')")
+                .ddl("create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))")
+                .returns("""
+                        c
+                        1999-07-05
+                        """);
     }
 
     @Test
     public void testToDateUkr() throws Exception {
         setProperty(PropertyKey.CAIRO_DATE_LOCALE, "uk");
-        assertQuery(
-                "c\n" +
-                        "5 лип. 1999\n",
-                "select c from x where to_date(c, 'd MMM y') = '1999-07-05'",
-                "create table x as (select cast('5 лип. 1999' as varchar) c from long_sequence(1))",
-                null, true, false
-        );
+        assertQuery("select c, to_timestamp(c, 'd MMM y') ts, to_timestamp_ns(c, 'd MMM y') ts_ns from x where to_date(c, 'd MMM y') = '1999-07-05'")
+                .ddl("create table x as (select cast('5 лип. 1999' as varchar) c from long_sequence(1))")
+                .returns("""
+                        c\tts\tts_ns
+                        5 лип. 1999\t1999-07-05T00:00:00.000000Z\t1999-07-05T00:00:00.000000000Z
+                        """);
     }
 
     @Test
     public void testToDateUs() throws Exception {
         setProperty(PropertyKey.CAIRO_DATE_LOCALE, "en-US");
-        assertQuery(
-                "c\n" +
-                        "5 Jul 1999\n",
-                "select c from x where to_date(c, 'd MMM y') = to_date('1999-07-05', 'yyyy-MM-dd')",
-                "create table x as (select cast('5 Jul 1999' as varchar) c from long_sequence(1))",
-                null, true, false
-        );
+        assertQuery("select c from x where to_date(c, 'd MMM y') = to_date('1999-07-05', 'yyyy-MM-dd')")
+                .ddl("create table x as (select cast('5 Jul 1999' as varchar) c from long_sequence(1))")
+                .returns("""
+                        c
+                        5 Jul 1999
+                        """);
     }
 
     @Test
     public void testToPgDate() throws Exception {
-        assertQuery(
-                "c\n" +
-                        "1999-07-05\n",
-                "select c from x where to_pg_date(c) = to_date('1999-07-05', 'yyyy-MM-dd')",
-                "create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))",
-                null, true, false
-        );
+        assertQuery("select c from x where to_pg_date(c) = to_date('1999-07-05', 'yyyy-MM-dd')")
+                .ddl("create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))")
+                .returns("""
+                        c
+                        1999-07-05
+                        """);
     }
 
     @Test
     public void testToPgDateUkr() throws Exception {
         setProperty(PropertyKey.PG_DATE_LOCALE, "uk");
-        assertQuery(
-                "c\n" +
-                        "1999-07-05\n",
-                "select c from x where to_pg_date(c) = '1999-07-05'",
-                "create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))",
-                null, true, false
-        );
+        assertQuery("select c from x where to_pg_date(c) = '1999-07-05'")
+                .ddl("create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))")
+                .returns("""
+                        c
+                        1999-07-05
+                        """);
     }
 
     @Test
     public void testTrim() throws Exception {
-        assertQuery(
-                "k\ttrim\n" +
-                        "  abc\tabc\n" +
-                        "  abc  \tabc\n" +
-                        "abc  \tabc\n" +
-                        "   \t\n" +
-                        "abc  \tabc\n",
-                "select k, trim(k) from x",
-                "create table x as (select rnd_varchar('  abc', 'abc  ', '  abc  ', '   ') k from long_sequence(5))",
-                null, true, true
-        );
+        assertQuery("select k, trim(k) from x")
+                .ddl("create table x as (select rnd_varchar('  abc', 'abc  ', '  abc  ', '   ') k from long_sequence(5))")
+                .expectSize()
+                .returns("""
+                        k\ttrim
+                          abc\tabc
+                          abc  \tabc
+                        abc  \tabc
+                           \t
+                        abc  \tabc
+                        """);
+    }
+
+    private static Utf8String asciiWithoutFlag(String value) {
+        return new Utf8String(value.getBytes(StandardCharsets.UTF_8), false);
+    }
+
+    private static Utf8String malformedUtf8(String validPrefix) {
+        final byte[] bytes = (validPrefix + ' ').getBytes(StandardCharsets.UTF_8);
+        bytes[bytes.length - 1] = (byte) 0xC3;
+        return new Utf8String(bytes, false);
     }
 }

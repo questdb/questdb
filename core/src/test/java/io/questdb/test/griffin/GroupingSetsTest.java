@@ -46,7 +46,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
 
             // GROUP BY region, CUBE(symbol) -> sets: (region, symbol), (region)
             // same as ROLLUP for single cube column
-            assertSql(
+            assertGroupingSetsQuery(
                     "region\tsymbol\tSUM\n" +
                             "US\tBTC\t30.0\n" +
                             "EU\tETH\t70.0\n" +
@@ -75,7 +75,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // GROUP BY region, ROLLUP(symbol) -> sets: (region, symbol), (region)
-            assertSql(
+            assertGroupingSetsQuery(
                     "region\tsymbol\tSUM\n" +
                             "US\tBTC\t30.0\n" +
                             "EU\tETH\t70.0\n" +
@@ -103,7 +103,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('ETH', 'sell', 40, '2024-01-01T00:03:00.000000Z')"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tside\tSUM\n" +
                             "BTC\tbuy\t10.0\n" +
                             "BTC\tsell\t20.0\n" +
@@ -145,7 +145,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
 
             // CUBE(a, b, c) -> 2^3 = 8 grouping sets, ordered by mask iteration:
             // (a,b,c), (a,b), (a,c), (a), (b,c), (b), (c), ()
-            assertSql(
+            assertGroupingSetsQuery(
                     "a\tb\tc\tSUM\n" +
                             "1\t10\t100\t1000.0\n" +
                             "2\t20\t200\t2000.0\n" +
@@ -182,7 +182,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('ETH', 'sell', 40, '2024-01-01T00:03:00.000000Z')"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tside\tSUM\n" +
                             "BTC\tbuy\t10.0\n" +
                             "BTC\tsell\t20.0\n" +
@@ -212,7 +212,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // Non-overlapping sets: group by symbol only, then by side only
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tside\tSUM\n" +
                             "BTC\t\t30.0\n" +
                             "ETH\t\t70.0\n" +
@@ -252,7 +252,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('ETH', 'sell', 40, '2024-01-01T00:03:00.000000Z')"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tside\tSUM\n" +
                             "BTC\tbuy\t10.0\n" +
                             "BTC\tsell\t20.0\n" +
@@ -283,7 +283,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('ETH', 400, 40, '2024-01-01T00:03:00.000000Z')"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tSUM\tCOUNT\tMIN\tMAX\n" +
                             "\t100.0\t4\t100.0\t400.0\n" +
                             "BTC\t30.0\t2\t100.0\t200.0\n" +
@@ -314,12 +314,12 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x INT, y DOUBLE)");
             execute("INSERT INTO t VALUES (1, 10), (1, 20), (2, 30)");
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "x\tSUM\n" +
+                            "null\t60.0\n" +
                             "1\t30.0\n" +
-                            "2\t30.0\n" +
-                            "null\t60.0\n",
-                    "SELECT x, SUM(y) FROM t GROUP BY ROLLUP(x)"
+                            "2\t30.0\n",
+                    "SELECT x, SUM(y) FROM t GROUP BY ROLLUP(x) ORDER BY x"
             );
         });
     }
@@ -335,7 +335,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // ROLLUP(a, b, c) -> (a,b,c), (a,b), (a), ()
-            assertSql(
+            assertGroupingSetsQuery(
                     "a\tb\tc\tSUM\n" +
                             "1\t10\t100\t1000.0\n" +
                             "2\t20\t200\t2000.0\n" +
@@ -359,7 +359,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('B', 40), ('B', 50)"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "category\tAVG\n" +
                             "\t30.0\n" +
                             "A\t20.0\n" +
@@ -387,7 +387,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('ETH', 'sell', 40, '2024-01-01T00:03:00.000000Z')"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tCOUNT\tSUM\n" +
                             "\t4\t100.0\n" +
                             "BTC\t2\t30.0\n" +
@@ -410,7 +410,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "(2, 30), (2, 40)"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "grp\tSUM\n" +
                             "null\t100.0\n" +
                             "1\t30.0\n" +
@@ -438,7 +438,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('ETH', 'sell', 40, '2024-01-01T00:03:00.000000Z')"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tSUM\n" +
                             "\t100.0\n" +
                             "BTC\t30.0\n" +
@@ -461,7 +461,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('Bob', 30)"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "name\tSUM\n" +
                             "\t60.0\n" +
                             "Alice\t30.0\n" +
@@ -484,7 +484,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('bar', 30)"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "label\tSUM\n" +
                             "\t60.0\n" +
                             "bar\t30.0\n" +
@@ -512,7 +512,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('ETH', 40, '2024-01-01T00:03:00.000000Z')"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tSUM\n" +
                             "\t90.0\n" +
                             "BTC\t20.0\n" +
@@ -547,11 +547,11 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     "2\tnull\t700.0\n" +
                     "null\tnull\t1000.0\n";
 
-            assertSql(rollupResult,
+            assertGroupingSetsQuery(rollupResult,
                     "SELECT a, b, SUM(v) FROM t GROUP BY ROLLUP(a, b)"
             );
 
-            assertSql(rollupResult,
+            assertGroupingSetsQuery(rollupResult,
                     "SELECT a, b, SUM(v) FROM t GROUP BY GROUPING SETS ((a, b), (a), ())"
             );
         });
@@ -569,7 +569,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
 
             // NULL category rows should aggregate with other NULL category rows
             // The grand total row also has NULL category
-            assertSql(
+            assertGroupingSetsQuery(
                     "category\tSUM\n" +
                             "\t20.0\n" +
                             "A\t40.0\n" +
@@ -586,12 +586,12 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x INT, y DOUBLE)");
             execute("INSERT INTO t VALUES (1, 10), (2, 20)");
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "x\tSUM\n" +
+                            "null\t30.0\n" +
                             "1\t10.0\n" +
-                            "2\t20.0\n" +
-                            "null\t30.0\n",
-                    "SELECT x, SUM(y) FROM t GROUP BY rollup(x)"
+                            "2\t20.0\n",
+                    "SELECT x, SUM(y) FROM t GROUP BY rollup(x) ORDER BY x"
             );
         });
     }
@@ -602,12 +602,12 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x INT, y DOUBLE)");
             execute("INSERT INTO t VALUES (1, 10), (2, 20)");
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "x\tSUM\n" +
+                            "null\t30.0\n" +
                             "1\t10.0\n" +
-                            "2\t20.0\n" +
-                            "null\t30.0\n",
-                    "SELECT x, SUM(y) FROM t GROUP BY cube(x)"
+                            "2\t20.0\n",
+                    "SELECT x, SUM(y) FROM t GROUP BY cube(x) ORDER BY x"
             );
         });
     }
@@ -618,7 +618,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x INT, y DOUBLE)");
 
             // Empty table should produce no rows, even for the grand total
-            assertSql(
+            assertGroupingSetsQuery(
                     "x\tSUM\n",
                     "SELECT x, SUM(y) FROM t GROUP BY ROLLUP(x)"
             );
@@ -643,7 +643,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
 
             // GROUPING(col) returns 0 when column is actively grouped,
             // 1 when the column is rolled up (NULL)
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tside\tSUM\tgs\tgsd\n" +
                             "BTC\tbuy\t10.0\t0\t0\n" +
                             "BTC\tsell\t20.0\t0\t0\n" +
@@ -692,7 +692,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // GROUPING_ID(symbol, side) is equivalent to multi-arg GROUPING()
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tside\tSUM\tgrp\n" +
                             "BTC\tbuy\t10.0\t0\n" +
                             "BTC\tsell\t20.0\t0\n" +
@@ -722,7 +722,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // Single-arg GROUPING_ID works like GROUPING
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tside\tSUM\tgs\n" +
                             "BTC\tbuy\t10.0\t0\n" +
                             "BTC\tsell\t20.0\t0\n" +
@@ -756,7 +756,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // SAMPLE BY 1h ROLLUP(symbol): for each hour, compute per-symbol and grand total
-            assertSql(
+            assertGroupingSetsQuery(
                     "ts\tsymbol\tSUM\n" +
                             "2024-01-01T00:00:00.000000Z\t\t60.0\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\t30.0\n" +
@@ -787,7 +787,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // SAMPLE BY 1h ROLLUP(symbol, side): detail, by-symbol subtotals, grand total per hour
-            assertSql(
+            assertGroupingSetsQuery(
                     "ts\tsymbol\tside\tSUM\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\tbuy\t10.0\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\tsell\t20.0\n" +
@@ -816,7 +816,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // SAMPLE BY 1h CUBE(symbol, side): all combinations per hour
-            assertSql(
+            assertGroupingSetsQuery(
                     "ts\tsymbol\tside\tSUM\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\tbuy\t10.0\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\tsell\t20.0\n" +
@@ -848,7 +848,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // 3 time buckets, each with per-symbol detail + grand total
-            assertSql(
+            assertGroupingSetsQuery(
                     "ts\tsymbol\tSUM\n" +
                             "2024-01-01T00:00:00.000000Z\t\t30.0\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\t10.0\n" +
@@ -881,13 +881,14 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // SAMPLE BY 1h ROLLUP(symbol) FILL(NULL) should work
-            assertSql(
+            assertGroupingSetsQuery(
                     "ts\tsymbol\tSUM\n" +
                             "2024-01-01T00:00:00.000000Z\t\t30.0\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\t10.0\n" +
                             "2024-01-01T00:00:00.000000Z\tETH\t20.0\n" +
                             "2024-01-01T01:00:00.000000Z\t\t30.0\n" +
-                            "2024-01-01T01:00:00.000000Z\tBTC\t30.0\n",
+                            "2024-01-01T01:00:00.000000Z\tBTC\t30.0\n" +
+                            "2024-01-01T01:00:00.000000Z\tETH\tnull\n",
                     "SELECT ts, symbol, SUM(quantity) " +
                             "FROM trades " +
                             "SAMPLE BY 1h ROLLUP(symbol) FILL(NULL) " +
@@ -911,7 +912,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // SAMPLE BY 1h ROLLUP(symbol) FILL(NONE) should work
-            assertSql(
+            assertGroupingSetsQuery(
                     "ts\tsymbol\tSUM\n" +
                             "2024-01-01T00:00:00.000000Z\t\t30.0\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\t10.0\n" +
@@ -960,7 +961,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             // FILL(0) emits one fill row per key combination per missing
             // timestamp bucket. Key columns retain their actual values,
             // aggregate columns get the fill value.
-            assertSql(
+            assertGroupingSetsQuery(
                     "ts\tsymbol\tSUM\n" +
                             "2024-01-01T00:00:00.000000Z\t\t10.0\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\t10.0\n" +
@@ -992,7 +993,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             // FILL(NULL) emits one fill row per key combination per missing
             // timestamp bucket. Key columns retain their actual values,
             // aggregate columns get NULL.
-            assertSql(
+            assertGroupingSetsQuery(
                     "ts\tsymbol\tSUM\n" +
                             "2024-01-01T00:00:00.000000Z\t\t10.0\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\t10.0\n" +
@@ -1023,7 +1024,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // SAMPLE BY 1h ROLLUP(symbol) FROM '...' should work
-            assertSql(
+            assertGroupingSetsQuery(
                     "ts\tsymbol\tSUM\n" +
                             "2024-01-01T00:00:00.000000Z\t\t30.0\n" +
                             "2024-01-01T00:00:00.000000Z\tBTC\t10.0\n" +
@@ -1203,7 +1204,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (1, 2, 100.0), (1, 2, 200.0), (3, 4, 300.0)");
             // Plain GROUP BY with expressions must still work (no
             // column-reference restriction outside ROLLUP/CUBE/GROUPING SETS).
-            assertSql(
+            assertGroupingSetsQuery(
                     "column\tSUM\n" +
                             "3\t300.0\n" +
                             "7\t300.0\n",
@@ -1227,7 +1228,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
 
             // GROUPING() in fill rows should show the correct bitmask,
             // not the fill value (NULL or 0).
-            assertSql(
+            assertGroupingSetsQuery(
                     "grp\tts\tsymbol\tSUM\n" +
                             "0\t2024-01-01T00:00:00.000000Z\tBTC\t10.0\n" +
                             "1\t2024-01-01T00:00:00.000000Z\t\t10.0\n" +
@@ -1297,7 +1298,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
             execute("INSERT INTO t VALUES (1, 10, 100.0), (1, 20, 200.0), (2, 10, 300.0)");
             // All qualified - no mixed qualification error
-            assertSql(
+            assertGroupingSetsQuery(
                     "a\tSUM\n" +
                             "null\t600.0\n" +
                             "1\t300.0\n" +
@@ -1314,7 +1315,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a SYMBOL, v DOUBLE)");
             execute("INSERT INTO t VALUES ('x', 10.0), (NULL, 20.0), ('x', 30.0)");
-            assertSql(
+            assertGroupingSetsQuery(
                     "a\tSUM\tGROUPING\n" +
                             "\t20.0\t0\n" +
                             "x\t40.0\t0\n" +
@@ -1329,7 +1330,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, v DOUBLE)");
             // Empty table produces no rows (map is empty, no data to aggregate)
-            assertSql(
+            assertGroupingSetsQuery(
                     "a\tSUM\n",
                     "SELECT a, SUM(v) FROM t GROUP BY ROLLUP(a)"
             );
@@ -1340,7 +1341,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
     public void testEmptyTableCube() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
-            assertSql(
+            assertGroupingSetsQuery(
                     "a\tb\tSUM\n",
                     "SELECT a, b, SUM(v) FROM t GROUP BY CUBE(a, b)"
             );
@@ -1354,7 +1355,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("CREATE TABLE products (id INT, name SYMBOL)");
             execute("INSERT INTO products VALUES (1, 'A'), (2, 'B')");
             execute("INSERT INTO orders VALUES (1, 10), (1, 20), (2, 30)");
-            assertSql(
+            assertGroupingSetsQuery(
                     "name\tSUM\n" +
                             "\t60\n" +
                             "A\t30\n" +
@@ -1410,8 +1411,8 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "y\t20.0\n";
             String query = "SELECT a, SUM(v) FROM t GROUP BY ROLLUP(a) ORDER BY a";
             // Execute twice to trigger toTop/reuse
-            assertSql(expected, query);
-            assertSql(expected, query);
+            assertGroupingSetsQuery(expected, query);
+            assertGroupingSetsQuery(expected, query);
         });
     }
 
@@ -1420,7 +1421,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a SYMBOL, v DOUBLE)");
             execute("INSERT INTO t VALUES ('x', 10.0), ('x', 20.0), ('y', 30.0)");
-            assertSql(
+            assertGroupingSetsQuery(
                     "a\tSUM\tCOUNT\tAVG\n" +
                             "\t60.0\t3\t20.0\n" +
                             "x\t30.0\t2\t15.0\n" +
@@ -1442,7 +1443,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     "c1 INT, c2 INT, c3 INT, c4 INT, c5 INT, " +
                     "c6 INT, c7 INT, c8 INT, c9 INT, c10 INT, " +
                     "c11 INT, c12 INT, v INT)");
-            assertSql(
+            assertGroupingSetsQuery(
                     "c1\tSUM\n",
                     "SELECT c1, SUM(v) FROM cube12" +
                             " GROUP BY CUBE(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12)"
@@ -1464,7 +1465,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "('ETH', 'buy', 30, '2024-01-01T00:02:00.000000Z')"
             );
 
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tSUM\n" +
                             "BTC\t30.0\n" +
                             "ETH\t30.0\n" +
@@ -1503,7 +1504,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     ('B', 30.0)
                     """);
             // QuestDB has no HAVING, so filter subtotal/grand total rows via subquery
-            assertSql(
+            assertGroupingSetsQuery(
                     "sym\ts\tgs\n" +
                             "A\t30.0\t0\n" +
                             "B\t30.0\t0\n",
@@ -1522,7 +1523,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     ('B', 20.0)
                     """);
             // Duplicate sets should produce duplicate output rows per SQL standard
-            assertSql(
+            assertGroupingSetsQuery(
                     "sym\ts\n" +
                             "A\t10.0\n" +
                             "A\t10.0\n" +
@@ -1540,7 +1541,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('x', 'y', 'z', 1.0)");
             // GROUPING_ID(a, b, c) with ROLLUP(a, b, c) produces:
             // (a,b,c) -> 0b000=0, (a,b) -> 0b001=1, (a) -> 0b011=3, () -> 0b111=7
-            assertSql(
+            assertGroupingSetsQuery(
                     "a\tb\tc\ts\tgid\n" +
                             "\t\t\t1.0\t7\n" +
                             "x\t\t\t1.0\t3\n" +
@@ -1599,7 +1600,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
 
             // CUBE(symbol, side) produces sets: (symbol,side), (symbol), (side), ()
             // GROUPING_ID bitmasks: 0, 1, 2, 3
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tside\tSUM\tgrp\n" +
                             "BTC\tbuy\t10.0\t0\n" +
                             "ETH\tsell\t20.0\t0\n" +
@@ -1632,7 +1633,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
 
             // SUM should skip NaN values; count should count non-NaN only
-            assertSql(
+            assertGroupingSetsQuery(
                     "symbol\tSUM\tcount\n" +
                             "BTC\t10.0\t1\n" +
                             "ETH\t30.0\t1\n" +
@@ -1643,5 +1644,9 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "ORDER BY GROUPING(symbol), symbol"
             );
         });
+    }
+
+    private void assertGroupingSetsQuery(String expected, String query) throws Exception {
+        assertQuery(query).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

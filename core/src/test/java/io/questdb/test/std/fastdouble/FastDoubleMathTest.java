@@ -169,11 +169,11 @@ public class FastDoubleMathTest {
     }
 
     private static long getLongFromBigEndianArray(byte[] array, int offset) {
-        return Long.reverseBytes(Unsafe.getUnsafe().getLong(array, Unsafe.BYTE_OFFSET + offset));
+        return Long.reverseBytes(Unsafe.getLong(array, Unsafe.BYTE_OFFSET + offset));
     }
 
     private static void setBigEndian(byte[] array, long lo, long hi) {
-        Unsafe.getUnsafe().putLong(array, Unsafe.BYTE_OFFSET + 1, Long.reverseBytes(lo));
-        Unsafe.getUnsafe().putLong(array, Unsafe.BYTE_OFFSET + 1 + 8, Long.reverseBytes(hi));
+        Unsafe.putLong(array, Unsafe.BYTE_OFFSET + 1, Long.reverseBytes(lo));
+        Unsafe.putLong(array, Unsafe.BYTE_OFFSET + 1 + 8, Long.reverseBytes(hi));
     }
 }

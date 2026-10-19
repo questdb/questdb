@@ -65,7 +65,7 @@ public class CairoKeywordBenchmark {
         Os.init();
         mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
         Utf8s.strCpyAscii("wal.detached", mem);
-        Unsafe.getUnsafe().putByte(mem + memSize - 1, (byte) 0);
+        Unsafe.putByte(mem + memSize - 1, (byte) 0);
         sink2.clear();
         Utf8s.utf8ToUtf16(mem, mem + memSize, sink2);
     }

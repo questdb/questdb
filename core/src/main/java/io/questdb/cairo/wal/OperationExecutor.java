@@ -35,6 +35,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 
@@ -66,6 +68,23 @@ class OperationExecutor implements Closeable {
         );
         this.engine = engine;
         this.maxRecompilationAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+    }
+
+    /**
+     * Acquires a {@link MemoryTrackerWorkload#WAL_APPLY} tracker and binds it on the
+     * apply context, so SQL applied in the batch (ALTER, UPDATE) inherits it via the
+     * {@code QueryRegistry} nesting check. Pair with
+     * {@link #releaseMemoryTracker(MemoryTracker)}.
+     */
+    public MemoryTracker acquireMemoryTracker(int tableId) {
+        assert executionContext.getMemoryTracker() == null;
+        final MemoryTracker memoryTracker = engine.getMemoryTrackerProvider().acquire(
+                executionContext.getSecurityContext(),
+                tableId,
+                MemoryTrackerWorkload.WAL_APPLY
+        );
+        executionContext.setMemoryTracker(memoryTracker);
+        return memoryTracker;
     }
 
     @Override
@@ -136,11 +155,28 @@ class OperationExecutor implements Closeable {
         return bindVariableService;
     }
 
+    /**
+     * Clears the apply context's tracker and returns it to the pool.
+     */
+    public void releaseMemoryTracker(MemoryTracker memoryTracker) {
+        executionContext.setMemoryTracker(null);
+        Misc.free(memoryTracker);
+    }
+
     public void resetRnd(long seed0, long seed1) {
         rnd.reset(seed0, seed1);
     }
 
     public void setNowAndFixClock(long now, int nowTimestampType) {
         executionContext.setNowAndFixClock(now, nowTimestampType);
+    }
+
+    /**
+     * Reports whether {@code tableName} is the name the statement last compiled here declared as its
+     * target. Only the apply context knows it - the compiler tells the context before resolving any
+     * name - so {@link ApplyWal2TableJob} asks through here.
+     */
+    boolean isStatementTargetTableName(CharSequence tableName) {
+        return executionContext.isStatementTarget(tableName);
     }
 }

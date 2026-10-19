@@ -45,11 +45,11 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
             long hi = dataAddr + (rowCount - 1) * (long) Long.BYTES;
             long offset = rowCount - 1;
             for (; hi >= dataAddr; hi -= Long.BYTES) {
-                long value = Unsafe.getUnsafe().getLong(hi);
+                long value = Unsafe.getLong(hi);
                 if (value != Numbers.LONG_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putLong(valueIndex + 1, value);
                     }
@@ -77,25 +77,28 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
         // Zero page address means a column top; fall through to the record-based path.
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
-            for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            // Backwards: last-wins, so a forward scan would rewrite a key's entry for every later
+            // non-null row. See GroupByFunction.computeKeyedBatch().
+            for (long i = rowCount - 1; i >= 0; i--) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
+                final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
                 if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final long existingValue = Unsafe.getUnsafe().getLong(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.LONG_NULL || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putLong(entryBase + valueColumnOffset, value);
+                    final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
+                    if (existingValue == Numbers.LONG_NULL || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putLong(entryBase + valueColumnOffset, value);
                     }
                 }
             }
         } else {
-            for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            // Backwards for the same last-wins reason as the direct-column path above.
+            for (long i = rowCount - 1; i >= 0; i--) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 record.setRowIndex(rowIndex);
                 final long value = arg.getTimestamp(record);
@@ -104,10 +107,10 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
                 if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final long existingValue = Unsafe.getUnsafe().getLong(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.LONG_NULL || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putLong(entryBase + valueColumnOffset, value);
+                    final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
+                    if (existingValue == Numbers.LONG_NULL || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putLong(entryBase + valueColumnOffset, value);
                     }
                 }
             }
@@ -136,7 +139,7 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId > destRowId || destValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcVal);
         }

@@ -25,7 +25,35 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class PivotTest extends AbstractSqlParserTest {
 
@@ -189,33 +217,93 @@ public class PivotTest extends AbstractSqlParserTest {
              ('ETH-USDC','sell',3675.72,0.064412,'2024-12-19T08:10:00.937999Z'),
              ('ETH-USDT','sell',3678.0,0.2,'2024-12-19T08:10:00.950000Z'),
              ('ETH-USD','sell',3678.0,0.2,'2024-12-19T08:10:00.950000Z');""";
+    private static final String PIVOT_RACE_RESULT = """
+            grp\tX\tY
+            A\t10\t20
+            B\t30\t40
+            """;
+    private static final String PIVOT_RACE_SQL = """
+            SELECT * FROM data
+            PIVOT (
+                SUM(val)
+                FOR cat IN (SELECT c FROM cats)
+                GROUP BY grp
+            ) ORDER BY grp""";
+    private static final String SQL_HIJACK_DDL = "CREATE TABLE hijack (x INT)";
+    private static final String SQL_HIJACK_SELECT = "SELECT 'HIJACK' other_statement FROM long_sequence(1)";
+    // the PIVOT IN sub-query race hooks, inert until a test arms them, see setUpStatic()
+    private static final AtomicReference<String> raceBorrowedCompilerSql = new AtomicReference<>();
+    private static final AtomicInteger raceSchemaChangesLeft = new AtomicInteger();
+
+    /**
+     * Stages the race a PIVOT IN sub-query can lose. While {@code raceSchemaChangesLeft} is
+     * positive, each open of a reader on {@code cats} at a known metadata version adds a column
+     * to {@code cats} just before the open and decrements it, as a concurrent ALTER would between
+     * the optimiser recording the version and code generation opening the reader. While
+     * {@code raceBorrowedCompilerSql} is set, every compiler the engine hands out has compiled
+     * that statement last, as a pooled compiler has after serving another connection.
+     */
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractCairoTest.engineFactory = configuration -> new CairoEngine(configuration) {
+            @Override
+            public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+                if (metadataVersion > -1
+                        && raceSchemaChangesLeft.get() > 0
+                        && Chars.equals(tableToken.getTableName(), "cats")) {
+                    try (TableWriter writer = TestUtils.getWriter(this, "cats")) {
+                        writer.addColumn("extra" + raceSchemaChangesLeft.decrementAndGet(), ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                    }
+                }
+                return super.getReader(tableToken, metadataVersion, readerPoolSupervisor);
+            }
+
+            @Override
+            public SqlCompiler getSqlCompiler() {
+                final SqlCompiler compiler = super.getSqlCompiler();
+                final String sql = raceBorrowedCompilerSql.get();
+                if (sql != null) {
+                    try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(this)) {
+                        final CompiledQuery cq = compiler.compile(sql, context);
+                        if (cq.getType() == CompiledQuery.SELECT) {
+                            Misc.free(cq.getRecordCursorFactory());
+                        } else {
+                            Misc.free(cq.getOperation());
+                        }
+                    } catch (Throwable th) {
+                        compiler.close();
+                        throw new AssertionError("could not compile the borrowed compiler's last statement", th);
+                    }
+                }
+                return compiler;
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        raceBorrowedCompilerSql.set(null);
+        raceSchemaChangesLeft.set(0);
+        super.tearDown();
+    }
 
     @Test
     public void testBasicPivot() throws Exception {
-        assertQueryAndPlan(
-                "country\t2000\t2010\t2020\n",
-                """
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country
-                        );
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country\t2000\t2010\t2020
-                        NL\t1005\t1065\t1158
-                        US\t8579\t8783\t9510
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country
+                );
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           keys: [country]
                           values: [first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year]))]
@@ -226,32 +314,129 @@ public class PivotTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: cities
+                        """)
+                .returns("country\t2000\t2010\t2020\n", """
+                        country\t2000\t2010\t2020
+                        NL\t1005\t1065\t1158
+                        US\t8579\t8783\t9510
                         """);
     }
 
     @Test
+    public void testPivotAliasedAggregateProtectedColumnNames() throws Exception {
+        // Regression: a pivot with an ALIASED aggregate builds a composite output column name
+        // (value_aggregate). When the value is a protective-quoted operator token or dotted name,
+        // the composite used to embed those quotes mid-name ("in"_s / "FNCL 2.5"_s), which
+        // toColumnName could not strip, so the quotes leaked into result set metadata and broke
+        // CREATE TABLE AS SELECT. The components are now stripped and the whole composite
+        // re-protected, so the names surface clean.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'and', 20),
+                        ('B', 'in', 30),
+                        ('B', 'and', 40);
+                    """);
+
+            // operator-token values with an aliased aggregate -> clean in_s / and_s
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) AS s FOR cat IN ('in', 'and') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin_s\tand_s
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data
+                        PIVOT (SUM(val) AS s FOR cat IN ('in', 'and') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("SELECT grp, in_s, and_s FROM pivoted ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin_s\tand_s
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+
+            // dotted values with an aliased aggregate -> clean FNCL 2.5_s (dot stays content, no leaked quotes)
+            execute("CREATE TABLE sec (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO sec VALUES
+                        ('A', 'FNCL 2.5', 10),
+                        ('A', 'FNCL 3.0', 20),
+                        ('B', 'FNCL 2.5', 30),
+                        ('B', 'FNCL 3.0', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM sec
+                    PIVOT (SUM(val) AS s FOR cat IN ('FNCL 2.5', 'FNCL 3.0') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tFNCL 2.5_s\tFNCL 3.0_s
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotCastOfSubQueryFailsCleanly() throws Exception {
+        // Regression: PIVOT names its IN values, FOR expressions, GROUP BY keys and aggregates
+        // through ExpressionNode.toSink(), whose cast branch read the token of a sub-query operand,
+        // which is null, and threw a NullPointerException. Each statement must fail with the
+        // positioned function resolution error instead, as the same cast does outside PIVOT.
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+            execute("CREATE VIEW v AS (SELECT * FROM cities)");
+            drainWalAndViewQueues();
+
+            assertQuery("SELECT * FROM cities PIVOT (SUM(population) FOR year IN ((SELECT max(year) FROM v)::INT) GROUP BY country)")
+                    .noLeakCheck()
+                    .fails(82, "there is no matching function `cast` with the argument types: (CURSOR, INT)");
+            assertQuery("SELECT * FROM cities PIVOT (SUM(population) FOR year IN (CAST((SELECT max(year) FROM cities) AS INT)) GROUP BY country)")
+                    .noLeakCheck()
+                    .fails(57, "there is no matching function `cast` with the argument types: (CURSOR, INT)");
+            assertQuery("SELECT * FROM cities PIVOT (SUM(population) FOR (SELECT 'NL')::VARCHAR IN ('NL') GROUP BY year)")
+                    .noLeakCheck()
+                    .fails(61, "there is no matching function `cast` with the argument types: (CURSOR, VARCHAR)");
+            assertQuery("SELECT * FROM cities PIVOT (SUM(population) FOR year IN (2000) GROUP BY (SELECT 'NL')::VARCHAR)")
+                    .noLeakCheck()
+                    .fails(85, "there is no matching function `cast` with the argument types: (CURSOR, VARCHAR)");
+            assertQuery("SELECT * FROM cities PIVOT (SUM((SELECT 1)::INT) FOR year IN (2000) GROUP BY country)")
+                    .noLeakCheck()
+                    .fails(42, "there is no matching function `cast` with the argument types: (CURSOR, INT)");
+        });
+    }
+
+    @Test
     public void testPivotDefaultNamingRules() throws Exception {
-        assertQueryAndPlan(
-                "side\tBTC-USD_first(price)\tBTC-USD_first(price)_2\n",
-                """
-                        trades PIVOT (
-                        first(price),
-                        first(price)
-                        FOR symbol IN ('BTC-USD')
-                        GROUP BY side
-                        ) order by side;""",
-                ddlTrades,
-                null,
-                dmlTrades,
-                """
-                        side\tBTC-USD_first(price)\tBTC-USD_first(price)_2
-                        buy\t101502.2\t101502.2
-                        sell\t101502.1\t101502.1
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                trades PIVOT (
+                first(price),
+                first(price)
+                FOR symbol IN ('BTC-USD')
+                GROUP BY side
+                ) order by side;""")
+                .ddl(ddlTrades)
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
                         Encode sort light
                           keys: [side]
                             GroupBy vectorized: false
@@ -266,32 +451,27 @@ public class PivotTest extends AbstractSqlParserTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
+                        """)
+                .returns("side\tBTC-USD_first(price)\tBTC-USD_first(price)_2\n", """
+                        side\tBTC-USD_first(price)\tBTC-USD_first(price)_2
+                        buy\t101502.2\t101502.2
+                        sell\t101502.1\t101502.1
                         """);
     }
 
     @Test
     public void testPivotDefaultNamingRules2() throws Exception {
-        assertQueryAndPlan(
-                "side\tBTC-USD_first(price)\tBTC-USD_first(amount)\n",
-                """
-                        trades PIVOT (
-                        first(price),
-                        first(amount)
-                        FOR symbol IN ('BTC-USD')
-                        GROUP BY side
-                        ) order by side;""",
-                ddlTrades,
-                null,
-                dmlTrades,
-                """
-                        side\tBTC-USD_first(price)\tBTC-USD_first(amount)
-                        buy\t101502.2\t5.775E-5
-                        sell\t101502.1\t1.4443E-4
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                trades PIVOT (
+                first(price),
+                first(amount)
+                FOR symbol IN ('BTC-USD')
+                GROUP BY side
+                ) order by side;""")
+                .ddl(ddlTrades)
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
                         Encode sort light
                           keys: [side]
                             GroupBy vectorized: false
@@ -304,36 +484,141 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
+                        """)
+                .returns("side\tBTC-USD_first(price)\tBTC-USD_first(amount)\n", """
+                        side\tBTC-USD_first(price)\tBTC-USD_first(amount)
+                        buy\t101502.2\t5.775E-5
+                        sell\t101502.1\t1.4443E-4
                         """);
     }
 
     @Test
+    public void testPivotDottedValueTruncatedToOperatorTokenDedups() throws Exception {
+        // Regression (createExprColumnAlias quote-path dedup gap): at a small generated-alias max size,
+        // a dotted pivot value ('in .x') truncates past its dot and its residual 'in ' trims back to the
+        // operator token 'in', colliding on the display name with a sibling value 'in'. The dedup must
+        // key on the trimmed content and yield distinct, quote-free column names; before the fix the
+        // second column surfaced as a second bare 'in', so the projection metadata build threw
+        // "Duplicate column [name=in]" and the (otherwise valid) PIVOT failed to compile.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE, 6);
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'in .x', 20),
+                        ('B', 'in', 30),
+                        ('B', 'in .x', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'in .x') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	i_2
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotDottedValueWithTrailingSpace() throws Exception {
+        // A dotted pivot value with a trailing space ('FNCL 2.5 ') surfaces a clean column name with
+        // no bare trailing space (an interop hazard over PG / HTTP / CSV) and dedups against the
+        // space-free variant (FNCL 2.5 / FNCL 2.5_2), matching the operator-token trailing-space
+        // behavior rather than two columns differing only by a space.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'FNCL 2.5', 10),
+                        ('A', 'FNCL 2.5 ', 20),
+                        ('B', 'FNCL 2.5', 30),
+                        ('B', 'FNCL 2.5 ', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('FNCL 2.5', 'FNCL 2.5 ') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tFNCL 2.5\tFNCL 2.5_2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotDuplicateOperatorTokenValuesThroughJoin() throws Exception {
+        // Two pivots produce operator-token columns ('in') that collide in the outer wildcard.
+        // The dedup must yield clean, quote-free names (in / in1) and the join must compile
+        // (regression: the composed reference t2."in" threw "wtf? t2.\"in\"" / Invalid column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+            assertQuery("""
+                    SELECT * FROM
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1
+                      CROSS JOIN
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t2
+                    ORDER BY grp, grp1
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	grp1	in1
+                            A	10	A	10
+                            A	10	B	30
+                            B	30	A	10
+                            B	30	B	30
+                            """);
+        });
+    }
+
+    @Test(timeout = 30000)
+    public void testPivotEmptyValue() throws Exception {
+        // An empty-string pivot value has no content to build an alias from; it must terminate
+        // with a "column" placeholder instead of spinning the compiler forever (regression for
+        // the PIVOT IN ('') hang / NegativeArraySizeException).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', '', 10), ('B', '', 30);");
+            assertQuery("""
+                    SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('') GROUP BY grp) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	column
+                            A	10
+                            B	30
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotImplicitGroupBy() throws Exception {
-        assertQueryAndPlan(
-                """
-                        2000\t2010\t2020
-                        null\tnull\tnull
-                        """,
-                """
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                        );
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        2000\t2010\t2020
-                        9584\t9848\t10668
-                        """,
-                false,
-                true,
-                false,
-                """
+        assertQuery("""
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                );
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .noRandomAccess()
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           values: [first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year]))]
                             Async JIT Group By workers: 1
@@ -343,36 +628,32 @@ public class PivotTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: cities
+                        """)
+                .returns("""
+                        2000\t2010\t2020
+                        null\tnull\tnull
+                        """, """
+                        2000\t2010\t2020
+                        9584\t9848\t10668
                         """);
     }
 
     @Test
     public void testPivotImplicitGroupByWithAlias() throws Exception {
-        assertQueryAndPlan(
-                """
-                        2000_sum\t2010_sum\t2020_sum
-                        null\tnull\tnull
-                        """,
-                """
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                        );
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        2000_sum\t2010_sum\t2020_sum
-                        9584\t9848\t10668
-                        """,
-                false,
-                true,
-                false,
-                """
+        assertQuery("""
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                );
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .noRandomAccess()
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           values: [first_not_null(case([sum,nullL,year])),first_not_null(case([sum,nullL,year])),first_not_null(case([sum,nullL,year]))]
                             Async JIT Group By workers: 1
@@ -382,36 +663,32 @@ public class PivotTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: cities
+                        """)
+                .returns("""
+                        2000_sum\t2010_sum\t2020_sum
+                        null\tnull\tnull
+                        """, """
+                        2000_sum\t2010_sum\t2020_sum
+                        9584\t9848\t10668
                         """);
     }
 
     @Test
     public void testPivotImplicitGroupByWithAliasNoAs() throws Exception {
-        assertQueryAndPlan(
-                """
-                        2000_sum\t2010_sum\t2020_sum
-                        null\tnull\tnull
-                        """,
-                """
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population) sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                        );
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        2000_sum\t2010_sum\t2020_sum
-                        9584\t9848\t10668
-                        """,
-                false,
-                true,
-                false,
-                """
+        assertQuery("""
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population) sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                );
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .noRandomAccess()
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           values: [first_not_null(case([sum,nullL,year])),first_not_null(case([sum,nullL,year])),first_not_null(case([sum,nullL,year]))]
                             Async JIT Group By workers: 1
@@ -421,36 +698,31 @@ public class PivotTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: cities
+                        """)
+                .returns("""
+                        2000_sum\t2010_sum\t2020_sum
+                        null\tnull\tnull
+                        """, """
+                        2000_sum\t2010_sum\t2020_sum
+                        9584\t9848\t10668
                         """);
     }
 
     @Test
     public void testPivotImplicitGroupByWithOrderBy() throws Exception {
-        assertQueryAndPlan(
-                """
-                        2000\t2010\t2020
-                        null\tnull\tnull
-                        """,
-                """
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                        ) ORDER BY "2000";
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        2000\t2010\t2020
-                        9584\t9848\t10668
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                ) ORDER BY "2000";
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
                         Encode sort
                           keys: [2000]
                             GroupBy vectorized: false
@@ -462,6 +734,13 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("""
+                        2000\t2010\t2020
+                        null\tnull\tnull
+                        """, """
+                        2000\t2010\t2020
+                        9584\t9848\t10668
                         """);
     }
 
@@ -471,33 +750,31 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (2000, 2010)
+                        GROUP BY country
+                    )
+                    UNION ALL
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (2000, 2010)
+                        GROUP BY country
+                    )
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             country\t2000\t2010
                             NL\t1005\t1065
                             US\t8579\t8783
                             NL\t1005\t1065
                             US\t8579\t8783
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (2000, 2010)
-                                GROUP BY country
-                            )
-                            UNION ALL
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (2000, 2010)
-                                GROUP BY country
-                            )
-                            """,
-                    null,
-                    false,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -506,14 +783,15 @@ public class PivotTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS, 5);
             execute(ddlMonthlySales);
-            assertException("""
+            assertQuery("""
                     SELECT * FROM monthly_sales
                     PIVOT (
                         SUM(amount)
                         FOR month IN ('JAN', 'FEB', 'MAR', 'APR')
                           empid IN (1, 2)
                     )
-                    """, 104, "PIVOT produces too many columns: 8, limit is 5");
+                    """)
+                    .fails(104, "PIVOT produces too many columns: 8, limit is 5");
         });
     }
 
@@ -522,7 +800,7 @@ public class PivotTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS, 10);
             execute(ddlMonthlySales);
-            assertException("""
+            assertQuery("""
                     SELECT * FROM monthly_sales
                     PIVOT (
                         SUM(amount),
@@ -531,7 +809,39 @@ public class PivotTest extends AbstractSqlParserTest {
                         FOR month IN ('JAN', 'FEB', 'MAR', 'APR')
                         GROUP BY empid
                     )
-                    """, 28, "PIVOT produces too many columns: 12, limit is 10");
+                    """)
+                    .fails(28, "PIVOT produces too many columns: 12, limit is 10");
+        });
+    }
+
+    @Test
+    public void testPivotMultiForProtectedColumnNames() throws Exception {
+        // Regression: a multi-FOR pivot concatenates one value alias per FOR column (value1_value2).
+        // Protective-quoted operator-token values used to embed their quotes mid-name ("in"_"and");
+        // the components are now stripped so the composite surfaces clean (in_and).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, c1 STRING, c2 STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 'and', 10),
+                        ('B', 'in', 'and', 30);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR c1 IN ('in')
+                            c2 IN ('and')
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin_and
+                            A\t10
+                            B\t30
+                            """);
         });
     }
 
@@ -541,30 +851,27 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT * FROM cities
+                        PIVOT (
+                            SUM(population)
+                            FOR year IN (2000, 2010, 2020)
+                            GROUP BY country
+                        )
+                    ) PIVOT (
+                        SUM("2000" + "2010" + "2020")
+                        FOR country IN ('NL', 'US')
+                        GROUP BY country
+                    ) order by country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country	NL	US
                             NL	3228	null
                             US	null	26872
-                            """,
-                    """
-                            SELECT * FROM (
-                                SELECT * FROM cities
-                                PIVOT (
-                                    SUM(population)
-                                    FOR year IN (2000, 2010, 2020)
-                                    GROUP BY country
-                                )
-                            ) PIVOT (
-                                SUM("2000" + "2010" + "2020")
-                                FOR country IN ('NL', 'US')
-                                GROUP BY country
-                            ) order by country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -591,21 +898,151 @@ public class PivotTest extends AbstractSqlParserTest {
                     sell\t101502.1\t101502.1\t101497.0\t101497.0
                     """;
 
-            assertPlanNoLeakCheck(pivotQuery, """
-                    Encode sort light
-                      keys: [side]
-                        GroupBy vectorized: false
-                          keys: [side]
-                          values: [first_not_null(case([open,NaN,symbol,switch(symbol,'BTC-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'BTC-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'BTC-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'BTC-USD',close,NaN)]))]
-                            Async JIT Group By workers: 1
-                              keys: [side,symbol]
-                              values: [first(price),max(price),min(price),last(price)]
-                              filter: symbol in [BTC-USD]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trades
+            assertQuery(pivotQuery)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [side]
+                                GroupBy vectorized: false
+                                  keys: [side]
+                                  values: [first_not_null(case([open,NaN,symbol,switch(symbol,'BTC-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'BTC-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'BTC-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'BTC-USD',close,NaN)]))]
+                                    Async JIT Group By workers: 1
+                                      keys: [side,symbol]
+                                      values: [first(price),max(price),min(price),last(price)]
+                                      filter: symbol in [BTC-USD]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                            """)
+                    .returns(result);
+        });
+    }
+
+    @Test
+    public void testPivotOperatorTokenColumnCollidesWithSiblingColumn() throws Exception {
+        // An operator-token pivot column ('in') surfaces bare as `in` via toColumnName, so a SELECT *
+        // that pairs it with a same-named sibling column must deduplicate on the DISPLAY name, not the
+        // raw compiler alias: the dedup used to key on the quote-protected "in", missing the collision
+        // with a bare in, so the projection metadata build threw "duplicate column [name=in]"
+        // (regression). Both representation orders are covered.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+
+            // bare column `in` beside a protective-quoted "in" pivot column -> in / in1
+            execute("CREATE TABLE t1 (\"in\" INT);");
+            execute("INSERT INTO t1 VALUES (99);");
+            assertQuery("""
+                    SELECT * FROM t1
+                      CROSS JOIN (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) p
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            in	grp	in1
+                            99	A	10
+                            99	B	30
+                            """);
+
+            // protective-quoted "in" pivot column beside a bare `in` user alias -> in / in1
+            assertQuery("""
+                    SELECT * FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) p
+                      CROSS JOIN (SELECT 1 AS "in") k
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in1
+                            A	10	1
+                            B	30	1
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotOperatorTokenValueThroughJoin() throws Exception {
+        // An operator-token pivot column ('in') referenced through a join wildcard produces the
+        // composed reference t1."in"; it must resolve against the join metadata (stored bare as
+        // t1.in) and surface the clean name (regression: threw "wtf? t1.\"in\"" at compile time).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+            assertQuery("""
+                    SELECT * FROM
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1
+                      CROSS JOIN (SELECT 1 x) t2
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	x
+                            A	10	1
+                            B	30	1
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotOperatorTokenValueWithTrailingSpace() throws Exception {
+        // Regression: an operator-token pivot value ('in') and the same token plus trailing
+        // whitespace ('in ') both reduce to the display name `in` - the space is trimmed from the
+        // bare alias. The un-suffixed bare 'in ' candidate used to skip the quoted-sibling check and
+        // surface a second column also named `in`, so the projection metadata build threw
+        // "Duplicate column [name=in]". The dedup must now yield clean, quote-free names in / in_2,
+        // and CREATE TABLE AS SELECT over the pivot must succeed. Both value orders are covered:
+        // the result set was scan-order dependent (non-deterministic for a dynamic pivot) before.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'in ', 20),
+                        ('B', 'in', 30),
+                        ('B', 'in ', 40);
                     """);
-            assertSql(result, pivotQuery);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'in ') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in_2
+                            A	10	20
+                            B	30	40
+                            """);
+            // reverse value order collides the other way but still dedups cleanly to in / in_2
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in ', 'in') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in_2
+                            A	20	10
+                            B	40	30
+                            """);
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in', 'in ') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("SELECT grp, \"in\", in_2 FROM pivoted ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in_2
+                            A	10	20
+                            B	30	40
+                            """);
         });
     }
 
@@ -615,19 +1052,318 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertException(
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY 1
-                            )
-                            """,
-                    97,
-                    "cannot use positional group by inside `PIVOT`"
-            );
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY 1
+                    )
+                    """)
+                    .fails(97, "cannot use positional group by inside `PIVOT`");
         });
+    }
+
+    @Test
+    public void testPivotProtectedColumnNotReferenceableFromEnclosingQuery() throws Exception {
+        // Documented limitation: a compiler-protected output column - a dotted user alias, or an
+        // operator-token pivot value - is not referenceable by name from an enclosing query, because
+        // the protective quotes cannot survive to the outer reference. These must keep failing
+        // cleanly in the parser with a SqlException, never a "wtf?" AssertionError from an
+        // unresolved compile-time lookup (a future refactor of the resolution path could regress it).
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT \"a.b\" FROM (SELECT 1 AS \"a.b\")")
+                    .fails(7, "Invalid table name or alias");
+            assertQuery("SELECT * FROM (SELECT 1 AS \"a.b\") ORDER BY \"a.b\"")
+                    .fails(43, "Invalid table name or alias");
+
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+            assertQuery("SELECT t1.\"in\" FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1")
+                    .fails(7, "Invalid column: t1.in");
+        });
+    }
+
+    @Test
+    public void testPivotQuotedContentValueCollidesWithOperatorToken() throws Exception {
+        // Regression: a pivot value whose data is literally "in" displays as in (the documented
+        // quoted-content-value tradeoff) and collides with the operator-token value 'in'. The dedup
+        // must yield clean in / in_2, not in / "in"_2 - the leaked quotes broke result set metadata
+        // and CREATE TABLE AS SELECT, and were non-deterministic for a dynamic pivot (scan order
+        // decided the collision).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', '"in"', 20),
+                        ('B', 'in', 30),
+                        ('B', '"in"', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', '"in"') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin\tin_2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in', '"in"') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("SELECT grp, \"in\", in_2 FROM pivoted ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin\tin_2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotStaticListWithCaseVariantOperatorTokenValues() throws Exception {
+        // 'in' and 'IN' are distinct values (the duplicate-value guard is case-sensitive) but
+        // collide in the case-insensitive alias space, so the second gets a dedup suffix. The
+        // suffix turns the operator token into a plain identifier, so the protective quotes must
+        // not leak into the column name (regression: the old name was the literal "IN_2", which
+        // also broke CREATE TABLE AS SELECT over the pivot).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'IN', 20),
+                        ('B', 'in', 30),
+                        ('B', 'IN', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'IN') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	IN_2
+                            A	10	20
+                            B	30	40
+                            """);
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data
+                        PIVOT (SUM(val) FOR cat IN ('in', 'IN') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("""
+                    SELECT grp, "in", "IN_2" FROM pivoted ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	IN_2
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotStaticListWithDottedValues() throws Exception {
+        // A static IN-list dotted value goes through the SqlParser alias path (distinct from the
+        // dynamic subquery path the *Type tests cover); its column name must be clean.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'FNCL 2.5', 10),
+                        ('A', 'FNCL 3.0', 20),
+                        ('B', 'FNCL 2.5', 30),
+                        ('B', 'FNCL 3.0', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('FNCL 2.5', 'FNCL 3.0') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	FNCL 2.5	FNCL 3.0
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotStaticListWithOperatorTokenValues() throws Exception {
+        // Values that collide with operator tokens ('in', 'and') are quote-protected internally;
+        // the result set surfaces the clean names, not "in" / "and".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'and', 20),
+                        ('B', 'in', 30),
+                        ('B', 'and', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'and') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	and
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotStaticListWithQuotedContentValue() throws Exception {
+        // Documented limitation: a pivot value whose data genuinely begins and ends with a double
+        // quote AND contains a dot (or matches an operator token) cannot be distinguished from a
+        // compiler-protected alias, so toColumnName strips those quotes and the column surfaces as
+        // 'a.b' rather than '"a.b"'. This pins the tradeoff so it cannot drift silently; preserving
+        // such quotes would require tracking alias provenance out-of-band.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', '"a.b"', 10),
+                        ('B', '"a.b"', 20);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('"a.b"') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	a.b
+                            A	10
+                            B	20
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateDoesNotReparseBorrowedDdl() throws Exception {
+        // The compiler the PIVOT borrows last compiled a CREATE TABLE. Re-parsing its lexer on the
+        // sub-query's behalf would hand the PIVOT a CREATE TABLE model.
+        assertCompileSurfacesPivotOutOfDate(null, SQL_HIJACK_DDL, PIVOT_RACE_SQL, PIVOT_RACE_SQL);
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateDoesNotReparseBorrowedSelect() throws Exception {
+        // The compiler the PIVOT borrows last compiled another SELECT. Re-parsing its lexer on the
+        // sub-query's behalf would pivot on that statement's values.
+        assertCompileSurfacesPivotOutOfDate(null, SQL_HIJACK_SELECT, PIVOT_RACE_SQL, PIVOT_RACE_SQL);
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateExhaustsCreateTableAsSelectRetries() throws Exception {
+        // Every attempt of the statement loses the race. Each one must cost the statement's retry
+        // loop exactly one attempt and leave nothing open when the loop gives up.
+        assertMemoryLeak(() -> {
+            createPivotRaceTables();
+            raceBorrowedCompilerSql.set(SQL_HIJACK_SELECT);
+            final int schemaChangeBudget = 1_000;
+            final String createSql = "CREATE TABLE pivoted AS (" + PIVOT_RACE_SQL + ")";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(createSql, sqlExecutionContext);
+                raceSchemaChangesLeft.set(schemaChangeBudget);
+                try (Operation op = cq.getOperation()) {
+                    try (OperationFuture ignore = op.execute(sqlExecutionContext, null)) {
+                        Assert.fail("expected the CREATE TABLE AS SELECT retries to run out");
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table schema has changed [table=cats");
+                        // the start of the SELECT text
+                        Assert.assertEquals(createSql.indexOf('(') + 1, e.getPosition());
+                    }
+                }
+            }
+            Assert.assertEquals(
+                    configuration.getMaxSqlRecompileAttempts() + 1,
+                    schemaChangeBudget - raceSchemaChangesLeft.get()
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("pivoted"));
+            assertNothingBusy();
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateRetriedByAlterView() throws Exception {
+        assertExecuteRetriesPivotOutOfDate(
+                "CREATE VIEW pv AS (SELECT 'A' grp)",
+                "ALTER VIEW pv AS (" + PIVOT_RACE_SQL + ")"
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateRetriedByCreateTableAsSelect() throws Exception {
+        // CREATE TABLE AS SELECT recompiles its SELECT when it executes, and retries that compile
+        // when a table it reads goes out of date. A schema change racing the PIVOT IN sub-query
+        // must reach that retry rather than the compiler the PIVOT borrows.
+        assertMemoryLeak(() -> {
+            createPivotRaceTables();
+            raceBorrowedCompilerSql.set(SQL_HIJACK_SELECT);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile("CREATE TABLE pivoted AS (" + PIVOT_RACE_SQL + ")", sqlExecutionContext);
+                // armed after the compile, so the schema changes under the SELECT that the
+                // execution recompiles
+                raceSchemaChangesLeft.set(1);
+                try (
+                        Operation op = cq.getOperation();
+                        OperationFuture fut = op.execute(sqlExecutionContext, null)
+                ) {
+                    fut.await();
+                }
+            }
+            Assert.assertEquals(0, raceSchemaChangesLeft.get());
+            assertQuery("pivoted")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PIVOT_RACE_RESULT);
+            assertNothingBusy();
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateRetriedByCreateView() throws Exception {
+        assertExecuteRetriesPivotOutOfDate(null, "CREATE VIEW pv AS (" + PIVOT_RACE_SQL + ")");
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateSurfacesFromExplain() throws Exception {
+        // EXPLAIN runs the PIVOT IN sub-query to learn the plan's columns.
+        assertCompileSurfacesPivotOutOfDate(null, SQL_HIJACK_SELECT, "EXPLAIN " + PIVOT_RACE_SQL, PIVOT_RACE_SQL);
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateSurfacesFromViewExpansion() throws Exception {
+        // A view body's PIVOT is optimised as part of the statement that reads the view.
+        assertCompileSurfacesPivotOutOfDate(
+                "CREATE VIEW pv AS (" + PIVOT_RACE_SQL + ")",
+                SQL_HIJACK_SELECT,
+                "SELECT * FROM pv ORDER BY grp",
+                "SELECT * FROM pv ORDER BY grp"
+        );
     }
 
     @Test
@@ -636,18 +1372,15 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertException(
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (SELECT year FROM cities WHERE year > 9999)
-                                GROUP BY country
-                            )
-                            """,
-                    66,
-                    "PIVOT IN subquery returned empty result set"
-            );
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (SELECT year FROM cities WHERE year > 9999)
+                        GROUP BY country
+                    )
+                    """)
+                    .fails(66, "PIVOT IN subquery returned empty result set");
         });
     }
 
@@ -657,18 +1390,15 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertException(
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (SELECT year, country FROM cities)
-                                GROUP BY country
-                            )
-                            """,
-                    66,
-                    "PIVOT IN subquery must return exactly one column, got 2"
-            );
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (SELECT year, country FROM cities)
+                        GROUP BY country
+                    )
+                    """)
+                    .fails(66, "PIVOT IN subquery must return exactly one column, got 2");
         });
     }
 
@@ -685,14 +1415,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', array[1, 2], 30),
                         ('B', array[3, 4], 40);
                     """);
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 56, "unsupported PIVOT FOR column type: DOUBLE[]");
+                    """)
+                    .fails(56, "unsupported PIVOT FOR column type: DOUBLE[]");
         });
     }
 
@@ -709,14 +1440,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'A'::binary, 30),
                         ('B', 'B'::binary, 40);
                     """);
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 56, "unsupported PIVOT FOR column type: BINARY");
+                    """)
+                    .fails(56, "unsupported PIVOT FOR column type: BINARY");
         });
     }
 
@@ -726,14 +1458,15 @@ public class PivotTest extends AbstractSqlParserTest {
             execute("CREATE TABLE data (grp SYMBOL, cat BOOLEAN, val INT);");
             execute("CREATE TABLE cats (c BOOLEAN);");
             execute("INSERT INTO cats VALUES (true), (false);");
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: BOOLEAN");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: BOOLEAN");
         });
     }
 
@@ -751,24 +1484,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\t1\t2
                             A\t10\t20
                             B\t30\t40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -786,24 +1516,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'Y', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tX\tY
                             A\t10\t20
                             B\t30\t40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -821,24 +1548,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', '2024-01-02', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	"2024-01-01T00:00:00.000Z"	"2024-01-02T00:00:00.000Z"
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	2024-01-01T00:00:00.000Z	2024-01-02T00:00:00.000Z
                             A	10	20
                             B	30	40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -856,14 +1580,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.75m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(20,2)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(20,2)");
         });
     }
 
@@ -881,14 +1606,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.75m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(4,2)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(4,2)");
         });
     }
 
@@ -906,14 +1632,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.75m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(40,2)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(40,2)");
         });
     }
 
@@ -931,14 +1658,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.75m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(9,2)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(9,2)");
         });
     }
 
@@ -956,14 +1684,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.75m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(10,2)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(10,2)");
         });
     }
 
@@ -981,14 +1710,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.5m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(2,1)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(2,1)");
         });
     }
 
@@ -1006,24 +1736,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.5, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	"1.5"	"2.5"
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	1.5	2.5
                             A	10	20
                             B	30	40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1040,24 +1767,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'cat_2', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp	cat_1	cat_2	cat_3	cat_4	cat_5	cat_6	cat_7	cat_8	cat_9	cat_0
                             A	10	20	null	null	null	null	null	null	null	null
                             B	30	40	null	null	null	null	null	null	null	null
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1075,24 +1799,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.5, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	"1.5"	"2.5"
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	1.5	2.5
                             A	10	20
                             B	30	40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1110,14 +1831,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', #u09v, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: GEOHASH(4c)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: GEOHASH(4c)");
         });
     }
 
@@ -1135,24 +1857,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', '192.168.1.2', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	"192.168.1.1"	"192.168.1.2"
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	192.168.1.1	192.168.1.2
                             A	10	20
                             B	30	40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1164,24 +1883,21 @@ public class PivotTest extends AbstractSqlParserTest {
             execute("CREATE TABLE years (y INT);");
             execute("INSERT INTO years VALUES (2000), (2010);");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (SELECT y FROM years)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country\t2000\t2010
                             NL\t1005\t1065
                             US\t8579\t8783
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (SELECT y FROM years)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1199,15 +1915,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', to_long128(2, 2), 40);
                     """);
 
-            assertException(
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """, 48, "there is no matching operator `IN` with the argument type: LONG128");
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: LONG128");
         });
     }
 
@@ -1227,15 +1943,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', to_long256(2, 2, 2, 2), 40);
                     """);
 
-            assertException(
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """, 56, "unsupported PIVOT FOR column type: LONG256");
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .fails(56, "unsupported PIVOT FOR column type: LONG256");
         });
     }
 
@@ -1253,24 +1969,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2000000000000, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\t1000000000000\t2000000000000
                             A\t10\t20
                             B\t30\t40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1279,14 +1992,15 @@ public class PivotTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT);");
             execute("CREATE TABLE cats AS (SELECT 'cat_' || x::string as c FROM long_sequence(100000));");
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     )
-                    """, 56, "PIVOT produces too many columns: 5001, limit is 5000");
+                    """)
+                    .fails(56, "PIVOT produces too many columns: 5001, limit is 5000");
         });
     }
 
@@ -1308,25 +2022,22 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('West', 'prod_2', 'Q2', 450);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM sales
+                    PIVOT (
+                        SUM(amount)
+                        FOR product IN (SELECT p FROM products)
+                            quarter IN (SELECT q FROM quarters)
+                        GROUP BY region
+                    ) ORDER BY region
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             region\tprod_1_Q1\tprod_1_Q2\tprod_2_Q1\tprod_2_Q2\tprod_3_Q1\tprod_3_Q2
                             East\t100\t150\t200\t250\tnull\tnull
                             West\t300\t350\t400\t450\tnull\tnull
-                            """,
-                    """
-                            SELECT * FROM sales
-                            PIVOT (
-                                SUM(amount)
-                                FOR product IN (SELECT p FROM products)
-                                    quarter IN (SELECT q FROM quarters)
-                                GROUP BY region
-                            ) ORDER BY region
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1344,24 +2055,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', null, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\t1\tNULL
                             A\t10\t20
                             B\t30\t40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1379,24 +2087,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', null, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tX\tNULL
                             A\t10\t20
                             B\t30\t40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1414,24 +2119,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\t1\t2
                             A\t10\t20
                             B\t30\t40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1449,24 +2151,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'Y', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tX\tY
                             A\t10\t20
                             B\t30\t40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1484,24 +2183,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'Y', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tX\tY
                             A\t10\t20
                             B\t30\t40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1519,24 +2215,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', '2024-01-02T00:00:00.000000Z', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	"2024-01-01T00:00:00.000000Z"	"2024-01-02T00:00:00.000000Z"
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	2024-01-01T00:00:00.000000Z	2024-01-02T00:00:00.000000Z
                             A	10	20
                             B	30	40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1554,53 +2247,93 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'Y', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tX\tY
                             A\t10\t20
                             B\t30\t40
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotToTableWithDottedColumnNamesFailsCleanly() throws Exception {
+        // Documented limitation: a dotted pivot value yields a display column name that contains a
+        // dot (FNCL 2.5), which is not a valid PHYSICAL column name - TableUtils.isValidColumnName
+        // rejects '.'. So CREATE TABLE AS SELECT (and a materialized view) over such a pivot cannot
+        // materialize the column and must fail cleanly with an "invalid column name" SqlException,
+        // never a crash. Operator-token pivot values (in, and) ARE valid physical names and CTAS
+        // succeeds - see testPivotToTableWithOperatorTokenColumnNames. The dotted display name still
+        // works for plain SELECT and over the wire; only physical persistence is unsupported.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'FNCL 2.5', 10), ('B', 'FNCL 2.5', 30);");
+            assertExceptionNoLeakCheck(
+                    "CREATE TABLE pivoted AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('FNCL 2.5') GROUP BY grp))",
+                    13,
+                    "invalid column name [name=FNCL 2.5"
+            );
+        });
+    }
+
+    @Test
+    public void testPivotToTableWithOperatorTokenColumnNames() throws Exception {
+        // Operator-token pivot values now yield clean physical column names, so CREATE TABLE AS
+        // SELECT succeeds (the old "in"-with-quotes name was rejected as invalid) and the columns
+        // remain addressable via quoted identifiers.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'and', 20),
+                        ('B', 'in', 30),
+                        ('B', 'and', 40);
+                    """);
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data
+                        PIVOT (SUM(val) FOR cat IN ('in', 'and') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("""
+                    SELECT grp, "in", "and" FROM pivoted ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	and
+                            A	10	20
+                            B	30	40
+                            """);
         });
     }
 
     @Test
     public void testPivotWithAliasedAggregate() throws Exception {
-        assertQueryAndPlan(
-                "country\t2000_total\t2010_total\t2020_total\n",
-                """
-                        cities
-                        PIVOT (
-                            SUM(population) as total
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country
-                        ) order by country;
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country\t2000_total\t2010_total\t2020_total
-                        NL\t1005\t1065\t1158
-                        US\t8579\t8783\t9510
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population) as total
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country
+                ) order by country;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -1612,6 +2345,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("country\t2000_total\t2010_total\t2020_total\n", """
+                        country\t2000_total\t2010_total\t2020_total
+                        NL\t1005\t1065\t1158
+                        US\t8579\t8783\t9510
                         """);
     }
 
@@ -1627,25 +2365,45 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('G2', 'B', null);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM sparse
+                    PIVOT (
+                        SUM(val), count(val)
+                        FOR cat IN ('A', 'B')
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp	A_SUM(val)	A_count(val)	B_SUM(val)	B_count(val)
                             G1	10	1	null	0
                             G2	20	1	null	0
-                            """,
-                    """
-                            SELECT * FROM sparse
-                            PIVOT (
-                                SUM(val), count(val)
-                                FOR cat IN ('A', 'B')
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
+    }
+
+    @Test
+    public void testPivotWithApproxCountDistinctEmptyCellsCaseMode() throws Exception {
+        assertQuery("""
+                cities
+                PIVOT (
+                    approx_count_distinct(population) AS acd
+                    FOR
+                        year IN (2020, 2030)
+                        country IN ('NL', 'US')
+                    GROUP BY name
+                ) ORDER BY name;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .returns("name\t2020_NL_acd\t2020_US_acd\t2030_NL_acd\t2030_US_acd\n", """
+                        name	2020_NL_acd	2020_US_acd	2030_NL_acd	2030_US_acd
+                        Amsterdam	1	0	0	0
+                        New York City	0	1	0	0
+                        Seattle	0	1	0	0
+                        """);
     }
 
     @Test
@@ -1673,27 +2431,11 @@ public class PivotTest extends AbstractSqlParserTest {
                     ) select * from A asof join B ON (vehicle_id) LIMIT 10
                     ;""";
 
-            assertQueryNoLeakCheck("""
-                            timestamp	vehicle_id	i000	i001	i002	i003	i004	i005	i006	i007	i008	i009	timestamp1	vehicle_id1	s000	s001	s002	s003	s004	s005	s006	s007	s008	s009
-                            2025-01-01T00:00:00.000000Z	AAA000	null	856.0	366.0	25.0	-475.0	29.0	373.0	-998.0	-881.0	-6.0	2025-01-01T00:00:00.000000Z	AAA000	val_-48	val_-516	val_-972	val_-714	val_-703	val_481	val_512	val_116	val_97	val_-405
-                            2025-01-01T00:00:00.000000Z	AAA001	698.0	859.0	-893.0	716.0	51.0	-57.0	-16.0	886.0	-904.0	-727.0	2025-01-01T00:00:00.000000Z	AAA001	val_-964	val_-305	val_-171	val_-104	val_-279	val_198	val_-769	val_-127	val_228	val_-723
-                            2025-01-01T00:00:00.000000Z	AAA002	388.0	86.0	339.0	697.0	-508.0	57.0	518.0	3.0	504.0	-951.0	2025-01-01T00:00:00.000000Z	AAA002	val_-914	val_-752	val_-747	val_-973	val_-842	val_-300	val_928	val_-463	val_-319	val_638
-                            2025-01-01T00:00:00.000000Z	AAA003	64.0	717.0	-360.0	-248.0	694.0	10.0	778.0	-602.0	-476.0	-364.0	2025-01-01T00:00:00.000000Z	AAA003	val_394	val_-835	val_263	val_-54	val_-908	val_705	val_-703	val_-393	val_-933	val_841
-                            2025-01-01T00:00:00.000000Z	AAA004	3.0	-517.0	-123.0	290.0	374.0	-840.0	-155.0	-711.0	841.0	203.0	2025-01-01T00:00:00.000000Z	AAA004	val_-136	val_-781	val_380	val_763	val_138	val_524	val_624	val_-195	val_-352	val_-574
-                            2025-01-01T00:00:00.000000Z	AAA005	-909.0	-943.0	422.0	747.0	-687.0	-663.0	150.0	514.0	932.0	93.0	2025-01-01T00:00:00.000000Z	AAA005	val_-682	val_-76	val_-121	val_-128	val_-59	val_930	val_681	val_-445	val_-819	val_695
-                            2025-01-01T00:00:00.000000Z	AAA006	598.0	-866.0	-728.0	59.0	3.0	-311.0	-842.0	469.0	25.0	575.0	2025-01-01T00:00:00.000000Z	AAA006	val_468	val_-330	val_-740	val_-113	val_535	val_-473	val_272	val_-671	val_926	val_-184
-                            2025-01-01T00:00:00.000000Z	AAA007	191.0	868.0	87.0	-820.0	-934.0	485.0	31.0	-147.0	-168.0	627.0	2025-01-01T00:00:00.000000Z	AAA007	val_242	val_-531	val_-138	val_60	val_37	val_-995	val_43	val_782	val_640	val_75
-                            2025-01-01T00:00:00.000000Z	AAA008	-693.0	-721.0	-472.0	-964.0	-42.0	-64.0	483.0	-509.0	-412.0	-942.0	2025-01-01T00:00:00.000000Z	AAA008	val_-67	val_17	val_444	val_-190	val_692	val_941	val_385	val_468	val_-384	val_795
-                            2025-01-01T00:00:00.000000Z	AAA009	910.0	276.0	451.0	293.0	-333.0	827.0	834.0	-242.0	-199.0	-336.0	2025-01-01T00:00:00.000000Z	AAA009	val_889	val_407	val_-806	val_895	val_460	val_-743	val_988	val_-320	val_435	val_583
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    false,
-                    false);
-
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .withPlan("""
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                 SelectedRecord
                                     AsOf Join Light
@@ -1722,48 +2464,43 @@ public class PivotTest extends AbstractSqlParserTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: sensors
+                            """)
+                    .returns("""
+                            timestamp	vehicle_id	i000	i001	i002	i003	i004	i005	i006	i007	i008	i009	timestamp1	vehicle_id1	s000	s001	s002	s003	s004	s005	s006	s007	s008	s009
+                            2025-01-01T00:00:00.000000Z	AAA000	null	856.0	366.0	25.0	-475.0	29.0	373.0	-998.0	-881.0	-6.0	2025-01-01T00:00:00.000000Z	AAA000	val_-48	val_-516	val_-972	val_-714	val_-703	val_481	val_512	val_116	val_97	val_-405
+                            2025-01-01T00:00:00.000000Z	AAA001	698.0	859.0	-893.0	716.0	51.0	-57.0	-16.0	886.0	-904.0	-727.0	2025-01-01T00:00:00.000000Z	AAA001	val_-964	val_-305	val_-171	val_-104	val_-279	val_198	val_-769	val_-127	val_228	val_-723
+                            2025-01-01T00:00:00.000000Z	AAA002	388.0	86.0	339.0	697.0	-508.0	57.0	518.0	3.0	504.0	-951.0	2025-01-01T00:00:00.000000Z	AAA002	val_-914	val_-752	val_-747	val_-973	val_-842	val_-300	val_928	val_-463	val_-319	val_638
+                            2025-01-01T00:00:00.000000Z	AAA003	64.0	717.0	-360.0	-248.0	694.0	10.0	778.0	-602.0	-476.0	-364.0	2025-01-01T00:00:00.000000Z	AAA003	val_394	val_-835	val_263	val_-54	val_-908	val_705	val_-703	val_-393	val_-933	val_841
+                            2025-01-01T00:00:00.000000Z	AAA004	3.0	-517.0	-123.0	290.0	374.0	-840.0	-155.0	-711.0	841.0	203.0	2025-01-01T00:00:00.000000Z	AAA004	val_-136	val_-781	val_380	val_763	val_138	val_524	val_624	val_-195	val_-352	val_-574
+                            2025-01-01T00:00:00.000000Z	AAA005	-909.0	-943.0	422.0	747.0	-687.0	-663.0	150.0	514.0	932.0	93.0	2025-01-01T00:00:00.000000Z	AAA005	val_-682	val_-76	val_-121	val_-128	val_-59	val_930	val_681	val_-445	val_-819	val_695
+                            2025-01-01T00:00:00.000000Z	AAA006	598.0	-866.0	-728.0	59.0	3.0	-311.0	-842.0	469.0	25.0	575.0	2025-01-01T00:00:00.000000Z	AAA006	val_468	val_-330	val_-740	val_-113	val_535	val_-473	val_272	val_-671	val_926	val_-184
+                            2025-01-01T00:00:00.000000Z	AAA007	191.0	868.0	87.0	-820.0	-934.0	485.0	31.0	-147.0	-168.0	627.0	2025-01-01T00:00:00.000000Z	AAA007	val_242	val_-531	val_-138	val_60	val_37	val_-995	val_43	val_782	val_640	val_75
+                            2025-01-01T00:00:00.000000Z	AAA008	-693.0	-721.0	-472.0	-964.0	-42.0	-64.0	483.0	-509.0	-412.0	-942.0	2025-01-01T00:00:00.000000Z	AAA008	val_-67	val_17	val_444	val_-190	val_692	val_941	val_385	val_468	val_-384	val_795
+                            2025-01-01T00:00:00.000000Z	AAA009	910.0	276.0	451.0	293.0	-333.0	827.0	834.0	-242.0	-199.0	-336.0	2025-01-01T00:00:00.000000Z	AAA009	val_889	val_407	val_-806	val_895	val_460	val_-743	val_988	val_-320	val_435	val_583
                             """);
         });
     }
 
     @Test
     public void testPivotWithCTEInsideDynamicSubQuery() throws Exception {
-        assertQueryAndPlan(
-                """
-                        CPDH\t2010\t2017\t2018\t2022
-                        C1\tnull\t0\t20\t10
-                        C2\t30\tnull\tnull\t10
-                        C3\t80\tnull\tnull\tnull
-                        """,
-                """
-                        WITH CPB AS (
-                        SELECT 'C1' AS CPDH, 2022 AS NF, 10 AS JG
-                        UNION ALL
-                        SELECT 'C1',2018,20
-                        UNION ALL
-                        SELECT 'C1',2017,0
-                        UNION ALL
-                        SELECT 'C2',2022,10
-                        UNION ALL
-                        SELECT 'C2',2010,30
-                        UNION ALL
-                        SELECT 'C3',2010,80
-                        )
-                        SELECT * FROM CPB PIVOT (sum(jg) FOR nf IN (SELECT NF FROM CPB ORDER BY NF) GROUP BY CPDH) ORDER BY CPDH;""",
-                null,
-                null,
-                null,
-                """
-                        CPDH\t2010\t2017\t2018\t2022
-                        C1\tnull\t0\t20\t10
-                        C2\t30\tnull\tnull\t10
-                        C3\t80\tnull\tnull\tnull
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light
+        assertQuery("""
+                WITH CPB AS (
+                SELECT 'C1' AS CPDH, 2022 AS NF, 10 AS JG
+                UNION ALL
+                SELECT 'C1',2018,20
+                UNION ALL
+                SELECT 'C1',2017,0
+                UNION ALL
+                SELECT 'C2',2022,10
+                UNION ALL
+                SELECT 'C2',2010,30
+                UNION ALL
+                SELECT 'C3',2010,80
+                )
+                SELECT * FROM CPB PIVOT (sum(jg) FOR nf IN (SELECT NF FROM CPB ORDER BY NF) GROUP BY CPDH) ORDER BY CPDH;""")
+                .expectSize()
+                .withPlan("""
+                        Encode sort light
                           keys: [CPDH]
                             GroupBy vectorized: false
                               keys: [CPDH]
@@ -1795,36 +2532,32 @@ public class PivotTest extends AbstractSqlParserTest {
                                             VirtualRecord
                                               functions: [2010,'C3',80]
                                                 long_sequence count: 1
+                        """)
+                .returns("""
+                        CPDH\t2010\t2017\t2018\t2022
+                        C1\tnull\t0\t20\t10
+                        C2\t30\tnull\tnull\t10
+                        C3\t80\tnull\tnull\tnull
                         """);
     }
 
     @Test
     public void testPivotWithCast() throws Exception {
-        assertQueryAndPlan(
-                "country\t2000\t'2010'::int\t'2020'::long\n",
-                """
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, '2010'::int, '2020'::long)
-                            GROUP BY country
-                        ) order by country;
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country	2000	'2010'::int	'2020'::long
-                        NL	1005	1065	1158
-                        US	8579	8783	9510
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light
+        assertQuery("""
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, '2010'::int, '2020'::long)
+                    GROUP BY country
+                ) order by country;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -1836,6 +2569,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("country\t2000\t'2010'::int\t'2020'::long\n", """
+                        country	2000	'2010'::int	'2020'::long
+                        NL	1005	1065	1158
+                        US	8579	8783	9510
                         """);
     }
 
@@ -1849,24 +2587,21 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        coalesce(NULL, NULL, SUM(population))
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country\t2000\t2010\t2020
                             NL\t1005\t1065\t1158
                             US\t8579\t8783\t9510
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                coalesce(NULL, NULL, SUM(population))
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -1881,54 +2616,40 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        coalesce(0, SUM(population))
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country\t2000\t2010\t2020
                             NL\t0\t0\t0
                             US\t0\t0\t0
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                coalesce(0, SUM(population))
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
     @Test
     public void testPivotWithComplexInitialStatement() throws Exception {
-        assertQueryAndPlan(
-                "country\tname\t2000_sum\t2010_sum\t2020_sum\n",
-                """
-                        (cities
-                        WHERE (population % 2) = 0)
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country, name
-                        ) order by country;""",
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country\tname\t2000_sum\t2010_sum\t2020_sum
-                        NL\tAmsterdam\tnull\tnull\t1158
-                        US\tSeattle\t564\t608\t738
-                        US\tNew York City\tnull\tnull\t8772
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light
+        assertQuery("""
+                (cities
+                WHERE (population % 2) = 0)
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country, name
+                ) order by country;""")
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -1940,6 +2661,12 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("country\tname\t2000_sum\t2010_sum\t2020_sum\n", """
+                        country\tname\t2000_sum\t2010_sum\t2020_sum
+                        NL\tAmsterdam\tnull\tnull\t1158
+                        US\tSeattle\t564\t608\t738
+                        US\tNew York City\tnull\tnull\t8772
                         """);
     }
 
@@ -1949,25 +2676,48 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        COUNT(*),
+                        last(population)
+                        FOR year IN (2000, 2010, 2020, null, 2030)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country	2000_COUNT()	2000_last(population)	2010_COUNT()	2010_last(population)	2020_COUNT()	2020_last(population)	null_COUNT()	null_last(population)	2030_COUNT()	2030_last(population)
                             NL	1	1005	1	1065	1	1158	0	null	0	null
                             US	2	8015	2	8175	2	8772	0	null	0	null
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                COUNT(*),
-                                last(population)
-                                FOR year IN (2000, 2010, 2020, null, 2030)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotWithCountDistinctEmptyCells() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        count_distinct(population) AS cd,
+                        approx_count_distinct(population) AS acd,
+                        sum(population) AS total
+                        FOR year IN (2020, 2030)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country	2020_cd	2020_acd	2020_total	2030_cd	2030_acd	2030_total
+                            NL	1	1	1158	0	0	null
+                            US	2	2	9510	0	0	null
+                            """);
         });
     }
 
@@ -1983,24 +2733,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('S2', 'humidity', 55.8);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM measurements
+                    PIVOT (
+                        avg(value) / 2
+                        FOR metric IN ('temp', 'humidity')
+                        GROUP BY sensor
+                    ) ORDER BY sensor
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sensor	temp	humidity
                             S1	12.75	30.1
                             S2	14.15	27.9
-                            """,
-                    """
-                            SELECT * FROM measurements
-                            PIVOT (
-                                avg(value) / 2
-                                FOR metric IN ('temp', 'humidity')
-                                GROUP BY sensor
-                            ) ORDER BY sensor
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -2020,26 +2767,16 @@ public class PivotTest extends AbstractSqlParserTest {
                             ) order by country;
                             """;
 
-            assertException(query, 60, "PIVOT IN subquery returned empty result set");
+            assertQuery(query)
+                    .fails(60, "PIVOT IN subquery returned empty result set");
 
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            country\t2000\t2010\t2020
-                            NL\t1005\t1065\t1158
-                            US\t8579\t8783\t9510
-                            """,
-                    query,
-                    null,
-                    true,
-                    true,
-                    false
-            );
-
-            assertPlanNoLeakCheck(query,
-                    """
-                            Sort light
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
                               keys: [country]
                                 GroupBy vectorized: false
                                   keys: [country]
@@ -2051,6 +2788,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: cities
+                            """)
+                    .returns("""
+                            country\t2000\t2010\t2020
+                            NL\t1005\t1065\t1158
+                            US\t8579\t8783\t9510
                             """);
         });
     }
@@ -2071,24 +2813,16 @@ public class PivotTest extends AbstractSqlParserTest {
                             );
                             """;
 
-            assertException(query, 60, "PIVOT IN subquery returned empty result set");
+            assertQuery(query)
+                    .fails(60, "PIVOT IN subquery returned empty result set");
 
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            2000_Amsterdam\t2000_New York City\t2000_Seattle\t2010_Amsterdam\t2010_New York City\t2010_Seattle\t2020_Amsterdam\t2020_New York City\t2020_Seattle
-                            1005\t8015\t564\t1065\t8175\t608\t1158\t8772\t738
-                            """,
-                    query,
-                    null,
-                    false,
-                    true,
-                    false
-            );
-
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
                             GroupBy vectorized: false
                               values: [first_not_null(case([(year=2000 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2000 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2000 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2010 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2010 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2020 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2020 and name='Seattle'),SUM(population),null]))]
                                 Async Group By workers: 1
@@ -2098,6 +2832,10 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                            """)
+                    .returns("""
+                            2000_Amsterdam\t2000_New York City\t2000_Seattle\t2010_Amsterdam\t2010_New York City\t2010_Seattle\t2020_Amsterdam\t2020_New York City\t2020_Seattle
+                            1005\t8015\t564\t1065\t8175\t608\t1158\t8772\t738
                             """);
         });
     }
@@ -2119,24 +2857,16 @@ public class PivotTest extends AbstractSqlParserTest {
                             );
                             """;
 
-            assertException(query, 81, "PIVOT IN subquery returned empty result set");
+            assertQuery(query)
+                    .fails(81, "PIVOT IN subquery returned empty result set");
 
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            2000_Amsterdam_SUM(population)	2000_Amsterdam_AVG(population)	2000_New York City_SUM(population)	2000_New York City_AVG(population)	2000_Seattle_SUM(population)	2000_Seattle_AVG(population)	2010_Amsterdam_SUM(population)	2010_Amsterdam_AVG(population)	2010_New York City_SUM(population)	2010_New York City_AVG(population)	2010_Seattle_SUM(population)	2010_Seattle_AVG(population)	2020_Amsterdam_SUM(population)	2020_Amsterdam_AVG(population)	2020_New York City_SUM(population)	2020_New York City_AVG(population)	2020_Seattle_SUM(population)	2020_Seattle_AVG(population)
-                            1005	1005.0	8015	8015.0	564	564.0	1065	1065.0	8175	8175.0	608	608.0	1158	1158.0	8772	8772.0	738	738.0
-                            """,
-                    query,
-                    null,
-                    false,
-                    true,
-                    false
-            );
-
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
                             GroupBy vectorized: false
                               values: [first_not_null(case([(year=2000 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2000 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2000 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2000 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2000 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2000 and name='Seattle'),AVG(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2010 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2010 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2010 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2010 and name='Seattle'),AVG(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2020 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2020 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2020 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2020 and name='Seattle'),AVG(population),null]))]
                                 Async Group By workers: 1
@@ -2146,6 +2876,10 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                            """)
+                    .returns("""
+                            2000_Amsterdam_SUM(population)	2000_Amsterdam_AVG(population)	2000_New York City_SUM(population)	2000_New York City_AVG(population)	2000_Seattle_SUM(population)	2000_Seattle_AVG(population)	2010_Amsterdam_SUM(population)	2010_Amsterdam_AVG(population)	2010_New York City_SUM(population)	2010_New York City_AVG(population)	2010_Seattle_SUM(population)	2010_Seattle_AVG(population)	2020_Amsterdam_SUM(population)	2020_Amsterdam_AVG(population)	2020_New York City_SUM(population)	2020_New York City_AVG(population)	2020_Seattle_SUM(population)	2020_Seattle_AVG(population)
+                            1005	1005.0	8015	8015.0	564	564.0	1065	1065.0	8175	8175.0	608	608.0	1158	1158.0	8772	8772.0	738	738.0
                             """);
         });
     }
@@ -2154,22 +2888,19 @@ public class PivotTest extends AbstractSqlParserTest {
     public void testPivotWithEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY country
+                    )
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country\t2000\t2010\t2020
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY country
-                            )
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -2179,52 +2910,39 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year - 2000 IN (0, 10)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country	0	10
                             NL	1005	1065
                             US	8579	8783
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year - 2000 IN (0, 10)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
     @Test
     public void testPivotWithForAliases() throws Exception {
-        assertQueryAndPlan(
-                "country\tD1\tD2\tD3\n",
-                """
-                        cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000 as D1, 2010 D2, 2020 as D3)
-                            GROUP BY country
-                        );
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country\tD1\tD2\tD3
-                        NL\t1005\t1065\t1158
-                        US\t8579\t8783\t9510
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000 as D1, 2010 D2, 2020 as D3)
+                    GROUP BY country
+                );
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           keys: [country]
                           values: [first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year]))]
@@ -2235,33 +2953,29 @@ public class PivotTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: cities
+                        """)
+                .returns("country\tD1\tD2\tD3\n", """
+                        country\tD1\tD2\tD3
+                        NL\t1005\t1065\t1158
+                        US\t8579\t8783\t9510
                         """);
     }
 
     @Test
     public void testPivotWithGroupByAndLimit() throws Exception {
-        assertQueryAndPlan(
-                "country\tname\t2000_sum\t2010_sum\t2020_sum\n",
-                """
-                        cities
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country, name
-                        ) order by country, name LIMIT 1 ;""",
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country\tname\t2000_sum\t2010_sum\t2020_sum
-                        NL\tAmsterdam\t1005\t1065\t1158
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light lo: 1
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country, name
+                ) order by country, name LIMIT 1 ;""")
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light lo: 1
                           keys: [country, name]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -2273,35 +2987,28 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("country\tname\t2000_sum\t2010_sum\t2020_sum\n", """
+                        country\tname\t2000_sum\t2010_sum\t2020_sum
+                        NL\tAmsterdam\t1005\t1065\t1158
                         """);
     }
 
     @Test
     public void testPivotWithGroupByAndOrderBy() throws Exception {
-        assertQueryAndPlan(
-                "country\tname\t2000_sum\t2010_sum\t2020_sum\n",
-                """
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country, name
-                        )  ORDER BY "2000_sum";""",
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country\tname\t2000_sum\t2010_sum\t2020_sum
-                        US\tSeattle\t564\t608\t738
-                        NL\tAmsterdam\t1005\t1065\t1158
-                        US\tNew York City\t8015\t8175\t8772
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country, name
+                )  ORDER BY "2000_sum";""")
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
                         Encode sort light
                           keys: [2000_sum]
                             GroupBy vectorized: false
@@ -2314,33 +3021,30 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("country\tname\t2000_sum\t2010_sum\t2020_sum\n", """
+                        country\tname\t2000_sum\t2010_sum\t2020_sum
+                        US\tSeattle\t564\t608\t738
+                        NL\tAmsterdam\t1005\t1065\t1158
+                        US\tNew York City\t8015\t8175\t8772
                         """);
     }
 
     @Test
     public void testPivotWithGroupByAndOrderByAndLimit() throws Exception {
-        assertQueryAndPlan(
-                "country\tname\t2000_sum\t2010_sum\t2020_sum\n",
-                """
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country, name
-                        ) ORDER BY "2000_sum" LIMIT 1;""",
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country\tname\t2000_sum\t2010_sum\t2020_sum
-                        US\tSeattle\t564\t608\t738
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country, name
+                ) ORDER BY "2000_sum" LIMIT 1;""")
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
                         Long Top K lo: 1
                           keys: [2000_sum asc]
                             GroupBy vectorized: false
@@ -2353,6 +3057,10 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("country\tname\t2000_sum\t2010_sum\t2020_sum\n", """
+                        country\tname\t2000_sum\t2010_sum\t2020_sum
+                        US\tSeattle\t564\t608\t738
                         """);
     }
 
@@ -2368,54 +3076,41 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('US', 'America');
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT continent, "2000", "2010", "2020" FROM (
+                        SELECT ci.continent, c.year, c.population
+                        FROM cities c
+                        JOIN country_info ci ON c.country = ci.code
+                    )
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY continent
+                    ) ORDER BY continent
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             continent\t2000\t2010\t2020
                             America\t8579\t8783\t9510
                             Europe\t1005\t1065\t1158
-                            """,
-                    """
-                            SELECT continent, "2000", "2010", "2020" FROM (
-                                SELECT ci.continent, c.year, c.population
-                                FROM cities c
-                                JOIN country_info ci ON c.country = ci.code
-                            )
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY continent
-                            ) ORDER BY continent
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
     @Test
     public void testPivotWithLatestOnGroupBy() throws Exception {
-        assertQueryAndPlan(
-                "side\tETH-USDT\tBTC-USDT\tDOGE-USDT\n",
-                """
-                        (select side, symbol, last(price) as price from trades group by side, symbol)
-                          pivot (
-                            last(price)
-                            FOR "symbol" IN ('ETH-USDT', 'BTC-USDT', 'DOGE-USDT')
-                            GROUP BY side
-                          ) ORDER BY side;""",
-                ddlTrades,
-                null,
-                dmlTrades,
-                """
-                        side\tETH-USDT\tBTC-USDT\tDOGE-USDT
-                        buy\t3678.01\t101497.6\t0.36047
-                        sell\t3678.0\t101497.0\t0.36041
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                (select side, symbol, last(price) as price from trades group by side, symbol)
+                  pivot (
+                    last(price)
+                    FOR "symbol" IN ('ETH-USDT', 'BTC-USDT', 'DOGE-USDT')
+                    GROUP BY side
+                  ) ORDER BY side;""")
+                .ddl(ddlTrades)
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
                         Encode sort light
                           keys: [side]
                             GroupBy vectorized: false
@@ -2431,6 +3126,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
+                        """)
+                .returns("side\tETH-USDT\tBTC-USDT\tDOGE-USDT\n", """
+                        side\tETH-USDT\tBTC-USDT\tDOGE-USDT
+                        buy\t3678.01\t101497.6\t0.36047
+                        sell\t3678.0\t101497.0\t0.36041
                         """);
     }
 
@@ -2440,54 +3140,41 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        MIN(population) AS min, MAX(population) AS max
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country\t2000_min\t2000_max\t2010_min\t2010_max\t2020_min\t2020_max
                             NL\t1005\t1005\t1065\t1065\t1158\t1158
                             US\t564\t8015\t608\t8175\t738\t8772
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                MIN(population) AS min, MAX(population) AS max
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
     @Test
     public void testPivotWithMultipleAggregates() throws Exception {
-        assertQueryAndPlan(
-                "country\t2000_SUM(population)\t2000_AVG(population)\t2010_SUM(population)\t2010_AVG(population)\t2020_SUM(population)\t2020_AVG(population)\n",
-                """
-                        cities
-                        PIVOT (
-                            SUM(population),
-                            AVG(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country
-                        ) order by country;
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country	2000_SUM(population)	2000_AVG(population)	2010_SUM(population)	2010_AVG(population)	2020_SUM(population)	2020_AVG(population)
-                        NL	1005	1005.0	1065	1065.0	1158	1158.0
-                        US	8579	4289.5	8783	4391.5	9510	4755.0
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population),
+                    AVG(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country
+                ) order by country;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -2499,40 +3186,33 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
-                        """
-        );
+                        """)
+                .returns("country\t2000_SUM(population)\t2000_AVG(population)\t2010_SUM(population)\t2010_AVG(population)\t2020_SUM(population)\t2020_AVG(population)\n", """
+                        country	2000_SUM(population)	2000_AVG(population)	2010_SUM(population)	2010_AVG(population)	2020_SUM(population)	2020_AVG(population)
+                        NL	1005	1005.0	1065	1065.0	1158	1158.0
+                        US	8579	4289.5	8783	4391.5	9510	4755.0
+                        """);
     }
 
     @Test
     public void testPivotWithMultipleAliasedAggregatesExplicitGroupBy() throws Exception {
-        assertQueryAndPlan(
-                "name\t2000_NL_total\t2000_NL_count\t2000_NL_count_dis\t2000_US_total\t2000_US_count\t2000_US_count_dis\t2010_NL_total\t2010_NL_count\t2010_NL_count_dis\t2010_US_total\t2010_US_count\t2010_US_count_dis\n",
-                """
-                        cities
-                        PIVOT (
-                            SUM(population) as total,
-                            COUNT(population) as count,
-                            COUNT(distinct population) as count_dis
-                            FOR
-                                year IN (2000, 2010)
-                                country IN ('NL', 'US')
-                            GROUP BY name
-                        ) order by name;
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        name	2000_NL_total	2000_NL_count	2000_NL_count_dis	2000_US_total	2000_US_count	2000_US_count_dis	2010_NL_total	2010_NL_count	2010_NL_count_dis	2010_US_total	2010_US_count	2010_US_count_dis
-                        Amsterdam	1005	1	1	null	0	0	1065	1	1	null	0	0
-                        New York City	null	0	0	8015	1	1	null	0	0	8175	1	1
-                        Seattle	null	0	0	564	1	1	null	0	0	608	1	1
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population) as total,
+                    COUNT(population) as count,
+                    COUNT(distinct population) as count_dis
+                    FOR
+                        year IN (2000, 2010)
+                        country IN ('NL', 'US')
+                    GROUP BY name
+                ) order by name;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light
                           keys: [name]
                             GroupBy vectorized: false
                               keys: [name]
@@ -2544,38 +3224,33 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("name\t2000_NL_total\t2000_NL_count\t2000_NL_count_dis\t2000_US_total\t2000_US_count\t2000_US_count_dis\t2010_NL_total\t2010_NL_count\t2010_NL_count_dis\t2010_US_total\t2010_US_count\t2010_US_count_dis\n", """
+                        name	2000_NL_total	2000_NL_count	2000_NL_count_dis	2000_US_total	2000_US_count	2000_US_count_dis	2010_NL_total	2010_NL_count	2010_NL_count_dis	2010_US_total	2010_US_count	2010_US_count_dis
+                        Amsterdam	1005	1	1	null	0	0	1065	1	1	null	0	0
+                        New York City	null	0	0	8015	1	1	null	0	0	8175	1	1
+                        Seattle	null	0	0	564	1	1	null	0	0	608	1	1
                         """);
     }
 
     @Test
     public void testPivotWithMultipleAliasedAggregatesExplicitGroupByWithForAliases() throws Exception {
-        assertQueryAndPlan(
-                "name\t2K00_Netherlands_total\t2K00_Netherlands_count\t2K00_United States_total\t2K00_United States_count\t2K10_Netherlands_total\t2K10_Netherlands_count\t2K10_United States_total\t2K10_United States_count\n",
-                """
-                        cities
-                        PIVOT (
-                            SUM(population) as total,
-                            COUNT(population) as count
-                            FOR
-                                year IN (2000 AS '2K00', 2010 AS '2K10')
-                                country IN ('NL' AS Netherlands, 'US' AS 'United States')
-                            GROUP BY name
-                        ) order by name;
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        name	2K00_Netherlands_total	2K00_Netherlands_count	2K00_United States_total	2K00_United States_count	2K10_Netherlands_total	2K10_Netherlands_count	2K10_United States_total	2K10_United States_count
-                        Amsterdam	1005	1	null	0	1065	1	null	0
-                        New York City	null	0	8015	1	null	0	8175	1
-                        Seattle	null	0	564	1	null	0	608	1
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population) as total,
+                    COUNT(population) as count
+                    FOR
+                        year IN (2000 AS '2K00', 2010 AS '2K10')
+                        country IN ('NL' AS Netherlands, 'US' AS 'United States')
+                    GROUP BY name
+                ) order by name;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light
                           keys: [name]
                             GroupBy vectorized: false
                               keys: [name]
@@ -2587,37 +3262,32 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("name\t2K00_Netherlands_total\t2K00_Netherlands_count\t2K00_United States_total\t2K00_United States_count\t2K10_Netherlands_total\t2K10_Netherlands_count\t2K10_United States_total\t2K10_United States_count\n", """
+                        name	2K00_Netherlands_total	2K00_Netherlands_count	2K00_United States_total	2K00_United States_count	2K10_Netherlands_total	2K10_Netherlands_count	2K10_United States_total	2K10_United States_count
+                        Amsterdam	1005	1	null	0	1065	1	null	0
+                        New York City	null	0	8015	1	null	0	8175	1
+                        Seattle	null	0	564	1	null	0	608	1
                         """);
     }
 
     @Test
     public void testPivotWithMultipleAliasedAggregatesImplicitGroupBy() throws Exception {
-        assertQueryAndPlan(
-                """
-                        2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count
-                        null\tnull\tnull\tnull\tnull\tnull\tnull\tnull
-                        """,
-                """
-                        cities
-                        PIVOT (
-                            SUM(population) as total,
-                            COUNT(population) as count
-                            FOR
-                                year IN (2000, 2010)
-                                country IN ('NL', 'US')
-                        );
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count
-                        1005\t1\t8579\t2\t1065\t1\t8783\t2
-                        """,
-                false,
-                true,
-                false,
-                """
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population) as total,
+                    COUNT(population) as count
+                    FOR
+                        year IN (2000, 2010)
+                        country IN ('NL', 'US')
+                );
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .noRandomAccess()
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           values: [first_not_null(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),first_not_null(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),first_not_null(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),first_not_null(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]
                             Async Group By workers: 1
@@ -2627,35 +3297,33 @@ public class PivotTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: cities
+                        """)
+                .returns("""
+                        2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count
+                        null\tnull\tnull\tnull\tnull\tnull\tnull\tnull
+                        """, """
+                        2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count
+                        1005\t1\t8579\t2\t1065\t1\t8783\t2
                         """);
     }
 
     @Test
     public void testPivotWithMultipleFor() throws Exception {
-        assertQueryAndPlan(
-                "country\t2000_NL\n",
-                """
-                        cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000)
-                                country IN ('NL')
-                            GROUP BY country
-                        ) order by country;
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country	2000_NL
-                        NL	1005
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000)
+                        country IN ('NL')
+                    GROUP BY country
+                ) order by country;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -2668,36 +3336,31 @@ public class PivotTest extends AbstractSqlParserTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: cities
+                        """)
+                .returns("country\t2000_NL\n", """
+                        country	2000_NL
+                        NL	1005
                         """);
     }
 
     @Test
     public void testPivotWithMultipleForAndAggregatesOrderedAndLimited() throws Exception {
-        assertQueryAndPlan(
-                "country\t2000_NL_SUM(population)\t2000_NL_AVG(population)\n",
-                """
-                        cities
-                        PIVOT (
-                            SUM(population),
-                            AVG(population)
-                            FOR
-                                year IN (2000)
-                                country IN ('NL')
-                            GROUP BY country
-                        ) ORDER BY country DESC LIMIT 1;
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country	2000_NL_SUM(population)	2000_NL_AVG(population)
-                        NL	1005	1005.0
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light lo: 1
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population),
+                    AVG(population)
+                    FOR
+                        year IN (2000)
+                        country IN ('NL')
+                    GROUP BY country
+                ) ORDER BY country DESC LIMIT 1;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light lo: 1
                           keys: [country desc]
                             GroupBy vectorized: false
                               keys: [country]
@@ -2710,35 +3373,28 @@ public class PivotTest extends AbstractSqlParserTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: cities
+                        """)
+                .returns("country\t2000_NL_SUM(population)\t2000_NL_AVG(population)\n", """
+                        country	2000_NL_SUM(population)	2000_NL_AVG(population)
+                        NL	1005	1005.0
                         """);
     }
 
     @Test
     public void testPivotWithMultipleForExprs() throws Exception {
-        assertQueryAndPlan(
-                "name\t2000_NL\t2000_US\t2010_NL\t2010_US\t2020_NL\t2020_US\n",
-                """
-                        cities PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                                country in ('NL', 'US')
-                            GROUP BY name
-                        );
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        name\t2000_NL\t2000_US\t2010_NL\t2010_US\t2020_NL\t2020_US
-                        Amsterdam\t1005\tnull\t1065\tnull\t1158\tnull
-                        Seattle\tnull\t564\tnull\t608\tnull\t738
-                        New York City\tnull\t8015\tnull\t8175\tnull\t8772
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                cities PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                        country in ('NL', 'US')
+                    GROUP BY name
+                );
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           keys: [name]
                           values: [first_not_null(case([(year=2000 and country='NL'),SUM(population),null])),first_not_null(case([(year=2000 and country='US'),SUM(population),null])),first_not_null(case([(year=2010 and country='NL'),SUM(population),null])),first_not_null(case([(year=2010 and country='US'),SUM(population),null])),first_not_null(case([(year=2020 and country='NL'),SUM(population),null])),first_not_null(case([(year=2020 and country='US'),SUM(population),null]))]
@@ -2749,39 +3405,33 @@ public class PivotTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: cities
-                        """
-        );
+                        """)
+                .returns("name\t2000_NL\t2000_US\t2010_NL\t2010_US\t2020_NL\t2020_US\n", """
+                        name\t2000_NL\t2000_US\t2010_NL\t2010_US\t2020_NL\t2020_US
+                        Amsterdam\t1005\tnull\t1065\tnull\t1158\tnull
+                        Seattle\tnull\t564\tnull\t608\tnull\t738
+                        New York City\tnull\t8015\tnull\t8175\tnull\t8772
+                        """);
     }
 
     @Test
     public void testPivotWithMultipleForExprsAndMultipleAggregates() throws Exception {
-        assertQueryAndPlan(
-                """
-                        2000_Amsterdam_NL_SUM(population)	2000_Amsterdam_NL_COUNT(population)	2000_Amsterdam_US_SUM(population)	2000_Amsterdam_US_COUNT(population)	2000_Seattle_NL_SUM(population)	2000_Seattle_NL_COUNT(population)	2000_Seattle_US_SUM(population)	2000_Seattle_US_COUNT(population)	2000_New York City_NL_SUM(population)	2000_New York City_NL_COUNT(population)	2000_New York City_US_SUM(population)	2000_New York City_US_COUNT(population)	2010_Amsterdam_NL_SUM(population)	2010_Amsterdam_NL_COUNT(population)	2010_Amsterdam_US_SUM(population)	2010_Amsterdam_US_COUNT(population)	2010_Seattle_NL_SUM(population)	2010_Seattle_NL_COUNT(population)	2010_Seattle_US_SUM(population)	2010_Seattle_US_COUNT(population)	2010_New York City_NL_SUM(population)	2010_New York City_NL_COUNT(population)	2010_New York City_US_SUM(population)	2010_New York City_US_COUNT(population)	2020_Amsterdam_NL_SUM(population)	2020_Amsterdam_NL_COUNT(population)	2020_Amsterdam_US_SUM(population)	2020_Amsterdam_US_COUNT(population)	2020_Seattle_NL_SUM(population)	2020_Seattle_NL_COUNT(population)	2020_Seattle_US_SUM(population)	2020_Seattle_US_COUNT(population)	2020_New York City_NL_SUM(population)	2020_New York City_NL_COUNT(population)	2020_New York City_US_SUM(population)	2020_New York City_US_COUNT(population)
-                        null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null
-                        """,
-                """
-                        cities
-                        PIVOT (
-                            SUM(population),
-                            COUNT(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                                name IN ( 'Amsterdam', 'Seattle', 'New York City')
-                                country in ('NL', 'US')
-                        );
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        2000_Amsterdam_NL_SUM(population)	2000_Amsterdam_NL_COUNT(population)	2000_Amsterdam_US_SUM(population)	2000_Amsterdam_US_COUNT(population)	2000_Seattle_NL_SUM(population)	2000_Seattle_NL_COUNT(population)	2000_Seattle_US_SUM(population)	2000_Seattle_US_COUNT(population)	2000_New York City_NL_SUM(population)	2000_New York City_NL_COUNT(population)	2000_New York City_US_SUM(population)	2000_New York City_US_COUNT(population)	2010_Amsterdam_NL_SUM(population)	2010_Amsterdam_NL_COUNT(population)	2010_Amsterdam_US_SUM(population)	2010_Amsterdam_US_COUNT(population)	2010_Seattle_NL_SUM(population)	2010_Seattle_NL_COUNT(population)	2010_Seattle_US_SUM(population)	2010_Seattle_US_COUNT(population)	2010_New York City_NL_SUM(population)	2010_New York City_NL_COUNT(population)	2010_New York City_US_SUM(population)	2010_New York City_US_COUNT(population)	2020_Amsterdam_NL_SUM(population)	2020_Amsterdam_NL_COUNT(population)	2020_Amsterdam_US_SUM(population)	2020_Amsterdam_US_COUNT(population)	2020_Seattle_NL_SUM(population)	2020_Seattle_NL_COUNT(population)	2020_Seattle_US_SUM(population)	2020_Seattle_US_COUNT(population)	2020_New York City_NL_SUM(population)	2020_New York City_NL_COUNT(population)	2020_New York City_US_SUM(population)	2020_New York City_US_COUNT(population)
-                        1005	1	null	0	null	0	564	1	null	0	8015	1	1065	1	null	0	null	0	608	1	null	0	8175	1	1158	1	null	0	null	0	738	1	null	0	8772	1
-                        """,
-                false,
-                true,
-                false,
-                """
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population),
+                    COUNT(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                        name IN ( 'Amsterdam', 'Seattle', 'New York City')
+                        country in ('NL', 'US')
+                );
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .noRandomAccess()
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           values: [first_not_null(case([(year=2000 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2000 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='New York City' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='New York City' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='New York City' and country='US'),COUNT(population),0]))]
                             Async Group By workers: 1
@@ -2791,37 +3441,32 @@ public class PivotTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: cities
-                        """
-        );
+                        """)
+                .returns("""
+                        2000_Amsterdam_NL_SUM(population)	2000_Amsterdam_NL_COUNT(population)	2000_Amsterdam_US_SUM(population)	2000_Amsterdam_US_COUNT(population)	2000_Seattle_NL_SUM(population)	2000_Seattle_NL_COUNT(population)	2000_Seattle_US_SUM(population)	2000_Seattle_US_COUNT(population)	2000_New York City_NL_SUM(population)	2000_New York City_NL_COUNT(population)	2000_New York City_US_SUM(population)	2000_New York City_US_COUNT(population)	2010_Amsterdam_NL_SUM(population)	2010_Amsterdam_NL_COUNT(population)	2010_Amsterdam_US_SUM(population)	2010_Amsterdam_US_COUNT(population)	2010_Seattle_NL_SUM(population)	2010_Seattle_NL_COUNT(population)	2010_Seattle_US_SUM(population)	2010_Seattle_US_COUNT(population)	2010_New York City_NL_SUM(population)	2010_New York City_NL_COUNT(population)	2010_New York City_US_SUM(population)	2010_New York City_US_COUNT(population)	2020_Amsterdam_NL_SUM(population)	2020_Amsterdam_NL_COUNT(population)	2020_Amsterdam_US_SUM(population)	2020_Amsterdam_US_COUNT(population)	2020_Seattle_NL_SUM(population)	2020_Seattle_NL_COUNT(population)	2020_Seattle_US_SUM(population)	2020_Seattle_US_COUNT(population)	2020_New York City_NL_SUM(population)	2020_New York City_NL_COUNT(population)	2020_New York City_US_SUM(population)	2020_New York City_US_COUNT(population)
+                        null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null
+                        """, """
+                        2000_Amsterdam_NL_SUM(population)	2000_Amsterdam_NL_COUNT(population)	2000_Amsterdam_US_SUM(population)	2000_Amsterdam_US_COUNT(population)	2000_Seattle_NL_SUM(population)	2000_Seattle_NL_COUNT(population)	2000_Seattle_US_SUM(population)	2000_Seattle_US_COUNT(population)	2000_New York City_NL_SUM(population)	2000_New York City_NL_COUNT(population)	2000_New York City_US_SUM(population)	2000_New York City_US_COUNT(population)	2010_Amsterdam_NL_SUM(population)	2010_Amsterdam_NL_COUNT(population)	2010_Amsterdam_US_SUM(population)	2010_Amsterdam_US_COUNT(population)	2010_Seattle_NL_SUM(population)	2010_Seattle_NL_COUNT(population)	2010_Seattle_US_SUM(population)	2010_Seattle_US_COUNT(population)	2010_New York City_NL_SUM(population)	2010_New York City_NL_COUNT(population)	2010_New York City_US_SUM(population)	2010_New York City_US_COUNT(population)	2020_Amsterdam_NL_SUM(population)	2020_Amsterdam_NL_COUNT(population)	2020_Amsterdam_US_SUM(population)	2020_Amsterdam_US_COUNT(population)	2020_Seattle_NL_SUM(population)	2020_Seattle_NL_COUNT(population)	2020_Seattle_US_SUM(population)	2020_Seattle_US_COUNT(population)	2020_New York City_NL_SUM(population)	2020_New York City_NL_COUNT(population)	2020_New York City_US_SUM(population)	2020_New York City_US_COUNT(population)
+                        1005	1	null	0	null	0	564	1	null	0	8015	1	1065	1	null	0	null	0	608	1	null	0	8175	1	1158	1	null	0	null	0	738	1	null	0	8772	1
+                        """);
     }
 
     @Test
     public void testPivotWithMultipleGroupBy() throws Exception {
-        assertQueryAndPlan(
-                "country\tname\t2000\t2010\t2020\n",
-                """
-                        cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                                GROUP BY country, name
-                        ) order by country, name;
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country	name	2000	2010	2020
-                        NL	Amsterdam	1005	1065	1158
-                        US	New York City	8015	8175	8772
-                        US	Seattle	564	608	738
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                        GROUP BY country, name
+                ) order by country, name;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light
                           keys: [country, name]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -2833,8 +3478,13 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
-                        """
-        );
+                        """)
+                .returns("country\tname\t2000\t2010\t2020\n", """
+                        country	name	2000	2010	2020
+                        NL	Amsterdam	1005	1065	1158
+                        US	New York City	8015	8175	8772
+                        US	Seattle	564	608	738
+                        """);
     }
 
     @Test
@@ -2856,22 +3506,19 @@ public class PivotTest extends AbstractSqlParserTest {
             // conditions down to the inner query, so no rows match when FOR values don't
             // exist in the data (e.g., year IN (1990, 1995) filters out all rows).
             // This behavior is kept for performance reasons.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (1990, 1995)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country\t1990\t1995
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (1990, 1995)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -2893,27 +3540,11 @@ public class PivotTest extends AbstractSqlParserTest {
                     ) ORDER BY timestamp
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
-                            timestamp	ADA-USD_buy	ADA-USD_sell	ADA-USDT_buy	ADA-USDT_sell	BTC-USD_buy	BTC-USD_sell
-                            2024-12-19T08:10:00.000000Z	null	0.9716	null	0.9716	null	null
-                            2024-12-19T08:10:00.100000Z	null	null	null	null	101502.2	101502.1
-                            2024-12-19T08:10:00.200000Z	null	null	null	null	101502.2	null
-                            2024-12-19T08:10:00.400000Z	null	null	null	null	101502.2	null
-                            2024-12-19T08:10:00.500000Z	null	0.9716	null	0.9716	null	null
-                            2024-12-19T08:10:00.600000Z	null	null	null	null	101502.2	null
-                            2024-12-19T08:10:00.700000Z	null	null	null	null	101500.66666666667	101500.57777777778
-                            2024-12-19T08:10:00.900000Z	null	null	null	null	101497.6	101497.25
-                            """,
-                    query,
-                    "timestamp",
-                    true,
-                    true,
-                    false
-            );
-
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .withPlan("""
                             Encode sort light
                               keys: [timestamp]
                                 GroupBy vectorized: false
@@ -2932,6 +3563,17 @@ public class PivotTest extends AbstractSqlParserTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            timestamp	ADA-USD_buy	ADA-USD_sell	ADA-USDT_buy	ADA-USDT_sell	BTC-USD_buy	BTC-USD_sell
+                            2024-12-19T08:10:00.000000Z	null	0.9716	null	0.9716	null	null
+                            2024-12-19T08:10:00.100000Z	null	null	null	null	101502.2	101502.1
+                            2024-12-19T08:10:00.200000Z	null	null	null	null	101502.2	null
+                            2024-12-19T08:10:00.400000Z	null	null	null	null	101502.2	null
+                            2024-12-19T08:10:00.500000Z	null	0.9716	null	0.9716	null	null
+                            2024-12-19T08:10:00.600000Z	null	null	null	null	101502.2	null
+                            2024-12-19T08:10:00.700000Z	null	null	null	null	101500.66666666667	101500.57777777778
+                            2024-12-19T08:10:00.900000Z	null	null	null	null	101497.6	101497.25
                             """);
         });
     }
@@ -2955,55 +3597,42 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('E', 'null', 90);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(value + 1) + 10
+                        FOR type IN (select distinct type from data order by type)
+                        GROUP BY category
+                    ) ORDER BY category
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             category	NULL	X	Y	null_2	y_2
                             A	null	21	null	null	null
                             B	null	null	41	null	null
                             C	null	61	71	null	null
                             D	91	null	null	null	81
                             E	null	null	null	101	null
-                            """,
-                    """
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(value + 1) + 10
-                                FOR type IN (select distinct type from data order by type)
-                                GROUP BY category
-                            ) ORDER BY category
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
     @Test
     public void testPivotWithOrderBy() throws Exception {
-        assertQueryAndPlan(
-                "country\t2000\t2010\t2020\n",
-                """
-                        cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country
-                        )   ORDER BY "2000";
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country\t2000\t2010\t2020
-                        NL\t1005\t1065\t1158
-                        US\t8579\t8783\t9510
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country
+                )   ORDER BY "2000";
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
                         Encode sort light
                           keys: [2000]
                             GroupBy vectorized: false
@@ -3016,6 +3645,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("country\t2000\t2010\t2020\n", """
+                        country\t2000\t2010\t2020
+                        NL\t1005\t1065\t1158
+                        US\t8579\t8783\t9510
                         """);
     }
 
@@ -3025,67 +3659,48 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlMonthlySales);
             execute(dmlMonthlySales);
 
-            assertException("""
-                            monthly_sales\s
-                            PIVOT (
-                              SUM(amount)\s
-                              FOR MONTH IN ('JAN', 'FEB', 'MAR')\s
-                            )ORDER BY EMPID;""",
-                    86,
-                    "Invalid column: EMPID");
+            assertQuery("""
+                    monthly_sales\s
+                    PIVOT (
+                      SUM(amount)\s
+                      FOR MONTH IN ('JAN', 'FEB', 'MAR')\s
+                    )ORDER BY EMPID;""")
+                    .fails(86, "Invalid column: EMPID");
 
-            assertSql("""
+            assertQuery("""
+                    monthly_sales\s
+                    PIVOT (
+                      SUM(amount)\s
+                      FOR MONTH IN ('JAN', 'FEB', 'MAR')\s
+                      GROUP BY EMPID
+                    ) ORDER BY EMPID;""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             EMPID	JAN	FEB	MAR
                             1	10400	8000	11000
                             2	39500	90700	12000
-                            """,
-                    """
-                            monthly_sales\s
-                            PIVOT (
-                              SUM(amount)\s
-                              FOR MONTH IN ('JAN', 'FEB', 'MAR')\s
-                              GROUP BY EMPID
-                            ) ORDER BY EMPID;""");
+                            """);
         });
     }
 
     @Test
     public void testPivotWithSampleBy() throws Exception {
-        assertQueryAndPlan(
-                "symbol\tbuy_price\tsell_price\n",
-                """
-                        (
-                          SELECT timestamp, symbol, side, last(price)
-                          FROM trades
-                          SAMPLE BY 1d
-                        ) PIVOT (
-                          sum(last) as price
-                          FOR side in ('buy', 'sell')
-                          GROUP BY symbol
-                        ) order by symbol;
-                        """,
-                ddlTrades,
-                null,
-                dmlTrades,
-                """
-                        symbol	buy_price	sell_price
-                        ADA-USD	null	0.9716
-                        ADA-USDT	null	0.9716
-                        BTC-USD	101497.6	101497.0
-                        BTC-USDT	101497.6	101497.0
-                        DOGE-USD	0.36047	0.36041
-                        DOGE-USDT	0.36047	0.36041
-                        ETH-USD	3678.01	3678.0
-                        ETH-USDC	null	3675.72
-                        ETH-USDT	3678.01	3678.0
-                        SOL-USD	null	210.41
-                        SOL-USDT	null	210.41
-                        USDT-USDC	0.9994	null
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                (
+                  SELECT timestamp, symbol, side, last(price)
+                  FROM trades
+                  SAMPLE BY 1d
+                ) PIVOT (
+                  sum(last) as price
+                  FOR side in ('buy', 'sell')
+                  GROUP BY symbol
+                ) order by symbol;
+                """)
+                .ddl(ddlTrades)
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
                         Encode sort light
                           keys: [symbol]
                             GroupBy vectorized: false
@@ -3104,6 +3719,21 @@ public class PivotTest extends AbstractSqlParserTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: trades
+                        """)
+                .returns("symbol\tbuy_price\tsell_price\n", """
+                        symbol	buy_price	sell_price
+                        ADA-USD	null	0.9716
+                        ADA-USDT	null	0.9716
+                        BTC-USD	101497.6	101497.0
+                        BTC-USDT	101497.6	101497.0
+                        DOGE-USD	0.36047	0.36041
+                        DOGE-USDT	0.36047	0.36041
+                        ETH-USD	3678.01	3678.0
+                        ETH-USDC	null	3675.72
+                        ETH-USDT	3678.01	3678.0
+                        SOL-USD	null	210.41
+                        SOL-USDT	null	210.41
+                        USDT-USDC	0.9994	null
                         """);
     }
 
@@ -3119,24 +3749,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('info', 'warning', 'msg4');
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM logs
+                    PIVOT (
+                        last(message)
+                        FOR status IN ('critical', 'warning')
+                        GROUP BY category
+                    ) ORDER BY category
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             category\tcritical\twarning
                             error\tmsg1\tmsg2
                             info\tmsg3\tmsg4
-                            """,
-                    """
-                            SELECT * FROM logs
-                            PIVOT (
-                                last(message)
-                                FOR status IN ('critical', 'warning')
-                                GROUP BY category
-                            ) ORDER BY category
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -3148,24 +3775,21 @@ public class PivotTest extends AbstractSqlParserTest {
             execute("CREATE TABLE years (y INT);");
             execute("INSERT INTO years VALUES (2000), (2000), (2010);");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (SELECT y FROM years)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country\t2000\t2010
                             NL\t1005\t1065
                             US\t8579\t8783
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (SELECT y FROM years)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
@@ -3181,53 +3805,40 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('2024-01-02', 'B', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM events
+                    PIVOT (
+                        SUM(value)
+                        FOR category IN ('A', 'B')
+                        GROUP BY ts
+                    ) ORDER BY ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tA\tB
                             2024-01-01T00:00:00.000000Z\t10\t20
                             2024-01-02T00:00:00.000000Z\t30\t40
-                            """,
-                    """
-                            SELECT * FROM events
-                            PIVOT (
-                                SUM(value)
-                                FOR category IN ('A', 'B')
-                                GROUP BY ts
-                            ) ORDER BY ts
-                            """,
-                    "ts",
-                    true,
-                    true,
-                    false);
+                            """);
         });
     }
 
     @Test
     public void testPivotWithTimestampGrouping() throws Exception {
-        assertQueryAndPlan(
-                """
-                        2000\t2010\t2020
-                        null\tnull\tnull
-                        """,
-                """
-                        cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                        );
-                        """,
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        2000\t2010\t2020
-                        9584\t9848\t10668
-                        """,
-                false,
-                true,
-                false,
-                """
+        assertQuery("""
+                cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                );
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .noRandomAccess()
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           values: [first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year]))]
                             Async JIT Group By workers: 1
@@ -3237,37 +3848,31 @@ public class PivotTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: cities
+                        """)
+                .returns("""
+                        2000\t2010\t2020
+                        null\tnull\tnull
+                        """, """
+                        2000\t2010\t2020
+                        9584\t9848\t10668
                         """);
     }
 
     @Test
     public void testPivotWithTradesData() throws Exception {
-        assertQueryAndPlan(
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                """
-                        (select * from trades where symbol in 'ETH-USDT')
-                          pivot (
-                            sum(price)
-                            FOR "symbol" IN ('ETH-USDT')
-                                side in ('buy', 'sell')
-                            GROUP BY timestamp
-                          ) order by timestamp;""",
-                ddlTrades,
-                "timestamp",
-                dmlTrades,
-                """
-                        timestamp\tETH-USDT_buy\tETH-USDT_sell
-                        2024-12-19T08:10:00.700999Z\tnull\t3678.25
-                        2024-12-19T08:10:00.736000Z\tnull\t3678.25
-                        2024-12-19T08:10:00.759000Z\tnull\t3678.0
-                        2024-12-19T08:10:00.772999Z\tnull\t3678.0
-                        2024-12-19T08:10:00.887000Z\t3678.01\tnull
-                        2024-12-19T08:10:00.950000Z\tnull\t3678.0
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                (select * from trades where symbol in 'ETH-USDT')
+                  pivot (
+                    sum(price)
+                    FOR "symbol" IN ('ETH-USDT')
+                        side in ('buy', 'sell')
+                    GROUP BY timestamp
+                  ) order by timestamp;""")
+                .ddl(ddlTrades)
+                .timestamp("timestamp")
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
                         Encode sort light
                           keys: [timestamp]
                             GroupBy vectorized: false
@@ -3280,34 +3885,33 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
+                        """)
+                .returns("timestamp\tETH-USDT_buy\tETH-USDT_sell\n", """
+                        timestamp\tETH-USDT_buy\tETH-USDT_sell
+                        2024-12-19T08:10:00.700999Z\tnull\t3678.25
+                        2024-12-19T08:10:00.736000Z\tnull\t3678.25
+                        2024-12-19T08:10:00.759000Z\tnull\t3678.0
+                        2024-12-19T08:10:00.772999Z\tnull\t3678.0
+                        2024-12-19T08:10:00.887000Z\t3678.01\tnull
+                        2024-12-19T08:10:00.950000Z\tnull\t3678.0
                         """);
     }
 
     @Test
     public void testPivotWithTradesDataAndLimit() throws Exception {
-        assertQueryAndPlan(
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                """
-                        trades
-                          PIVOT (
-                            sum(price)
-                            FOR "symbol" IN ('ETH-USDT')
-                                side in ('buy', 'sell')
-                            GROUP BY timestamp
-                          ) order by timestamp LIMIT 3;""",
-                ddlTrades,
-                "timestamp",
-                dmlTrades,
-                """
-                        timestamp\tETH-USDT_buy\tETH-USDT_sell
-                        2024-12-19T08:10:00.700999Z\tnull\t3678.25
-                        2024-12-19T08:10:00.736000Z\tnull\t3678.25
-                        2024-12-19T08:10:00.759000Z\tnull\t3678.0
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                trades
+                  PIVOT (
+                    sum(price)
+                    FOR "symbol" IN ('ETH-USDT')
+                        side in ('buy', 'sell')
+                    GROUP BY timestamp
+                  ) order by timestamp LIMIT 3;""")
+                .ddl(ddlTrades)
+                .timestamp("timestamp")
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
                         Long Top K lo: 3
                           keys: [timestamp asc]
                             GroupBy vectorized: false
@@ -3320,37 +3924,30 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
+                        """)
+                .returns("timestamp\tETH-USDT_buy\tETH-USDT_sell\n", """
+                        timestamp\tETH-USDT_buy\tETH-USDT_sell
+                        2024-12-19T08:10:00.700999Z\tnull\t3678.25
+                        2024-12-19T08:10:00.736000Z\tnull\t3678.25
+                        2024-12-19T08:10:00.759000Z\tnull\t3678.0
                         """);
     }
 
     @Test
     public void testPivotWithTradesDataAndOrderByAsc() throws Exception {
-        assertQueryAndPlan(
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                """
-                        trades
-                          PIVOT (
-                            sum(price)
-                            FOR "symbol" IN ('ETH-USDT')
-                                side in ('buy', 'sell')
-                            GROUP BY timestamp
-                          ) ORDER BY timestamp ASC;""",
-                ddlTrades,
-                "timestamp###ASC",
-                dmlTrades,
-                """
-                        timestamp\tETH-USDT_buy\tETH-USDT_sell
-                        2024-12-19T08:10:00.700999Z\tnull\t3678.25
-                        2024-12-19T08:10:00.736000Z\tnull\t3678.25
-                        2024-12-19T08:10:00.759000Z\tnull\t3678.0
-                        2024-12-19T08:10:00.772999Z\tnull\t3678.0
-                        2024-12-19T08:10:00.887000Z\t3678.01\tnull
-                        2024-12-19T08:10:00.950000Z\tnull\t3678.0
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                trades
+                  PIVOT (
+                    sum(price)
+                    FOR "symbol" IN ('ETH-USDT')
+                        side in ('buy', 'sell')
+                    GROUP BY timestamp
+                  ) ORDER BY timestamp ASC;""")
+                .ddl(ddlTrades)
+                .timestampAsc("timestamp")
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
                         Encode sort light
                           keys: [timestamp]
                             GroupBy vectorized: false
@@ -3363,38 +3960,33 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                        """
-        );
+                        """)
+                .returns("timestamp\tETH-USDT_buy\tETH-USDT_sell\n", """
+                        timestamp\tETH-USDT_buy\tETH-USDT_sell
+                        2024-12-19T08:10:00.700999Z\tnull\t3678.25
+                        2024-12-19T08:10:00.736000Z\tnull\t3678.25
+                        2024-12-19T08:10:00.759000Z\tnull\t3678.0
+                        2024-12-19T08:10:00.772999Z\tnull\t3678.0
+                        2024-12-19T08:10:00.887000Z\t3678.01\tnull
+                        2024-12-19T08:10:00.950000Z\tnull\t3678.0
+                        """);
     }
 
     @Test
     public void testPivotWithTradesDataAndOrderByDesc() throws Exception {
-        assertQueryAndPlan(
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                """
-                        trades
-                          PIVOT (
-                            sum(price)
-                            FOR "symbol" IN ('ETH-USDT')
-                                side in ('buy', 'sell')
-                            GROUP BY timestamp
-                          ) ORDER BY timestamp DESC;""",
-                ddlTrades,
-                "timestamp###DESC",
-                dmlTrades,
-                """
-                        timestamp\tETH-USDT_buy\tETH-USDT_sell
-                        2024-12-19T08:10:00.950000Z\tnull\t3678.0
-                        2024-12-19T08:10:00.887000Z\t3678.01\tnull
-                        2024-12-19T08:10:00.772999Z\tnull\t3678.0
-                        2024-12-19T08:10:00.759000Z\tnull\t3678.0
-                        2024-12-19T08:10:00.736000Z\tnull\t3678.25
-                        2024-12-19T08:10:00.700999Z\tnull\t3678.25
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                trades
+                  PIVOT (
+                    sum(price)
+                    FOR "symbol" IN ('ETH-USDT')
+                        side in ('buy', 'sell')
+                    GROUP BY timestamp
+                  ) ORDER BY timestamp DESC;""")
+                .ddl(ddlTrades)
+                .timestampDesc("timestamp")
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
                         Encode sort light
                           keys: [timestamp desc]
                             GroupBy vectorized: false
@@ -3407,8 +3999,16 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                        """
-        );
+                        """)
+                .returns("timestamp\tETH-USDT_buy\tETH-USDT_sell\n", """
+                        timestamp\tETH-USDT_buy\tETH-USDT_sell
+                        2024-12-19T08:10:00.950000Z\tnull\t3678.0
+                        2024-12-19T08:10:00.887000Z\t3678.01\tnull
+                        2024-12-19T08:10:00.772999Z\tnull\t3678.0
+                        2024-12-19T08:10:00.759000Z\tnull\t3678.0
+                        2024-12-19T08:10:00.736000Z\tnull\t3678.25
+                        2024-12-19T08:10:00.700999Z\tnull\t3678.25
+                        """);
     }
 
     @Test
@@ -3429,7 +4029,10 @@ public class PivotTest extends AbstractSqlParserTest {
                               )ORDER BY timestamp ASC;
                             """;
 
-            assertQuery("""
+            assertQuery(pivotQuery)
+                    .timestampAsc("timestamp")
+                    .expectSize()
+                    .returns("""
                             timestamp\tETH-USDT_buy\tETH-USDT_sell
                             2024-12-19T08:10:00.700999Z\tnull\t3678.25
                             2024-12-19T08:10:00.736000Z\tnull\t3678.25
@@ -3437,39 +4040,46 @@ public class PivotTest extends AbstractSqlParserTest {
                             2024-12-19T08:10:00.772999Z\tnull\t3678.0
                             2024-12-19T08:10:00.887000Z\t3678.01\tnull
                             2024-12-19T08:10:00.950000Z\tnull\t3678.0
-                            """,
-                    pivotQuery,
-                    "timestamp###ASC",
-                    true,
-                    true);
+                            """);
 
-            assertException(
-                    pivotQuery.replace("GROUP BY timestamp", "GROUP BY 1"),
-                    110,
-                    "cannot use positional group by inside `PIVOT`");
+            assertQuery(pivotQuery.replace("GROUP BY timestamp", "GROUP BY 1"))
+                    .fails(110, "cannot use positional group by inside `PIVOT`");
         });
     }
 
     @Test
     public void testPivotWithTradesDataAndSubquery() throws Exception {
-        assertQueryAndPlan(
-                "timestamp\tBTC-USD_buy\tBTC-USD_sell\n",
-                """
-                        SELECT * FROM (
-                        SELECT * FROM (
-                             SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'
-                        )
-                        PIVOT (
-                            sum(price)
-                            FOR symbol IN ('BTC-USD')
-                                side IN ('buy', 'sell')
-                            GROUP BY timestamp
-                        )
-                        );""",
-                ddlTrades,
-                null,
-                dmlTrades,
-                """
+        assertQuery("""
+                SELECT * FROM (
+                SELECT * FROM (
+                     SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'
+                )
+                PIVOT (
+                    sum(price)
+                    FOR symbol IN ('BTC-USD')
+                        side IN ('buy', 'sell')
+                    GROUP BY timestamp
+                )
+                );""")
+                .ddl(ddlTrades)
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
+                        GroupBy vectorized: false
+                          keys: [timestamp]
+                          values: [first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),null])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),null]))]
+                            GroupBy vectorized: false
+                              keys: [timestamp,symbol,side]
+                              values: [sum(price)]
+                                Async Group By workers: 1
+                                  keys: [timestamp,symbol,side]
+                                  values: [avg(price)]
+                                  filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                        """)
+                .returns("timestamp\tBTC-USD_buy\tBTC-USD_sell\n", """
                         timestamp\tBTC-USD_buy\tBTC-USD_sell
                         2024-12-19T08:10:00.136000Z\t101502.2\tnull
                         2024-12-19T08:10:00.138000Z\tnull\t101502.1
@@ -3486,57 +4096,29 @@ public class PivotTest extends AbstractSqlParserTest {
                         2024-12-19T08:10:00.744000Z\t101497.6\tnull
                         2024-12-19T08:10:00.926000Z\t101497.6\tnull
                         2024-12-19T08:10:00.932000Z\tnull\t101497.25
-                        """,
-                true,
-                true,
-                false,
-                """
-                        GroupBy vectorized: false
-                          keys: [timestamp]
-                          values: [first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),null])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),null]))]
-                            GroupBy vectorized: false
-                              keys: [timestamp,symbol,side]
-                              values: [sum(price)]
-                                Async Group By workers: 1
-                                  keys: [timestamp,symbol,side]
-                                  values: [avg(price)]
-                                  filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: trades
                         """);
     }
 
     @Test
     public void testPivotWithTradesDataAndWithClause() throws Exception {
-        assertQueryAndPlan(
-                "timestamp\tBTC-USD_buy\tBTC-USD_sell\n",
-                """
-                        WITH p AS\s
-                        (WITH t AS
-                        (
-                        
-                            SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'
-                            SAMPLE BY 1m
-                        )
-                        SELECT * FROM t
-                        PIVOT (
-                            sum(price)
-                            FOR symbol IN ('BTC-USD')   \s
-                            side IN ('buy', 'sell')  \s
-                            GROUP BY timestamp
-                        ) ) SELECT * from p where `BTC-USD_buy` > 25780 or `BTC-USD_sell` > 25780;""",
-                ddlTrades,
-                null,
-                dmlTrades,
-                """
-                        timestamp\tBTC-USD_buy\tBTC-USD_sell
-                        2024-12-19T08:10:00.000000Z\t101501.27999999998\t101500.15000000002
-                        """,
-                true,
-                false,
-                false,
-                """
+        assertQuery("""
+                WITH p AS\s
+                (WITH t AS
+                (
+                
+                    SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'
+                    SAMPLE BY 1m
+                )
+                SELECT * FROM t
+                PIVOT (
+                    sum(price)
+                    FOR symbol IN ('BTC-USD')   \s
+                    side IN ('buy', 'sell')  \s
+                    GROUP BY timestamp
+                ) ) SELECT * from p where `BTC-USD_buy` > 25780 or `BTC-USD_sell` > 25780;""")
+                .ddl(ddlTrades)
+                .mutateWith(dmlTrades)
+                .withPlan("""
                         Filter filter: (25780<BTC-USD_buy or 25780<BTC-USD_sell)
                             GroupBy vectorized: false
                               keys: [timestamp]
@@ -3554,40 +4136,35 @@ public class PivotTest extends AbstractSqlParserTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: trades
+                        """)
+                .returns("timestamp\tBTC-USD_buy\tBTC-USD_sell\n", """
+                        timestamp\tBTC-USD_buy\tBTC-USD_sell
+                        2024-12-19T08:10:00.000000Z\t101501.27999999998\t101500.15000000002
                         """);
     }
 
     @Test
     public void testPivotWithTradesDataAndWithClause2() throws Exception {
-        assertQueryAndPlan(
-                "timestamp\tBTC-USD_buy\tBTC-USD_sell\n",
-                """
-                        WITH t AS
-                                (
-                        
-                                        SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount\s
-                        FROM trades WHERE symbol IN 'BTC-USD'
-                        SAMPLE BY 1m
-                        ), P AS (
-                                SELECT * FROM t
-                                PIVOT (
-                                sum(price)
-                        FOR symbol IN ('BTC-USD')
-                        side IN ('buy', 'sell')
-                        GROUP BY timestamp
-                        ) )
-                        SELECT * FROM P;""",
-                ddlTrades,
-                null,
-                dmlTrades,
-                """
-                        timestamp\tBTC-USD_buy\tBTC-USD_sell
-                        2024-12-19T08:10:00.000000Z\t101501.27999999998\t101500.15000000002
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                WITH t AS
+                        (
+                
+                                SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount\s
+                FROM trades WHERE symbol IN 'BTC-USD'
+                SAMPLE BY 1m
+                ), P AS (
+                        SELECT * FROM t
+                        PIVOT (
+                        sum(price)
+                FOR symbol IN ('BTC-USD')
+                side IN ('buy', 'sell')
+                GROUP BY timestamp
+                ) )
+                SELECT * FROM P;""")
+                .ddl(ddlTrades)
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           keys: [timestamp]
                           values: [first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),null])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),null]))]
@@ -3604,34 +4181,28 @@ public class PivotTest extends AbstractSqlParserTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
+                        """)
+                .returns("timestamp\tBTC-USD_buy\tBTC-USD_sell\n", """
+                        timestamp\tBTC-USD_buy\tBTC-USD_sell
+                        2024-12-19T08:10:00.000000Z\t101501.27999999998\t101500.15000000002
                         """);
     }
 
     @Test
     public void testPivotWithTradesOHLC() throws Exception {
-        assertQueryAndPlan(
-                "side\tETH-USD_open\tETH-USD_high\tETH-USD_low\tETH-USD_close\tBTC-USD_open\tBTC-USD_high\tBTC-USD_low\tBTC-USD_close\n",
-                """
-                        trades PIVOT (
-                        first_not_null(price) as open,
-                        max(price) as high,
-                        min(price) as low,
-                        last_not_null(price) as close
-                        FOR symbol IN ('ETH-USD', 'BTC-USD')
-                        GROUP BY side
-                        );""",
-                ddlTrades,
-                null,
-                dmlTrades,
-                """
-                        side\tETH-USD_open\tETH-USD_high\tETH-USD_low\tETH-USD_close\tBTC-USD_open\tBTC-USD_high\tBTC-USD_low\tBTC-USD_close
-                        buy\t3678.01\t3678.01\t3678.01\t3678.01\t101502.2\t101502.2\t101497.6\t101497.6
-                        sell\t3678.25\t3678.25\t3678.0\t3678.0\t101502.1\t101502.1\t101497.0\t101497.0
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("""
+                trades PIVOT (
+                first_not_null(price) as open,
+                max(price) as high,
+                min(price) as low,
+                last_not_null(price) as close
+                FOR symbol IN ('ETH-USD', 'BTC-USD')
+                GROUP BY side
+                );""")
+                .ddl(ddlTrades)
+                .mutateWith(dmlTrades)
+                .expectSize()
+                .withPlan("""
                         GroupBy vectorized: false
                           keys: [side]
                           values: [first_not_null(case([open,NaN,symbol,switch(symbol,'ETH-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'ETH-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'ETH-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'ETH-USD',close,NaN)])),first_not_null(case([open,NaN,symbol,switch(symbol,'BTC-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'BTC-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'BTC-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'BTC-USD',close,NaN)]))]
@@ -3642,6 +4213,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: trades
+                        """)
+                .returns("side\tETH-USD_open\tETH-USD_high\tETH-USD_low\tETH-USD_close\tBTC-USD_open\tBTC-USD_high\tBTC-USD_low\tBTC-USD_close\n", """
+                        side\tETH-USD_open\tETH-USD_high\tETH-USD_low\tETH-USD_close\tBTC-USD_open\tBTC-USD_high\tBTC-USD_low\tBTC-USD_close
+                        buy\t3678.01\t3678.01\t3678.01\t3678.01\t101502.2\t101502.2\t101497.6\t101497.6
+                        sell\t3678.25\t3678.25\t3678.0\t3678.0\t101502.1\t101502.1\t101497.0\t101497.0
                         """);
     }
 
@@ -3674,7 +4250,39 @@ public class PivotTest extends AbstractSqlParserTest {
                         LIMIT -10
                     );""";
 
-            assertQueryNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            UnionSymbolCast
+                              functions: [timestamp,vehicle_id::symbol,i000]
+                                Union
+                                    Long Top K lo: 10
+                                      keys: [timestamp asc]
+                                        GroupBy vectorized: false
+                                          keys: [timestamp,vehicle_id]
+                                          values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
+                                            Async JIT Group By workers: 1
+                                              keys: [timestamp,vehicle_id,sensor_name]
+                                              values: [avg(int_value)]
+                                              filter: sensor_name in [i000]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: sensors
+                                    Encode sort light lo: -10
+                                      keys: [timestamp]
+                                        GroupBy vectorized: false
+                                          keys: [timestamp,vehicle_id]
+                                          values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
+                                            Async JIT Group By workers: 1
+                                              keys: [timestamp,vehicle_id,sensor_name]
+                                              values: [avg(int_value)]
+                                              filter: sensor_name in [i000]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: sensors
+                            """)
+                    .returns("""
                             timestamp	vehicle_id	i000
                             2025-01-01T00:00:00.000000Z	AAA001	698.0
                             2025-01-01T00:00:00.000000Z	AAA002	388.0
@@ -3686,81 +4294,36 @@ public class PivotTest extends AbstractSqlParserTest {
                             2025-01-01T00:00:00.000000Z	AAA008	-693.0
                             2025-01-01T00:00:00.000000Z	AAA009	910.0
                             2025-01-01T00:00:00.000000Z	AAA010	-270.0
-                            2025-01-01T00:00:00.009000Z	AAA058	-746.0
-                            2025-01-01T00:00:00.009000Z	AAA057	-791.0
-                            2025-01-01T00:00:00.009000Z	AAA056	282.0
-                            2025-01-01T00:00:00.009000Z	AAA055	332.0
-                            2025-01-01T00:00:00.009000Z	AAA054	-547.0
-                            2025-01-01T00:00:00.009000Z	AAA053	-965.0
-                            2025-01-01T00:00:00.009000Z	AAA052	-800.0
-                            2025-01-01T00:00:00.009000Z	AAA051	-461.0
-                            2025-01-01T00:00:00.009000Z	AAA050	-753.0
+                            2025-01-01T00:00:00.009000Z	AAA091	675.0
+                            2025-01-01T00:00:00.009000Z	AAA092	-742.0
+                            2025-01-01T00:00:00.009000Z	AAA093	-473.0
+                            2025-01-01T00:00:00.009000Z	AAA094	625.0
+                            2025-01-01T00:00:00.009000Z	AAA095	-949.0
+                            2025-01-01T00:00:00.009000Z	AAA096	733.0
+                            2025-01-01T00:00:00.009000Z	AAA097	662.0
+                            2025-01-01T00:00:00.009000Z	AAA098	-240.0
+                            2025-01-01T00:00:00.009000Z	AAA099	160.0
                             2025-01-01T00:00:00.010000Z	AAA000	-636.0
-                            """,
-                    query,
-                    null,
-                    false,
-                    false,
-                    false);
-
-            assertPlanNoLeakCheck(query,
-                    """
-                            Union
-                                Long Top K lo: 10
-                                  keys: [timestamp asc]
-                                    GroupBy vectorized: false
-                                      keys: [timestamp,vehicle_id]
-                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
-                                        Async JIT Group By workers: 1
-                                          keys: [timestamp,vehicle_id,sensor_name]
-                                          values: [avg(int_value)]
-                                          filter: sensor_name in [i000]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: sensors
-                                Sort light lo: -10
-                                  keys: [timestamp]
-                                    GroupBy vectorized: false
-                                      keys: [timestamp,vehicle_id]
-                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
-                                        Async JIT Group By workers: 1
-                                          keys: [timestamp,vehicle_id,sensor_name]
-                                          values: [avg(int_value)]
-                                          filter: sensor_name in [i000]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: sensors
                             """);
         });
     }
 
     @Test
     public void testPivotWithWhere() throws Exception {
-        assertQueryAndPlan(
-                "country\tname\t2000_sum\t2010_sum\t2020_sum\n",
-                """
-                        cities
-                        WHERE (population % 2) = 0
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country, name
-                        ) order by country;""",
-                ddlCities,
-                null,
-                dmlCities,
-                """
-                        country\tname\t2000_sum\t2010_sum\t2020_sum
-                        NL\tAmsterdam\tnull\tnull\t1158
-                        US\tSeattle\t564\t608\t738
-                        US\tNew York City\tnull\tnull\t8772
-                        """,
-                true,
-                true,
-                false,
-                """
-                        Sort light
+        assertQuery("""
+                cities
+                WHERE (population % 2) = 0
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country, name
+                ) order by country;""")
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .withPlan("""
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -3772,6 +4335,12 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                        """)
+                .returns("country\tname\t2000_sum\t2010_sum\t2020_sum\n", """
+                        country\tname\t2000_sum\t2010_sum\t2020_sum
+                        NL\tAmsterdam\tnull\tnull\t1158
+                        US\tSeattle\t564\t608\t738
+                        US\tNew York City\tnull\tnull\t8772
                         """);
     }
 
@@ -3786,24 +4355,121 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        abs(SUM(population))
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country\t2000\t2010\t2020
                             NL\t1005\t1065\t1158
                             US\t8579\t8783\t9510
-                            """,
-                    """
-                            SELECT * FROM cities
-                            PIVOT (
-                                abs(SUM(population))
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """);
+        });
+    }
+
+    private static void assertNothingBusy() {
+        Assert.assertEquals(0, engine.getSqlCompilerPool().getBusyCount());
+        Assert.assertEquals(0, engine.getBusyReaderCount());
+        Assert.assertEquals(0, engine.getBusyWriterCount());
+    }
+
+    private static String columnNames(RecordMetadata metadata) {
+        final StringSink sink = new StringSink();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+            sink.put(metadata.getColumnName(i));
+        }
+        return sink.toString();
+    }
+
+    private static void createPivotRaceTables() throws SqlException {
+        execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT)");
+        execute("CREATE TABLE cats (c SYMBOL)");
+        execute("INSERT INTO cats VALUES ('X'), ('Y')");
+        execute("""
+                INSERT INTO data VALUES
+                    ('A', 'X', 10),
+                    ('A', 'Y', 20),
+                    ('B', 'X', 30),
+                    ('B', 'Y', 40)
+                """);
+    }
+
+    /**
+     * Compiles {@code sql}, which reaches the PIVOT IN sub-query of {@link #PIVOT_RACE_SQL}, while
+     * a schema change races that sub-query's plan and every borrowed compiler last compiled
+     * {@code borrowedCompilerSql}. The compile must fail with the out-of-date exception, the signal
+     * to retry, and the retry, {@code retrySql}, must return the pivot of the real data.
+     */
+    private void assertCompileSurfacesPivotOutOfDate(
+            @Nullable String setupSql,
+            String borrowedCompilerSql,
+            String sql,
+            String retrySql
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotRaceTables();
+            if (setupSql != null) {
+                execute(setupSql);
+                drainWalAndViewQueues();
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                raceBorrowedCompilerSql.set(borrowedCompilerSql);
+                raceSchemaChangesLeft.set(1);
+                // The schema change hits the plan of the sub-query, which runs while the statement
+                // is still optimised. Only the statement's caller can retry it: it holds the
+                // statement's text.
+                try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    Assert.fail("expected TableReferenceOutOfDateException, compiled a plan with columns: "
+                            + columnNames(factory.getMetadata()));
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "[table=cats");
+                }
+                Assert.assertEquals(0, raceSchemaChangesLeft.get());
+                Assert.assertEquals(1, engine.getSqlCompilerPool().getBusyCount());
+            }
+            assertNothingBusy();
+
+            // the caller's retry
+            assertQuery(retrySql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PIVOT_RACE_RESULT);
+            assertNothingBusy();
+        });
+    }
+
+    /**
+     * Executes {@code sql}, which defines view {@code pv} as {@link #PIVOT_RACE_SQL}, through
+     * {@link CairoEngine#execute(CharSequence, SqlExecutionContext)} while a schema change races
+     * the PIVOT IN sub-query's plan and every borrowed compiler last compiled a CREATE TABLE. The
+     * statement's retry must absorb the race, and {@code pv} must pivot the real data.
+     */
+    private void assertExecuteRetriesPivotOutOfDate(@Nullable String setupSql, String sql) throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotRaceTables();
+            if (setupSql != null) {
+                execute(setupSql);
+                drainWalAndViewQueues();
+            }
+            raceBorrowedCompilerSql.set(SQL_HIJACK_DDL);
+            raceSchemaChangesLeft.set(1);
+            engine.execute(sql, sqlExecutionContext);
+            Assert.assertEquals(0, raceSchemaChangesLeft.get());
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM pv ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PIVOT_RACE_RESULT);
+            assertNothingBusy();
         });
     }
 }

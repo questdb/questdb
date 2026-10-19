@@ -31,61 +31,51 @@ public class FloorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleNegative() throws Exception {
-        assertQuery(
-                "floor\n" +
-                        "-14.0\n",
-                "select floor(-13.1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select floor(-13.1)")
+                .expectSize()
+                .returns("""
+                        floor
+                        -14.0
+                        """);
     }
 
     @Test
     public void testDoublePositive() throws Exception {
-        assertQuery(
-                "floor\n" +
-                        "13.0\n",
-                "select floor(13.1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select floor(13.1)")
+                .expectSize()
+                .returns("""
+                        floor
+                        13.0
+                        """);
     }
 
     @Test
     public void testFloatNegative() throws Exception {
-        assertQuery(
-                "floor\n" +
-                        "-14.0\n",
-                "select floor(-13.1f)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select floor(-13.1f)")
+                .expectSize()
+                .returns("""
+                        floor
+                        -14.0
+                        """);
     }
 
     @Test
     public void testFloatPositive() throws Exception {
-        assertQuery(
-                "floor\n" +
-                        "13.0\n",
-                "select floor(13.1f)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select floor(13.1f)")
+                .expectSize()
+                .returns("""
+                        floor
+                        13.0
+                        """);
     }
 
     @Test
     public void testNaN() throws Exception {
-        assertQuery(
-                "floor\n" +
-                        "null\n",
-                "select floor(NaN)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select floor(NaN)")
+                .expectSize()
+                .returns("""
+                        floor
+                        null
+                        """);
     }
 }

@@ -127,7 +127,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         long nextPos = pos + 1;
         if (nextPos < masterRowCount) {
             long nextRowIdx = isFiltered ? filteredRows.get(nextPos) : (frameRowLo + nextPos);
-            long nextHorizonTs = Math.addExact(readTimestamp(nextRowIdx), offsets[offsetIdx]);
+            long nextHorizonTs = HorizonTimestampIterator.addTimestampAndOffset(readTimestamp(nextRowIdx), offsets[offsetIdx]);
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;
@@ -193,14 +193,14 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         if (hasRows) {
             long firstMasterTs = readTimestamp(firstRowIdx);
             for (int k = 0, n = offsets.length; k < n; k++) {
-                long horizonTs = Math.addExact(firstMasterTs, offsets[k]);
+                long horizonTs = HorizonTimestampIterator.addTimestampAndOffset(firstMasterTs, offsets[k]);
                 heapInsert(horizonTs, k);
             }
         }
     }
 
     private long readTimestamp(long rowIdx) {
-        return Unsafe.getUnsafe().getLong(tsColumnAddress + (rowIdx << 3));
+        return Unsafe.getLong(tsColumnAddress + (rowIdx << 3));
     }
 
     private void siftDown() {

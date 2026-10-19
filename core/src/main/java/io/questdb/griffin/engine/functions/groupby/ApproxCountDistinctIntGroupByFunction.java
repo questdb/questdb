@@ -227,7 +227,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     private void overwrite(MapValue mapValue, long value) {

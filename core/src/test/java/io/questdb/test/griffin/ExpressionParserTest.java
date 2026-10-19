@@ -29,10 +29,13 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 
@@ -145,13 +148,16 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testArrayTypeErrorRecovery() throws Exception {
         // Test that parser can handle multiple errors in sequence
-        assertException("select null::double [], null::int []", 20, "array type requires no whitespace");
+        assertQuery("select null::double [], null::int []")
+                .fails(20, "array type requires no whitespace");
 
         // Test error recovery with different constructs
-        assertException("select x, null::double [], y from table", 23, "array type requires no whitespace");
+        assertQuery("select x, null::double [], y from table")
+                .fails(23, "array type requires no whitespace");
 
         // Test complex expressions with array errors
-        assertException("select (select null::double [] from dual)", 28, "array type requires no whitespace");
+        assertQuery("select (select null::double [] from dual)")
+                .fails(28, "array type requires no whitespace");
     }
 
     @Test
@@ -176,59 +182,86 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testBrutalArraySyntaxErrors() throws Exception {
         // Multiple consecutive brackets
-        assertException("select null::[][][]", 13, "type definition is expected");
-        assertException("select null::][", 13, "syntax error");
+        assertQuery("select null::[][][]")
+                .fails(13, "type definition is expected");
+        assertQuery("select null::][")
+                .fails(13, "syntax error");
 
         // Brackets with numbers (common user mistake)
-        assertException("select null::double[1]", 20, "']' expected");
-        assertException("select null::int[0]", 17, "']' expected");
-        assertException("select null::varchar[255]", 21, "']' expected");
+        assertQuery("select null::double[1]")
+                .fails(20, "']' expected");
+        assertQuery("select null::int[0]")
+                .fails(17, "']' expected");
+        assertQuery("select null::varchar[255]")
+                .fails(21, "']' expected");
 
         // Brackets with expressions
-        assertException("select null::double[x+1]", 20, "']' expected");
-        assertException("select null::int[null]", 17, "']' expected");
+        assertQuery("select null::double[x+1]")
+                .fails(20, "']' expected");
+        assertQuery("select null::int[null]")
+                .fails(17, "']' expected");
 
         // Weird spacing patterns in brackets
-        assertException("select null::double[ ]", 21, "expected 'double[]' but found 'double[ ]'");
-        assertException("select null::int[\t]", 18, "expected 'int[]' but found 'int[\t]'");
-        assertException("select null::varchar[\n]", 22, "expected 'varchar[]' but found 'varchar[\n]'");
+        assertQuery("select null::double[ ]")
+                .fails(21, "expected 'double[]' but found 'double[ ]'");
+        assertQuery("select null::int[\t]")
+                .fails(18, "expected 'int[]' but found 'int[\t]'");
+        assertQuery("select null::varchar[\n]")
+                .fails(22, "expected 'varchar[]' but found 'varchar[\n]'");
 
         // Mixed bracket types
-        assertException("select null::double(]", 20, "syntax error");
-        assertException("select null::int[)", 17, "']' expected");
+        assertQuery("select null::double(]")
+                .fails(20, "syntax error");
+        assertQuery("select null::int[)")
+                .fails(17, "']' expected");
 
         // Unicode brackets (if parser somehow accepts them)
-        assertException("select null::double【】", 13, "invalid constant: double【】");
-        assertException("select null::int〔〕", 13, "invalid constant: int〔〕");
+        assertQuery("select null::double【】")
+                .fails(13, "invalid constant: double【】");
+        assertQuery("select null::int〔〕")
+                .fails(13, "invalid constant: int〔〕");
 
         // Extreme whitespace variations
-        assertException("select null::double\t\t\t[]", 22, "array type requires no whitespace: expected 'double[]' but found 'double\t\t\t []'");
+        assertQuery("select null::double\t\t\t[]")
+                .fails(22, "array type requires no whitespace: expected 'double[]' but found 'double\t\t\t []'");
 
         // NBSP is NOT picked up by Character.isWhitespace()
-        assertException("select null::int\u00A0[]", 13, "invalid constant: int []"); // Non-breaking space
-        assertException("select null::varchar\u2003[]", 21, "array type requires no whitespace: expected 'varchar[]' but found 'varchar  []'"); // Em space
+        assertQuery("select null::int\u00A0[]")
+                .fails(13, "invalid constant: int []"); // Non-breaking space
+        assertQuery("select null::varchar\u2003[]")
+                .fails(21, "array type requires no whitespace: expected 'varchar[]' but found 'varchar  []'"); // Em space
 
         // Extremely long type names with spaces
-        assertException("select null::doubleprecision []", 29, "array type requires no whitespace: expected 'doubleprecision[]' but found 'doubleprecision  []'");
+        assertQuery("select null::doubleprecision []")
+                .fails(29, "array type requires no whitespace: expected 'doubleprecision[]' but found 'doubleprecision  []'");
 
         // Case sensitivity issues
-        assertException("select null::DOUBLE []", 20, "array type requires no whitespace");
-        assertException("select null::Double []", 20, "array type requires no whitespace");
-        assertException("select null::dOuBlE []", 20, "array type requires no whitespace");
+        assertQuery("select null::DOUBLE []")
+                .fails(20, "array type requires no whitespace");
+        assertQuery("select null::Double []")
+                .fails(20, "array type requires no whitespace");
+        assertQuery("select null::dOuBlE []")
+                .fails(20, "array type requires no whitespace");
 
         // Multiple spaces of different types
-        assertException("select null::double \t []", 22, "array type requires no whitespace");
-        assertException("select null::int  \t  []", 21, "array type requires no whitespace");
+        assertQuery("select null::double \t []")
+                .fails(22, "array type requires no whitespace");
+        assertQuery("select null::int  \t  []")
+                .fails(21, "array type requires no whitespace");
 
         // Nested cast errors
-        assertException("select cast(cast(null as double []) as int)", 32, "array type requires no whitespace");
+        assertQuery("select cast(cast(null as double []) as int)")
+                .fails(32, "array type requires no whitespace");
 
         // Array in function parameters
-        assertException("select abs(null::double [])", 24, "array type requires no whitespace");
+        assertQuery("select abs(null::double [])")
+                .fails(24, "array type requires no whitespace");
 
         // Array in complex expressions
-        assertException("select (1 + null::int []) * 2", 22, "array type requires no whitespace");
-        assertException("select case when true then null::double [] else null end", 40, "array type requires no whitespace");
+        assertQuery("select (1 + null::int []) * 2")
+                .fails(22, "array type requires no whitespace");
+        assertQuery("select case when true then null::double [] else null end")
+                .fails(40, "array type requires no whitespace");
     }
 
     @Test
@@ -267,6 +300,79 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseDanglingBraceAroundWhen() {
+        // the inner 'when' flushes the brace, and the ')' after it used to flush the 'case'
+        assertFail(
+                "1 + case when (v when 1) then (1) else (2) end",
+                4,
+                "unbalanced 'case'"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingBraceBeforeWhen() {
+        assertFail(
+                "case (when v > 1 then 1 else 2 end)",
+                0,
+                "unbalanced 'case'"
+        );
+        assertFail(
+                "1 + case (when v > 1 then 1 else 2 end)",
+                4,
+                "unbalanced 'case'"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingBraceInNestedCase() {
+        // the error points at the innermost 'case', the one the brace is written in
+        assertFail(
+                "1 + case when x then (case (when a then b end)) end",
+                22,
+                "unbalanced 'case'"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingBracketAroundKeyword() {
+        assertFail("1 + case when a[when 1] then 1 else 2 end", 4, "unbalanced 'case'");
+        assertFail("1 + case when x then a[1, 2, 3, end]", 4, "unbalanced 'case'");
+        assertFail("1 + case when x then ARRAY[1, when 2] else 2 end", 4, "unbalanced 'case'");
+        assertFail("1 + case when x then ARRAY[1, 2, 3, end]", 4, "unbalanced 'case'");
+    }
+
+    @Test
+    public void testCaseDanglingCastAroundKeyword() {
+        assertFail("1 + case cast(when v > 1 then 1 else 2 end as int)", 4, "unbalanced 'case'");
+        assertFail("1 + case when cast(v when 1 as int) then 1 end", 4, "unbalanced 'case'");
+    }
+
+    @Test
+    public void testCaseDanglingDotAfterEnd() {
+        assertFail(
+                "case x when 1 then 'a' when 2 then 'b' end.foo",
+                42,
+                "'.' is unexpected here"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingDotAfterEndInExpression() {
+        assertFail(
+                "1 + case x when 1 then 'a' when 2 then 'b' end.foo",
+                46,
+                "'.' is unexpected here"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingFunctionCallAroundKeyword() {
+        assertFail("1 + case when f(when 1, 2) then 1 else 2 end", 4, "unbalanced 'case'");
+        assertFail("1 + case when f(a, b, c, end) then 1 end", 4, "unbalanced 'case'");
+        assertFail("1 + case when x then f(1, 2, 3 then 4) end", 4, "unbalanced 'case'");
+    }
+
+    @Test
     public void testCaseDanglingOperatorAfterCase() {
         assertFail(
                 "1 + case *x when 1 then 'a' when 2 then 'b' end",
@@ -281,6 +387,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "1 + case x when 1 then 'a' when 2 then 'b' else * end",
                 48,
                 "too few arguments for '*' [found=0,expected=2]"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingOperatorAfterEnd() {
+        assertFail(
+                "case x when 1 then 'a' when 2 then 'b' end &",
+                43,
+                "too few arguments for '&' [found=1,expected=2]"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingOperatorAfterEndNested() {
+        assertFail(
+                "case x when 1 then case y when 2 then 'a' else 'b' end else 'c' end +",
+                68,
+                "too few arguments for '+' [found=1,expected=2]"
         );
     }
 
@@ -300,6 +424,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 17,
                 "too few arguments for '*' [found=1,expected=2]"
         );
+    }
+
+    @Test
+    public void testCaseDanglingWildcard() {
+        // the wildcard replaces the 'case', so the error points at the keyword left without one
+        assertFail("case.* when 1 then 2 end", 7, "unbalanced 'case'");
+        assertFail("case.*(a, b, c, end)", 16, "unbalanced 'case'");
     }
 
     @Test
@@ -349,10 +480,45 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseMissingArgInBraceQuery() throws Exception {
+        // The listener of this class shows nothing when a CASE is emitted with more operands
+        // than it was given; the tree a statement builds does. The CASE took a null operand,
+        // then an operand of the expression around it, then one of the CASE around it, and
+        // each statement failed with a NullPointerException at a different place.
+        assertQuery("select case when () then 1 else 2 end from long_sequence(1)")
+                .fails(20, "missing arguments");
+        assertQuery("select (x) + case when x > 1 then () else 2 end from long_sequence(1)")
+                .fails(37, "missing arguments");
+        assertQuery("select case when 1 x > 1 then case when (x = 1) then 'a' else () end when x > 2 then 'b' end from long_sequence(1)")
+                .fails(65, "missing arguments");
+    }
+
+    @Test
     public void testCaseMissingElseArg() {
         assertFail(
                 "case when a > b then 1 else end",
                 28,
+                "missing arguments"
+        );
+    }
+
+    @Test
+    public void testCaseMissingElseArgInBrace() {
+        // An empty brace delivers no value, the same as no brace at all.
+        assertFail(
+                "case when a > b then 1 else () end",
+                31,
+                "missing arguments"
+        );
+        assertFail(
+                "case when a > b then 1 else (()) end",
+                33,
+                "missing arguments"
+        );
+        // The inner CASE fails at its own END.
+        assertFail(
+                "case when a then case when b then 1 else () end else 2 end",
+                44,
                 "missing arguments"
         );
     }
@@ -376,6 +542,21 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseMissingThenArgInBrace() {
+        assertFail(
+                "case when a > b then () else 2 end",
+                24,
+                "missing arguments"
+        );
+        // With no ELSE, END is the keyword that finds the value missing.
+        assertFail(
+                "f(case when a then () end, 2)",
+                22,
+                "missing arguments"
+        );
+    }
+
+    @Test
     public void testCaseMissingWhen() {
         assertFail(
                 "case then x end",
@@ -389,6 +570,31 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "case when then 1 else 2 end",
                 10,
+                "missing arguments"
+        );
+    }
+
+    @Test
+    public void testCaseMissingWhenArgInBrace() {
+        assertFail(
+                "case when () then 1 else 2 end",
+                13,
+                "missing arguments"
+        );
+        assertFail(
+                "case a when () then 1 end",
+                15,
+                "missing arguments"
+        );
+        assertFail(
+                "case when a > b then 1 when () then 2 end",
+                31,
+                "missing arguments"
+        );
+        // A brace that holds only a dot delivers no value either.
+        assertFail(
+                "1 + case when (.) then 1 end",
+                18,
                 "missing arguments"
         );
     }
@@ -458,6 +664,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 11,
                 "dangling expression"
         );
+    }
+
+    @Test
+    public void testCaseWithDotDereference() throws SqlException {
+        x(" a b . b c . 1 + b c . - case",
+                "case when (a).b then (b).c + 1 else -(b).c end");
     }
 
     @Test
@@ -737,6 +949,26 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountStarAfterOperator() throws SqlException {
+        x("2 * count *", "2 * count(*)");
+    }
+
+    @Test
+    public void testCountStarNestedInFunction() throws SqlException {
+        x("* count 5 coalesce", "coalesce(count(*), 5)");
+    }
+
+    @Test
+    public void testCountStarRepeated() throws SqlException {
+        x("* count * count +", "count(*) + count(*)");
+    }
+
+    @Test
+    public void testCountStarWhitespace() throws SqlException {
+        x("* count 5 coalesce", "coalesce(count( * ), 5)");
+    }
+
+    @Test
     public void testDanglingExpression() {
         assertFail(
                 "(.*10)",
@@ -866,8 +1098,40 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDotDereferenceDanglingOperator() {
+        // The member access used to count one operand more than it delivered, so an operator
+        // with an operand missing passed the operand check after it.
+        assertFail("(a).b +", 6, "too few arguments for '+' [found=1,expected=2]");
+        assertFail("a = (b).c and", 10, "too few arguments for 'and' [found=1,expected=2]");
+        // Inside a CASE the operator took the operand of the WHEN before it.
+        assertFail("case when a then (b).c + else 1 end", 23, "too few arguments for '+' [found=1,expected=2]");
+    }
+
+    @Test
+    public void testDotDereferenceEmptyBrace() throws Exception {
+        // The access had no value to read: the statement built a `.` with a null operand and
+        // failed with a NullPointerException.
+        assertQuery("select ().x from long_sequence(1)")
+                .fails(10, "too few arguments for '.' [found=1,expected=2]");
+        assertFail("().b", 3, "too few arguments for '.' [found=1,expected=2]");
+        assertFail("case when a then ().b else 1 end", 20, "too few arguments for '.' [found=1,expected=2]");
+    }
+
+    @Test
     public void testDotDereferenceExpression() throws SqlException {
         x("u a.z c . =", "u = (a.z).c");
+    }
+
+    @Test
+    public void testDottedNameAfterOperatorFailsCleanly() {
+        // A dotted name whose qualifier is a pending operator (not an identifier) used to
+        // blow up with an internal ClassCastException, e.g. the demo-box scanner probes
+        // "tables()/.env" and "tables()/.git/HEAD" (parsed as the division tables() / .env).
+        // It must now fail with a clean SqlException instead.
+        assertFail("tables()/.env", 10, "'.' is unexpected here");
+        assertFail("tables()/.git/HEAD", 10, "'.' is unexpected here");
+        assertFail("tables() / .env", 12, "'.' is unexpected here");
+        assertFail("1/.env", 3, "'.' is unexpected here");
     }
 
     @Test
@@ -1176,18 +1440,26 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidArraySyntaxInCast() throws Exception {
-        assertException("select null::[]double;", 13, "did you mean 'double[]'?");
-        assertException("select null::[]float;", 13, "did you mean 'float[]'?");
-        assertException("select null::[];", 13, "type definition is expected");
-        assertException("select null::double []", 20, "array type requires no whitespace: expected 'double[]' but found 'double  []'");
+        assertQuery("select null::[]double;")
+                .fails(13, "did you mean 'double[]'?");
+        assertQuery("select null::[]float;")
+                .fails(13, "did you mean 'float[]'?");
+        assertQuery("select null::[];")
+                .fails(13, "type definition is expected");
+        assertQuery("select null::double []")
+                .fails(20, "array type requires no whitespace: expected 'double[]' but found 'double  []'");
     }
 
     @Test
     public void testInvalidArraySyntaxInCreateTable() throws Exception {
-        assertException("create table x(a []double)", 17, "did you mean 'double[]'?");
-        assertException("create table x(a []int)", 17, "did you mean 'int[]'?");
-        assertException("create table x(a [])", 17, "column type is expected here");
-        assertException("create table x(a [], b double)", 17, "column type is expected here");
+        assertQuery("create table x(a []double)")
+                .fails(17, "did you mean 'double[]'?");
+        assertQuery("create table x(a []int)")
+                .fails(17, "did you mean 'int[]'?");
+        assertQuery("create table x(a [])")
+                .fails(17, "column type is expected here");
+        assertQuery("create table x(a [], b double)")
+                .fails(17, "column type is expected here");
     }
 
     @Test
@@ -1459,6 +1731,64 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testSimpleLiteralExit() throws Exception {
         x("a", "a lit");
+    }
+
+    @Test
+    public void testStackOverflowLeavesNoStateForNextStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            // Every level nests a sub-query inside an EXTRACT call, so the overflow unwinds through
+            // levels that each left an open 'extract(' on the operator stack. The FROM check of the
+            // next statement scans that stack and would read the stale tokens.
+            final int depth = 10_000;
+            final StringSink sql = new StringSink();
+            sql.put("SELECT ");
+            for (int i = 0; i < depth; i++) {
+                sql.put("extract(year FROM (SELECT ");
+            }
+            sql.put("now()");
+            for (int i = 0; i < depth; i++) {
+                sql.put("))");
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // The compile runs on a thread with a small stack of its own, so the nested
+                // sub-queries exhaust it whatever stack size the JVM gives the test thread. The
+                // statements after it run on the test thread, on the same compiler.
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                final Thread thread = new Thread(
+                        null,
+                        () -> {
+                            try {
+                                compiler.compile(sql, sqlExecutionContext);
+                            } catch (Throwable th) {
+                                failure.set(th);
+                            }
+                        },
+                        "overflow",
+                        256 * 1024
+                );
+                thread.start();
+                thread.join();
+                if (!(failure.get() instanceof StackOverflowError)) {
+                    throw new AssertionError("expected StackOverflowError", failure.get());
+                }
+                assertQuery("SELECT x FROM long_sequence(3)")
+                        .withCompiler(compiler)
+                        .expectSize()
+                        .returns("""
+                                x
+                                1
+                                2
+                                3
+                                """);
+                assertQuery("SELECT x FROM long_sequence(3) WHERE x > (SELECT min(x) FROM long_sequence(3))")
+                        .withCompiler(compiler)
+                        .returns("""
+                                x
+                                2
+                                3
+                                """);
+            }
+        });
     }
 
     @Test

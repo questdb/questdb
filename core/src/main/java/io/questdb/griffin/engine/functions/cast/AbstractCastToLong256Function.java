@@ -32,16 +32,8 @@ import io.questdb.griffin.engine.functions.Long256Function;
  * Abstract base class for functions that cast values to long256.
  */
 public abstract class AbstractCastToLong256Function extends Long256Function implements CastFunction {
-    /**
-     * The function argument to cast.
-     */
     protected final Function arg;
 
-    /**
-     * Constructs a new cast to long256 function.
-     *
-     * @param arg the function argument to cast
-     */
     public AbstractCastToLong256Function(Function arg) {
         this.arg = arg;
     }
@@ -49,6 +41,12 @@ public abstract class AbstractCastToLong256Function extends Long256Function impl
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        // All concrete subclasses hold a mutable Long256Impl.
+        return false;
     }
 
     @Override

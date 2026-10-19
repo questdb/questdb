@@ -44,8 +44,7 @@ public class ShowStandardConformingStringsCursorFactory extends AbstractRecordCu
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.toTop();
-        return cursor;
+        return cursor.of(executionContext.getCircuitBreaker());
     }
 
     @Override

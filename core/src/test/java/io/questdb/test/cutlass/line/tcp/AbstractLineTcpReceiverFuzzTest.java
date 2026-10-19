@@ -106,7 +106,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     public void runTest() throws Exception {
-        runTest((factoryType, thread, token, event, segment, position) -> {
+        runTest((factoryType, _, token, event, _, _) -> {
             String tableName = token.getTableName();
             if (walEnabled) {
                 // There is no locking as such in WAL, so we treat writer return as an unlock event.
@@ -520,7 +520,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     void runTest(PoolListener listener, long minIdleMsBeforeWriterRelease) throws Exception {
-        runInContext(receiver -> {
+        runInContext(_ -> {
             Assert.assertEquals(0, tables.size());
             for (int i = 0; i < numOfTables; i++) {
                 final CharSequence tableName = getTableName(i);
@@ -551,7 +551,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     final Socket socket = sockets.get(i);
                     socket.close();
                 }
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                engine.setPoolListener((_, _, _, _, _, _) -> {
                 });
             }
         }, false, minIdleMsBeforeWriterRelease);

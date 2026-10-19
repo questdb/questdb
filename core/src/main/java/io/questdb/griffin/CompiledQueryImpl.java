@@ -48,8 +48,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
-    // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
-    private long affectedRowsCount;
     private AlterOperation alterOp;
     private boolean cacheable;
     private boolean done;
@@ -91,7 +89,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void clear() {
         this.type = NONE;
         this.recordCursorFactory = null;
-        this.affectedRowsCount = -1;
         this.insertOp = null;
         this.alterOp = null;
         this.updateOp = null;
@@ -155,6 +152,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case CREATE_TABLE:
             case CREATE_MAT_VIEW:
+            case CREATE_LIVE_VIEW:
             case CREATE_TABLE_AS_SELECT:
             case DROP:
                 assert false;
@@ -167,11 +165,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     @Override
     public boolean executedAtParseTime() {
         return isExecutedAtParseTime;
-    }
-
-    @Override
-    public long getAffectedRowsCount() {
-        return affectedRowsCount;
     }
 
     @Override
@@ -287,6 +280,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = true;
     }
 
+    public void ofCreateLiveView(Operation createLiveViewOp) {
+        of(CREATE_LIVE_VIEW);
+        this.operation = createLiveViewOp;
+        this.isExecutedAtParseTime = false;
+    }
+
     public void ofCreateView(CreateViewOperation createViewOp) {
         of(CREATE_VIEW);
         this.operation = createViewOp;
@@ -330,7 +329,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void ofPseudoSelect(@Nullable RecordCursorFactory factory) {
         this.type = PSEUDO_SELECT;
         this.recordCursorFactory = factory;
-        this.affectedRowsCount = -1;
         this.isExecutedAtParseTime = false;
     }
 
@@ -362,6 +360,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofSet() {
         of(SET);
+        this.isExecutedAtParseTime = true;
+    }
+
+    public void ofRebaseWal() {
+        type = TABLE_REBASE;
         this.isExecutedAtParseTime = true;
     }
 
@@ -421,6 +424,5 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private void of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
-        this.affectedRowsCount = -1;
     }
 }

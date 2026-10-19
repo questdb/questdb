@@ -70,7 +70,7 @@ public class LowerCaseUtf8SequenceIntHashMapTest {
                 }
                 // copy each string to the memory
                 int len = s.length();
-                Unsafe.getUnsafe().putInt(p, len);
+                Unsafe.putInt(p, len);
                 Utf8s.strCpyAscii(s, len, p + 4);
                 p += 4 + len;
             }
@@ -164,7 +164,7 @@ public class LowerCaseUtf8SequenceIntHashMapTest {
             assert utf8Bytes.length == 2;
             for (int i = 0; i < N; i++) {
                 for (int j = 0; j < 2; j++) {
-                    Unsafe.getUnsafe().putByte(mem + (long) 2 * i + j, utf8Bytes[j]);
+                    Unsafe.putByte(mem + (long) 2 * i + j, utf8Bytes[j]);
                 }
             }
 
@@ -174,8 +174,8 @@ public class LowerCaseUtf8SequenceIntHashMapTest {
 
                 final Utf8String bcs = Utf8String.newInstance(dus);
                 map.put(Utf8String.newInstance(dus), i);
-                Assert.assertEquals(i, (int) map.get(dus));
-                Assert.assertEquals(i, (int) map.get(bcs));
+                Assert.assertEquals(i, map.get(dus));
+                Assert.assertEquals(i, map.get(bcs));
             }
         } finally {
             Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);

@@ -328,7 +328,10 @@ public class CommonUtils {
                         throw SqlException.position(position).put("positive number expected: ").put(str);
                     }
                     return multiple;
-                } catch (NumericException ignored) {
+                } catch (NumericException e) {
+                    // the unit is a single trailing letter, so anything before it must be a number;
+                    // without this check '1min' would pass as a 1-nanosecond stride
+                    throw SqlException.position(position).put("Invalid unit: ").put(str);
                 }
             }
         }
@@ -336,7 +339,9 @@ public class CommonUtils {
     }
 
     public static char getStrideUnit(CharSequence str, int position) throws SqlException {
-        assert !str.isEmpty();
+        if (str == null || str.isEmpty()) {
+            throw SqlException.position(position).put("invalid unit '").put(str == null ? "null" : "").put('\'');
+        }
         final char unit = str.charAt(str.length() - 1);
         return switch (unit) {
             case 'M', 'y', 'w', 'd', 'h', 'm', 's', 'T', 'U', 'n' -> unit;
@@ -361,6 +366,21 @@ public class CommonUtils {
      */
     public static boolean isLeapYear(int year) {
         return ((year & 3) == 0) && ((year % 100) != 0 || (year % 400) == 0);
+    }
+
+    // Fixed-size, epoch-aligned units: their bucket boundaries fall at integer multiples of the
+    // bucket size from the epoch, which the arithmetic floor/ceil inverses rely on.
+    public static boolean isFixedAlignedUnit(char unit) {
+        return switch (unit) {
+            case 's', 'm', 'h', 'd', 'T', 'U', 'n' -> true;
+            default -> false;
+        };
+    }
+
+    // Fixed-length-duration units, as dateadd treats them: a week adds a constant 7 days, so it is
+    // a fixed duration here, unlike isFixedAlignedUnit where week buckets are not epoch-aligned.
+    public static boolean isFixedDurationUnit(char unit) {
+        return unit == 'w' || isFixedAlignedUnit(unit);
     }
 
     public static boolean isSubDayUnit(char unit) {

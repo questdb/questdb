@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -140,6 +141,13 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     public int getPartitionPurgeListCapacity() {
         // Bump it to high number so that test doesn't fail with memory leak if LongList re-allocates
         return 512;
+    }
+
+    @Override
+    public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+        return overrides.getQwpServerInfoProvider() != null
+                ? overrides.getQwpServerInfoProvider()
+                : super.getQwpServerInfoProvider();
     }
 
     @Override

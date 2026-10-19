@@ -35,10 +35,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApprox0thPercentileLongValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n1.0\n",
-                    "select approx_percentile(x, 0) from test"
-            );
+            assertQuery("select approx_percentile(x, 0) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n1.0\n");
         });
     }
 
@@ -46,10 +47,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApprox100thPercentileLongValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n103.0\n",
-                    "select approx_percentile(x, 1.0) from test"
-            );
+            assertQuery("select approx_percentile(x, 1.0) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n103.0\n");
         });
     }
 
@@ -57,10 +59,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApprox50thPercentileIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as int) x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n51.0\n",
-                    "select approx_percentile(x, 0.5) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n51.0\n");
         });
     }
 
@@ -68,10 +71,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApprox50thPercentileLongValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n51.0\n",
-                    "select approx_percentile(x, 0.5) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n51.0\n");
         });
     }
 
@@ -79,10 +83,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApprox50thPercentileLongValuesWith5() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n51.0\n",
-                    "select approx_percentile(x, 0.5) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n51.0\n");
         });
     }
 
@@ -91,10 +96,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApprox50thPercentileWithPrecision1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n511.0\n",
-                    "select approx_percentile(x, 0.5, 1) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5, 1) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n511.0\n");
         });
     }
 
@@ -102,10 +108,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApprox50thPercentileWithPrecision2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n501.0\n",
-                    "select approx_percentile(x, 0.5, 2) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5, 2) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n501.0\n");
         });
     }
 
@@ -113,10 +120,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApprox50thPercentileWithPrecision3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n500.0\n",
-                    "select approx_percentile(x, 0.5, 3) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5, 3) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n500.0\n");
         });
     }
 
@@ -124,10 +132,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApprox50thPercentileWithPrecision4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n500.0\n",
-                    "select approx_percentile(x, 0.5, 4) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5, 4) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n500.0\n");
         });
     }
 
@@ -135,10 +144,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApprox50thPercentileWithPrecision5() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n500.0\n",
-                    "select approx_percentile(x, 0.5, 5) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n500.0\n");
         });
     }
 
@@ -147,13 +157,14 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
             execute("insert into test values (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile
                             null
-                            """,
-                    "select approx_percentile(x, 0.5) from test"
-            );
+                            """);
         });
     }
 
@@ -161,10 +172,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApproxPercentileAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select 5 x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n5.0\n",
-                    "select approx_percentile(x, 0.5) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n5.0\n");
         });
     }
 
@@ -172,13 +184,14 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApproxPercentileEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile
                             null
-                            """,
-                    "select approx_percentile(x, 0.5) from test"
-            );
+                            """);
         });
     }
 
@@ -187,13 +200,14 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
             execute("insert into test values (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile
                             null
-                            """,
-                    "select approx_percentile(x, 0.5, 5) from test"
-            );
+                            """);
         });
     }
 
@@ -201,13 +215,14 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApproxPercentilePackedEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile
                             null
-                            """,
-                    "select approx_percentile(x, 0.5, 5) from test"
-            );
+                            """);
         });
     }
 
@@ -216,10 +231,11 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
         bindVariableService.setDouble(0, 0.5);
         assertMemoryLeak(() -> {
             execute("create table test as (select 5 x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n5.0\n",
-                    "select approx_percentile(x, $1, 5) from test"
-            );
+            assertQuery("select approx_percentile(x, $1, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n5.0\n");
         });
     }
 
@@ -228,13 +244,14 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
             execute("insert into test values (1), (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile
                             1.0
-                            """,
-                    "select approx_percentile(x, 0.5) from test"
-            );
+                            """);
         });
     }
 
@@ -243,83 +260,60 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
         bindVariableService.setDouble(0, 0.5);
         assertMemoryLeak(() -> {
             execute("create table test as (select 5 x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n5.0\n",
-                    "select approx_percentile(x, $1) from test"
-            );
+            assertQuery("select approx_percentile(x, $1) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n5.0\n");
         });
     }
 
     @Test
     public void testInvalidPercentile1() throws Exception {
-        assertException(
-                "select approx_percentile(x, 1.1) from long_sequence(1)",
-                7,
-                "percentile must be between 0.0 and 1.0"
-        );
+        assertQuery("select approx_percentile(x, 1.1) from long_sequence(1)")
+                .fails(7, "percentile must be between 0.0 and 1.0");
     }
 
     @Test
     public void testInvalidPercentile2() throws Exception {
-        assertException(
-                "select approx_percentile(x, -1) from long_sequence(1)",
-                7,
-                "percentile must be between 0.0 and 1.0"
-        );
+        assertQuery("select approx_percentile(x, -1) from long_sequence(1)")
+                .fails(7, "percentile must be between 0.0 and 1.0");
     }
 
     @Test
     public void testInvalidPercentile3() throws Exception {
-        assertException(
-                "select approx_percentile(x, x) from long_sequence(1)",
-                28,
-                "percentile must be a constant"
-        );
+        assertQuery("select approx_percentile(x, x) from long_sequence(1)")
+                .fails(28, "percentile must be a constant");
     }
 
     @Test
     public void testInvalidPercentilePacked1() throws Exception {
-        assertException(
-                "select approx_percentile(x, 1.1, 5) from long_sequence(1)",
-                7,
-                "percentile must be between 0.0 and 1.0"
-        );
+        assertQuery("select approx_percentile(x, 1.1, 5) from long_sequence(1)")
+                .fails(7, "percentile must be between 0.0 and 1.0");
     }
 
     @Test
     public void testInvalidPercentilePacked2() throws Exception {
-        assertException(
-                "select approx_percentile(x, -1, 5) from long_sequence(1)",
-                7,
-                "percentile must be between 0.0 and 1.0"
-        );
+        assertQuery("select approx_percentile(x, -1, 5) from long_sequence(1)")
+                .fails(7, "percentile must be between 0.0 and 1.0");
     }
 
     @Test
     public void testInvalidPercentilePacked3() throws Exception {
-        assertException(
-                "select approx_percentile(x, x, 5) from long_sequence(1)",
-                28,
-                "percentile must be a constant"
-        );
+        assertQuery("select approx_percentile(x, x, 5) from long_sequence(1)")
+                .fails(28, "percentile must be a constant");
     }
 
     @Test
     public void testInvalidPrecision1() throws Exception {
-        assertException(
-                "select approx_percentile(x, 0.5, 6) from long_sequence(1)",
-                33,
-                "precision must be between 0 and 5"
-        );
+        assertQuery("select approx_percentile(x, 0.5, 6) from long_sequence(1)")
+                .fails(33, "precision must be between 0 and 5");
     }
 
     @Test
     public void testInvalidPrecision2() throws Exception {
-        assertException(
-                "select approx_percentile(x, 0.5, -1) from long_sequence(1)",
-                33,
-                "precision must be between 0 and 5"
-        );
+        assertQuery("select approx_percentile(x, 0.5, -1) from long_sequence(1)")
+                .fails(33, "precision must be between 0 and 5");
     }
 
     @Test
@@ -328,13 +322,14 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             execute("create table test (x long)");
             execute("insert into test values (1), (-1)");
             try {
-                assertSql(
-                        """
+                assertQuery("select approx_percentile(x, 0.5) from test")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 approx_percentile
                                 1.0
-                                """,
-                        "select approx_percentile(x, 0.5) from test"
-                );
+                                """);
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -347,13 +342,14 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             execute("create table test (x long)");
             execute("insert into test values (1), (-1)");
             try {
-                assertSql(
-                        """
+                assertQuery("select approx_percentile(x, 0.5, 5) from test")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 approx_percentile
                                 1.0
-                                """,
-                        "select approx_percentile(x, 0.5, 5) from test"
-                );
+                                """);
                 Assert.fail();
             } catch (CairoException ignore) {
             }

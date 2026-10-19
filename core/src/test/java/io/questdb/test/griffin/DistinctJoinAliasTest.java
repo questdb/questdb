@@ -218,16 +218,18 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into profiles values (101, 1, 'Software Developer');");
             execute("insert into profiles values (102, 2, 'Data Analyst');");
 
-            assertQueryNoLeakCheck(
-                    "name\temail\tbio\n" +
-                            "Alice\talice@test.com\tSoftware Developer\n" +
-                            "Bob\tbob@test.com\tData Analyst\n",
-                    "select distinct name.name, email.email, bio.bio " +
-                            "from users as name " +
-                            "inner join users as email on name.user_id = email.user_id " +
-                            "inner join profiles as bio on email.user_id = bio.user_id " +
-                            "order by name.name"
-            );
+            assertQuery("select distinct name.name, email.email, bio.bio " +
+                    "from users as name " +
+                    "inner join users as email on name.user_id = email.user_id " +
+                    "inner join profiles as bio on email.user_id = bio.user_id " +
+                    "order by name.name")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            name\temail\tbio
+                            Alice\talice@test.com\tSoftware Developer
+                            Bob\tbob@test.com\tData Analyst
+                            """);
         });
     }
 
@@ -285,18 +287,18 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             final String thirdAlias = "proj_id";
             final String fourthAlias = "role";
 
-            assertQueryNoLeakCheck(
-                    "dept_name\t" + secondAlias + "\t" + thirdAlias + "\t" + fourthAlias + "\n" +
+            assertQuery("select distinct employees.dept_name, projects.emp_name, assignments.proj_id, tasks.role " +
+                    "from departments as employees " +
+                    "inner join employees as projects on employees.dept_id = projects.dept_id " +
+                    "inner join projects as assignments on projects.dept_id = assignments.dept_id " +
+                    "inner join assignments as tasks on projects.emp_id = tasks.emp_id " +
+                    "inner join tasks as departments on tasks.assign_id = departments.assign_id " +
+                    "order by employees.dept_name")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("dept_name\t" + secondAlias + "\t" + thirdAlias + "\t" + fourthAlias + "\n" +
                             "Engineering\tAlice\t201\tLead\n" +
-                            "Marketing\tBob\t202\tManager\n",
-                    "select distinct employees.dept_name, projects.emp_name, assignments.proj_id, tasks.role " +
-                            "from departments as employees " +
-                            "inner join employees as projects on employees.dept_id = projects.dept_id " +
-                            "inner join projects as assignments on projects.dept_id = assignments.dept_id " +
-                            "inner join assignments as tasks on projects.emp_id = tasks.emp_id " +
-                            "inner join tasks as departments on tasks.assign_id = departments.assign_id " +
-                            "order by employees.dept_name"
-            );
+                            "Marketing\tBob\t202\tManager\n");
         });
     }
 
@@ -333,16 +335,16 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into z values (200, 2, 'Z2');");
 
             final String secondAlias = columnAliasExprEnabled ? "z_value_2" : "z_value1";
-            assertQueryNoLeakCheck(
-                    "z_value\t" + secondAlias + "\ty_value\n" +
+            assertQuery("select distinct z.z_value, y.z_value, x.y_value " +
+                    "from x as z " +
+                    "inner join y as y on z.y_id = y.id " +
+                    "inner join z as x on z.id = x.x_id " +
+                    "order by z.z_value")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("z_value\t" + secondAlias + "\ty_value\n" +
                             "X1\tY1\tZ1\n" +
-                            "X2\tY2\tZ2\n",
-                    "select distinct z.z_value, y.z_value, x.y_value " +
-                            "from x as z " +
-                            "inner join y as y on z.y_id = y.id " +
-                            "inner join z as x on z.id = x.x_id " +
-                            "order by z.z_value"
-            );
+                            "X2\tY2\tZ2\n");
         });
     }
 
@@ -373,17 +375,19 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into metrics values ('memory');");
             execute("insert into current values (1, 'cpu');");
 
-            assertQueryNoLeakCheck(
-                    "account_id\tmetric\n" +
-                            "1\tmemory\n" +
-                            "2\tcpu\n" +
-                            "2\tmemory\n",
-                    "select distinct historical.account_id, metrics.metric " +
-                            "from historical " +
-                            "cross join metrics " +
-                            "left join current on historical.account_id = current.account_id and metrics.metric = current.metric " +
-                            "where current.account_id is null"
-            );
+            assertQuery("select distinct historical.account_id, metrics.metric " +
+                    "from historical " +
+                    "cross join metrics " +
+                    "left join current on historical.account_id = current.account_id and metrics.metric = current.metric " +
+                    "where current.account_id is null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            account_id\tmetric
+                            1\tmemory
+                            2\tcpu
+                            2\tmemory
+                            """);
         });
     }
 
@@ -406,17 +410,19 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into accounts values (1);");
             execute("insert into accounts values (2);");
 
-            assertQueryNoLeakCheck(
-                    "account_id\tmetric\n" +
-                            "1\tcpu\n" +
-                            "1\tmemory\n" +
-                            "2\tcpu\n" +
-                            "2\tmemory\n",
-                    "select distinct accounts.account_id, metrics.metric " +
-                            "from accounts " +
-                            "cross join metrics " +
-                            "order by account_id, metric"
-            );
+            assertQuery("select distinct accounts.account_id, metrics.metric " +
+                    "from accounts " +
+                    "cross join metrics " +
+                    "order by account_id, metric")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            account_id\tmetric
+                            1\tcpu
+                            1\tmemory
+                            2\tcpu
+                            2\tmemory
+                            """);
         });
     }
 
@@ -468,18 +474,20 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into products values (202, 'Mouse', 1);");
             execute("insert into categories values (1, 'Electronics');");
 
-            assertQueryNoLeakCheck(
-                    "name\tproduct_name\tcategory_name\n" +
-                            "Alice\tLaptop\tElectronics\n" +
-                            "Bob\tMouse\tElectronics\n",
-                    "select distinct customers.name, products.product_name, categories.category_name " +
-                            "from customers " +
-                            "inner join orders on customers.customer_id = orders.customer_id " +
-                            "inner join order_items on orders.order_id = order_items.order_id " +
-                            "inner join products on order_items.product_id = products.product_id " +
-                            "inner join categories on products.category_id = categories.category_id " +
-                            "order by name, product_name"
-            );
+            assertQuery("select distinct customers.name, products.product_name, categories.category_name " +
+                    "from customers " +
+                    "inner join orders on customers.customer_id = orders.customer_id " +
+                    "inner join order_items on orders.order_id = order_items.order_id " +
+                    "inner join products on order_items.product_id = products.product_id " +
+                    "inner join categories on products.category_id = categories.category_id " +
+                    "order by name, product_name")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            name\tproduct_name\tcategory_name
+                            Alice\tLaptop\tElectronics
+                            Bob\tMouse\tElectronics
+                            """);
         });
     }
 
@@ -503,13 +511,15 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:00');");
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
 
-            assertQueryNoLeakCheck(
-                    "sensor_id\tapptype\n" +
-                            "air\t1\n",
-                    "select distinct samples_tbl.sensor_id, sensors_tbl.apptype " +
-                            "from samples as samples_tbl " +
-                            "inner join sensors as sensors_tbl on sensors_tbl.sensor_id = samples_tbl.sensor_id"
-            );
+            assertQuery("select distinct samples_tbl.sensor_id, sensors_tbl.apptype " +
+                    "from samples as samples_tbl " +
+                    "inner join sensors as sensors_tbl on sensors_tbl.sensor_id = samples_tbl.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sensor_id\tapptype
+                            air\t1
+                            """);
         });
     }
 
@@ -533,13 +543,15 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:00');");
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
 
-            assertQueryNoLeakCheck(
-                    "sensor_name\tapplication_type\n" +
-                            "air\t1\n",
-                    "select distinct samples.sensor_id as sensor_name, sensors.apptype as application_type " +
-                            "from samples " +
-                            "inner join sensors on sensors.sensor_id = samples.sensor_id"
-            );
+            assertQuery("select distinct samples.sensor_id as sensor_name, sensors.apptype as application_type " +
+                    "from samples " +
+                    "inner join sensors on sensors.sensor_id = samples.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sensor_name\tapplication_type
+                            air\t1
+                            """);
         });
     }
 
@@ -563,13 +575,15 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:00');");
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
 
-            assertQueryNoLeakCheck(
-                    "sensor_id\tapptype\n" +
-                            "air\t1\n",
-                    "select distinct sa.sensor_id, se.apptype " +
-                            "from samples sa " +
-                            "inner join sensors se on se.sensor_id = sa.sensor_id"
-            );
+            assertQuery("select distinct sa.sensor_id, se.apptype " +
+                    "from samples sa " +
+                    "inner join sensors se on se.sensor_id = sa.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sensor_id\tapptype
+                            air\t1
+                            """);
         });
     }
 
@@ -595,13 +609,15 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
             execute("insert into samples values ('air', '1970-02-02T10:10:01');");
 
-            assertQueryNoLeakCheck(
-                    "sensor_id\tapptype\n" +
-                            "air\t1\n",
-                    "select distinct samples.sensor_id, sensors.apptype " +
-                            "from samples " +
-                            "inner join sensors on sensors.sensor_id = samples.sensor_id"
-            );
+            assertQuery("select distinct samples.sensor_id, sensors.apptype " +
+                    "from samples " +
+                    "inner join sensors on sensors.sensor_id = samples.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sensor_id\tapptype
+                            air\t1
+                            """);
         });
     }
 
@@ -627,14 +643,16 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
             execute("insert into samples values ('soil', '1970-02-02T10:10:02');");
 
-            assertQueryNoLeakCheck(
-                    "sensor_id\tapptype\n" +
-                            "air\t1\n" +
-                            "soil\tnull\n",
-                    "select distinct samples.sensor_id, sensors.apptype " +
-                            "from samples " +
-                            "left join sensors on sensors.sensor_id = samples.sensor_id"
-            );
+            assertQuery("select distinct samples.sensor_id, sensors.apptype " +
+                    "from samples " +
+                    "left join sensors on sensors.sensor_id = samples.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sensor_id\tapptype
+                            air\t1
+                            soil\tnull
+                            """);
         });
     }
 
@@ -669,17 +687,19 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into products values (201, 'Laptop');");
             execute("insert into products values (202, 'Mouse');");
 
-            assertQueryNoLeakCheck(
-                    "name\tproduct_name\n" +
-                            "Alice\tLaptop\n" +
-                            "Alice\tMouse\n" +
-                            "Bob\tLaptop\n",
-                    "select distinct users.name, products.product_name " +
-                            "from users " +
-                            "inner join orders on users.user_id = orders.user_id " +
-                            "inner join products on orders.product_id = products.product_id " +
-                            "order by name, product_name"
-            );
+            assertQuery("select distinct users.name, products.product_name " +
+                    "from users " +
+                    "inner join orders on users.user_id = orders.user_id " +
+                    "inner join products on orders.product_id = products.product_id " +
+                    "order by name, product_name")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            name\tproduct_name
+                            Alice\tLaptop
+                            Alice\tMouse
+                            Bob\tLaptop
+                            """);
         });
     }
 
@@ -716,15 +736,15 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
 
             final String secondAlias = columnAliasExprEnabled ? "value_2" : "value1";
             final String thirdAlias = columnAliasExprEnabled ? "value_3" : "value2";
-            assertQueryNoLeakCheck(
-                    "value\t" + secondAlias + "\t" + thirdAlias + "\n" +
+            assertQuery("select distinct a.value, b.value, c.value " +
+                    "from a " +
+                    "inner join b on a.id = b.a_id " +
+                    "inner join c on b.id = c.b_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\t" + secondAlias + "\t" + thirdAlias + "\n" +
                             "A1\tB1\tC1\n" +
-                            "A2\tB2\tC2\n",
-                    "select distinct a.value, b.value, c.value " +
-                            "from a " +
-                            "inner join b on a.id = b.a_id " +
-                            "inner join c on b.id = c.b_id"
-            );
+                            "A2\tB2\tC2\n");
         });
     }
 
@@ -744,14 +764,16 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into sensors values ('air2', 'main', 1, '1970-02-02T10:10:01');");
             execute("insert into sensors values ('main', null, 2, '1970-02-02T10:10:02');");
 
-            assertQueryNoLeakCheck(
-                    "sensor_id\tapptype\n" +
-                            "air1\t2\n" +
-                            "air2\t2\n",
-                    "select distinct s1.sensor_id, s2.apptype " +
-                            "from sensors s1 " +
-                            "inner join sensors s2 on s1.parent_id = s2.sensor_id"
-            );
+            assertQuery("select distinct s1.sensor_id, s2.apptype " +
+                    "from sensors s1 " +
+                    "inner join sensors s2 on s1.parent_id = s2.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sensor_id\tapptype
+                            air1\t2
+                            air2\t2
+                            """);
         });
     }
 
@@ -778,15 +800,17 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into samples values (1, 'temp1', 25.5);");
             execute("insert into samples values (2, 'hum1', 60.0);");
 
-            assertQueryNoLeakCheck(
-                    "sensor_id\ttype\tvalue\n" +
-                            "hum1\thumidity\t60.0\n" +
-                            "temp1\ttemperature\t25.5\n",
-                    "select distinct sensors.sensor_id, samples.type, sensors.value " +
-                            "from sensors as samples " +
-                            "inner join samples as sensors on samples.sensor_id = sensors.sensor_id " +
-                            "order by sensors.sensor_id"
-            );
+            assertQuery("select distinct sensors.sensor_id, samples.type, sensors.value " +
+                    "from sensors as samples " +
+                    "inner join samples as sensors on samples.sensor_id = sensors.sensor_id " +
+                    "order by sensors.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sensor_id\ttype\tvalue
+                            hum1\thumidity\t60.0
+                            temp1\ttemperature\t25.5
+                            """);
         });
     }
 
@@ -823,16 +847,16 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
 
             final String secondAlias = columnAliasExprEnabled ? "value_2" : "value1";
             final String thirdAlias = columnAliasExprEnabled ? "value_3" : "value2";
-            assertQueryNoLeakCheck(
-                    "value\t" + secondAlias + "\t" + thirdAlias + "\n" +
+            assertQuery("select distinct table2.value, table3.value, table1.value " +
+                    "from table1 as table2 " +
+                    "inner join table2 as table3 on table2.id = table3.table1_id " +
+                    "inner join table3 as table1 on table3.id = table1.table2_id " +
+                    "order by table2.value")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\t" + secondAlias + "\t" + thirdAlias + "\n" +
                             "A1\tB1\tC1\n" +
-                            "A2\tB2\tC2\n",
-                    "select distinct table2.value, table3.value, table1.value " +
-                            "from table1 as table2 " +
-                            "inner join table2 as table3 on table2.id = table3.table1_id " +
-                            "inner join table3 as table1 on table3.id = table1.table2_id " +
-                            "order by table2.value"
-            );
+                            "A2\tB2\tC2\n");
         });
     }
 }

@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Specialized off-heap hash table that stores int keys and multiple long values.
@@ -54,6 +55,10 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
     private int capacity;
     private int free;
     private long mask;
+    // Per-workload native memory tracker bound by the owning cursor at workload start.
+    // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
+    // degrade to the global-only overloads in that case.
+    private @Nullable MemoryTracker memoryTracker;
     private long ptr;
     private int size;
 
@@ -102,11 +107,16 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
     @Override
     public void close() {
         if (ptr != 0) {
-            ptr = Unsafe.free(ptr, entrySize * capacity, memoryTag);
+            ptr = Unsafe.free(ptr, entrySize * capacity, memoryTag, memoryTracker);
             capacity = 0;
             free = 0;
             size = 0;
         }
+        // The block is gone, so the tracker that charged it carries no debt for this map any more.
+        // Dropping the reference keeps a later free - one that runs after the pooled tracker was
+        // recycled by another workload - on the global counter, where it cannot corrupt someone
+        // else's total.
+        memoryTracker = null;
     }
 
     public boolean excludes(int key) {
@@ -132,11 +142,11 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
     }
 
     public int keyAt(long index) {
-        return Unsafe.getUnsafe().getInt(ptr + index * entrySize);
+        return Unsafe.getInt(ptr + index * entrySize);
     }
 
     public long keyIndex(int key) {
-        long hashCode = Hash.fastHashInt64(key);
+        long hashCode = Hash.hashInt64(key);
         long index = hashCode & mask;
         int k = keyAt(index);
         if (k == noEntryKey) {
@@ -183,7 +193,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         if (index < 0) {
             long entryPtr = ptr + (-index - 1) * entrySize;
             for (int i = 0; i < valueCount; i++) {
-                Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * i, values[i]);
+                Unsafe.putLong(entryPtr + 4 + 8L * i, values[i]);
             }
         } else {
             putAllAt0(index, key, values);
@@ -204,14 +214,14 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
             throw new IllegalArgumentException("valueIndex out of bounds: " + valueIndex);
         }
         if (index < 0) {
-            Unsafe.getUnsafe().putLong(ptr + (-index - 1) * entrySize + 4 + 8L * valueIndex, value);
+            Unsafe.putLong(ptr + (-index - 1) * entrySize + 4 + 8L * valueIndex, value);
         } else {
             long entryPtr = ptr + index * entrySize;
-            Unsafe.getUnsafe().putInt(entryPtr, key);
+            Unsafe.putInt(entryPtr, key);
             for (int i = 0; i < valueCount; i++) {
-                Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * i, 0L);
+                Unsafe.putLong(entryPtr + 4 + 8L * i, 0L);
             }
-            Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * valueIndex, value);
+            Unsafe.putLong(entryPtr + 4 + 8L * valueIndex, value);
             size++;
             if (--free == 0) {
                 try {
@@ -236,9 +246,9 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
             final long oldCapacity = capacity;
             long newPtr;
             if (ptr == 0) {
-                newPtr = Unsafe.malloc(entrySize * initialCapacity, memoryTag);
+                newPtr = Unsafe.malloc(entrySize * initialCapacity, memoryTag, memoryTracker);
             } else {
-                newPtr = Unsafe.realloc(ptr, entrySize * oldCapacity, entrySize * initialCapacity, memoryTag);
+                newPtr = Unsafe.realloc(ptr, entrySize * oldCapacity, entrySize * initialCapacity, memoryTag, memoryTracker);
             }
             ptr = newPtr;
             capacity = initialCapacity;
@@ -246,6 +256,21 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         }
 
         clear();
+    }
+
+    /**
+     * Binds the per-workload {@link MemoryTracker} that every subsequent allocation charges. A
+     * {@code null} tracker degrades the map to global-only accounting.
+     * <p>
+     * Rebinding releases the live block first: a block has to be freed under the tracker that
+     * charged it, or the two counters drift apart and the per-query limit stops holding. Callers
+     * therefore bind at workload start, immediately before {@link #reopen()}, when the map is empty.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker) {
+            close();
+            memoryTracker = tracker;
+        }
     }
 
     public int size() {
@@ -256,7 +281,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         if (valueIndex < 0 || valueIndex >= valueCount) {
             throw new IllegalArgumentException("valueIndex out of bounds: " + valueIndex);
         }
-        return index < 0 ? Unsafe.getUnsafe().getLong(ptr + (-index - 1) * entrySize + 4 + 8L * valueIndex) : noEntryValue;
+        return index < 0 ? Unsafe.getLong(ptr + (-index - 1) * entrySize + 4 + 8L * valueIndex) : noEntryValue;
     }
 
     private long probe(int key, long index) {
@@ -277,9 +302,9 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
 
     private void putAllAt0(long index, int key, long[] values) {
         final long entryPtr = ptr + index * entrySize;
-        Unsafe.getUnsafe().putInt(entryPtr, key);
+        Unsafe.putInt(entryPtr, key);
         for (int i = 0; i < valueCount; i++) {
-            Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * i, values[i]);
+            Unsafe.putLong(entryPtr + 4 + 8L * i, values[i]);
         }
     }
 
@@ -289,7 +314,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         }
 
         final int oldCapacity = capacity;
-        long newPtr = Unsafe.malloc(entrySize * newCapacity, memoryTag);
+        long newPtr = Unsafe.malloc(entrySize * newCapacity, memoryTag, memoryTracker);
 
         long oldPtr = ptr;
         ptr = newPtr;
@@ -299,32 +324,36 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         zero();
 
         for (long p = oldPtr, lim = oldPtr + entrySize * oldCapacity; p < lim; p += entrySize) {
-            int key = Unsafe.getUnsafe().getInt(p);
+            int key = Unsafe.getInt(p);
             if (key != noEntryKey) {
-                long hashCode = Hash.fastHashInt64(key);
+                long hashCode = Hash.hashInt64(key);
                 long index = hashCode & mask;
                 while (keyAt(index) != noEntryKey) {
                     index = (index + 1) & mask;
                 }
 
                 long entryPtr = ptr + index * entrySize;
-                Unsafe.getUnsafe().putInt(entryPtr, key);
+                Unsafe.putInt(entryPtr, key);
                 // Copy all values
                 for (long o = 4, oLim = 4 + 8L * valueCount; o < oLim; o += 8) {
-                    Unsafe.getUnsafe().putLong(entryPtr + o, Unsafe.getUnsafe().getLong(p + o));
+                    Unsafe.putLong(entryPtr + o, Unsafe.getLong(p + o));
                 }
             }
         }
 
-        Unsafe.free(oldPtr, entrySize * oldCapacity, memoryTag);
+        Unsafe.free(oldPtr, entrySize * oldCapacity, memoryTag, memoryTracker);
     }
 
     private void zero() {
+        if (ptr == 0) {
+            // Closed: clear() still runs its bookkeeping, but there is no block to wipe.
+            return;
+        }
         if (noEntryKey == 0) {
             Vect.memset(ptr, entrySize * capacity, 0);
         } else {
             for (long p = ptr, lim = ptr + entrySize * capacity; p < lim; p += entrySize) {
-                Unsafe.getUnsafe().putInt(p, noEntryKey);
+                Unsafe.putInt(p, noEntryKey);
             }
         }
     }

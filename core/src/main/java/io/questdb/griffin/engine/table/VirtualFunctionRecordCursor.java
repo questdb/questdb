@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -40,6 +41,7 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class VirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualFunctionRecord recordA;
@@ -92,12 +94,17 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     public int getLongTopKColumnIndex(int columnIndex) {
-        if (supportsRandomAccess && functions.getQuick(columnIndex) instanceof ColumnFunction columnFunction) {
-            final int virtualColumnIndex = columnFunction.getColumnIndex();
-            final int columnType = priorityMetadata.getColumnType(virtualColumnIndex);
-            if (columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType)) {
-                return priorityMetadata.getBaseColumnIndex(virtualColumnIndex);
-            }
+        if (!supportsRandomAccess) {
+            return -1;
+        }
+        ColumnFunction columnFunction = ColumnFunction.unwrap(functions.getQuick(columnIndex));
+        if (columnFunction == null) {
+            return -1;
+        }
+        final int virtualColumnIndex = columnFunction.getColumnIndex();
+        final int columnType = priorityMetadata.getColumnType(virtualColumnIndex);
+        if (columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType)) {
+            return priorityMetadata.getBaseColumnIndex(virtualColumnIndex);
         }
         return -1;
     }
@@ -123,8 +130,8 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         final boolean result = baseCursor.hasNext();
-        if (result && memoizerCount > 0) {
-            memoizeFunctions(recordA);
+        if (result) {
+            clearMemos();
         }
         return result;
     }
@@ -160,9 +167,23 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         if (supportsRandomAccess) {
             assert baseCursor != null;
             baseCursor.recordAt(((VirtualFunctionRecord) record).getBaseRecord(), atRowId);
-            memoizeFunctions((VirtualFunctionRecord) record);
+            clearMemos();
         } else {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        if (baseCursor != null) {
+            baseCursor.setParquetDecodeHint(hint);
+        }
+    }
+
+    @Override
+    public void setRecordAtRows(@Nullable RowIdSource source) {
+        if (baseCursor != null) {
+            baseCursor.setRecordAtRows(source);
         }
     }
 
@@ -173,9 +194,9 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         assert baseCursor != null;
-        baseCursor.skipRows(rowCount);
+        baseCursor.skipRows(rowCount, maxRowsAfterSkip);
     }
 
     @Override
@@ -185,10 +206,9 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         GroupByUtils.toTop(functions);
     }
 
-    private void memoizeFunctions(VirtualFunctionRecord record) {
-        Record joinRecord = record.getInternalJoinRecord();
+    private void clearMemos() {
         for (int i = 0; i < memoizerCount; i++) {
-            memoizers.getQuick(i).memoize(joinRecord);
+            memoizers.getQuick(i).clearMemo();
         }
     }
 }

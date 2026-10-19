@@ -24,12 +24,27 @@
 
 package io.questdb.cairo.sql;
 
-import org.jetbrains.annotations.Nullable;
+import io.questdb.mp.continuation.CancellationBinding;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
+public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, CancellationBinding.Source {
 
+    /**
+     * Minimum interval between cooperative engine hooks on high-throttle stateful paths.
+     */
+    long COOPERATIVE_POLL_INTERVAL_NANOS = 50_000L;
+
+    /**
+     * Number of healthy, suspendable breaker visits between cooperative engine hooks for the
+     * non-stateful variants.
+     */
+    int COOPERATIVE_POLL_STRIDE = 128;
+
+    /**
+     * Number of healthy visits between cooperative clock samples on hot stateful paths.
+     */
+    int STATEFUL_COOPERATIVE_POLL_STRIDE = 1024;
     int STATE_OK = 0;
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
         @Override
@@ -42,17 +57,18 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public boolean checkIfTripped(long millis, long fd) {
-            return false;
+        public void clearCancelledFlag(AtomicBoolean expected) {
+        }
+
+        // the default takes this singleton's monitor; it is process-wide, so a parallel query
+        // path would serialise on it
+        @Override
+        public void copyCancelledFlagTo(CancellationBinding target) {
+            target.clear();
         }
 
         @Override
         public AtomicBoolean getCancelledFlag() {
-            return null;
-        }
-
-        @Override
-        public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
             return null;
         }
 
@@ -95,10 +111,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public void setFd(long fd) {
-        }
-
-        @Override
         public void statefulThrowExceptionIfTripped() {
         }
 
@@ -122,14 +134,48 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      */
     void cancel();
 
-    boolean checkIfTripped(long millis, long fd);
+    /**
+     * Same as {@link #checkIfTripped()} but bypasses the connection-probe throttle. Meant for cold
+     * error paths that classify an abort after the fact and need a current connection verdict.
+     */
+    default boolean checkIfTrippedNoThrottle() {
+        return checkIfTripped();
+    }
+
+    /**
+     * Boolean breaker check followed by the policy-neutral cooperative-poll extension point when
+     * the breaker is still healthy. Use only at a call site where the current continuation may
+     * safely suspend.
+     */
+    default boolean checkIfTrippedOrYield() {
+        return checkIfTripped();
+    }
+
+    default void clearCancelledFlag(AtomicBoolean expected) {
+        synchronized (this) {
+            if (getCancelledFlag() == expected) {
+                setCancelledFlag((AtomicBoolean) null);
+            }
+        }
+    }
+
+    default void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        clearCancelledFlag(expected);
+    }
+
+    default void copyCancelledFlagTo(CancellationBinding target) {
+        synchronized (this) {
+            target.set(getCancelledFlag());
+        }
+    }
 
     AtomicBoolean getCancelledFlag();
 
-    @Nullable
-    SqlExecutionCircuitBreakerConfiguration getConfiguration();
-
     long getFd();
+
+    default long getRemainingTimeoutMillis() {
+        return Long.MAX_VALUE;
+    }
 
     /**
      * Similar to checkIfTripped() method but returns int value describing reason for tripping.
@@ -143,7 +189,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     int getState();
 
     /**
-     * Similar to checkIfTripped(long millis, long fd) method but returns int value describing reason for tripping.
+     * Classifies the breaker verdict for a query that started at {@code millis} on connection {@code fd}.
      *
      * @return circuit breaker state, one of: <br>
      * - {@link #STATE_OK} <br>
@@ -152,6 +198,22 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      * - {@link #STATE_TIMEOUT} <br>
      */
     int getState(long millis, long fd);
+
+    /**
+     * Classifying breaker check followed by the policy-neutral cooperative-poll extension point
+     * when the result is {@link #STATE_OK}. Use only at a suspendable call site.
+     */
+    default int getStateOrYield() {
+        return getState();
+    }
+
+    /**
+     * Timestamped classifying breaker check followed by the policy-neutral cooperative-poll
+     * extension point when the result is {@link #STATE_OK}. Use only at a suspendable call site.
+     */
+    default int getStateOrYield(long millis, long fd) {
+        return getState(millis, fd);
+    }
 
     long getTimeout();
 
@@ -168,7 +230,16 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     void setCancelledFlag(AtomicBoolean cancelled);
 
-    void setFd(long fd);
+    default void setCancelledFlag(CancellationBinding source) {
+        synchronized (source) {
+            final AtomicBoolean flag = source.getFlag();
+            setCancelledFlag(flag, source.getGeneration(flag));
+        }
+    }
+
+    default void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        setCancelledFlag(cancelled);
+    }
 
     /**
      * Uses internal state of the circuit breaker to assert conditions. This method also
@@ -181,6 +252,53 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      * It is meant to be used in more coarse-grained processing, e.g. before native operation on whole page frame.
      */
     void statefulThrowExceptionIfTrippedNoThrottle();
+
+    /**
+     * Unthrottled breaker check followed by the policy-neutral cooperative-poll extension point.
+     * Use only at a call site where the current continuation may safely suspend.
+     */
+    default void statefulThrowExceptionIfTrippedNoThrottleOrYield() {
+        statefulThrowExceptionIfTrippedNoThrottle();
+    }
+
+    /**
+     * Stateful breaker check followed by the policy-neutral cooperative-poll extension point.
+     * Use only at a call site where the current continuation may safely suspend. The OSS default
+     * preserves {@link #statefulThrowExceptionIfTripped()} semantics. Implementations backed by a
+     * {@code CairoEngine} sample cooperative eligibility on real breaker checks and at most
+     * {@link #STATEFUL_COOPERATIVE_POLL_STRIDE} healthy visits apart. High-throttle paths coalesce
+     * engine hooks that occur within {@link #COOPERATIVE_POLL_INTERVAL_NANOS}; zero and small
+     * throttle values retain the non-stateful {@link #COOPERATIVE_POLL_STRIDE} visit cadence to
+     * avoid frequent clock reads.
+     */
+    default void statefulThrowExceptionIfTrippedOrYield() {
+        statefulThrowExceptionIfTripped();
+    }
+
+    /**
+     * Checks cancellation and timeout on every call (both are cheap, so the query stays promptly
+     * cancellable), but throttles only the heavy connection probe by elapsed wall-clock time.
+     * <p>
+     * Use it for coarse, potentially re-scanned sites, e.g. the per-page-frame check of a cursor that a
+     * nested-loop join re-runs once per master row: the cheap cancel/timeout checks keep firing every
+     * frame while the recv() connection probe fires at most once per throttle window. The throttle state
+     * lives on the breaker, which is shared per query via the execution context, so the probe is bounded
+     * for the whole query regardless of how many cursors consult it.
+     * <p>
+     * The default implementation falls back to {@link #statefulThrowExceptionIfTrippedNoThrottle()};
+     * only breakers with a real (syscall-backed) connection probe need to override it.
+     */
+    default void statefulThrowExceptionIfTrippedTimeThrottled() {
+        statefulThrowExceptionIfTrippedNoThrottle();
+    }
+
+    /**
+     * Time-throttled breaker check followed by the policy-neutral cooperative-poll extension
+     * point. Use only at a call site where the current continuation may safely suspend.
+     */
+    default void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+        statefulThrowExceptionIfTrippedTimeThrottled();
+    }
 
     /**
      * Unsets timer reset/power-up time, so it won't time out on any check (unless resetTimer() is called).

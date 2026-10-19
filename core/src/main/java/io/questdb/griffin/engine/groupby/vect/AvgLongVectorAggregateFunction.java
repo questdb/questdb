@@ -51,6 +51,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     private long countsAddr;
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public AvgLongVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
@@ -72,7 +73,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
         if (address != 0) {
             final double s = Vect.sumLongAcc(address, frameRowCount, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
             if (Numbers.isFinite(s)) {
-                final long c = Unsafe.getUnsafe().getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
+                final long c = Unsafe.getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
                 sum.add(s);
                 count.add(c);
             }
@@ -131,9 +132,9 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
         // although the final values are double, avg() calculates sum and count for longs
         // double is derived at the very end. The initial values need to be set
         // correctly with long sum and count in mind.
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
     }
 
     @Override

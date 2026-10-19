@@ -43,6 +43,9 @@ import org.jetbrains.annotations.NotNull;
 public class MinTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final int argColumnIndex;
+    // Set when arg is the designated timestamp column. Page frame data is sorted ASC by the designated
+    // timestamp, so the first row of any frame is its minimum and computeBatch can skip the column scan.
+    private boolean isDesignated;
     private int valueIndex;
 
     public MinTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
@@ -56,7 +59,8 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
-            final long batchMin = Vect.minLong(dataAddr, rowCount);
+            // Designated timestamp column has no nulls and is sorted ASC within a frame.
+            final long batchMin = isDesignated ? Unsafe.getLong(dataAddr) : Vect.minLong(dataAddr, rowCount);
             if (batchMin != Numbers.LONG_NULL) {
                 final long existing = mapValue.getTimestamp(valueIndex);
                 if (batchMin < existing || existing == Numbers.LONG_NULL) {
@@ -86,24 +90,24 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
+                final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
                 if (value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    final long current = Unsafe.getUnsafe().getLong(addr);
-                    Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
+                    final long current = Unsafe.getLong(addr);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getTimestamp(record);
                 if (value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    final long current = Unsafe.getUnsafe().getLong(addr);
-                    Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
+                    final long current = Unsafe.getLong(addr);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
                 }
             }
         }
@@ -121,7 +125,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public String getName() {
-        return "min";
+        return isDesignated ? "min_designated" : "min";
     }
 
     @Override
@@ -162,6 +166,10 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
         if (srcMin != Numbers.LONG_NULL && (srcMin < destMin || destMin == Numbers.LONG_NULL)) {
             destValue.putTimestamp(valueIndex, srcMin);
         }
+    }
+
+    public void setDesignated(boolean isDesignated) {
+        this.isDesignated = isDesignated;
     }
 
     @Override

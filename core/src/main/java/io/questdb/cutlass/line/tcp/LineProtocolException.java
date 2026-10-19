@@ -27,15 +27,14 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.Decimal256;
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 public class LineProtocolException extends CairoException {
-    private static final ThreadLocal<LineProtocolException> tlException = new ThreadLocal<>(LineProtocolException::new);
+    private static final FiberLocal<LineProtocolException> tlException = new FiberLocal<>(LineProtocolException::new);
 
     public static LineProtocolException boundsError(long entityValue, int colType, CharSequence tableNameUtf16, CharSequence columnName) {
         return instance()
@@ -89,19 +88,23 @@ public class LineProtocolException extends CairoException {
                 .put("; designated timestamp before 1970-01-01 is not allowed");
     }
 
-    public static LineProtocolException designatedTimestampValueOverflow(String tableNameUtf16, long timestamp) {
+    public static LineProtocolException designatedTimestampOutOfBounds(String tableNameUtf16, long timestamp, CharSequence reason) {
         return instance()
                 .put("table: ").put(tableNameUtf16)
                 .put(", timestamp: ").put(timestamp)
-                .put("; designated timestamp overflow, max[")
-                .put(CommonUtils.MAX_TIMESTAMP)
-                .put("]");
+                .put("; ").put(reason);
     }
 
     public static LineProtocolException invalidColNameError(CharSequence columnName, String tableNameUtf16) {
         return instance()
                 .put("table: ").put(tableNameUtf16)
                 .put("; invalid column name: ").put(columnName);
+    }
+
+    public static LineProtocolException malformedUtf8(String tableNameUtf16, CharSequence cause) {
+        return instance()
+                .put("table: ").put(tableNameUtf16)
+                .put("; ").put(cause);
     }
 
     public static LineProtocolException newColumnsNotAllowed(String columnName, String tableNameUtf16) {
@@ -147,6 +150,12 @@ public class LineProtocolException extends CairoException {
     public static LineProtocolException timestampValueOverflow(long timestamp) {
         return instance()
                 .put("long overflow, timestamp: ").put(timestamp);
+    }
+
+    public static LineProtocolException unsupportedTimestampUnit(byte unit) {
+        return instance()
+                .put("unsupported timestamp unit: ").put(unit)
+                .put("; the value must be suffixed with 'n' (nanos), 't' (micros) or 'm' (millis)");
     }
 
     public static LineProtocolException valueError(String tableNameUtf16, int colType, Utf8Sequence ilpValue, DirectUtf8Sequence columnName) {

@@ -121,7 +121,7 @@ public class UpdateOperation extends AbstractOperation {
 
     public void forceTestTimeout() {
         int state = SqlExecutionCircuitBreaker.STATE_OK;
-        if (requesterTimeout || (state = circuitBreaker.getState()) != SqlExecutionCircuitBreaker.STATE_OK) {
+        if (requesterTimeout || (state = circuitBreaker.getStateOrYield()) != SqlExecutionCircuitBreaker.STATE_OK) {
             if (state == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
                 throw CairoException.queryCancelled(circuitBreaker.getFd());
             } else {
@@ -171,7 +171,7 @@ public class UpdateOperation extends AbstractOperation {
             throw CairoException.queryTimedOut(circuitBreaker.getFd(), 0, 0);
         }
 
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
     }
 
     @Override

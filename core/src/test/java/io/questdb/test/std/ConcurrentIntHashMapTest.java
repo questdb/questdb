@@ -28,6 +28,8 @@ import io.questdb.std.ConcurrentIntHashMap;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.function.IntFunction;
+
 public class ConcurrentIntHashMapTest {
 
     @Test
@@ -56,6 +58,38 @@ public class ConcurrentIntHashMapTest {
 
         map.computeIfAbsent(142, k -> null);
         Assert.assertFalse(map.containsKey(142));
+    }
+
+    @Test
+    public void testComputeIfAbsentReturnsExistingWithoutInvokingMapping() {
+        // Exercises the lock-free first-node fast path: when the key is already present,
+        // computeIfAbsent must return the stored value and must NOT invoke the mapping function.
+        ConcurrentIntHashMap<Integer> map = new ConcurrentIntHashMap<>(4);
+        final int n = 256;
+        for (int i = 0; i < n; i++) {
+            map.put(i, i);
+        }
+        Assert.assertEquals(n, map.size());
+
+        final IntFunction<Integer> failing = k -> {
+            throw new AssertionError("mapping function must not run for present key: " + k);
+        };
+        // Every present key (whether bin head or further down a chain) resolves without the mapping.
+        for (int i = 0; i < n; i++) {
+            Assert.assertEquals(i, (long) map.computeIfAbsent(i, failing));
+        }
+        Assert.assertEquals(n, map.size());
+
+        // The token (BiIntFunction) overload makes the same guarantee for a present key.
+        Assert.assertEquals(0, (long) map.computeIfAbsent(0, new Object(), (k, token) -> {
+            throw new AssertionError("mapping function must not run for present key");
+        }));
+        Assert.assertEquals(n, map.size());
+
+        // An absent key still falls through to the locked path and inserts.
+        Assert.assertEquals(1000, (long) map.computeIfAbsent(1000, k -> 1000));
+        Assert.assertTrue(map.containsKey(1000));
+        Assert.assertEquals(n + 1, map.size());
     }
 
     @Test

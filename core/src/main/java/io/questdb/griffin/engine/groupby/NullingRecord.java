@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;

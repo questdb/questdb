@@ -79,6 +79,10 @@ public class Vm {
         return new MemoryCARWImpl(pageSize, maxPages, memoryTag);
     }
 
+    public static MemoryCARW getCARWInstance(long pageSize, int maxPages, int memoryTag, String maxPagesConfigKey) {
+        return new MemoryCARWImpl(pageSize, maxPages, memoryTag, maxPagesConfigKey);
+    }
+
     public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
         return new MemoryCMARWImpl(ff, name, extendSegmentSize, size, memoryTag, opts);
     }
@@ -97,6 +101,10 @@ public class Vm {
 
     public static MemoryCMR getCMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
+    }
+
+    public static MemoryCMARW getExactCMARWInstance() {
+        return new MemoryCMARWImpl(true);
     }
 
     public static MemoryCMOR getMemoryCMOR(boolean bypassFdCache) {

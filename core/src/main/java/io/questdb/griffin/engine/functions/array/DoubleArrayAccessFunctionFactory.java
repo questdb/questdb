@@ -140,6 +140,9 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 for (int j = i + 1; j < n; j++) {
                     Misc.free(argsCopy.getQuick(j));
                 }
+                // The constant keeps no argument, so this branch owns them all. arrayArg may be a
+                // constant array literal holding native memory, so failing to close it leaks.
+                Misc.free(arrayArg);
                 return DoubleConstant.NULL;
             }
             indexArgs.add((int) index);

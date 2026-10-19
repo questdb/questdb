@@ -42,6 +42,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.griffin.engine.TestBinarySequence;
@@ -101,12 +102,12 @@ public class MemoryCARWImplTest {
                 actual.copyTo(buffer, 0, 1024);
 
                 for (int i = 0; i < N; i++) {
-                    assertEquals(seq.byteAt(i), Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(seq.byteAt(i), Unsafe.getByte(buffer + i));
                 }
 
                 // rest of the buffer must not be overwritten
                 for (int i = N; i < 1024; i++) {
-                    assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(5, Unsafe.getByte(buffer + i));
                 }
 
                 // copy from middle
@@ -114,12 +115,12 @@ public class MemoryCARWImplTest {
                 actual.copyTo(buffer, O, 1024);
 
                 for (int i = 0; i < N - O; i++) {
-                    assertEquals(seq.byteAt(i + O), Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(seq.byteAt(i + O), Unsafe.getByte(buffer + i));
                 }
 
                 // rest of the buffer must not be overwritten
                 for (int i = N - O; i < 1024; i++) {
-                    assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(5, Unsafe.getByte(buffer + i));
                 }
             } finally {
                 Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
@@ -182,7 +183,7 @@ public class MemoryCARWImplTest {
                 long address = mem.addressOf(offset);
                 offset += len;
                 while (len > 0 & i < N) {
-                    assertEquals(i++, Unsafe.getUnsafe().getShort(address));
+                    assertEquals(i++, Unsafe.getShort(address));
                     address += 2;
                     len -= 2;
                 }
@@ -270,17 +271,6 @@ public class MemoryCARWImplTest {
             for (char i = n; i > 0; i--) {
                 assertEquals(i, mem.getChar(o));
                 o += 2;
-            }
-        }
-    }
-
-    @Test
-    public void testDeadCodeForUtf8() {
-        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
-            try {
-                mem.putStrUtf8(null);
-                Assert.fail();
-            } catch (UnsupportedOperationException ignored) {
             }
         }
     }
@@ -659,6 +649,41 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testJumpToZeroKeepsAllocation() {
+        final int pageSize = 256;
+        final int sz = 256 * 3;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, 3, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) i);
+            }
+            Assert.assertEquals(sz, mem.size());
+            final long address = mem.getPageAddress(0);
+
+            // Rewinding keeps every page the buffer grew to, so a caller that
+            // rewinds and refills each cycle reallocates nothing and writes into
+            // pages that are already mapped. Callers rely on this: see
+            // WindowFunction.onCheckpointRestoreBegin().
+            mem.jumpTo(0);
+            Assert.assertEquals(sz, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
+            Assert.assertEquals(address, mem.getPageAddress(0));
+
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) (i + 1));
+            }
+            Assert.assertEquals(sz, mem.size());
+            Assert.assertEquals(address, mem.getPageAddress(0));
+            for (int i = 0; i < sz; i++) {
+                Assert.assertEquals((byte) (i + 1), mem.getByte(i));
+            }
+
+            // truncate(), by contrast, hands all but the first page back.
+            mem.truncate();
+            Assert.assertEquals(pageSize, mem.size());
+        }
+    }
+
+    @Test
     public void testLong256() {
         try (MemoryARW mem = new MemoryCARWImpl(256, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
@@ -978,6 +1003,27 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testMalformedStrUtf8IsRejected() {
+        final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(ptr, (byte) '1');
+            Unsafe.putByte(ptr + 1, (byte) 0xC3);
+
+            try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+                try {
+                    mem.putStrUtf8(new DirectUtf8String().of(ptr, ptr + 2));
+                    Assert.fail("expected the malformed value to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                }
+                Assert.assertEquals(0, mem.getAppendOffset());
+            }
+        } finally {
+            Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testMaxPages() {
         int pageSize = 256;
         int maxPages = 3;
@@ -1009,6 +1055,14 @@ public class MemoryCARWImplTest {
     public void testNullBin() {
         try (MemoryARW mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             testNullBin0(mem);
+        }
+    }
+
+    @Test
+    public void testNullStrUtf8() {
+        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(Integer.BYTES, mem.putStrUtf8(null));
+            Assert.assertNull(mem.getStrA(0));
         }
     }
 
@@ -1170,6 +1224,7 @@ public class MemoryCARWImplTest {
         }
     }
 
+
     private void testStrRnd(long offset, long pageSize) {
         Rnd rnd = new Rnd();
         int N = 1000;
@@ -1283,7 +1338,7 @@ public class MemoryCARWImplTest {
                 int sz = buffer.length;
                 for (int j = 0; j < sz; j++) {
                     buffer[j] = rnd.nextByte();
-                    Unsafe.getUnsafe().putByte(bufAddr + j, buffer[j]);
+                    Unsafe.putByte(bufAddr + j, buffer[j]);
                 }
 
                 o = mem.putBin(binarySequence);
@@ -1352,15 +1407,25 @@ public class MemoryCARWImplTest {
         final byte[] buf = new byte[0];
         binarySequence.of(buf);
         mem.putBin(null);
+        // putBin(from, len) with len == 0 writes an empty (non-null) BINARY
+        // entry. Callers signal null via putNullBin() or a negative len.
+        long emptyOff = mem.getAppendOffset();
         mem.putBin(0, 0);
-        long o1 = mem.putBin(binarySequence);
+        long emptyOff2 = mem.getAppendOffset();
+        mem.putBin(binarySequence);
+        long nullOff1 = mem.getAppendOffset();
         mem.putNullBin();
+        long nullOff2 = mem.getAppendOffset();
+        mem.putBin(0L, -1L);
 
         assertNull(mem.getBin(0));
-        assertNull(mem.getBin(8));
-        BinarySequence bsview = mem.getBin(16);
-        assertNotNull(bsview);
-        assertEquals(0, bsview.length());
-        assertNull(mem.getBin(o1));
+        BinarySequence empty1 = mem.getBin(emptyOff);
+        assertNotNull(empty1);
+        assertEquals(0, empty1.length());
+        BinarySequence empty2 = mem.getBin(emptyOff2);
+        assertNotNull(empty2);
+        assertEquals(0, empty2.length());
+        assertNull(mem.getBin(nullOff1));
+        assertNull(mem.getBin(nullOff2));
     }
 }

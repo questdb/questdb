@@ -43,7 +43,10 @@ public class ShowTablesWithOrderingDisabledTest extends AbstractCairoTest {
             execute("create table balances(account_no int, currency symbol, amount double)");
             execute("create table accounts(account_no int, currency symbol)");
             execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
-            assertSql("table_name\ncard_payments\naccounts\nbalances\ndeposits\n", "SHOW TABLES");
+            assertQuery("SHOW TABLES")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\ncard_payments\naccounts\nbalances\ndeposits\n");
         });
     }
 
@@ -54,7 +57,10 @@ public class ShowTablesWithOrderingDisabledTest extends AbstractCairoTest {
             execute("create table balances(account_no int, currency symbol, amount double)");
             execute("create table accounts(account_no int, currency symbol)");
             execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
-            assertSql("table_name\ncard_payments\naccounts\nbalances\ndeposits\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\ncard_payments\naccounts\nbalances\ndeposits\n");
         });
     }
 
@@ -68,7 +74,10 @@ public class ShowTablesWithOrderingDisabledTest extends AbstractCairoTest {
             execute("drop table balances");
             execute("create table businesses(name symbol)");
             execute("create table balances2(account_no int, currency symbol, amount double)");
-            assertSql("table_name\nbalances2\nbusinesses\ncard_payments\naccounts\ndeposits\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\nbalances2\nbusinesses\ncard_payments\naccounts\ndeposits\n");
         });
     }
 
@@ -82,7 +91,10 @@ public class ShowTablesWithOrderingDisabledTest extends AbstractCairoTest {
             execute("rename table balances to statement_balances");
             execute("create table businesses(name symbol)");
             execute("create table balances2(account_no int, currency symbol, amount double)");
-            assertSql("table_name\nbalances2\nbusinesses\nstatement_balances\ncard_payments\naccounts\ndeposits\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\nbalances2\nbusinesses\nstatement_balances\ncard_payments\naccounts\ndeposits\n");
         });
     }
 }

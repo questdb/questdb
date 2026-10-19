@@ -36,38 +36,32 @@ import static io.questdb.test.tools.TestUtils.putWithLeadingZeroIfNeeded;
 public class WeekOfYearFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
-        assertQuery(
-                "week_of_year\n" +
-                        "null\n",
-                "select week_of_year(null)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select week_of_year(null)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        week_of_year
+                        null
+                        """);
     }
 
     @Test
     public void testPreEpoch() throws Exception {
-        assertQuery(
-                "week_of_year\n" +
-                        "28\n",
-                "select week_of_year('1901-07-11T22:00:30.555998Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select week_of_year('1901-07-11T22:00:30.555998Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        week_of_year
+                        28
+                        """);
 
-        assertQuery(
-                "week_of_year\n" +
-                        "28\n",
-                "select week_of_year('1901-07-11T22:00:30.555998123Z'::timestamp_ns)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select week_of_year('1901-07-11T22:00:30.555998123Z'::timestamp_ns)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        week_of_year
+                        28
+                        """);
     }
 
     @Test
@@ -104,16 +98,12 @@ public class WeekOfYearFunctionFactoryTest extends AbstractCairoTest {
                 putWithLeadingZeroIfNeeded(weekSink, weekSink.length(), week);
                 expectedWeekFormatted = weekSink.toString();
 
-                assertQuery(
-                        "week_partition_dir_name\tweek\n" +
-                                expectedWeekFormatted + '\t' + week + '\n',
-                        "with timestamp as (select '" + expectedDayFormatted + "T23:59:59.999999Z'::" + ColumnType.nameOf(timestampType) + " as ts)\n" +
-                                "  select to_str(ts, 'YYYY-Www') week_partition_dir_name, week_of_year(ts) week from timestamp",
-                        null,
-                        null,
-                        true,
-                        true
-                );
+                assertQuery("with timestamp as (select '" + expectedDayFormatted + "T23:59:59.999999Z'::" + ColumnType.nameOf(timestampType) + " as ts)\n" +
+                        "  select to_str(ts, 'YYYY-Www') week_partition_dir_name, week_of_year(ts) week from timestamp")
+                        .ddl(null)
+                        .expectSize()
+                        .returns("week_partition_dir_name\tweek\n" +
+                                expectedWeekFormatted + '\t' + week + '\n');
             }
         }
     }

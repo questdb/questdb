@@ -25,32 +25,45 @@
 package io.questdb.metrics;
 
 import io.questdb.mp.ValueHolder;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 
 public class QueryTrace implements ValueHolder<QueryTrace> {
     public static final ObjectFactory<QueryTrace> ITEM_FACTORY = QueryTrace::new;
 
+    public long clientWaitNanos;
     public long executionNanos;
+    // Elapsed nanos from cursor open to the first row; -1 when the query
+    // produced no rows. -1 (not 0) is the sentinel because 0 is a legitimate
+    // measurement under a coarse test clock.
+    public long firstRowNanos = -1;
     public boolean isJit;
     public String principal;
     public String queryText;
+    public long resourceGroupCpuWaitNanos = Numbers.LONG_NULL;
     public long timestamp;
 
     @Override
     public void clear() {
+        clientWaitNanos = 0;
         executionNanos = 0;
+        firstRowNanos = -1;
         isJit = false;
         principal = null;
         queryText = null;
+        resourceGroupCpuWaitNanos = Numbers.LONG_NULL;
         timestamp = 0;
     }
 
     @Override
     public void copyTo(QueryTrace dest) {
+        dest.clientWaitNanos = clientWaitNanos;
         dest.executionNanos = executionNanos;
+        dest.firstRowNanos = firstRowNanos;
         dest.isJit = isJit;
         dest.principal = principal;
         dest.queryText = queryText;
+        dest.resourceGroupCpuWaitNanos = resourceGroupCpuWaitNanos;
         dest.timestamp = timestamp;
     }
 }

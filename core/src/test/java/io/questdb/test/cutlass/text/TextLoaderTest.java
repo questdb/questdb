@@ -30,7 +30,9 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -42,7 +44,6 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoadWarning;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -73,7 +74,14 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class TextLoaderTest extends AbstractCairoTest {
 
-    private static final ByteArrayTransformer NOOP_TRANSFORMER = (arr) -> {
+    // the middle timestamp is 2262-01-01T00:00:00.000000000Z, one nanosecond above CommonUtils.MAX_TIMESTAMP
+    private static final String NANO_TS_BEYOND_CEILING_CSV = """
+            v,ts
+            1,0
+            2,9214646400000000000
+            3,1
+            """;
+    private static final ByteArrayTransformer NOOP_TRANSFORMER = (_) -> {
     };
     private static final String PATH_SEP_REGEX = Os.isWindows() ?
             String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
@@ -1060,7 +1068,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testIgnoreLongLine() throws Exception {
-        assertNoLeak(textLoader -> {
+        assertNoLeak(_ -> {
             String expected = """
                     f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9
                     CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407
@@ -1233,6 +1241,62 @@ public class TextLoaderTest extends AbstractCairoTest {
                     36,
                     36
             );
+        });
+    }
+
+    @Test
+    public void testImportBadFieldSkipAllPartitioned() throws Exception {
+        // a bad non-timestamp field must abort the import into a partitioned table as well
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,ts
+                    1,1970-01-01T00:00:00.000000Z
+                    x,1970-01-01T00:00:01.000000Z
+                    3,1970-01-01T00:00:02.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ALL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            try {
+                playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                Assert.fail("import must abort on a bad field");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bad syntax [line=1, col=0]");
+            }
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n");
+        });
+    }
+
+    @Test
+    public void testImportBadTimestampSkipAllPartitioned() throws Exception {
+        // an unparseable designated timestamp must abort the import into a partitioned table
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,ts
+                    1,1970-01-01T00:00:00.000000Z
+                    2,1970-01-01T00:00:01.000000Z
+                    3,not-a-timestamp
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ALL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            try {
+                // analyse the structure on the first two rows only, so that the bad
+                // timestamp reaches the writer instead of the type detector
+                playText0(textLoader, csv, csv.indexOf("3,not-a-timestamp"), NOOP_TRANSFORMER);
+                Assert.fail("import must abort on an unparseable designated timestamp");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bad syntax [line=2, col=1]");
+            }
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n");
         });
     }
 
@@ -1697,6 +1761,93 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportTimestampNSBeyondCeilingSkipAll() throws Exception {
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ALL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            try {
+                playText0(textLoader, NANO_TS_BEYOND_CEILING_CSV, 1024, NOOP_TRANSFORMER);
+                Assert.fail("import must abort on an out-of-bounds designated timestamp");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed"
+                );
+            }
+            // abort rolls back the valid neighbours as well
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n");
+        });
+    }
+
+    @Test
+    public void testImportTimestampNSBeyondCeilingSkipCol() throws Exception {
+        assertImportTimestampNSBeyondCeilingSkipsRow(Atomicity.SKIP_COL);
+    }
+
+    @Test
+    public void testImportTimestampNSBeyondCeilingSkipRow() throws Exception {
+        assertImportTimestampNSBeyondCeilingSkipsRow(Atomicity.SKIP_ROW);
+    }
+
+    @Test
+    public void testImportTimestampBeforeEpochSkipAllNewTable() throws Exception {
+        // the import creates the table: the abort must leave it empty
+        assertNoLeak(textLoader -> {
+            String csv = """
+                    v,ts
+                    1,1970-01-01T00:00:00.000000Z
+                    2,1969-12-31T23:59:59.000000Z
+                    3,1970-01-01T00:00:01.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ALL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            try {
+                playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                Assert.fail("import must abort on an out-of-bounds designated timestamp");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "designated timestamp before 1970-01-01 is not allowed");
+            }
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n");
+        });
+    }
+
+    @Test
+    public void testImportTimestampBeyondYear9999SkipAllNonPartitioned() throws Exception {
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
+            // the middle value is 10000-01-01T00:00:00.000000Z, one microsecond above the ceiling
+            String csv = """
+                    v,ts
+                    1,0
+                    2,253402300800000000
+                    3,1
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ALL, false, PartitionBy.NONE);
+            textLoader.setForceHeaders(true);
+            try {
+                playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                Assert.fail("import must abort on an out-of-bounds designated timestamp");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "designated timestamp beyond 9999-12-31 is not allowed");
+            }
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n");
+        });
+    }
+
+    @Test
     public void testImportTimestampPartitionByDay() throws Exception {
         final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
             @Override
@@ -1763,7 +1914,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testLineRoll() throws Exception {
-        assertNoLeak(textLoader -> {
+        assertNoLeak(_ -> {
             String expected = """
                     f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9
                     "CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407
@@ -3425,6 +3576,33 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriteToExistingTableAuthorizesInsertBeforeMatchingColumns() throws Exception {
+        assertNoLeak(textLoader -> {
+            // The text has more columns than the table. Matching them would fail with an error that names the
+            // table's column count, so a principal who may not insert must be refused before the match.
+            final SecurityContext insertDenied = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    throw CairoException.authorization().put("insert denied");
+                }
+
+                @Override
+                protected SecurityContext newPrincipalContext(CharSequence principal) {
+                    return this;
+                }
+            };
+            execute("create table test(a int, b int)");
+            configureLoaderDefaults(textLoader);
+            try {
+                playText0(textLoader, "1,2,3\n4,5,6\n", 1024, NOOP_TRANSFORMER, insertDenied);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertEquals("insert denied", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
     public void testWriteToExistingTableBadDateColumn() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = """
@@ -3717,6 +3895,16 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteArrayTransformer transformer) throws TextException {
+        playText0(textLoader, text, firstBufSize, transformer, AllowAllSecurityContext.INSTANCE);
+    }
+
+    private static void playText0(
+            TextLoader textLoader,
+            String text,
+            int firstBufSize,
+            ByteArrayTransformer transformer,
+            SecurityContext securityContext
+    ) throws TextException {
         byte[] bytes = text.getBytes(Files.UTF_8);
         transformer.transform(bytes);
         int len = bytes.length;
@@ -3724,19 +3912,19 @@ public class TextLoaderTest extends AbstractCairoTest {
         long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         try {
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(buf + i, bytes[i]);
+                Unsafe.putByte(buf + i, bytes[i]);
             }
 
             if (firstBufSize < len) {
-                textLoader.parse(buf, buf + firstBufSize, AllowAllSecurityContext.INSTANCE);
+                textLoader.parse(buf, buf + firstBufSize, securityContext);
                 textLoader.setState(TextLoader.LOAD_DATA);
 
                 for (int i = firstBufSize; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
-                    textLoader.parse(smallBuf, smallBuf + 1, AllowAllSecurityContext.INSTANCE);
+                    Unsafe.putByte(smallBuf, Unsafe.getByte(buf + i));
+                    textLoader.parse(smallBuf, smallBuf + 1, securityContext);
                 }
             } else {
-                textLoader.parse(buf, buf + len, AllowAllSecurityContext.INSTANCE);
+                textLoader.parse(buf, buf + len, securityContext);
             }
             textLoader.wrapUp();
         } finally {
@@ -3803,6 +3991,31 @@ public class TextLoaderTest extends AbstractCairoTest {
             } catch (TextException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "duplicate column name found");
             }
+        });
+    }
+
+    private void assertImportTimestampNSBeyondCeilingSkipsRow(int atomicity) throws Exception {
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            configureLoaderDefaults(textLoader, atomicity, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, NANO_TS_BEYOND_CEILING_CSV, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(3, textLoader.getParsedLineCount());
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            // the rejected timestamp counts as an error against the timestamp column
+            Assert.assertEquals(0, textLoader.getColumnErrorCounts().get(0));
+            Assert.assertEquals(1, textLoader.getColumnErrorCounts().get(1));
+            // a row without a valid designated timestamp cannot be stored, so both
+            // skip policies drop the row and keep the valid neighbours
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\tts
+                            1\t1970-01-01T00:00:00.000000000Z
+                            3\t1970-01-01T00:00:00.000000001Z
+                            """);
         });
     }
 
@@ -4081,11 +4294,11 @@ public class TextLoaderTest extends AbstractCairoTest {
         long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         try {
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(buf + i, json[i]);
+                Unsafe.putByte(buf + i, json[i]);
             }
 
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
+                Unsafe.putByte(smallBuf, Unsafe.getByte(buf + i));
                 textLoader.parse(smallBuf, smallBuf + 1, AllowAllSecurityContext.INSTANCE);
             }
             textLoader.wrapUp();
@@ -4249,9 +4462,11 @@ public class TextLoaderTest extends AbstractCairoTest {
         );
     }
 
-    protected void assertTable(String expected) throws SqlException {
+    protected void assertTable(String expected) throws Exception {
         refreshTablesInBaseEngine();
-        assertSql(expected, "test");
+        assertQuery("test")
+                .noLeakCheck()
+                .returnsOnce(expected);
     }
 
     @FunctionalInterface

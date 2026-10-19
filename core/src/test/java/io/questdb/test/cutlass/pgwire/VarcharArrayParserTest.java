@@ -84,8 +84,8 @@ public class VarcharArrayParserTest extends AbstractTest {
             parser.of("{\n\"hello\",\r\n\"world\"\n}");
             Assert.assertEquals(1, parser.getDimCount());
             Assert.assertEquals(2, parser.getDimLen(0));
-            Assert.assertEquals("hello", parser.getVarcharAt(0).toString());
-            Assert.assertEquals("world", parser.getVarcharAt(1).toString());
+            TestUtils.assertEquals("hello", parser.getVarcharAt(0));
+            TestUtils.assertEquals("world", parser.getVarcharAt(1));
         }
     }
 
@@ -96,9 +96,9 @@ public class VarcharArrayParserTest extends AbstractTest {
             Assert.assertEquals(1, parser.getDimCount());
             Assert.assertEquals(4, parser.getDimLen(0));
             Assert.assertEquals(4, parser.getFlatViewLength());
-            Assert.assertEquals("hello", parser.getVarcharAt(0).toString());
+            TestUtils.assertEquals("hello", parser.getVarcharAt(0));
             Assert.assertNull(parser.getVarcharAt(1));
-            Assert.assertEquals("world", parser.getVarcharAt(2).toString());
+            TestUtils.assertEquals("world", parser.getVarcharAt(2));
             Assert.assertNull(parser.getVarcharAt(3));
         }
     }
@@ -109,8 +109,8 @@ public class VarcharArrayParserTest extends AbstractTest {
             parser.of("[\"foo\",\"bar\"]");
             Assert.assertEquals(1, parser.getDimCount());
             Assert.assertEquals(2, parser.getDimLen(0));
-            Assert.assertEquals("foo", parser.getVarcharAt(0).toString());
-            Assert.assertEquals("bar", parser.getVarcharAt(1).toString());
+            TestUtils.assertEquals("foo", parser.getVarcharAt(0));
+            TestUtils.assertEquals("bar", parser.getVarcharAt(1));
         }
     }
 
@@ -120,8 +120,8 @@ public class VarcharArrayParserTest extends AbstractTest {
             parser.of("{ \"hello\" , \"world\" }");
             Assert.assertEquals(1, parser.getDimCount());
             Assert.assertEquals(2, parser.getDimLen(0));
-            Assert.assertEquals("hello", parser.getVarcharAt(0).toString());
-            Assert.assertEquals("world", parser.getVarcharAt(1).toString());
+            TestUtils.assertEquals("hello", parser.getVarcharAt(0));
+            TestUtils.assertEquals("world", parser.getVarcharAt(1));
         }
     }
 
@@ -132,9 +132,9 @@ public class VarcharArrayParserTest extends AbstractTest {
             Assert.assertEquals(1, parser.getDimCount());
             Assert.assertEquals(3, parser.getDimLen(0));
             Assert.assertEquals(3, parser.getFlatViewLength());
-            Assert.assertEquals("hello", parser.getVarcharAt(0).toString());
-            Assert.assertEquals("world", parser.getVarcharAt(1).toString());
-            Assert.assertEquals("test", parser.getVarcharAt(2).toString());
+            TestUtils.assertEquals("hello", parser.getVarcharAt(0));
+            TestUtils.assertEquals("world", parser.getVarcharAt(1));
+            TestUtils.assertEquals("test", parser.getVarcharAt(2));
         }
     }
 
@@ -155,9 +155,9 @@ public class VarcharArrayParserTest extends AbstractTest {
             parser.of("{\"\",\"hello\",\"\"}");
             Assert.assertEquals(1, parser.getDimCount());
             Assert.assertEquals(3, parser.getDimLen(0));
-            Assert.assertEquals("", parser.getVarcharAt(0).toString());
-            Assert.assertEquals("hello", parser.getVarcharAt(1).toString());
-            Assert.assertEquals("", parser.getVarcharAt(2).toString());
+            TestUtils.assertEquals("", parser.getVarcharAt(0));
+            TestUtils.assertEquals("hello", parser.getVarcharAt(1));
+            TestUtils.assertEquals("", parser.getVarcharAt(2));
         }
     }
 
@@ -168,7 +168,7 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length, 1);
@@ -197,14 +197,14 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length);
                 Assert.assertEquals(1, parser.getDimCount());
                 Assert.assertEquals(2, parser.getDimLen(0));
-                Assert.assertEquals("hello", parser.getVarcharAt(0).toString());
-                Assert.assertEquals("world", parser.getVarcharAt(1).toString());
+                TestUtils.assertEquals("hello", parser.getVarcharAt(0));
+                TestUtils.assertEquals("world", parser.getVarcharAt(1));
             }
         } finally {
             Unsafe.free(ptr, bytes.length, MemoryTag.NATIVE_DEFAULT);
@@ -218,13 +218,13 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length);
                 Assert.assertEquals(1, parser.getDimCount());
                 Assert.assertEquals(1, parser.getDimLen(0));
-                Assert.assertEquals("hello", parser.getVarcharAt(0).toString());
+                TestUtils.assertEquals("hello", parser.getVarcharAt(0));
             }
         } finally {
             Unsafe.free(ptr, bytes.length, MemoryTag.NATIVE_DEFAULT);
@@ -238,7 +238,7 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length, 1);
@@ -257,15 +257,15 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length);
                 Assert.assertEquals(1, parser.getDimCount());
                 Assert.assertEquals(3, parser.getDimLen(0));
-                Assert.assertEquals("hello", parser.getVarcharAt(0).toString());
+                TestUtils.assertEquals("hello", parser.getVarcharAt(0));
                 Assert.assertNull(parser.getVarcharAt(1));
-                Assert.assertEquals("world", parser.getVarcharAt(2).toString());
+                TestUtils.assertEquals("world", parser.getVarcharAt(2));
             }
         } finally {
             Unsafe.free(ptr, bytes.length, MemoryTag.NATIVE_DEFAULT);
@@ -279,14 +279,14 @@ public class VarcharArrayParserTest extends AbstractTest {
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+                Unsafe.putByte(ptr + i, bytes[i]);
             }
             try (VarcharArrayParser parser = new VarcharArrayParser()) {
                 parser.of(ptr, ptr + bytes.length);
                 Assert.assertEquals(1, parser.getDimCount());
                 Assert.assertEquals(2, parser.getDimLen(0));
-                Assert.assertEquals("foo", parser.getVarcharAt(0).toString());
-                Assert.assertEquals("bar", parser.getVarcharAt(1).toString());
+                TestUtils.assertEquals("foo", parser.getVarcharAt(0));
+                TestUtils.assertEquals("bar", parser.getVarcharAt(1));
             }
         } finally {
             Unsafe.free(ptr, bytes.length, MemoryTag.NATIVE_DEFAULT);
@@ -310,8 +310,8 @@ public class VarcharArrayParserTest extends AbstractTest {
             Assert.assertEquals(1, parser.getDimCount());
             Assert.assertEquals(2, parser.getDimLen(0));
             Assert.assertEquals(2, parser.getFlatViewLength());
-            Assert.assertEquals("hello", parser.getVarcharAt(0).toString());
-            Assert.assertEquals("world", parser.getVarcharAt(1).toString());
+            TestUtils.assertEquals("hello", parser.getVarcharAt(0));
+            TestUtils.assertEquals("world", parser.getVarcharAt(1));
         }
     }
 
@@ -322,7 +322,7 @@ public class VarcharArrayParserTest extends AbstractTest {
             Assert.assertEquals(1, parser.getDimCount());
             Assert.assertEquals(1, parser.getDimLen(0));
             Assert.assertEquals(1, parser.getFlatViewLength());
-            Assert.assertEquals("hello", parser.getVarcharAt(0).toString());
+            TestUtils.assertEquals("hello", parser.getVarcharAt(0));
         }
     }
 
@@ -343,9 +343,9 @@ public class VarcharArrayParserTest extends AbstractTest {
             parser.of("{\"Привет\",\"你好\",\"🌍\"}");
             Assert.assertEquals(1, parser.getDimCount());
             Assert.assertEquals(3, parser.getDimLen(0));
-            Assert.assertEquals("Привет", parser.getVarcharAt(0).toString());
-            Assert.assertEquals("你好", parser.getVarcharAt(1).toString());
-            Assert.assertEquals("🌍", parser.getVarcharAt(2).toString());
+            TestUtils.assertEquals("Привет", parser.getVarcharAt(0));
+            TestUtils.assertEquals("你好", parser.getVarcharAt(1));
+            TestUtils.assertEquals("🌍", parser.getVarcharAt(2));
         }
     }
 

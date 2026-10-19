@@ -42,7 +42,7 @@ public class DebugUtils {
             try {
                 long ts = Long.MIN_VALUE;
                 for (int i = 0; i < size; i++) {
-                    long nextTs = Unsafe.getUnsafe().getLong(buffer + (long) i * Long.BYTES);
+                    long nextTs = Unsafe.getLong(buffer + (long) i * Long.BYTES);
                     if (nextTs < ts) {
                         return false;
                     }
@@ -62,14 +62,15 @@ public class DebugUtils {
     // Useful debugging method
     public static boolean reconcileColumnTops(int partitionsSlotSize, LongList openPartitionInfo, ColumnVersionReader columnVersionReader, TableReader reader) {
         int partitionCount = reader.getPartitionCount();
-        TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
+        final TableReaderMetadata metadata = reader.getMetadata();
+        TimestampDriver driver = ColumnType.getTimestampDriver(metadata.getTimestampType());
         for (int p = 0; p < partitionCount; p++) {
             long partitionRowCount = reader.getPartitionRowCount(p);
             if (partitionRowCount != -1) {
                 long partitionTimestamp = openPartitionInfo.getQuick(p * partitionsSlotSize);
                 for (int c = 0; c < reader.getColumnCount(); c++) {
                     long colTop = Math.min(reader.getColumnTop(reader.getColumnBase(p), c), partitionRowCount);
-                    long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, c);
+                    long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, metadata.getWriterIndex(c));
                     long columnTop = Math.min(columnTopRaw == -1 ? partitionRowCount : columnTopRaw, partitionRowCount);
                     if (columnTop != colTop) {
                         LOG.critical().$("failed to reconcile column top [partition=").$ts(driver, partitionTimestamp)
@@ -88,8 +89,8 @@ public class DebugUtils {
     static void assertO3IndexSorted(long indexAddr, long indexSize) {
         long lastTs = Long.MIN_VALUE;
         for (long i = 0; i < indexSize; i++) {
-            long ts = Unsafe.getUnsafe().getLong(indexAddr + 16 * i);
-            long rowId = Unsafe.getUnsafe().getLong(indexAddr + 16 * i + 8);
+            long ts = Unsafe.getLong(indexAddr + 16 * i);
+            long rowId = Unsafe.getLong(indexAddr + 16 * i + 8);
             assert ts >= lastTs : String.format("ts %,d lastTs %,d rowId %,d", ts, lastTs, rowId);
             lastTs = ts;
         }
@@ -98,7 +99,7 @@ public class DebugUtils {
     static void assertTimestampColumnSorted(long columnAddr, long columnSize) {
         long lastTs = Long.MIN_VALUE;
         for (long i = 0; i < columnSize; i++) {
-            long ts = Unsafe.getUnsafe().getLong(columnAddr + 8 * i);
+            long ts = Unsafe.getLong(columnAddr + 8 * i);
             assert ts >= lastTs : String.format("ts %,d lastTs %,d", ts, lastTs);
             lastTs = ts;
         }
@@ -107,8 +108,8 @@ public class DebugUtils {
     static void logO3Index(TimestampDriver driver, long indexAddr, long indexSize, long tailLen) {
         long start = Math.max(0, indexSize - tailLen);
         for (long i = start; i < indexSize; i++) {
-            long ts = Unsafe.getUnsafe().getLong(indexAddr + 16 * i);
-            long rowId = Unsafe.getUnsafe().getLong(indexAddr + 16 * i + 8);
+            long ts = Unsafe.getLong(indexAddr + 16 * i);
+            long rowId = Unsafe.getLong(indexAddr + 16 * i + 8);
             LOG.info().$("index [").$(i).$("] = ").$ts(driver, ts).$(", ts=").$(ts).$(", rowId=").$(rowId).$();
         }
     }
@@ -116,7 +117,7 @@ public class DebugUtils {
     static void logTimestampColumn(TimestampDriver driver, long colAddr, long colSize, long tailLen) {
         long start = Math.max(0, colSize - tailLen);
         for (long i = start; i < colSize; i++) {
-            long ts = Unsafe.getUnsafe().getLong(colAddr + 8 * i);
+            long ts = Unsafe.getLong(colAddr + 8 * i);
             LOG.info().$("ts_col [").$(i).$("] = ").$ts(driver, ts).$(", ts=").$(ts).$();
         }
     }

@@ -3,10 +3,10 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        linux-jdk17:
+        linux-jdk25:
           poolName: hetzner-incus
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
           javadoc_step: "javadoc:javadoc"
           javadoc_profile: ",javadoc"
     pool:

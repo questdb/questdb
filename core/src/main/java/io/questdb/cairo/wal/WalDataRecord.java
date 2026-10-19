@@ -38,6 +38,7 @@ import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -47,6 +48,8 @@ import static io.questdb.cairo.wal.WalReader.getPrimaryColumnIndex;
 
 public class WalDataRecord implements Record, Sinkable {
     private final BorrowedArray array = new BorrowedArray();
+    private final DirectString symViewA = new DirectString();
+    private final DirectString symViewB = new DirectString();
     private WalReader reader;
     private long recordIndex = 0;
 
@@ -290,12 +293,12 @@ public class WalDataRecord implements Record, Sinkable {
 
     @Override
     public CharSequence getSymA(int col) {
-        return reader.getSymbolValue(col, getInt(col));
+        return reader.getSymbolValue(col, getInt(col), symViewA);
     }
 
     @Override
     public CharSequence getSymB(int col) {
-        return getSymA(col);
+        return reader.getSymbolValue(col, getInt(col), symViewB);
     }
 
     @Override

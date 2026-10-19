@@ -24,7 +24,11 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.PagedDirectLongList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 import java.io.Closeable;
 
@@ -60,40 +64,35 @@ public class DedupColumnCommitAddresses implements Closeable {
     }
 
     public static long getColReserved1(long dedupBlockAddress, int keyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED1);
+        return Unsafe.getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED1);
     }
 
     public static long getColReserved2(long dedupBlockAddress, int keyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED2);
+        return Unsafe.getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED2);
     }
 
     public static long getColReserved3(long dedupBlockAddress, int keyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED3);
+        return Unsafe.getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED3);
     }
 
     public static long getColReserved4(long dedupBlockAddress, int keyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED4);
+        return Unsafe.getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED4);
     }
 
     public static long getColReserved5(long dedupBlockAddress, int keyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED5);
+        return Unsafe.getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED5);
     }
 
     public static long getColVarDataLen(long dedupBlockAddress, int keyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + COL_VAR_DATA_LEN_64);
+        return Unsafe.getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + COL_VAR_DATA_LEN_64);
     }
 
     public static long getO3VarDataLen(long dedupBlockAddress, int keyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + O3_VAR_DATA_LEN_64);
+        return Unsafe.getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + O3_VAR_DATA_LEN_64);
     }
 
-    public static void setColAddressValues(
-            long addr,
-            long columnDataAddress
-    ) {
-        Unsafe.getUnsafe().putLong(addr + COL_DATA_64, columnDataAddress);
-        Unsafe.getUnsafe().putLong(addr + COL_VAR_DATA_64, NULL);
-        Unsafe.getUnsafe().putLong(addr + COL_VAR_DATA_LEN_64, NULL);
+    public static void setColAddressValues(long addr, long columnDataAddress) {
+        setColAddressValues(addr, columnDataAddress, NULL, NULL);
     }
 
     public static void setColAddressValues(
@@ -102,9 +101,9 @@ public class DedupColumnCommitAddresses implements Closeable {
             long columnVarDataAddress,
             long columnVarDataLen
     ) {
-        Unsafe.getUnsafe().putLong(addr + COL_DATA_64, columnDataAddress);
-        Unsafe.getUnsafe().putLong(addr + COL_VAR_DATA_64, columnVarDataAddress);
-        Unsafe.getUnsafe().putLong(addr + COL_VAR_DATA_LEN_64, columnVarDataLen);
+        Unsafe.putLong(addr + COL_DATA_64, columnDataAddress);
+        Unsafe.putLong(addr + COL_VAR_DATA_64, columnVarDataAddress);
+        Unsafe.putLong(addr + COL_VAR_DATA_LEN_64, columnVarDataLen);
     }
 
     public static long setColValues(
@@ -115,14 +114,14 @@ public class DedupColumnCommitAddresses implements Closeable {
             long columnTop
     ) {
         long addr = dedupCommitAddr + (long) dedupKeyIndex * RECORD_BYTES;
-        Unsafe.getUnsafe().putInt(addr + COL_TYPE_32, columnType);
-        Unsafe.getUnsafe().putInt(addr + VAL_SIZE_32, valueSizeBytes);
-        Unsafe.getUnsafe().putLong(addr + COL_TOP_64, columnTop);
+        Unsafe.putInt(addr + COL_TYPE_32, columnType);
+        Unsafe.putInt(addr + VAL_SIZE_32, valueSizeBytes);
+        Unsafe.putLong(addr + COL_TOP_64, columnTop);
 
-        Unsafe.getUnsafe().putLong(addr + NULL_VAL_256, TableUtils.getNullLong(columnType, 0));
-        Unsafe.getUnsafe().putLong(addr + NULL_VAL_256 + 8, TableUtils.getNullLong(columnType, 1));
-        Unsafe.getUnsafe().putLong(addr + NULL_VAL_256 + 16, TableUtils.getNullLong(columnType, 2));
-        Unsafe.getUnsafe().putLong(addr + NULL_VAL_256 + 24, TableUtils.getNullLong(columnType, 3));
+        Unsafe.putLong(addr + NULL_VAL_256, TableUtils.getNullLong(columnType, 0));
+        Unsafe.putLong(addr + NULL_VAL_256 + 8, TableUtils.getNullLong(columnType, 1));
+        Unsafe.putLong(addr + NULL_VAL_256 + 16, TableUtils.getNullLong(columnType, 2));
+        Unsafe.putLong(addr + NULL_VAL_256 + 24, TableUtils.getNullLong(columnType, 3));
         return addr;
     }
 
@@ -130,9 +129,9 @@ public class DedupColumnCommitAddresses implements Closeable {
             long addr,
             long o3DataAddress
     ) {
-        Unsafe.getUnsafe().putLong(addr + O3_DATA_64, o3DataAddress);
-        Unsafe.getUnsafe().putLong(addr + O3_VAR_DATA_64, NULL);
-        Unsafe.getUnsafe().putLong(addr + O3_VAR_DATA_LEN_64, NULL);
+        Unsafe.putLong(addr + O3_DATA_64, o3DataAddress);
+        Unsafe.putLong(addr + O3_VAR_DATA_64, NULL);
+        Unsafe.putLong(addr + O3_VAR_DATA_LEN_64, NULL);
     }
 
     public static void setO3DataAddressValues(
@@ -141,9 +140,9 @@ public class DedupColumnCommitAddresses implements Closeable {
             long o3VarDataAddress,
             long o3VarDataLen
     ) {
-        Unsafe.getUnsafe().putLong(addr + O3_DATA_64, o3DataAddress);
-        Unsafe.getUnsafe().putLong(addr + O3_VAR_DATA_64, o3VarDataAddress);
-        Unsafe.getUnsafe().putLong(addr + O3_VAR_DATA_LEN_64, o3VarDataLen);
+        Unsafe.putLong(addr + O3_DATA_64, o3DataAddress);
+        Unsafe.putLong(addr + O3_VAR_DATA_64, o3VarDataAddress);
+        Unsafe.putLong(addr + O3_VAR_DATA_LEN_64, o3VarDataLen);
     }
 
     public static void setReservedValuesSet1(
@@ -152,9 +151,9 @@ public class DedupColumnCommitAddresses implements Closeable {
             long reserved2,
             long reserved3
     ) {
-        Unsafe.getUnsafe().putLong(addr + RESERVED1, reserved1);
-        Unsafe.getUnsafe().putLong(addr + RESERVED2, reserved2);
-        Unsafe.getUnsafe().putLong(addr + RESERVED3, reserved3);
+        Unsafe.putLong(addr + RESERVED1, reserved1);
+        Unsafe.putLong(addr + RESERVED2, reserved2);
+        Unsafe.putLong(addr + RESERVED3, reserved3);
     }
 
     public static void setReservedValuesSet2(
@@ -162,8 +161,8 @@ public class DedupColumnCommitAddresses implements Closeable {
             long reserved4,
             long reserved5
     ) {
-        Unsafe.getUnsafe().putLong(addr + RESERVED4, reserved4);
-        Unsafe.getUnsafe().putLong(addr + RESERVED5, reserved5);
+        Unsafe.putLong(addr + RESERVED4, reserved4);
+        Unsafe.putLong(addr + RESERVED5, reserved5);
     }
 
     public long allocateBlock() {
@@ -208,6 +207,7 @@ public class DedupColumnCommitAddresses implements Closeable {
     }
 
     static {
+        //noinspection ConstantValue
         assert RECORD_BYTES % Long.BYTES == 0;
     }
 }

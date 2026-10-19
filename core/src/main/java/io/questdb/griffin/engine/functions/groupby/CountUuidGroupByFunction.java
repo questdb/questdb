@@ -73,24 +73,24 @@ public class CountUuidGroupByFunction extends AbstractCountGroupByFunction {
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final long lo = Unsafe.getUnsafe().getLong(argAddr + rowIndex * UUID_BYTES);
-                final long hi = Unsafe.getUnsafe().getLong(argAddr + rowIndex * UUID_BYTES + 8);
+                final long lo = Unsafe.getLong(argAddr + rowIndex * UUID_BYTES);
+                final long hi = Unsafe.getLong(argAddr + rowIndex * UUID_BYTES + 8);
                 if (!Uuid.isNull(lo, hi)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
+                    Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long hi = arg.getLong128Hi(record);
                 final long lo = arg.getLong128Lo(record);
                 if (!Uuid.isNull(lo, hi)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
+                    Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
             }
         }

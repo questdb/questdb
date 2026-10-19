@@ -36,7 +36,9 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoinDenseRecordCursorFactoryBase {
     private final SymbolJoinKeyMapping joinKeyMapping;
@@ -59,8 +61,8 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
         Map fwdScanKeyToRowId = null;
         Map bwdScanKeyToRowId = null;
         try {
-            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
-            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE, false, false);
+            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE, false, false);
             this.cursor = new AsOfJoinDenseSingleSymbolRecordCursor(
                     columnSplit,
                     fwdScanKeyToRowId,
@@ -110,9 +112,23 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
         }
 
         @Override
+        public void close() {
+            joinKeyMapping.close();
+            super.close();
+        }
+
+        @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            // Reopen the symbol key cache before super.of() adopts the cursors so an open-time breach frees it exactly once.
+            joinKeyMapping.reopen();
             super.of(masterCursor, slaveCursor, circuitBreaker);
             joinKeyMapping.of(slaveCursor);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            joinKeyMapping.setMemoryTracker(tracker);
         }
 
         @Override

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
@@ -117,29 +118,28 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         final ObjList<Thread> viewCompilerJobs = new ObjList<>();
         final int viewCompilerJobCount = 1 + rnd.nextInt(4);
 
-        for (int i = 0; i < viewCompilerJobCount; i++) {
-            viewCompilerJobs.add(startViewCompilerJob(i, stop, rnd));
-        }
-
         final ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
         final ObjList<String> viewSqls = new ObjList<>();
 
-        for (int i = 0; i < tableCount; i++) {
-            String tableName = tableNameBase + "_" + i;
-            String viewName = tableName + "_v";
-            String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by 1h";
-            ObjList<FuzzTransaction> transactions = createTransactionsAndView(rnd, tableName, viewName, viewSql);
-            fuzzTransactions.add(transactions);
-            viewSqls.add(viewSql);
-        }
+        try {
+            for (int i = 0; i < viewCompilerJobCount; i++) {
+                viewCompilerJobs.add(startViewCompilerJob(i, stop, rnd));
+            }
 
-        // Can help to reduce memory consumption.
-        engine.releaseInactive();
-        fuzzer.applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
+            for (int i = 0; i < tableCount; i++) {
+                String tableName = tableNameBase + "_" + i;
+                String viewName = tableName + "_v";
+                String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by 1h";
+                ObjList<FuzzTransaction> transactions = createTransactionsAndView(rnd, tableName, viewName, viewSql);
+                fuzzTransactions.add(transactions);
+                viewSqls.add(viewSql);
+            }
 
-        stop.set(true);
-        for (int i = 0; i < viewCompilerJobCount; i++) {
-            viewCompilerJobs.getQuick(i).join();
+            // Can help to reduce memory consumption.
+            engine.releaseInactive();
+            fuzzer.applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
+        } finally {
+            stopAndJoinJobs(stop, viewCompilerJobs);
         }
 
         drainWalQueue();
@@ -154,15 +154,15 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                 final String viewSql = viewSqls.getQuick(i);
                 LOG.info().$("asserting view ").$(viewName).$(" against ").$(viewSql).$();
                 // check that the view exists and it is valid
-                assertSql(
-                        """
+                assertQuery("select view_status " +
+                        "from views() " +
+                        "where view_name = '" + viewName + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
                                 view_status
                                 valid
-                                """,
-                        "select view_status " +
-                                "from views() " +
-                                "where view_name = '" + viewName + "'"
-                );
+                                """);
                 TestUtils.assertSqlCursors(
                         compiler,
                         sqlExecutionContext,
@@ -214,7 +214,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     try {
                         try (ViewCompilerJob job = new ViewCompilerJob(workerId, engine, 0)) {
                             while (!stop.get()) {
-                                job.run(workerId);
+                                job.run();
                                 Os.sleep(rnd.nextInt(50));
                             }
 
@@ -222,7 +222,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                                 do {
                                     drainWalQueue(walApplyJob, engine);
-                                } while (job.run(workerId));
+                                } while (job.run());
                             }
                         }
                     } catch (Throwable throwable) {
@@ -238,6 +238,14 @@ public class ViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void testViewFuzz(RandomSelectGenerator selectGenerator, Rnd rnd, String tableName, String... viewNames) throws Exception {
+        // The final correctness check below orders each view by ALL non-binary columns to make the
+        // cursor comparison deterministic. RandomSelectGenerator can chain self-joins whose
+        // many-to-many key matches inflate the row count enough that ordering the result overruns
+        // the 128-page (16 MB) sort-key budget the fuzz test config imposes (Overrides sets
+        // cairo.sql.sort.key.max.pages=128), throwing a spurious LimitOverflowException on an
+        // otherwise legal query. Production leaves the sort-key budget unbounded (Long.MAX_VALUE);
+        // mirror that here, since this test exercises view correctness, not sort memory limits.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, Long.MAX_VALUE);
         long start = MicrosTimestampDriver.floor("2022-02-24T17");
         assertMemoryLeak(() -> {
             fuzzer.createInitialTableWal(tableName, timestampTypes[rnd.nextInt(10) % 2]);
@@ -251,29 +259,33 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     createView(viewName, viewSql);
                     LOG.info().$("created view ").$(viewName).$(" as ").$(viewSql).$();
                     // compile the view before registering it, so dependent views can see this view's metadata
-                    viewCompiler.run(0);
+                    viewCompiler.run();
                     selectGenerator.registerTable(viewName);
                 }
             }
 
             AtomicBoolean stop = new AtomicBoolean();
-            Thread viewCompilerJob = startViewCompilerJob(0, stop, rnd);
+            ObjList<Thread> viewCompilerJobs = new ObjList<>();
 
-            setFuzzParams(rnd);
+            try {
+                viewCompilerJobs.add(startViewCompilerJob(0, stop, rnd));
 
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd, start);
-            ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
-            fuzzTransactions.add(transactions);
-            fuzzer.applyManyWalParallel(
-                    fuzzTransactions,
-                    rnd,
-                    tableName,
-                    false,
-                    true
-            );
+                setFuzzParams(rnd);
 
-            stop.set(true);
-            viewCompilerJob.join();
+                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd, start);
+                ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
+                fuzzTransactions.add(transactions);
+                fuzzer.applyManyWalParallel(
+                        fuzzTransactions,
+                        rnd,
+                        tableName,
+                        false,
+                        true
+                );
+            } finally {
+                stopAndJoinJobs(stop, viewCompilerJobs);
+            }
+
             drainWalQueue();
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {

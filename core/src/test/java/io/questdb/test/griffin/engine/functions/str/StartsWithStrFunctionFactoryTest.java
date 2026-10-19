@@ -42,22 +42,22 @@ public class StartsWithStrFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testStartsWith() throws Exception {
-        assertQuery("col\ntrue\n", "select starts_with('ABCDEFGH', 'ABC') col");
-        assertQuery("col\nfalse\n", "select starts_with('ABCDEFGH', 'XYZ') col");
-        assertQuery("col\nfalse\n", "select starts_with('ABCDEFGH', 'ABCDEFGHIJK') col");
-        assertQuery("col\ntrue\n", "select starts_with('cAsEsEnsItIvE', 'cAsE') col");
-        assertQuery("col\nfalse\n", "select starts_with('smallcase', 'SMALL') col");
-        assertQuery("col\nfalse\n", "select starts_with('smallcase', 'smaLL') col");
+        assertQuery("select starts_with('ABCDEFGH', 'ABC') col").expectSize().returns("col\ntrue\n");
+        assertQuery("select starts_with('ABCDEFGH', 'XYZ') col").expectSize().returns("col\nfalse\n");
+        assertQuery("select starts_with('ABCDEFGH', 'ABCDEFGHIJK') col").expectSize().returns("col\nfalse\n");
+        assertQuery("select starts_with('cAsEsEnsItIvE', 'cAsE') col").expectSize().returns("col\ntrue\n");
+        assertQuery("select starts_with('smallcase', 'SMALL') col").expectSize().returns("col\nfalse\n");
+        assertQuery("select starts_with('smallcase', 'smaLL') col").expectSize().returns("col\nfalse\n");
     }
 
     @Test
     public void testStartsWithNonASCII() throws Exception {
-        assertQuery("col\ntrue\n", "select starts_with('hőmérséklet','hőmé') col");
+        assertQuery("select starts_with('hőmérséklet','hőmé') col").expectSize().returns("col\ntrue\n");
     }
 
     @Test
     public void testStartsWithSpecialCharacters() throws Exception {
-        assertQuery("col\ntrue\n", "select starts_with('~!@#$%^&*()_-:<>?,./', '~!@#') col");
+        assertQuery("select starts_with('~!@#$%^&*()_-:<>?,./', '~!@#') col").expectSize().returns("col\ntrue\n");
     }
 
     @Override

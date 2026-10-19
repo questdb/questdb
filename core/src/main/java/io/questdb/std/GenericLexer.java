@@ -29,6 +29,7 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 import java.util.Comparator;
@@ -158,6 +159,15 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
 
     public int getPosition() {
         return _pos;
+    }
+
+    /**
+     * Returns how many entries {@link #stash()} holds for {@link #unstash()}: the tokens and the
+     * positions together. Zero whenever every stash() has met its unstash().
+     */
+    @TestOnly
+    public int getStashSize() {
+        return stashedNumbers.size() + stashedStrings.size();
     }
 
     public int getTokenHi() {

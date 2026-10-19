@@ -37,6 +37,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -57,18 +58,22 @@ public class CastDecimalToVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testCastDecimalNullToStr() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "\n",
-                            "with data as (select cast(null as decimal(10,2)) d) select cast(d as varchar) from data"
-                    );
+                    assertQuery("with data as (select cast(null as decimal(10,2)) d) select cast(d as varchar) from data")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    cast
+                                    
+                                    """);
 
                     // Also test constant null
-                    assertSql(
-                            "cast\n" +
-                                    "\n",
-                            "select cast(cast(null as decimal(10,2)) as varchar)"
-                    );
+                    assertQuery("select cast(cast(null as decimal(10,2)) as varchar)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    cast
+                                    
+                                    """);
                 }
         );
     }
@@ -78,43 +83,55 @@ public class CastDecimalToVarcharFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // Basic decimal to varchar conversions
-                    assertSql(
-                            "cast\n" +
-                                    "123.45\n",
-                            "select cast(123.45m as varchar)"
-                    );
+                    assertQuery("select cast(123.45m as varchar)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    cast
+                                    123.45
+                                    """);
 
-                    assertSql(
-                            "cast\n" +
-                                    "-123.45\n",
-                            "select cast(-123.45m as varchar)"
-                    );
+                    assertQuery("select cast(-123.45m as varchar)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    cast
+                                    -123.45
+                                    """);
 
                     // Zero with decimal places
-                    assertSql(
-                            "cast\n" +
-                                    "0.00\n",
-                            "select cast(0.00m as varchar)"
-                    );
+                    assertQuery("select cast(0.00m as varchar)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    cast
+                                    0.00
+                                    """);
 
                     // Different decimal types
-                    assertSql(
-                            "cast\n" +
-                                    "99\n",
-                            "select cast(99m as varchar)"
-                    );
+                    assertQuery("select cast(99m as varchar)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    cast
+                                    99
+                                    """);
 
-                    assertSql(
-                            "cast\n" +
-                                    "12345.67\n",
-                            "select cast(12345.67m as varchar)"
-                    );
+                    assertQuery("select cast(12345.67m as varchar)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    cast
+                                    12345.67
+                                    """);
 
-                    assertSql(
-                            "cast\n" +
-                                    "123456789.123456\n",
-                            "select cast(123456789.123456m as varchar)"
-                    );
+                    assertQuery("select cast(123456789.123456m as varchar)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    cast
+                                    123456789.123456
+                                    """);
                 }
         );
     }
@@ -124,20 +141,24 @@ public class CastDecimalToVarcharFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // Constant folding test
-                    assertSql("QUERY PLAN\n" +
-                                    "VirtualRecord\n" +
-                                    "  functions: ['123.45']\n" +
-                                    "    long_sequence count: 1\n",
-                            "EXPLAIN select cast(123.45m as varchar) from long_sequence(1)");
+                    assertQuery("select cast(123.45m as varchar) from long_sequence(1)")
+                            .noLeakCheck()
+                            .assertsPlan("""
+                                    VirtualRecord
+                                      functions: ['123.45']
+                                        long_sequence count: 1
+                                    """);
 
                     // Runtime value test
-                    assertSql("QUERY PLAN\n" +
-                                    "VirtualRecord\n" +
-                                    "  functions: [value::varchar]\n" +
-                                    "    VirtualRecord\n" +
-                                    "      functions: [123.45]\n" +
-                                    "        long_sequence count: 1\n",
-                            "EXPLAIN WITH data AS (SELECT 123.45m AS value) SELECT cast(value as varchar) FROM data");
+                    assertQuery("WITH data AS (SELECT 123.45m AS value) SELECT cast(value as varchar) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
+                                    VirtualRecord
+                                      functions: [value::varchar]
+                                        VirtualRecord
+                                          functions: [123.45]
+                                            long_sequence count: 1
+                                    """);
                 }
         );
     }
@@ -174,8 +195,10 @@ public class CastDecimalToVarcharFunctionFactoryTest extends AbstractCairoTest {
                 Assert.assertNull(strA);
                 Assert.assertNull(strB);
             } else {
-                Assert.assertEquals(expected.toString(), strA.asAsciiCharSequence().toString());
-                Assert.assertEquals(expected.toString(), strB.asAsciiCharSequence().toString());
+                Assert.assertNotNull(strA);
+                Assert.assertNotNull(strB);
+                TestUtils.assertEquals(expected, strA.asAsciiCharSequence());
+                TestUtils.assertEquals(expected, strB.asAsciiCharSequence());
             }
         }
     }

@@ -25,6 +25,7 @@
 package io.questdb.test.mp;
 
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -60,6 +61,19 @@ public class SOCountDownLatchTest {
         // now we have 0 count, so await() should return immediately, we still wait for a bit
         // to prevent false negative due to OS/JVM hiccups
         Assert.assertTrue(latch.await(TimeUnit.SECONDS.toNanos(5)));
+    }
+
+    @Test
+    public void testAwaitTimeoutWhileInterrupted() throws Exception {
+        final SOCountDownLatch latch = new SOCountDownLatch(1);
+        final long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(500);
+        TestUtils.assertInterruptedWaitTimesOutWithoutSpin(
+                "SOCountDownLatch await",
+                timeoutNanos,
+                () -> latch.await(timeoutNanos),
+                () -> latch.await(TimeUnit.SECONDS.toNanos(30)),
+                latch::countDown
+        );
     }
 
     @Test

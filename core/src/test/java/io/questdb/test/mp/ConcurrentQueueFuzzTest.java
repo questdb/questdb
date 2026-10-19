@@ -24,7 +24,9 @@
 
 package io.questdb.test.mp;
 
+import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.CountedConcurrentQueue;
 import io.questdb.mp.ValueHolder;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -55,6 +57,54 @@ public class ConcurrentQueueFuzzTest {
         runFuzz(-3, -3);
     }
 
+    @Test
+    public void testTryDequeueNeverMissesCommittedItem() throws InterruptedException {
+        // The queue starts with one item per thread and every thread holds at most one
+        // dequeued item at a time. Whenever a thread dequeues it holds nothing while the
+        // other threads hold at most threadCount - 1 items between them, so the queue
+        // always contains at least one committed item and tryDequeueValue() must not
+        // report the queue empty. The tiny segment keeps the queue overflowing into
+        // enqueueSlow(), so segment freezes run constantly and the empty check in
+        // ConcurrentQueueSegment.tryDequeue() races against in-flight freezes.
+        final int threadCount = 32;
+        final int iterations = 100_000;
+        @SuppressWarnings("unchecked")
+        ConcurrentQueue<Object> queue = new ConcurrentQueue<>(() -> null, ConcurrentPool.POOL_MANIPULATOR, 4);
+        for (int i = 0; i < threadCount; i++) {
+            queue.enqueue(new Object());
+        }
+
+        CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        AtomicInteger misses = new AtomicInteger();
+        ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        ObjList<Thread> threads = new ObjList<>();
+        for (int i = 0; i < threadCount; i++) {
+            Thread th = new Thread(() -> {
+                try {
+                    barrier.await();
+                    for (int j = 0; j < iterations; j++) {
+                        Object item = queue.tryDequeueValue(null);
+                        if (item == null) {
+                            misses.incrementAndGet();
+                            item = new Object();
+                        }
+                        queue.enqueue(item);
+                    }
+                } catch (Throwable e) {
+                    errors.add(e);
+                }
+            });
+            th.start();
+            threads.add(th);
+        }
+        for (int i = 0; i < threadCount; i++) {
+            threads.getQuick(i).join();
+        }
+
+        Assert.assertTrue(errors.toString(), errors.isEmpty());
+        Assert.assertEquals("tryDequeueValue() reported an empty queue while it held committed items", 0, misses.get());
+    }
+
     private static void runFuzz(int producerMultiplier, int consumerMultiplier) throws InterruptedException {
         Rnd rnd = TestUtils.generateRandom(null);
 
@@ -80,7 +130,7 @@ public class ConcurrentQueueFuzzTest {
         int elementsCount = 33 + rnd.nextInt(1_000) + (int) Math.pow(2, rnd.nextInt(20));
         boolean[] received = new boolean[elementsCount];
 
-        ConcurrentQueue<IntHolderQueue> queue = ConcurrentQueue.createConcurrentQueue(IntHolderQueue::new);
+        CountedConcurrentQueue<IntHolderQueue> queue = CountedConcurrentQueue.create(IntHolderQueue::new);
         AtomicInteger counter = new AtomicInteger();
 
         CyclicBarrier barrier = new CyclicBarrier(nProducers + nConsumers);
@@ -154,6 +204,10 @@ public class ConcurrentQueueFuzzTest {
         for (int i = nProducers; i < nProducers + nConsumers; i++) {
             threads.getQuick(i).join();
         }
+
+        Assert.assertEquals("queue length must be zero after all elements drained", 0, queue.sizeDirty());
+        Assert.assertFalse("queue must be empty after all elements drained", queue.tryDequeue(new IntHolderQueue()));
+        Assert.assertEquals("queue length must remain zero after a no-op tryDequeue", 0, queue.sizeDirty());
 
         if (!errors.isEmpty()) {
             Assert.assertTrue(errors.toString(), errors.isEmpty());

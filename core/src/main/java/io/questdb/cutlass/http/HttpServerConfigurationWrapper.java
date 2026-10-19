@@ -29,8 +29,12 @@ import io.questdb.Metrics;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
+import io.questdb.mp.DynamicFiberWorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolConfigurationWrapper;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
@@ -39,15 +43,12 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-import java.util.concurrent.atomic.AtomicReference;
-
-public class HttpServerConfigurationWrapper implements HttpFullFatServerConfiguration {
-    private final AtomicReference<HttpFullFatServerConfiguration> delegate = new AtomicReference<>();
+public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolConfiguration, HttpFullFatServerConfiguration {
     private final Metrics metrics;
+    private final WorkerPoolConfigurationWrapper workerPoolConfiguration = new WorkerPoolConfigurationWrapper();
 
     public HttpServerConfigurationWrapper(Metrics metrics) {
         this.metrics = metrics;
-        delegate.set(null);
     }
 
     @Override
@@ -151,6 +152,26 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public FiberConfiguration getFiberConfiguration() {
+        return workerPoolConfiguration.getFiberConfiguration();
+    }
+
+    @Override
+    public int getFiberMaxLiveCount() {
+        return workerPoolConfiguration.getFiberMaxLiveCount();
+    }
+
+    @Override
+    public int getFiberMountBudget() {
+        return workerPoolConfiguration.getFiberMountBudget();
+    }
+
+    @Override
+    public int getFiberRetainedCount() {
+        return workerPoolConfiguration.getFiberRetainedCount();
+    }
+
+    @Override
     public long getHeartbeatInterval() {
         return getDelegate().getHeartbeatInterval();
     }
@@ -251,6 +272,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+        return getDelegate().getQwpBrowserAllowedOrigins();
+    }
+
+    @Override
     public int getRecvBufferSize() {
         return getDelegate().getRecvBufferSize();
     }
@@ -286,11 +312,6 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
-    public int getTestConnectionBufferSize() {
-        return getDelegate().getTestConnectionBufferSize();
-    }
-
-    @Override
     public long getTimeout() {
         return getDelegate().getTimeout();
     }
@@ -313,6 +334,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     @Override
     public int getWorkerCount() {
         return getDelegate().getWorkerCount();
+    }
+
+    @Override
+    public WorkerPoolMode getWorkerPoolMode() {
+        return getDelegate().getWorkerPoolMode();
     }
 
     @Override
@@ -341,6 +367,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public boolean isFiberEnabled() {
+        return getDelegate().isFiberEnabled();
+    }
+
+    @Override
     public boolean isPessimisticHealthCheckEnabled() {
         return getDelegate().isPessimisticHealthCheckEnabled();
     }
@@ -348,6 +379,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     @Override
     public boolean isQueryCacheEnabled() {
         return getDelegate().isQueryCacheEnabled();
+    }
+
+    @Override
+    public boolean isQwpBrowserTlsTerminationEnabled() {
+        return getDelegate().isQwpBrowserTlsTerminationEnabled();
     }
 
     @Override
@@ -366,7 +402,12 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     public void setDelegate(HttpFullFatServerConfiguration delegate) {
-        this.delegate.set(delegate);
+        workerPoolConfiguration.setDelegate(delegate);
+    }
+
+    @Override
+    public void setFiberConfigurationListener(FiberConfigurationListener listener) {
+        workerPoolConfiguration.setFiberConfigurationListener(listener);
     }
 
     @Override
@@ -375,6 +416,6 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     protected HttpFullFatServerConfiguration getDelegate() {
-        return delegate.get();
+        return (HttpFullFatServerConfiguration) workerPoolConfiguration.getDelegate();
     }
 }

@@ -1,7 +1,7 @@
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decoders::{
-    BaseVarDictDecoder, PrimitiveDictDecoder, RleDictionaryDecoder,
+    try_reserve_dict_values, BaseVarDictDecoder, PrimitiveDictDecoder, RleDictionaryDecoder,
 };
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
@@ -24,18 +24,27 @@ struct Slicer<'a> {
 
 impl Slicer<'_> {
     #[inline]
-    fn next(&mut self) -> &[u8] {
-        let res = &self.data[self.pos..self.pos + self.elem_size];
+    fn next(&mut self) -> ParquetResult<&[u8]> {
+        // Bounds-check the slice: a foreign or corrupt fixed-len-byte-array
+        // decimal page whose definition levels over-claim non-nulls must not
+        // index out of bounds and panic, aborting the JVM across JNI.
+        let res = self
+            .data
+            .get(self.pos..self.pos + self.elem_size)
+            .ok_or_else(|| fmt_err!(Layout, "decimal value exceeds values buffer"))?;
         self.pos += self.elem_size;
-        res
+        Ok(res)
     }
 
     #[inline]
-    fn next_raw_slice(&mut self, count: usize) -> &[u8] {
+    fn next_raw_slice(&mut self, count: usize) -> ParquetResult<&[u8]> {
         let len = self.elem_size * count;
-        let res = &self.data[self.pos..self.pos + len];
+        let res = self
+            .data
+            .get(self.pos..self.pos + len)
+            .ok_or_else(|| fmt_err!(Layout, "decimal value slice exceeds values buffer"))?;
         self.pos += len;
-        res
+        Ok(res)
     }
 
     #[inline]
@@ -451,7 +460,7 @@ impl<const N: usize> Pushable for ReverseDecimalColumnSink<'_, N> {
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let slice = self.slicer.next();
+        let slice = self.slicer.next()?;
         let base = self.buffers.data_vec.len();
         debug_assert!(base + N <= self.buffers.data_vec.capacity());
 
@@ -470,7 +479,7 @@ impl<const N: usize> Pushable for ReverseDecimalColumnSink<'_, N> {
         debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
         unsafe {
-            let src_ptr = self.slicer.next_raw_slice(count).as_ptr();
+            let src_ptr = self.slicer.next_raw_slice(count)?.as_ptr();
             let dst_ptr = self.buffers.data_vec.as_mut_ptr().add(base);
             if N == 2 {
                 for c in 0..count {
@@ -563,7 +572,7 @@ impl<const N: usize, const WORDS: usize> Pushable for WordSwapDecimalColumnSink<
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let slice = self.slicer.next();
+        let slice = self.slicer.next()?;
         let base = self.buffers.data_vec.len();
         debug_assert!(base + N <= self.buffers.data_vec.capacity());
 
@@ -582,7 +591,7 @@ impl<const N: usize, const WORDS: usize> Pushable for WordSwapDecimalColumnSink<
         debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
         // SAFETY: We reserved enough capacity for `count` values of `N` bytes each, and we only write to the range from `base` to `base + total_bytes`.
         unsafe {
-            let src = self.slicer.next_raw_slice(count);
+            let src = self.slicer.next_raw_slice(count)?;
             let dst = self.buffers.data_vec.as_mut_ptr().add(base);
             for c in 0..count {
                 let src_ptr = src.as_ptr().add(c * N);
@@ -662,7 +671,7 @@ impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let slice = self.slicer.next();
+        let slice = self.slicer.next()?;
         let base = self.buffers.data_vec.len();
         debug_assert!(base + N <= self.buffers.data_vec.capacity());
 
@@ -687,7 +696,7 @@ impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
                 let mut out_idx = 0usize;
                 while out_idx < count {
                     let chunk = (count - out_idx).min(CHUNK_VALUES);
-                    let raw_chunk = self.slicer.next_raw_slice(chunk);
+                    let raw_chunk = self.slicer.next_raw_slice(chunk)?;
                     for c in 0..chunk {
                         let src_ptr = raw_chunk.as_ptr().add(c * self.src_len);
                         let signed = decode_decimal64_from_be(src_ptr, self.src_len);
@@ -697,7 +706,7 @@ impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
                 }
             } else {
                 for c in 0..count {
-                    let slice = self.slicer.next();
+                    let slice = self.slicer.next()?;
                     let dest = ptr.add(c * N);
                     Self::sign_extend_and_convert(slice, dest, self.src_len)?;
                 }
@@ -908,7 +917,8 @@ impl<T: Copy> PrimitiveDictDecoder<T> for PreconvertedFlbaDecimalDict<T> {
 impl PreconvertedFlbaDecimalDict<Decimal8> {
     fn try_new_decimal8(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values =
+            try_reserve_dict_values(dict_page.num_values, "decimal dictionary values")?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 1];
@@ -922,7 +932,8 @@ impl PreconvertedFlbaDecimalDict<Decimal8> {
 impl PreconvertedFlbaDecimalDict<Decimal16> {
     fn try_new_decimal16(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values =
+            try_reserve_dict_values(dict_page.num_values, "decimal dictionary values")?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 2];
@@ -936,7 +947,8 @@ impl PreconvertedFlbaDecimalDict<Decimal16> {
 impl PreconvertedFlbaDecimalDict<Decimal32> {
     fn try_new_decimal32(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values =
+            try_reserve_dict_values(dict_page.num_values, "decimal dictionary values")?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 4];
@@ -950,7 +962,8 @@ impl PreconvertedFlbaDecimalDict<Decimal32> {
 impl PreconvertedFlbaDecimalDict<Decimal64> {
     fn try_new_decimal64(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values =
+            try_reserve_dict_values(dict_page.num_values, "decimal dictionary values")?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 8];
@@ -964,7 +977,8 @@ impl PreconvertedFlbaDecimalDict<Decimal64> {
 impl PreconvertedFlbaDecimalDict<Decimal128> {
     fn try_new_decimal128(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values =
+            try_reserve_dict_values(dict_page.num_values, "decimal dictionary values")?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 16];
@@ -980,7 +994,8 @@ impl PreconvertedFlbaDecimalDict<Decimal128> {
 impl PreconvertedFlbaDecimalDict<Decimal256> {
     fn try_new_decimal256(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values =
+            try_reserve_dict_values(dict_page.num_values, "decimal dictionary values")?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 32];
@@ -1167,5 +1182,114 @@ fn decode_fixed_decimal_with_slicer_mode<'a, const FILTERED: bool, const FILL_NU
             "unsupported target column type {:?} for FixedLenByteArray decimal",
             target_tag
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_decimal_slicer_oversized_read_errors() {
+        // A foreign/corrupt fixed-len-byte-array decimal page whose definition
+        // levels over-claim non-nulls (more elements than the values buffer
+        // holds) must surface a clean error rather than indexing out of bounds
+        // and aborting the JVM across the JNI boundary. The buffer holds 2 bytes
+        // but each element is 4.
+        let data = [0u8; 2];
+
+        let mut slicer = Slicer::new(&data, 4);
+        assert!(slicer.next().is_err());
+
+        let mut slicer = Slicer::new(&data, 4);
+        assert!(slicer.next_raw_slice(1).is_err());
+    }
+
+    #[test]
+    fn fixed_decimal_slicer_exact_buffer_reads_ok() {
+        // Off-by-one guard: an exactly-sized buffer (one 4-byte element) reads.
+        let data = [1u8, 2, 3, 4];
+
+        let mut slicer = Slicer::new(&data, 4);
+        assert_eq!(slicer.next().unwrap(), &data[..]);
+
+        let mut slicer = Slicer::new(&data, 4);
+        assert_eq!(slicer.next_raw_slice(1).unwrap(), &data[..]);
+    }
+
+    #[test]
+    fn try_new_decimal256_src_len_1_decodes_through_fallible_reservation() {
+        // src_len == 1 -> Decimal256 is the 32x amplification the fallible
+        // try_reserve_dict_values reservation guards: one buffer byte per value,
+        // a 32-byte value each. Existing FLBA-dict tests cover larger src_len /
+        // target pairs but not this shape, so drive a valid such dict through the
+        // try_new_decimal256 call site -- the reservation succeeds and the loop
+        // fills exactly num_values entries, sign-extending each 1-byte big-endian
+        // decimal. The unsatisfiable-count failure is covered deterministically by
+        // the decoders::tests helper test; it cannot be forced through this call
+        // site, because validate_flba_dict pins num_values to the buffer length,
+        // which a test cannot make large enough to overflow the reservation.
+        let buffer = [0x00u8, 0x01, 0x7f, 0xff]; // four 1-byte big-endian decimals
+        let dict_page = DictPage {
+            buffer: &buffer,
+            num_values: buffer.len(),
+            is_sorted: false,
+        };
+
+        let dict =
+            PreconvertedFlbaDecimalDict::<Decimal256>::try_new_decimal256(&dict_page, 1).unwrap();
+
+        assert_eq!(dict.values.len(), buffer.len());
+        // 0x01 -> +1. Decimal256(w0..w3) orders its words most-significant-first,
+        // so the value lands in the least-significant word w3.
+        let one = dict.values[1];
+        assert_eq!((one.0, one.1, one.2, one.3), (0, 0, 0, 1));
+        // 0xff sign-extends to -1: every word all-ones.
+        let neg_one = dict.values[3];
+        assert_eq!(
+            (neg_one.0, neg_one.1, neg_one.2, neg_one.3),
+            (-1, u64::MAX, u64::MAX, u64::MAX)
+        );
+    }
+
+    #[test]
+    fn try_new_decimal_dicts_all_widths_decode_through_fallible_reservation() {
+        // Drive every PreconvertedFlbaDecimalDict::try_new_decimalN call site --
+        // each routes its dictionary-value reservation through the fallible
+        // try_reserve_dict_values. The sibling test covers only Decimal256 and the
+        // wider FLBA-dict decode tests only Decimal64, so the remaining widths had
+        // no test exercising their reservation. src_len == 1 is the
+        // max-amplification shape (one buffer byte per value, target up to 32
+        // bytes); a valid such dict must reserve and fill exactly num_values
+        // entries for every width.
+        let buffer = [0x00u8, 0x01, 0x7f, 0xff]; // four 1-byte big-endian decimals
+        let dict_page = DictPage {
+            buffer: &buffer,
+            num_values: buffer.len(),
+            is_sorted: false,
+        };
+        let n = buffer.len();
+
+        let d8 = PreconvertedFlbaDecimalDict::<Decimal8>::try_new_decimal8(&dict_page, 1).unwrap();
+        assert_eq!(d8.values.len(), n);
+        let d16 =
+            PreconvertedFlbaDecimalDict::<Decimal16>::try_new_decimal16(&dict_page, 1).unwrap();
+        assert_eq!(d16.values.len(), n);
+        let d32 =
+            PreconvertedFlbaDecimalDict::<Decimal32>::try_new_decimal32(&dict_page, 1).unwrap();
+        assert_eq!(d32.values.len(), n);
+        let d64 =
+            PreconvertedFlbaDecimalDict::<Decimal64>::try_new_decimal64(&dict_page, 1).unwrap();
+        assert_eq!(d64.values.len(), n);
+        let d128 =
+            PreconvertedFlbaDecimalDict::<Decimal128>::try_new_decimal128(&dict_page, 1).unwrap();
+        assert_eq!(d128.values.len(), n);
+        let d256 =
+            PreconvertedFlbaDecimalDict::<Decimal256>::try_new_decimal256(&dict_page, 1).unwrap();
+        assert_eq!(d256.values.len(), n);
+
+        // Spot-check sign extension reaches the narrow widths too: 0xff -> -1.
+        assert_eq!(d8.values[3].0, -1);
+        assert_eq!(d16.values[3].0, -1);
     }
 }

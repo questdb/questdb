@@ -92,16 +92,16 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
         @Override
         protected void accumulateOne(long dataPtr, int accFi, double inputVal) {
             long addr = dataPtr + (long) accFi * Double.BYTES;
-            double accVal = Unsafe.getUnsafe().getDouble(addr);
+            double accVal = Unsafe.getDouble(addr);
             if (Numbers.isFinite(accVal)) {
                 long compAddr = compensationPtr + (long) accFi * Double.BYTES;
-                double c = Unsafe.getUnsafe().getDouble(compAddr);
+                double c = Unsafe.getDouble(compAddr);
                 double y = inputVal - c;
                 double t = accVal + y;
-                Unsafe.getUnsafe().putDouble(compAddr, (t - accVal) - y);
-                Unsafe.getUnsafe().putDouble(addr, t);
+                Unsafe.putDouble(compAddr, (t - accVal) - y);
+                Unsafe.putDouble(addr, t);
             } else {
-                Unsafe.getUnsafe().putDouble(addr, inputVal);
+                Unsafe.putDouble(addr, inputVal);
             }
         }
 
@@ -113,20 +113,20 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
         @Override
         protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
             long destAddr = destDataPtr + (long) destFi * Double.BYTES;
-            double destVal = Unsafe.getUnsafe().getDouble(destAddr);
+            double destVal = Unsafe.getDouble(destAddr);
             if (Numbers.isFinite(destVal)) {
                 long destCompAddr = compensationPtr + (long) destFi * Double.BYTES;
-                double destComp = Unsafe.getUnsafe().getDouble(destCompAddr);
-                double srcComp = Unsafe.getUnsafe().getDouble(srcCompensationPtr + (long) srcFi * Double.BYTES);
+                double destComp = Unsafe.getDouble(destCompAddr);
+                double srcComp = Unsafe.getDouble(srcCompensationPtr + (long) srcFi * Double.BYTES);
                 double y = (srcVal - srcComp) - destComp;
                 double t = destVal + y;
-                Unsafe.getUnsafe().putDouble(destCompAddr, (t - destVal) - y);
-                Unsafe.getUnsafe().putDouble(destAddr, t);
+                Unsafe.putDouble(destCompAddr, (t - destVal) - y);
+                Unsafe.putDouble(destAddr, t);
             } else {
-                Unsafe.getUnsafe().putDouble(destAddr, srcVal);
-                Unsafe.getUnsafe().putDouble(
+                Unsafe.putDouble(destAddr, srcVal);
+                Unsafe.putDouble(
                         compensationPtr + (long) destFi * Double.BYTES,
-                        Unsafe.getUnsafe().getDouble(srcCompensationPtr + (long) srcFi * Double.BYTES)
+                        Unsafe.getDouble(srcCompensationPtr + (long) srcFi * Double.BYTES)
                 );
             }
         }
@@ -160,14 +160,14 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
             long newCompPtr = allocator.malloc(newCapacity * Double.BYTES);
             zeroFillDoubles(newCompPtr, 0, newCapacity);
             if (!needsRemap) {
-                Unsafe.getUnsafe().copyMemory(oldCompPtr, newCompPtr, (long) oldFlatCardinality * Double.BYTES);
+                Unsafe.copyMemory(oldCompPtr, newCompPtr, (long) oldFlatCardinality * Double.BYTES);
             } else {
                 for (int fi = 0; fi < oldFlatCardinality; fi++) {
                     ArrayView.flatIndexToCoords(fi, accStrides, coords);
                     int newFi = ArrayView.coordsToFlatIndex(coords, newStrides);
-                    Unsafe.getUnsafe().putDouble(
+                    Unsafe.putDouble(
                             newCompPtr + (long) newFi * Double.BYTES,
-                            Unsafe.getUnsafe().getDouble(oldCompPtr + (long) fi * Double.BYTES)
+                            Unsafe.getDouble(oldCompPtr + (long) fi * Double.BYTES)
                     );
                 }
             }

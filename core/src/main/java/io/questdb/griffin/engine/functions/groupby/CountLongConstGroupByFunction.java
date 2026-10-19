@@ -61,9 +61,9 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     ) {
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         for (long i = 0; i < rowCount; i++) {
-            long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            long encoded = Unsafe.getLong(batchAddr + (i << 3));
             long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-            Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
+            Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
         }
     }
 

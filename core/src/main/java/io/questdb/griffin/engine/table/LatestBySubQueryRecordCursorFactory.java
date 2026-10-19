@@ -25,9 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -48,11 +50,10 @@ import org.jetbrains.annotations.Nullable;
 
 public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     private final int columnIndex;
-    private final Function filter;
     private final Record.CharSequenceFunction func;
     private final boolean indexed;
-    private final RecordCursorFactory recordCursorFactory;
-    private final IntHashSet symbolKeys;
+    private Function filter;
+    private RecordCursorFactory recordCursorFactory;
 
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -69,26 +70,24 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
-            // this instance is shared between factory and cursor
-            // factory will be resolving symbols for cursor and if successful
-            // symbol keys will be added to this hash set
-            symbolKeys = new IntHashSet();
             this.indexed = indexed;
-            PageFrameRecordCursor cursor;
+            final IntHashSet symbolKeys;
+            final PageFrameRecordCursor cursor;
             if (indexed) {
+                symbolKeys = new IntHashSet();
                 if (filter != null) {
-                    cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
+                    cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, filter);
                 } else {
-                    cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, null, rows);
+                    cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, rows);
                 }
             } else {
-                if (filter != null) {
-                    cursor = new LatestByValuesFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
-                } else {
-                    cursor = new LatestByValuesRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null);
-                }
+                final LatestByValueListRecordCursor valueListCursor = new LatestByValueListRecordCursor(
+                        configuration, metadata, columnIndex, filter, configuration.getDefaultSymbolCapacity(), true, false
+                );
+                symbolKeys = valueListCursor.getIncludedSymbolKeys();
+                cursor = valueListCursor;
             }
-            this.cursor = new PageFrameRecordCursorWrapper(cursor);
+            this.cursor = new PageFrameRecordCursorWrapper(cursor, symbolKeys);
             this.recordCursorFactory = recordCursorFactory;
             this.filter = filter;
             this.columnIndex = columnIndex;
@@ -107,9 +106,25 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestBySubQuery");
+        LatestByCompiledFilter.addJitAttr(sink, filter);
         sink.child("Subquery", recordCursorFactory);
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
+    }
+
+    // Holds the LATEST BY key sub-query in a private field and does not expose it through
+    // getBaseFactory() - the base is the partition frame scan, not the sub-query - so the
+    // external-source property is propagated explicitly. Without this, a mat-view predicate
+    // sub-query of the shape "WHERE key IN (SELECT ... FROM read_parquet(...)) LATEST ON ..."
+    // is accepted and the view then refreshes against an untracked external file.
+    @Override
+    public boolean usesExternalDataSource() {
+        return recordCursorFactory != null && recordCursorFactory.usesExternalDataSource();
     }
 
     @Override
@@ -119,18 +134,32 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(recordCursorFactory);
-        Misc.free(filter);
-        Misc.free(cursor);
+        final PageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
+        this.recordCursorFactory = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, recordCursorFactory);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class PageFrameRecordCursorWrapper implements PageFrameRecordCursor {
         private final PageFrameRecordCursor delegate;
+        private final IntHashSet symbolKeys;
         private RecordCursor baseCursor;
 
-        private PageFrameRecordCursorWrapper(PageFrameRecordCursor delegate) {
+        private PageFrameRecordCursorWrapper(PageFrameRecordCursor delegate, IntHashSet symbolKeys) {
             this.delegate = delegate;
+            this.symbolKeys = symbolKeys;
         }
 
         @Override
@@ -145,8 +174,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
 
         @Override
         public void close() {
-            baseCursor = Misc.free(baseCursor);
-            delegate.close();
+            final RecordCursor baseCursor = this.baseCursor;
+            this.baseCursor = null;
+            Throwable failure = Misc.freeBestEffort(null, baseCursor);
+            failure = Misc.freeBestEffort(failure, delegate);
+            CairoException.rethrowCleanupFailure(failure);
         }
 
         @Override
@@ -209,17 +241,22 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            delegate.setParquetDecodeHint(hint);
+        }
+
+        @Override
         public long size() {
             return delegate.size();
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (baseCursor != null) {
                 buildSymbolKeys();
                 baseCursor = Misc.free(baseCursor);
             }
-            delegate.skipRows(rowCount);
+            delegate.skipRows(rowCount, maxRowsAfterSkip);
         }
 
         @Override
@@ -239,7 +276,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             while (baseCursor.hasNext()) {
                 int symbolKey = symbolTable.keyOf(func.get(record, 0, sink));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(TableUtils.toIndexKey(symbolKey));
+                    symbolKeys.add(indexed ? TableUtils.toIndexKey(symbolKey) : symbolKey);
                 }
             }
         }

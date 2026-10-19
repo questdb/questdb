@@ -116,6 +116,8 @@ public class MetricsTest {
         metrics.scrapeIntoPrometheus(sink);
 
         final String encoded = sink.toString();
+        TestUtils.assertContains(encoded, "cpu_box_percent");
+        TestUtils.assertContains(encoded, "cpu_questdb_percent");
         TestUtils.assertContains(encoded, "jvm_major_gc_count");
         TestUtils.assertContains(encoded, "jvm_major_gc_time");
         TestUtils.assertContains(encoded, "jvm_minor_gc_count");
@@ -132,6 +134,21 @@ public class MetricsTest {
         Assert.assertTrue("Metrics with non-unique names: " + notUniqueMetrics, notUniqueMetrics.isEmpty());
     }
 
+    @Test
+    public void testScrapeExposure() {
+        final Metrics disabled = new Metrics(false, new NullMetricsRegistry());
+        Assert.assertFalse(disabled.isEnabled());
+        Assert.assertFalse(disabled.isScrapeEnabled());
+
+        final Metrics enabled = new Metrics(true, new NullMetricsRegistry());
+        Assert.assertTrue(enabled.isEnabled());
+        Assert.assertTrue(enabled.isScrapeEnabled());
+
+        final Metrics persistOnly = new Metrics(true, false, new NullMetricsRegistry());
+        Assert.assertTrue(persistOnly.isEnabled());
+        Assert.assertFalse(persistOnly.isScrapeEnabled());
+    }
+
     private static class SpyingMetricsRegistry implements MetricsRegistry {
         private final MetricsRegistry delegate = new NullMetricsRegistry();
         private final Set<CharSequence> labelNames = new HashSet<>();
@@ -142,6 +159,11 @@ public class MetricsTest {
         @Override
         public void addTarget(Target target) {
             delegate.addTarget(target);
+        }
+
+        @Override
+        public void removeTarget(Target target) {
+            delegate.removeTarget(target);
         }
 
         public Set<CharSequence> getLabelNames() {

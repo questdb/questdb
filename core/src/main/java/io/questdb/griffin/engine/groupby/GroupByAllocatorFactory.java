@@ -32,9 +32,22 @@ public class GroupByAllocatorFactory {
     }
 
     public static GroupByAllocator createAllocator(CairoConfiguration configuration) {
+        return createAllocator(configuration, true);
+    }
+
+    /**
+     * Creates a GROUP BY allocator. When {@code openOnInit} is {@code false},
+     * the allocator's chunk-index backing is not allocated at construction
+     * time; the first {@link GroupByAllocator#reopen()} allocates it on the
+     * global counter (the index is never charged to the per-query tracker), so
+     * the per-query counter stays clean across cursors.
+     */
+    public static GroupByAllocator createAllocator(CairoConfiguration configuration, boolean openOnInit) {
         return new FastGroupByAllocator(
                 configuration.getGroupByAllocatorDefaultChunkSize(),
-                configuration.getGroupByAllocatorMaxChunkSize()
+                configuration.getGroupByAllocatorMaxChunkSize(),
+                true,
+                openOnInit
         );
     }
 }

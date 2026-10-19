@@ -48,6 +48,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     );
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public MaxIntVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         super();
         this.columnIndex = columnIndex;
@@ -106,7 +107,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, valueOffset), Integer.MIN_VALUE);
+        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, valueOffset), Integer.MIN_VALUE);
     }
 
     @Override

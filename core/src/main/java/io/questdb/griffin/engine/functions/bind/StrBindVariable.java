@@ -95,6 +95,12 @@ public class StrBindVariable extends StrFunction implements Mutable {
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        // the bound value is set before execution starts and is immutable while it runs
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

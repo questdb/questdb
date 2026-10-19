@@ -59,9 +59,36 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
+    /**
+     * Parses a single expression text into an {@link ExpressionNode} tree without
+     * running it through the optimiser. Useful when callers persist expression
+     * fragments and need to recompile them later against a known
+     * {@link io.questdb.cairo.sql.RecordMetadata}.
+     */
+    ExpressionNode parseExpression(CharSequence expression) throws SqlException;
+
+    /**
+     * Generates the plan of a query model. When a table the plan reads is out of date, this
+     * method recompiles the model from this compiler's own SQL text and tries again, so the model
+     * must come from the statement this compiler is compiling. For any other model, use
+     * {@link #generateSelectWithoutRetries}.
+     */
     RecordCursorFactory generateSelectWithRetries(
             @Transient IQueryModel queryModel,
             @Nullable @Transient InsertModel insertModel,
+            @Transient SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException;
+
+    /**
+     * Generates the plan of a query model once. When a table the plan reads is out of date, this
+     * method throws {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} and leaves the
+     * retry to the caller. Use it for a model this compiler did not parse, such as a sub-query
+     * another compiler's optimiser produced: {@link #generateSelectWithRetries} would replace that
+     * model with whatever statement this compiler parsed last.
+     */
+    RecordCursorFactory generateSelectWithoutRetries(
+            @Transient IQueryModel queryModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException;

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursor;
@@ -34,11 +35,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final EncodedSortRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
+    private RecordCursorFactory base;
+    private EncodedSortRecordCursor cursor;
 
     public EncodedSortRecordCursorFactory(
             CairoConfiguration configuration,
@@ -104,7 +106,12 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final EncodedSortRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

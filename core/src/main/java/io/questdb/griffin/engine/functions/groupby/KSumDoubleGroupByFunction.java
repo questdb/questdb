@@ -33,6 +33,8 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -44,6 +46,48 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     public KSumDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            double batchSum = Vect.sumDoubleKahan(dataAddr, rowCount);
+            if (!Numbers.isFinite(batchSum)) {
+                // Native sumDoubleKahan only filters NaN. A single +/-Inf row poisons the
+                // whole batch sum (sum stays Inf or collapses to NaN when +Inf and -Inf cancel).
+                // computeNext skips both NaN and Inf via Numbers.isFinite; re-sum in Java to
+                // match that semantics for the batched path.
+                batchSum = 0;
+                double bc = 0;
+                boolean hasFinite = false;
+                for (int i = 0; i < rowCount; i++) {
+                    final double v = Unsafe.getDouble(dataAddr + ((long) i << 3));
+                    if (Numbers.isFinite(v)) {
+                        final double y = v - bc;
+                        final double t = batchSum + y;
+                        bc = (t - batchSum) - y;
+                        batchSum = t;
+                        hasFinite = true;
+                    }
+                }
+                if (!hasFinite) {
+                    return;
+                }
+            }
+            final long existingCount = mapValue.getLong(valueIndex + 2);
+            if (existingCount > 0) {
+                final double sum = mapValue.getDouble(valueIndex);
+                final double c = mapValue.getDouble(valueIndex + 1);
+                final double y = batchSum - c;
+                final double t = sum + y;
+                mapValue.putDouble(valueIndex, t);
+                mapValue.putDouble(valueIndex + 1, t - sum - y);
+            } else {
+                mapValue.putDouble(valueIndex, batchSum);
+                mapValue.putDouble(valueIndex + 1, 0.0);
+            }
+            mapValue.addLong(valueIndex + 2, 1);
+        }
     }
 
     @Override
@@ -148,6 +192,11 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putLong(valueIndex + 2, 0);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

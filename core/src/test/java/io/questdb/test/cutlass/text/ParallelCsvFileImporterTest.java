@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
@@ -34,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
@@ -42,8 +42,8 @@ import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
-import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
+import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.cutlass.text.TextImportException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -59,13 +59,17 @@ import io.questdb.std.IOURingFacadeImpl;
 import io.questdb.std.IOURingImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -131,7 +135,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesForFileWithLongLines() throws Exception {
         executeWithPool(
-                3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                3, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 90, 2, 185, 3, 256, 5), 3)
         );
     }
@@ -139,7 +143,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesForFileWithNoQuotes() throws Exception {
         executeWithPool(
-                3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                3, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-import.csv", list(0, 0, 4565, 44, 9087, 87, 13612, 130), 3)
         );
     }
@@ -147,7 +151,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesInFileWithOneLongLine() throws Exception {
         executeWithPool(
-                2, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                2, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 0, 252, 2), 2)
         );
     }
@@ -155,7 +159,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesInFileWithOneLongLineWithManyWorkers() throws Exception {
         executeWithPool(
-                7, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                7, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 0, 252, 2), 7)
         );
     }
@@ -163,7 +167,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesInLargerCsv() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                4, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-quotes-big.csv", list(0, 0, 16797, 254, 33514, 503, 50216, 752, 66923, 1002), 4)
         );
     }
@@ -171,7 +175,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesWith1WorkerForFileWithLongLines() throws Exception {
         executeWithPool(
-                1, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                1, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 256, 0), 1)
         );
     }
@@ -232,24 +236,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tdec\n" +
-                                    "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t1.000\n" +
-                                    "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t2.300\n" +
-                                    "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t12.340\n" +
-                                    "false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t123.400\n" +
-                                    "false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t123.400\n" +
-                                    "false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t123.400\n" +
-                                    "false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t123.400\n" +
-                                    "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t123.400\n" +
-                                    "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t123.400\n" +
-                                    "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t123.400\n",
-                            "select * from alltypes",
-                            "tstmp",
-                            true,
-                            false,
-                            true
-                    );
+                    assertQuery("select * from alltypes")
+                            .noLeakCheck()
+                            .timestamp("tstmp")
+                            .sizeMayVary()
+                            .returns("""
+                                    bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tdec
+                                    false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t1.000
+                                    false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t2.300
+                                    false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t12.340
+                                    false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t123.400
+                                    false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t123.400
+                                    false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t123.400
+                                    false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t123.400
+                                    true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t123.400
+                                    false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t123.400
+                                    true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t123.400
+                                    """);
                 }
         );
     }
@@ -285,20 +288,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tdec\n" +
-                                    "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t1.000\n" +
-                                    "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t2.300\n" +
-                                    "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t12.340\n" +
-                                    "false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t123.400\n" +
-                                    "false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t123.400\n" +
-                                    "false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t123.400\n" +
-                                    "false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t123.400\n" +
-                                    "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t123.400\n" +
-                                    "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t123.400\n" +
-                                    "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t123.400\n",
-                            "select * from alltypes", "tstmp", true, false, true
-                    );
+                    assertQuery("select * from alltypes")
+                            .noLeakCheck()
+                            .timestamp("tstmp")
+                            .sizeMayVary()
+                            .returns("""
+                                    bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tdec
+                                    false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t1.000
+                                    false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t2.300
+                                    false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t12.340
+                                    false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t123.400
+                                    false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t123.400
+                                    false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t123.400
+                                    false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t123.400
+                                    true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t123.400
+                                    false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t123.400
+                                    true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t123.400
+                                    """);
                 }
         );
     }
@@ -315,10 +321,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
 
                         refreshTablesInBaseEngine();
-                        assertQueryNoLeakCheck(
-                                "count\n1000\n", "select count(*) from t",
-                                null, false, false, true
-                        );
+                        assertQuery("select count(*) from t")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .sizeMayVary()
+                                .returns("count\n1000\n");
 
                         String[] foundFiles = new File(inputWorkRoot).list();
                         Assert.assertTrue(foundFiles == null || foundFiles.length == 0);
@@ -337,7 +344,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 8, ff, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, ff, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab4", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -353,21 +360,22 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportCsvFromFileWithBadColumnNamesInHeaderIntoNewTableFiltersOutBadCharacters() throws Exception {
         executeWithPool(
-                4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(10);
                         importer.of("tab24", "test-badheadernames.csv", 1, PartitionBy.MONTH, (byte) ',', "Ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select * from tab24")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .sizeMayVary()
+                            .returns("""
                                     Line\tTs\tD\tDescRipTION
                                     line1\t1970-01-02T00:00:00.000000Z\t0.490933692472\tdesc 1
                                     line2\t1970-01-03T00:00:00.000000Z\t0.105484410855\tdesc 2
-                                    """,
-                            "select * from tab24", "ts", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -384,8 +392,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select line, ts, d, description from t limit -10")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .sizeMayVary()
+                            .returns("""
                                     line\tts\td\tdescription
                                     line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991
                                     line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
@@ -397,10 +408,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998
                                     line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
                                     line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
-                                    """,
-                            "select line, ts, d, description from t limit -10",
-                            "ts", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -417,8 +425,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select line, ts, d, description from tab1 limit -10")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .sizeMayVary()
+                            .returns("""
                                     line\tts\td\tdescription
                                     line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991
                                     line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
@@ -430,10 +441,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998
                                     line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
                                     line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
-                                    """,
-                            "select line, ts, d, description from tab1 limit -10",
-                            "ts", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -452,8 +460,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select line, ts, d, description from " + tableName + " limit -10")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .sizeMayVary()
+                            .returns("""
                                     line\tts\td\tdescription
                                     line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991
                                     line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
@@ -465,10 +476,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998
                                     line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
                                     line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
-                                    """,
-                            "select line, ts, d, description from " + tableName + " limit -10",
-                            "ts", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -489,7 +497,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     final String tableName = "tab27";
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(10);
@@ -497,16 +505,18 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQuery(
-                            """
+                    assertQuery("select count(*) cnt from " + tableName)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
                                     cnt
                                     1000
-                                    """,
-                            "select count(*) cnt from " + tableName,
-                            null, false, true
-                    );
-                    assertQueryNoLeakCheck(
-                            """
+                                    """);
+                    assertQuery("select * from " + tableName + " limit -10")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .sizeMayVary()
+                            .returns("""
                                     line\tts\td\tdescription
                                     line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991
                                     line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
@@ -518,10 +528,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998
                                     line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
                                     line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
-                                    """,
-                            "select * from " + tableName + " limit -10",
-                            "ts", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -552,16 +559,16 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select * from reading")
+                            .noLeakCheck()
+                            .timestamp("readingDate")
+                            .sizeMayVary()
+                            .returns("""
                                     readingTypeId\tvalue\treadingDate
                                     electricity.gbp.saving\t3600.0\t2020-01-01T00:00:00.000001Z
                                     electricity.gbp.saving\t3600.0\t2020-01-01T00:00:00.000002Z
                                     electricity.power.hour\t0.101\t2020-01-01T00:00:00.000003Z
-                                    """,
-                            "select * from reading",
-                            "readingDate", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -579,8 +586,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select * from tab2 limit -10")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .sizeMayVary()
+                            .returns("""
                                     other\ttxt\tline\tts\td
                                     \tsome text\r
                                     spanning two lines\tline1\t2022-05-10T11:52:00.000000Z\t111.11
@@ -591,10 +601,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     many \r
                                     lines\tline2\t2022-05-11T11:52:00.000000Z\t222.22
                                     \tsingle line text without quotes\tline3\t2022-05-11T11:52:00.001000Z\t333.33
-                                    """,
-                            "select * from tab2 limit -10",
-                            "ts", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -603,7 +610,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportCsvWithTimestampNotMatchingInputFormatFails() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab3", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -618,7 +625,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportEmptyCsv() throws Exception {
         executeWithPool(
-                4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(10);
                         importer.of(
@@ -655,7 +662,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, brokenFf, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab5", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -690,7 +697,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, brokenFf, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab7", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -827,7 +834,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, brokenFf, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab6", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -1102,8 +1109,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQuery(
-                            """
+                    assertQuery("select * from tab38")
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
                                     line\tts\td\ttxt
                                     line1\t2022-05-10T11:52:00.000000Z\t\tsome text\r
                                     spanning two lines
@@ -1114,9 +1123,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     many \r
                                     lines
                                     line3\t2022-05-11T11:52:00.001000Z\t\tsingle line text without quotes
-                                    """,
-                            "select * from tab38", "ts", true, true
-                    );
+                                    """);
                 }
         );
     }
@@ -1133,14 +1140,14 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select * from tab")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .sizeMayVary()
+                            .returns("""
                                     ts\tdescription
                                     2022-05-11T11:52:00.000000Z\tb
-                                    """,
-                            "select * from tab",
-                            "ts", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -1158,10 +1165,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            "count\n3\n",
-                            "select count() from tab62", null, false, false, true
-                    );
+                    assertQuery("select count() from tab62")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("count\n3\n");
                 }
         );
     }
@@ -1179,10 +1187,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            "count\n3\n",
-                            "select count() from tab44", null, false, false, true
-                    );
+                    assertQuery("select count() from tab44")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("count\n3\n");
                 }
         );
     }
@@ -1199,10 +1208,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            "count\n1000\n",
-                            "select count(*) from tab51", null, false, false, true
-                    );
+                    assertQuery("select count(*) from tab51")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("count\n1000\n");
                 }
         );
     }
@@ -1236,7 +1246,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderButPartitionByNotSpecifiedAndTargetTableDoesntExist() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab49", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1267,7 +1277,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderButPartitionBySetToNone() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab48", "test-quotes-big.csv", 1, PartitionBy.NONE, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1327,10 +1337,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            "count\ticount\tlcount\n1000\t1000\t1000\n",
-                            "select count(*), sum( case when i is null then 1 else 0 end) icount, sum( case when l is null then 1 else 0 end) lcount from tab58", null, false, false, true
-                    );
+                    assertQuery("select count(*), sum( case when i is null then 1 else 0 end) icount, sum( case when l is null then 1 else 0 end) lcount from tab58")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("count\ticount\tlcount\n1000\t1000\t1000\n");
                 }
         );
     }
@@ -1338,7 +1349,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test//it fails even though ts column name and format are specified
     public void testImportFileWithHeaderIntoNewTableFailsBecauseTsColCantBeFoundInFileHeader() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab56", "test-quotes-oneline.csv", 1, PartitionBy.DAY, (byte) ',', "ts2", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1353,16 +1364,17 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderWhenTargetTableDoesntExistSuccess() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab50", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
 
                         refreshTablesInBaseEngine();
-                        assertQueryNoLeakCheck(
-                                "count\n1000\n",
-                                "select count(*) from tab50", null, false, false, true
-                        );
+                        assertQuery("select count(*) from tab50")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .sizeMayVary()
+                                .returns("count\n1000\n");
                     }
                 }
         );
@@ -1391,19 +1403,21 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithIncompleteHeaderWithForceHeaderIntoNewTable() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab61", "test-header-missing.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
 
                         refreshTablesInBaseEngine();
-                        assertQueryNoLeakCheck(
-                                """
+                        assertQuery("select * from tab61")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .sizeMayVary()
+                                .returns("""
                                         ts\tf3\tf3_\tf3__\tf4
                                         1972-09-28T00:00:00.000000Z\ta1\tb1\ta1\te1
                                         1972-09-28T00:00:00.000000Z\ta2\tb2\ta2\te2
-                                        """, "select * from tab61", "ts", true, false, true
-                        );
+                                        """);
                     }
                 }
         );
@@ -1440,7 +1454,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck("count\n3\n", "select count(*) from tab57", null, false, false, true);
+                    assertQuery("select count(*) from tab57")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("count\n3\n");
                 }
         );
     }
@@ -1448,7 +1466,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithNoHeaderIntoNewTableFailsBecauseTsColCantBeFoundInFileHeader() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab54", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1464,13 +1482,17 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     //when there is no header and header is not forced then target tabel columns get following names : f0, f1, ..., fN
     public void testImportFileWithNoHeaderIntoNewTableSucceedsBecauseSyntheticColumnNameIsUsed() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab55", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "f1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck("count\n3\n", "select count(*) from tab55", null, false, false, true);
+                    assertQuery("select count(*) from tab55")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("count\n3\n");
                 }
         );
     }
@@ -1535,28 +1557,30 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         int columnIndex = metadata.getColumnIndex("sym");
                         Assert.assertTrue("Column sym must exist", columnIndex >= 0);
 
-                        BitmapIndexReader indexReader = reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD);
+                        IndexReader indexReader = reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
                         Assert.assertNotNull(indexReader);
                         Assert.assertTrue(indexReader.getKeyCount() > 0);
                         Assert.assertTrue(indexReader.getValueMemorySize() > 0);
 
                         // expect only the very first row in zero partition to have 'sy1' symbol value
                         StaticSymbolTable symbolTable = reader.getSymbolTable(columnIndex);
-                        RowCursor ic = indexReader.getCursor(true, TableUtils.toIndexKey(symbolTable.keyOf("sy1")), 0, 1);
+                        RowCursor ic = indexReader.getCursor(TableUtils.toIndexKey(symbolTable.keyOf("sy1")), 0, 1);
                         Assert.assertTrue(ic.hasNext());
                         Assert.assertEquals(0, ic.next());
                         Assert.assertFalse(ic.hasNext());
+                        Misc.free(ic);
                     }
 
                     // run a query that uses the index
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select * from alltypes where sym in ('sy1','sy10')")
+                            .noLeakCheck()
+                            .timestamp("tstmp")
+                            .sizeMayVary()
+                            .returns("""
                                     bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
                                     false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
                                     true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d
-                                    """,
-                            "select * from alltypes where sym in ('sy1','sy10')", "tstmp", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -1582,7 +1606,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportIsCancelled() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab43", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true, () -> true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1597,7 +1621,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportNoRowsCsv() throws Exception {
         executeWithPool(
-                4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(10);
                         importer.of(
@@ -1702,8 +1726,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         }
 
         refreshTablesInBaseEngine();
-        assertQueryNoLeakCheck(
-                """
+        assertQuery("select * from timestamp_test")
+                .noLeakCheck()
+                .timestamp("ts_ns")
+                .sizeMayVary()
+                .returns("""
                         id\tts\tts_ns
                         1\t2025-08-05T00:00:00.000001000Z\t2025-08-05T00:00:00.000000Z
                         2\t2025-08-06T00:00:00.000002000Z\t2025-08-06T00:00:00.000000Z
@@ -1714,13 +1741,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         7\t2025-08-11T00:00:00.000007000Z\t2025-08-11T00:00:00.000000Z
                         8\t2025-08-12T00:00:00.000008000Z\t2025-08-12T00:00:00.000000Z
                         9\t2025-08-13T00:00:00.000009000Z\t2025-08-13T00:00:00.000000Z
-                        """,
-                "select * from timestamp_test",
-                "ts_ns",
-                true,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -1781,7 +1802,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                2, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     final String tableName = "tab29";
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
                         importer.setMinChunkSize(10);
@@ -1820,7 +1841,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                2, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     final String tableName = "tab30";
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
                         importer.setMinChunkSize(10);
@@ -1894,7 +1915,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                2, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     final String tableName = "tab28";
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
                         importer.setMinChunkSize(10);
@@ -1902,8 +1923,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select * from " + tableName + " limit -10")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .sizeMayVary()
+                            .returns("""
                                     line\tts\td\tdescription
                                     line10\t1972-09-18T00:00:00.000000Z\t0.928671996857\tdesc 10
                                     line9\t1972-09-19T00:00:00.000000Z\t0.123847438134\tdesc 9
@@ -1915,10 +1939,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     line3\t1972-09-25T00:00:00.000000Z\t0.525414887561\tdesc 3
                                     line2\t1972-09-26T00:00:00.000000Z\t0.105484410855\tdesc 2
                                     line1\t1972-09-27T00:00:00.000000Z\t0.490933692472\tdesc 1
-                                    """,
-                            "select * from " + tableName + " limit -10",
-                            "ts", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -1943,8 +1964,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("x")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .sizeMayVary()
+                            .returns("""
                                     str\tts
                                     foobar\t1970-01-02T00:00:00.000000Z
                                     foobar foobar foobar foobar\t1970-01-02T00:00:00.000000Z
@@ -1952,13 +1976,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     "foobar" foobar foobar foobar\t1970-01-02T00:00:00.000000Z
                                     foobar""\t1970-01-02T00:00:00.000000Z
                                     фубар "фубар" фубар\t1970-01-02T00:00:00.000000Z
-                                    """,
-                            "x",
-                            "ts",
-                            true,
-                            false,
-                            true
-                    );
+                                    """);
                 }
         );
     }
@@ -1983,7 +2001,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportWithSkipAllAtomicityFailsWhenTimestampCantBeParsedAtIndexingPhase() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab22", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true, null, Atomicity.SKIP_ALL);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -2025,10 +2043,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            "cnt\n13\n",
-                            "select count(*) cnt from alltypes", null, false, false, true
-                    );
+                    assertQuery("select count(*) cnt from alltypes")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("cnt\n13\n");
                 }
         );
     }
@@ -2048,9 +2067,57 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck("cnt\n0\n", "select count(*) cnt from tab23", null, false, false, true);
+                    assertQuery("select count(*) cnt from tab23")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("cnt\n0\n");
                 }
         );
+    }
+
+    @Test
+    public void testImportWithSkipAllAtomicityFailsOnOutOfBoundsNanosTimestamp() throws Exception {
+        // The abort twin of testImportWithSkipRowAtomicitySkipsOutOfBoundsNanosTimestamp: under
+        // SKIP_ALL the out-of-range row fails the import the way an unparsable timestamp does,
+        // and nothing lands in the table.
+        final String fileName = writeNanosBoundsCsv();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ALL);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+                Assert.fail("import is expected to fail under SKIP_ALL");
+            } catch (TextImportException e) {
+                TestUtils.assertContains(
+                        e.getMessage(),
+                        "import failed [phase=indexing, msg=`designated timestamp out of bounds [line=1, column=1, "
+                                + "msg=designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed]`]"
+                );
+            }
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT id, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("id\tts\n");
+        });
+    }
+
+    @Test
+    public void testImportWithSkipColumnAtomicitySkipsOutOfBoundsNanosTimestamp() throws Exception {
+        // SKIP_COLUMN cannot skip the designated timestamp, so it drops the row like SKIP_ROW.
+        assertSkipsOutOfBoundsNanosTimestampRow(Atomicity.SKIP_COL);
+    }
+
+    @Test
+    public void testImportWithSkipRowAtomicitySkipsOutOfBoundsNanosTimestamp() throws Exception {
+        // A numeric designated timestamp bypasses the date parser's year check, so parsing does
+        // not refuse a value beyond 2261-12-31. The indexing phase checks the parsed value against
+        // the column's bounds and applies the atomicity policy to it, where the writer's own
+        // refusal in the partition import phase used to fail the whole import. SKIP_ROW drops the
+        // row and imports its neighbours.
+        assertSkipsOutOfBoundsNanosTimestampRow(Atomicity.SKIP_ROW);
     }
 
     @Test
@@ -2084,18 +2151,21 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck(
-                            """
-                                    bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
-                                    false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
-                                    false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d
-                                    false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
-                                    false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
-                                    true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d
-                                    """, //date format discovery is flawed
-                            //"false\t31\t-150\tI\t14\t14\t1970-01-14T00:00:00.000Z\t1970-01-15T00:00:00.000000Z\t14.1000\t14.2\ts13\tsy14\t\tu33d\n",//long256 triggers error for bad values
-                            "select * from alltypes", "tstmp", true, false, true
-                    );
+                    assertQuery("select * from alltypes")
+                            .noLeakCheck()
+                            .timestamp("tstmp")
+                            .sizeMayVary()
+                            .returns(
+                                    """
+                                            bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
+                                            false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
+                                            false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d
+                                            false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
+                                            false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
+                                            true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d
+                                            """ //date format discovery is flawed
+                                    //"false\t31\t-150\tI\t14\t14\t1970-01-14T00:00:00.000Z\t1970-01-15T00:00:00.000000Z\t14.1000\t14.2\ts13\tsy14\t\tu33d\n",//long256 triggers error for bad values
+                            );
                 }
         );
     }
@@ -2103,7 +2173,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportWithZeroLengthQueueReturnsError() throws Exception {
         executeWithPool(
-                2, 0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                2, 0, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab16", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -2119,7 +2189,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportWithZeroWorkersFails() throws Exception {
         executeWithPool(
-                0, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                0, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 0)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab15", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -2735,7 +2805,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyProcessingQueueCapacityZero() throws Exception {
         executeWithPool(
-                1, 0, TestFilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                1, 0, TestFilesFacadeImpl.INSTANCE, (CairoEngine _, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     try {
                         executeCopy(compiler, sqlExecutionContext);
                         executeCopy(compiler, sqlExecutionContext);
@@ -2753,6 +2823,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         for (int workers = 2; workers < 3; workers++) {
             for (int queueSize = 1; queueSize < 9; queueSize <<= 1) {
+                // Only the extreme queue sizes (serialized vs. full parallelism) on slow CI runners.
+                if (!Os.isLinux() && queueSize != 1 && queueSize != 8) {
+                    continue;
+                }
                 LOG.info().$("run [no=").$(run++).$(",workers=").$(workers).$(",queueSize=").$(queueSize).I$();
 
                 int workerCount = workers;
@@ -2847,7 +2921,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck("cnt\n0\n", "select count(*) cnt from tab21", null, false, false, true);
+                    assertQuery("select count(*) cnt from tab21")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("cnt\n0\n");
                 }
         );
     }
@@ -2880,7 +2958,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQueryNoLeakCheck("cnt\n0\n", "select count(*) cnt from tab20", null, false, false, true);
+                    assertQuery("select count(*) cnt from tab20")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("cnt\n0\n");
                 }
         );
     }
@@ -2940,6 +3022,55 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 .anyMatch(stackTraceElement -> stackTraceElement.getClassName().endsWith(klass));
     }
 
+    private void assertSkipsOutOfBoundsNanosTimestampRow(int atomicity) throws Exception {
+        final String fileName = writeNanosBoundsCsv();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, atomicity);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT id, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\tts
+                            1\t2261-12-31T23:59:59.999999998Z
+                            3\t2261-12-31T23:59:59.999999999Z
+                            """);
+        });
+    }
+
+    /**
+     * Writes a three-row CSV whose numeric nanosecond timestamps sit one below the nanos ceiling,
+     * one above it, and exactly on it, into a fresh folder, and points {@link #inputRoot} at that
+     * folder. {@link #setUp()} restores the shared CSV root before the next test.
+     * <p>
+     * Callers must invoke this <em>before</em> {@code executeWithPool()}, never inside its
+     * runnable. {@code execute()} hands the pool to {@link CopyImportJob#assignToPool} first, and
+     * {@link io.questdb.mp.WorkerPool#assign} clones the job once per worker right there, each
+     * clone building a {@link io.questdb.cutlass.text.CsvFileIndexer} whose constructor copies
+     * {@code getSqlCopyInputRoot()} into a final field. A root set later reaches only the
+     * importer's own {@code localImportJob}, so the indexing chunk resolves against the shared CSV
+     * root or the fresh folder depending on whether a pool worker or the work-stealing caller
+     * picks it up.
+     */
+    private String writeNanosBoundsCsv() throws Exception {
+        final File dir = temp.newFolder("nanos-bounds" + System.nanoTime());
+        final String fileName = "nanos-bounds.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                "id,ts\n"
+                        + "1," + (CommonUtils.MAX_TIMESTAMP - 1) + "\n"
+                        + "2," + (CommonUtils.MAX_TIMESTAMP + 1) + "\n"
+                        + "3," + CommonUtils.MAX_TIMESTAMP + "\n"
+        );
+        inputRoot = dir.getAbsolutePath();
+        return fileName;
+    }
+
     private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, int workerCount) throws TextImportException {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         try (Path path = new Path().of(inputRoot).slash().concat(fileName);
@@ -2962,7 +3093,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     private void assertColumnNameException(String fileName, boolean forceHeader, String message) throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab60", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, forceHeader);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -3019,7 +3150,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     private void assertIndexChunks(int workerCount, String dateFormat, int partitionBy, String fileName, IndexChunk... expectedChunks) throws Exception {
         executeWithPool(
                 workerCount, 8,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                (CairoEngine _, SqlCompiler _, SqlExecutionContext sqlExecutionContext) ->
                         assertIndexChunksFor(sqlExecutionContext, workerCount, dateFormat, partitionBy, fileName, expectedChunks)
         );
     }
@@ -3064,7 +3195,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         }
     }
 
-    private void importAllIntoExisting(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, TextImportException {
+    private void importAllIntoExisting(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
         execute(
                 compiler,
                 """
@@ -3093,20 +3224,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         }
 
         refreshTablesInBaseEngine();
-        assertQueryNoLeakCheck(
-                "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\tdec\n" +
-                        "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111\t1.230\n" +
-                        "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111\t1.000\n" +
-                        "false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111\t123.000\n" +
-                        "false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111\t123.450\n" +
-                        "false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111\t123.456\n" +
-                        "false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111\t222.220\n" +
-                        "false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111\t333.330\n" +
-                        "true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111\t444.440\n" +
-                        "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111\t555.550\n" +
-                        "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\t666.660\n",
-                "select * from alltypes", "tstmp", true, false, true
-        );
+        assertQuery("select * from alltypes")
+                .noLeakCheck()
+                .timestamp("tstmp")
+                .sizeMayVary()
+                .returns("""
+                        bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\tdec
+                        false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111\t1.230
+                        false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111\t1.000
+                        false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111\t123.000
+                        false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111\t123.450
+                        false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111\t123.456
+                        false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111\t222.220
+                        false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111\t333.330
+                        true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111\t444.440
+                        false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111\t555.550
+                        true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\t666.660
+                        """);
     }
 
     private void importAllIntoNew(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
@@ -3117,49 +3251,45 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         refreshTablesInBaseEngine();
 
-        assertQuery(
-                "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\tdec\n" +
-                        "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111\t1.230\n" +
-                        "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111\t1.000\n" +
-                        "false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111\t123.000\n" +
-                        "false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111\t123.450\n" +
-                        "false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111\t123.456\n" +
-                        "false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111\t222.220\n" +
-                        "false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111\t333.330\n" +
-                        "true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111\t444.440\n" +
-                        "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111\t555.550\n" +
-                        "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\t666.660\n",
-                "select * from alltypes",
-                "tstmp",
-                true,
-                true
-        );
+        assertQuery("select * from alltypes")
+                .timestamp("tstmp")
+                .expectSize()
+                .returns("""
+                        bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\tdec
+                        false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111\t1.230
+                        false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111\t1.000
+                        false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111\t123.000
+                        false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111\t123.450
+                        false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111\t123.456
+                        false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111\t222.220
+                        false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111\t333.330
+                        true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111\t444.440
+                        false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111\t555.550
+                        true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\t666.660
+                        """);
 
-        assertQueryNoLeakCheck(
-                compiler,
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "bo\tBOOLEAN\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "by\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "sh\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "ch\tCHAR\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "in_\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "lo\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "dat\tDATE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "tstmp\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\ttrue\tfalse\n" +
-                        "ft\tDOUBLE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "db\tDOUBLE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "str\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "sym\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "l256\tLONG256\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "ge\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "uid\tUUID\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "dec\tDECIMAL(18,3)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n",
-                "show columns from alltypes",
-                null,
-                sqlExecutionContext,
-                false,
-                false
-        );
+        assertQuery("show columns from alltypes")
+                .noLeakCheck()
+                .withCompiler(compiler)
+                .withContext(sqlExecutionContext)
+                .noRandomAccess()
+                .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                        "bo\tBOOLEAN\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "by\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "sh\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "ch\tCHAR\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "in_\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "lo\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "dat\tDATE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "tstmp\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
+                        "ft\tDOUBLE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "db\tDOUBLE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "str\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "sym\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "l256\tLONG256\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "ge\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "uid\tUUID\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "dec\tDECIMAL(18,3)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n");
     }
 
     private void importAndCleanupTable(
@@ -3188,15 +3318,13 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         );
         importer.process(AllowAllSecurityContext.INSTANCE);
         importer.clear();
-        assertQueryNoLeakCheck(
-                compiler,
-                "cnt\n" + expectedCount + "\n",
-                "select count(*) cnt from " + tableName,
-                null,
-                false,
-                context,
-                true
-        );
+        assertQuery("select count(*) cnt from " + tableName)
+                .noLeakCheck()
+                .withCompiler(compiler)
+                .withContext(context)
+                .noRandomAccess()
+                .expectSize()
+                .returns("cnt\n" + expectedCount + "\n");
         CairoEngine cairoEngine = context.getCairoEngine();
         cairoEngine.execute("drop table " + tableName, context);
     }
@@ -3211,7 +3339,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     private void testImportCsvIntoNewTable0(String tableName) throws Exception {
         executeWithPool(
-                16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                16, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 16)) {
                         importer.setMinChunkSize(10);
                         importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -3219,16 +3347,18 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
 
                     refreshTablesInBaseEngine();
-                    assertQuery(
-                            """
+                    assertQuery("select count(*) cnt from " + tableName)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
                                     cnt
                                     1000
-                                    """,
-                            "select count(*) cnt from " + tableName,
-                            null, false, true
-                    );
-                    assertQueryNoLeakCheck(
-                            """
+                                    """);
+                    assertQuery("select * from " + tableName + " limit -10")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .sizeMayVary()
+                            .returns("""
                                     line\tts\td\tdescription
                                     line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991
                                     line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
@@ -3240,10 +3370,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998
                                     line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
                                     line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
-                                    """,
-                            "select * from " + tableName + " limit -10",
-                            "ts", true, false, true
-                    );
+                                    """);
                 }
         );
     }
@@ -3254,7 +3381,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     private void testImportThrowsException(FilesFacade ff, String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
         executeWithPool(
-                4, 8, ff, (CairoEngine engine1, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext1) -> {
+                4, 8, ff, (CairoEngine engine1, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine1, 4)) {
                         importer.of(tableName, fileName, 1, partitionBy, (byte) ',', tsCol, tsFormat, true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -3266,7 +3393,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         );
     }
 
-    private void testImportTimestampIntoExisting(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampColumn) throws SqlException {
+    private void testImportTimestampIntoExisting(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampColumn) throws Exception {
         execute(
                 compiler,
                 "CREATE TABLE 'timestamp_test' ( \n" +
@@ -3282,8 +3409,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         }
 
         refreshTablesInBaseEngine();
-        assertQueryNoLeakCheck(
-                """
+        assertQuery("select * from timestamp_test")
+                .noLeakCheck()
+                .timestamp(timestampColumn)
+                .sizeMayVary()
+                .returns("""
                         id\tts\tts_ns
                         1\t2025-08-05T00:00:00.000001Z\t2025-08-05T00:00:00.000000001Z
                         2\t2025-08-06T00:00:00.000002Z\t2025-08-06T00:00:00.000000002Z
@@ -3294,16 +3424,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         7\t2025-08-11T00:00:00.000007Z\t2025-08-11T00:00:00.000000007Z
                         8\t2025-08-12T00:00:00.000008Z\t2025-08-12T00:00:00.000000008Z
                         9\t2025-08-13T00:00:00.000009Z\t2025-08-13T00:00:00.000000009Z
-                        """,
-                "select * from timestamp_test",
-                timestampColumn,
-                true,
-                false,
-                true
-        );
+                        """);
     }
 
-    private void testImportTimestampIntoExistingWithTypeMismatch(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampColumn) throws SqlException {
+    private void testImportTimestampIntoExistingWithTypeMismatch(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampColumn) throws Exception {
         execute(
                 compiler,
                 "CREATE TABLE 'timestamp_test' ( \n" +
@@ -3319,8 +3443,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         }
 
         refreshTablesInBaseEngine();
-        assertQueryNoLeakCheck(
-                """
+        assertQuery("select * from timestamp_test")
+                .noLeakCheck()
+                .timestamp(timestampColumn)
+                .sizeMayVary()
+                .returns("""
                         id\tts\tts_ns
                         1\t2025-08-05T00:00:00.000001000Z\t2025-08-05T00:00:00.000000Z
                         2\t2025-08-06T00:00:00.000002000Z\t2025-08-06T00:00:00.000000Z
@@ -3331,13 +3458,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         7\t2025-08-11T00:00:00.000007000Z\t2025-08-11T00:00:00.000000Z
                         8\t2025-08-12T00:00:00.000008000Z\t2025-08-12T00:00:00.000000Z
                         9\t2025-08-13T00:00:00.000009000Z\t2025-08-13T00:00:00.000000Z
-                        """,
-                "select * from timestamp_test",
-                timestampColumn,
-                true,
-                false,
-                true
-        );
+                        """);
     }
 
     private void testImportTimestampTypeToNew(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampColumn) throws Exception {
@@ -3348,8 +3469,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         refreshTablesInBaseEngine();
 
-        assertQuery(
-                """
+        assertQuery("select * from timestamp_test")
+                .timestamp(timestampColumn)
+                .expectSize()
+                .returns("""
                         id\tts\tts_ns
                         1\t2025-08-05T00:00:00.000001Z\t2025-08-05T00:00:00.000000001Z
                         2\t2025-08-06T00:00:00.000002Z\t2025-08-06T00:00:00.000000002Z
@@ -3360,25 +3483,17 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         7\t2025-08-11T00:00:00.000007Z\t2025-08-11T00:00:00.000000007Z
                         8\t2025-08-12T00:00:00.000008Z\t2025-08-12T00:00:00.000000008Z
                         9\t2025-08-13T00:00:00.000009Z\t2025-08-13T00:00:00.000000009Z
-                        """,
-                "select * from timestamp_test",
-                timestampColumn,
-                true,
-                true
-        );
+                        """);
 
-        assertQueryNoLeakCheck(
-                compiler,
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "id\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts") ? "true" : "false") + "\tfalse\n" +
-                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns") ? "true" : "false") + "\tfalse\n",
-                "show columns from timestamp_test",
-                null,
-                sqlExecutionContext,
-                false,
-                false
-        );
+        assertQuery("show columns from timestamp_test")
+                .noLeakCheck()
+                .withCompiler(compiler)
+                .withContext(sqlExecutionContext)
+                .noRandomAccess()
+                .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                        "id\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                        "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts")) + "\tfalse\t\t\n" +
+                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns")) + "\tfalse\t\t\n");
     }
 
     private void testImportTooSmallFileBuffer0(String tableName) throws Exception {
@@ -3386,7 +3501,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         executeWithPool(
                 2,
                 2,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(10);
                         importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -3422,13 +3537,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
             node1.setProperty(PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, daysToKeep);
             new CopyImportRequestJob(engine, 1).close();
-            assertQuery(
-                    "count\n" + daysToKeep + "\n",
-                    "select count() from " + backlogTableName,
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select count() from " + backlogTableName)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + daysToKeep + "\n");
             engine.execute("drop table \"" + backlogTableName + "\"", sqlExecutionContext);
         }
     }
@@ -3575,7 +3687,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         return queueCapacity;
                     }
                 };
-                WorkerPool pool = new WorkerPool(() -> workerCount);
+                WorkerPool pool = new TestWorkerPool(workerCount);
                 execute(pool, runnable, configuration1);
             } else {
                 // we need to create entire engine
@@ -3606,7 +3718,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @FunctionalInterface
-    interface TextImportRunnable {
+    public interface TextImportRunnable {
         void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
     }
 

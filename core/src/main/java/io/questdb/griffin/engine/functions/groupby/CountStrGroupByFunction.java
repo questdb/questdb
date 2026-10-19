@@ -66,11 +66,11 @@ public class CountStrGroupByFunction extends AbstractCountGroupByFunction {
         // fast path, so we go through the record every iteration.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         for (long i = 0; i < rowCount; i++) {
-            final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            final long encoded = Unsafe.getLong(batchAddr + (i << 3));
             record.setRowIndex(Map.decodeBatchRowIndex(encoded));
             if (arg.getStrLen(record) != TableUtils.NULL_LEN) {
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
+                Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
             }
         }
     }

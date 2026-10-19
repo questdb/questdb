@@ -25,27 +25,39 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.tasks.VectorAggregateTask;
+import org.jetbrains.annotations.NotNull;
 
 public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
     private final static Log LOG = LogFactory.getLog(GroupByVectorAggregateJob.class);
+    private final MessageBus messageBus;
 
     public GroupByVectorAggregateJob(MessageBus messageBus) {
         super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSeq());
+        this.messageBus = messageBus;
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        final VectorAggregateEntry entry = queue.get(cursor).entry;
+    public boolean run(@NotNull WorkerContext workerContext) {
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        return dispatcher != null
+                ? !dispatcher.consumeVectorAggregate(workerContext.carrierId())
+                : super.run(workerContext);
+    }
+
+    @Override
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
+        final VectorAggregateTask task = queue.get(cursor);
+        final VectorAggregateEntry entry = task.entry;
+        task.clear();
         try {
-            entry.run(workerId, subSeq, cursor);
+            entry.run(workerContext.carrierId(), subSeq, cursor);
         } catch (Throwable th) {
-            LOG.error().$("vectorized reduce error [workerId=").$(workerId)
-                    .$(", ex=").$(th)
-                    .I$();
+            LOG.error().$("vectorized reduce error [ex=").$(th).I$();
         }
         return true;
     }

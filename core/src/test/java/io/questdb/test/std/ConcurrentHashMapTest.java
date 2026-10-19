@@ -25,13 +25,18 @@
 package io.questdb.test.std;
 
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
 
 import static org.junit.Assert.*;
 
 public class ConcurrentHashMapTest {
+    private static volatile long sink;
 
     @Test
     public void testCaseKey() {
@@ -128,6 +133,39 @@ public class ConcurrentHashMapTest {
     }
 
     @Test
+    public void testComputeIfAbsentReturnsExistingWithoutInvokingMapping() {
+        // Exercises the lock-free first-node fast path: when the key is already present,
+        // computeIfAbsent must return the stored value and must NOT invoke the mapping function.
+        ConcurrentHashMap<String> map = new ConcurrentHashMap<>(4);
+        final int n = 256;
+        for (int i = 0; i < n; i++) {
+            map.put("k" + i, "v" + i);
+        }
+        assertEquals(n, map.size());
+
+        final Function<CharSequence, String> failing = k -> {
+            throw new AssertionError("mapping function must not run for present key: " + k);
+        };
+        // Every present key (whether bin head or further down a chain/tree) resolves without the mapping.
+        // A fresh String instance forces the keyEquals comparison rather than reference equality.
+        for (int i = 0; i < n; i++) {
+            assertEquals("v" + i, map.computeIfAbsent(new StringBuilder("k").append(i).toString(), failing));
+        }
+        assertEquals(n, map.size());
+
+        // The token (BiFunction) overload makes the same guarantee for a present key.
+        assertEquals("v0", map.computeIfAbsent("k0", new Object(), (k, token) -> {
+            throw new AssertionError("mapping function must not run for present key");
+        }));
+        assertEquals(n, map.size());
+
+        // An absent key still falls through to the locked path and inserts.
+        assertEquals("inserted", map.computeIfAbsent("absent", k -> "inserted"));
+        assertTrue(map.containsKey("absent"));
+        assertEquals(n + 1, map.size());
+    }
+
+    @Test
     public void testComputeIfPresent() {
         ConcurrentHashMap<String> map = identityMap();
 
@@ -143,6 +181,103 @@ public class ConcurrentHashMapTest {
         }
     }
 
+    @Test
+    public void testEntryCursorClearAndRebind() {
+        final ConcurrentHashMap.EntryCursor<String> cursor = new ConcurrentHashMap.EntryCursor<>();
+        cursor.of(identityMap());
+        assertTrue(cursor.hasNext());
+        cursor.clear();
+        assertFalse(cursor.hasNext());
+        cursor.toTop();
+        assertFalse(cursor.hasNext());
+
+        final ConcurrentHashMap<String> other = new ConcurrentHashMap<>();
+        other.put("other", "value");
+        cursor.of(other);
+        assertTrue(cursor.hasNext());
+        assertEquals("other", cursor.getKey());
+        assertEquals("value", cursor.getValue());
+        assertFalse(cursor.hasNext());
+    }
+
+    @Test
+    public void testEntryCursorResetDuringResize() {
+        final ConcurrentHashMap<Integer> map = new ConcurrentHashMap<>(1);
+        final ConcurrentHashMap.EntryCursor<Integer> cursor = new ConcurrentHashMap.EntryCursor<>();
+        for (int i = 0; i < 32; i++) {
+            map.put("key" + i, i);
+        }
+        cursor.of(map);
+        for (int i = 32; i < 4096; i++) {
+            map.put("key" + i, i);
+        }
+        assertTrue(cursor.hasNext());
+        cursor.toTop();
+        final Set<CharSequence> keys = new HashSet<>();
+        while (cursor.hasNext()) {
+            assertTrue("duplicate entry after rewind", keys.add(cursor.getKey()));
+            assertEquals(map.get(cursor.getKey()), cursor.getValue());
+        }
+        assertEquals(map.size(), keys.size());
+
+        cursor.toTop();
+        assertTrue(cursor.hasNext());
+        map.clear();
+        map.put("new", -1);
+        cursor.toTop();
+        assertTrue(cursor.hasNext());
+        assertEquals("new", cursor.getKey());
+        assertEquals(Integer.valueOf(-1), cursor.getValue());
+        assertFalse(cursor.hasNext());
+    }
+
+    @Test
+    public void testEntryCursorSteadyStateAllocatesNoJavaHeap() {
+        try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final ConcurrentHashMap<Integer> map = new ConcurrentHashMap<>();
+            for (int i = 0; i < 128; i++) {
+                map.put("key" + i, i);
+            }
+            final ConcurrentHashMap.EntryCursor<Integer> cursor = new ConcurrentHashMap.EntryCursor<>();
+            cursor.of(map);
+            sink = sum(cursor, 20_000);
+            final com.sun.management.ThreadMXBean bean = scope.getBean();
+            long minAllocatedBytes = Long.MAX_VALUE;
+            for (int round = 0; round < 5; round++) {
+                final long before = bean.getCurrentThreadAllocatedBytes();
+                sink = sum(cursor, 10_000);
+                minAllocatedBytes = Math.min(minAllocatedBytes, bean.getCurrentThreadAllocatedBytes() - before);
+            }
+            assertEquals(10_000L * 127 * 128 / 2, sink);
+            assertEquals(0, minAllocatedBytes);
+        }
+    }
+
+    @Test
+    public void testEntryCursorsAreIndependent() {
+        final ConcurrentHashMap<String> map = identityMap();
+        final ConcurrentHashMap.EntryCursor<String> outer = new ConcurrentHashMap.EntryCursor<>();
+        final ConcurrentHashMap.EntryCursor<String> inner = new ConcurrentHashMap.EntryCursor<>();
+        outer.of(map);
+        inner.of(map);
+        for (int pass = 0; pass < 2; pass++) {
+            final Set<String> pairs = new HashSet<>();
+            while (outer.hasNext()) {
+                final CharSequence key = outer.getKey();
+                inner.toTop();
+                while (inner.hasNext()) {
+                    assertSame(key, outer.getKey());
+                    assertEquals(map.get(key), outer.getValue());
+                    assertTrue(pairs.add(key + "/" + inner.getKey()));
+                }
+                map.entrySet().iterator().next();
+                map.values().iterator().next();
+            }
+            assertEquals(map.size() * map.size(), pairs.size());
+            outer.toTop();
+        }
+    }
+
     private static ConcurrentHashMap<String> identityMap() {
         ConcurrentHashMap<String> identity = new ConcurrentHashMap<>(3);
         assertTrue(identity.isEmpty());
@@ -152,5 +287,16 @@ public class ConcurrentHashMapTest {
         assertFalse(identity.isEmpty());
         assertEquals(3, identity.size());
         return identity;
+    }
+
+    private static long sum(ConcurrentHashMap.EntryCursor<Integer> cursor, int scans) {
+        long sum = 0;
+        for (int i = 0; i < scans; i++) {
+            cursor.toTop();
+            while (cursor.hasNext()) {
+                sum += cursor.getValue();
+            }
+        }
+        return sum;
     }
 }

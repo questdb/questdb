@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
@@ -51,6 +52,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class CreateViewOperationImpl implements CreateViewOperation {
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final boolean isAudited;
     private final String sqlText;
     private final ViewDefinition viewDefinition = new ViewDefinition();
     private CreateTableOperationImpl createTableOperation;
@@ -58,10 +60,12 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     public CreateViewOperationImpl(
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
-            @NotNull @Transient LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+            @NotNull @Transient LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            boolean isAudited
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
+        this.isAudited = isAudited;
 
         viewDefinition.getDependencies().putAll(dependencies);
         dependencies.clear();
@@ -180,7 +184,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
         viewDefinition.init(
                 viewToken,
                 Chars.toString(createTableOperation.getSelectText()),
-                0L
+                0L,
+                isAudited
         );
     }
 
@@ -190,8 +195,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     }
 
     @Override
-    public boolean isIndexed(int index) {
-        return false;
+    public byte getIndexType(int index) {
+        return IndexType.NONE;
     }
 
     @Override
@@ -238,8 +243,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
             model.setColumnType(ColumnType.UNDEFINED);
             // Copy index() definitions from create table op, so that we don't lose them.
             TableColumnMetadata augColumnMetadata = augColumnMetadataMap.get(columnName);
-            if (augColumnMetadata != null && augColumnMetadata.isSymbolIndexFlag()) {
-                model.setIndexed(true, qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
+            if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
+                model.setIndexType(augColumnMetadata.getIndexType(), qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
             }
             createColumnModelMap.put(columnName, model);
         }

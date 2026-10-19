@@ -119,7 +119,7 @@ public class Bootstrap {
         }
 
         if (argsMap.get("-n") == null && Os.type != Os.WINDOWS) {
-            Signal.handle(new Signal("HUP"), signal -> { /* suppress HUP signal */ });
+            Signal.handle(new Signal("HUP"), _ -> { /* suppress HUP signal */ });
         }
 
         // before we set up the logger, we need to copy the conf file
@@ -202,7 +202,7 @@ public class Bootstrap {
                             buildInformation,
                             ffOverride,
                             MicrosecondClockImpl.INSTANCE,
-                            (configuration1, engine, freeOnExit) -> DefaultFactoryProvider.INSTANCE,
+                            (_, _, _) -> DefaultFactoryProvider.INSTANCE,
                             true
                     );
                 }
@@ -226,7 +226,7 @@ public class Bootstrap {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
         }
-        if (!config.getMetricsConfiguration().isEnabled()) {
+        if (!config.getMetrics().isEnabled()) {
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
         Unsafe.setRssMemLimit(config.getMemoryConfiguration().getResolvedRamUsageLimitBytes());
@@ -391,7 +391,7 @@ public class Bootstrap {
     }
 
     public CairoEngine newCairoEngine() {
-        return new CairoEngine(getConfiguration().getCairoConfiguration());
+        return new CairoEngine(getConfiguration().getCairoConfiguration(), new io.questdb.cairo.wal.QdbrWalLocker(), true);
     }
 
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
@@ -449,9 +449,7 @@ public class Bootstrap {
         int colWidth = 32;
         // Insert at least one space between columns
         sb.append("  ");
-        for (int i = headerWidth + 2; i < colWidth; i++) {
-            sb.append(' ');
-        }
+        sb.repeat(" ", Math.max(0, colWidth - (headerWidth + 2)));
     }
 
     private static void setPublicVersion(String publicDir, String version) throws IOException {
@@ -556,14 +554,18 @@ public class Bootstrap {
         final String pgReadOnlyHint = pgEnabled && pgReadOnly ? " [read-only]" : "";
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
 
-        log.advisoryW().$("Config:").$();
-        log.advisoryW().$(" - http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
+        log.advisoryW().$("OS: ").$(System.getProperty("os.name")).$(' ').$(System.getProperty("os.version"))
+                .$(", JDK: ").$(System.getProperty("java.vendor")).$(' ').$(System.getProperty("java.version")).$();
+
         boolean enabled = config.getLineTcpReceiverConfiguration().isEnabled();
-        log.advisoryW().$(" - tcp.enabled  : ").$(enabled).$();
-        log.advisoryW().$(" - pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
+        log.advisoryW().$("Config: http.enabled:").$(httpEnabled).$(httpReadOnlyHint)
+                .$(", tcp.enabled:").$(enabled)
+                .$(", pg.enabled:").$(pgEnabled).$(pgReadOnlyHint).$();
         if (cairoConfig != null) {
-            log.advisoryW().$(" - attach partition suffix: ").$(cairoConfig.getAttachPartitionSuffix()).$();
-            log.advisoryW().$(" - open database [").$uuid(cairoConfig.getDatabaseIdLo(), cairoConfig.getDatabaseIdHi()).I$();
+            // evaluate before opening the log chain: config getters may log themselves
+            final long databaseIdLo = cairoConfig.getDatabaseIdLo();
+            final long databaseIdHi = cairoConfig.getDatabaseIdHi();
+            log.advisoryW().$(" - open database [").$uuid(databaseIdLo, databaseIdHi).I$();
             if (cairoConfig.isReadOnlyInstance()) {
                 log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
             }
@@ -599,11 +601,12 @@ public class Bootstrap {
         long ramUsageLimitBytes = ramConfig.getRamUsageLimitBytes();
         long ramUsageLimitPercent = ramConfig.getRamUsageLimitPercent();
         long effectiveRamUsageLimit = ramConfig.getResolvedRamUsageLimitBytes();
+        long totalSystemMemory = ramConfig.getTotalSystemMemory();
         log.advisoryW().$(" - configured ram.usage.limit.bytes: ")
                 .$(ramUsageLimitBytes != 0 ? toSizePretty(ramUsageLimitBytes) : "0 (no limit)").$();
         log.advisoryW().$(" - configured ram.usage.limit.percent: ")
                 .$(ramUsageLimitPercent != 0 ? ramUsageLimitPercent : "0 (no limit)").$();
-        log.advisoryW().$(" - system RAM: ").$(toSizePretty(ramConfig.getTotalSystemMemory())).$();
+        log.advisoryW().$(" - system RAM: ").$(toSizePretty(totalSystemMemory)).$();
         log.advisoryW().$(" - resolved RAM usage limit: ")
                 .$(effectiveRamUsageLimit != 0 ? toSizePretty(effectiveRamUsageLimit) : "0 (no limit)").$();
     }

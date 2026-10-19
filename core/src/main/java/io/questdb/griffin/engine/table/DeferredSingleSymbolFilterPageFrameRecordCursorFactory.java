@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -34,7 +35,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -46,8 +46,8 @@ import org.jetbrains.annotations.NotNull;
 public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends PageFrameRecordCursorFactory {
     private final int symbolColumnIndex;
     private final SingleSymbolFilter symbolFilter;
-    private final Function symbolFunc;
     private boolean convertedToFrame;
+    private Function symbolFunc;
     private int symbolKey;
 
     public DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
@@ -87,7 +87,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
 
             @Override
             public int getSymbolFilterKey() {
-                return symbolKey;
+                return symbolKey != SymbolTable.VALUE_NOT_FOUND ? TableUtils.toIndexKey(symbolKey) : SymbolTable.VALUE_NOT_FOUND;
             }
         };
     }
@@ -95,6 +95,20 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     public SingleSymbolFilter convertToSampleByIndexPageFrameCursorFactory() {
         convertedToFrame = true;
         return symbolFilter;
+    }
+
+    @Override
+    protected void _close() {
+        final Function symbolFunc = this.symbolFunc;
+        this.symbolFunc = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, symbolFunc);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -108,14 +122,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
         PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, order);
         initFwdPageFrameCursor(partitionFrameCursor, executionContext);
         try {
-            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                final CharSequence symbol = symbolFunc.getStrA(null);
-                final StaticSymbolTable symbolMapReader = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex);
-                symbolKey = symbolMapReader.keyOf(symbol);
-                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKey = TableUtils.toIndexKey(symbolKey);
-                }
-            }
+            symbolKey = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex).keyOf(symbolFunc.getStrA(null), symbolKey);
             return fwdPageFrameCursor;
         } catch (Throwable th) {
             Misc.free(fwdPageFrameCursor);

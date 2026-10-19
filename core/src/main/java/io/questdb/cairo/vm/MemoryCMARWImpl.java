@@ -45,6 +45,8 @@ import org.jetbrains.annotations.Nullable;
 // contiguous mapped appendable readable writable
 public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, MemoryCARW, MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
+    // allocates exactly the requested size instead of TableUtils.alignedSize()
+    private final boolean exact;
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
     private boolean closeFdOnClose = true;
@@ -55,15 +57,26 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long minMappedMemorySize = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSizePow2, long size, int memoryTag, int opts) {
+        this(false);
         of(ff, name, extendSegmentSizePow2, size, memoryTag, opts, -1);
     }
 
     public MemoryCMARWImpl() {
+        this(false);
+    }
+
+    public MemoryCMARWImpl(boolean exact) {
+        this.exact = exact;
     }
 
     @Override
     public long addressHi() {
         return lim;
+    }
+
+    @Override
+    public void allocate(long size) {
+        allocateDiskSpace(size);
     }
 
     @Override
@@ -134,6 +147,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         }
         size = 0;
         ff = null;
+        // Drop the append bounds of the mapping we no longer own. checkAndExtend() returns
+        // early for any address at or below lim, so a stale lim lets jumpTo()/appendAddressFor()
+        // hand out pointers into unmapped space instead of failing, and zero() -- which memsets
+        // lim - pageAddress bytes from pageAddress, already nulled above -- would memset lim
+        // bytes starting at address 0. Reset unconditionally: a close on an instance that never
+        // mapped anything must end in the same clean state, same as size and ff.
+        lim = 0;
+        appendAddress = 0;
     }
 
     @Override
@@ -256,6 +277,53 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         appendAddress += bytes;
     }
 
+    public void swapState(MemoryCMARWImpl other) {
+        assert exact == other.exact;
+        long tFd = this.fd;
+        this.fd = other.fd;
+        other.fd = tFd;
+
+        long tPage = this.pageAddress;
+        this.pageAddress = other.pageAddress;
+        other.pageAddress = tPage;
+
+        long tLim = this.lim;
+        this.lim = other.lim;
+        other.lim = tLim;
+
+        long tSize = this.size;
+        this.size = other.size;
+        other.size = tSize;
+
+        long tApp = this.appendAddress;
+        this.appendAddress = other.appendAddress;
+        other.appendAddress = tApp;
+
+        FilesFacade tFf = this.ff;
+        this.ff = other.ff;
+        other.ff = tFf;
+
+        long tSeg = this.extendSegmentMsb;
+        this.extendSegmentMsb = other.extendSegmentMsb;
+        other.extendSegmentMsb = tSeg;
+
+        long tMin = this.minMappedMemorySize;
+        this.minMappedMemorySize = other.minMappedMemorySize;
+        other.minMappedMemorySize = tMin;
+
+        int tMad = this.madviseOpts;
+        this.madviseOpts = other.madviseOpts;
+        other.madviseOpts = tMad;
+
+        int tTag = this.memoryTag;
+        this.memoryTag = other.memoryTag;
+        other.memoryTag = tTag;
+
+        boolean tCof = this.closeFdOnClose;
+        this.closeFdOnClose = other.closeFdOnClose;
+        other.closeFdOnClose = tCof;
+    }
+
     @Override
     public void switchTo(FilesFacade ff, long fd, long extendSegmentSizePow2, long offset, boolean truncate, byte truncateMode) {
         this.ff = ff;
@@ -266,7 +334,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     public void sync(boolean async) {
-        ff.msync(pageAddress, size, async);
+        // An async sync is a no-op: msync(MS_ASYNC) has been a no-op on Linux since 2.6.19, and the
+        // Windows msync ignores the flag and flushes synchronously. The OS writes dirty pages back
+        // on its own.
+        if (!async) {
+            ff.msync(pageAddress, size, false);
+        }
     }
 
     @Override
@@ -327,6 +400,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         Vect.memset(pageAddress, baseLength, 0);
     }
 
+    private void allocateDiskSpace(long size) {
+        if (exact) {
+            TableUtils.allocateDiskSpaceUnaligned(ff, fd, size);
+        } else {
+            TableUtils.allocateDiskSpaceAligned(ff, fd, size);
+        }
+    }
+
     private void checkAndExtend(long address) {
         if (address <= lim) {
             return;
@@ -340,7 +421,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         long offset = appendAddress - pageAddress;
         long previousSize = size;
         assert size > 0;
-        TableUtils.allocateDiskSpace(ff, fd, newSize);
+        allocateDiskSpace(newSize);
         try {
             this.pageAddress = TableUtils.mremap(
                     ff,
@@ -364,7 +445,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     private void map0(FilesFacade ff, long size) {
         try {
-            this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);
+            allocateDiskSpace(size);
+            this.pageAddress = TableUtils.mapRWNoAlloc(ff, fd, size, 0, memoryTag);
             this.lim = pageAddress + size;
             ff.madvise(pageAddress, size, madviseOpts);
         } catch (Throwable e) {
@@ -384,7 +466,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         // file either did not exist when length() was called or empty
         if (size < 1) {
             this.size = minMappedMemorySize;
-            TableUtils.allocateDiskSpace(ff, fd, this.size);
             map0(ff, minMappedMemorySize);
             this.appendAddress = pageAddress;
         } else {

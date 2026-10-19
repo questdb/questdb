@@ -171,6 +171,15 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public RecordCursorFactory generateSelectWithoutRetries(
+                IQueryModel queryModel,
+                SqlExecutionContext executionContext,
+                boolean generateProgressLogger
+        ) throws SqlException {
+            return delegate.generateSelectWithoutRetries(queryModel, executionContext, generateProgressLogger);
+        }
+
+        @Override
         public BytecodeAssembler getAsm() {
             return delegate.getAsm();
         }
@@ -208,6 +217,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public void goodbye() {
             entry = null;
             pool = null;
+        }
+
+        @Override
+        public ExpressionNode parseExpression(CharSequence expression) throws SqlException {
+            return delegate.parseExpression(expression);
         }
 
         @Override

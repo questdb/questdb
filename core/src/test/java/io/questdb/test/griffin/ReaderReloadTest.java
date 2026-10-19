@@ -75,8 +75,14 @@ public class ReaderReloadTest extends AbstractCairoTest {
             TableReader reader1 = engine.getReader(xTableToken);
             Assert.assertNotNull(reader1);
             reader1.close();
-            assertSql("column\n" +
-                    "1\n", "select sum(x) / sum(x) from x");
+            assertQuery("select sum(x) / sum(x) from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            column
+                            1
+                            """);
 
             execute("alter table x add column new_col int");
             execute("insert into x select x, x, timestamp_sequence('2022-02-25T14', 1000000000) ts, x % 2 from long_sequence(100)");

@@ -341,7 +341,7 @@ public class CairoMemoryTest extends AbstractTest {
                     long addr = FF.mmap(mem.getFd(), fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                     try {
                         for (int i = 0; i < count; i++) {
-                            Assert.assertEquals(i, Unsafe.getUnsafe().getLong(addr + i * Long.BYTES));
+                            Assert.assertEquals(i, Unsafe.getLong(addr + i * Long.BYTES));
                         }
                     } finally {
                         FF.munmap(addr, fileSize, MemoryTag.MMAP_DEFAULT);
@@ -354,11 +354,44 @@ public class CairoMemoryTest extends AbstractTest {
                     addr = FF.mmap(mem.getFd(), fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                     try {
                         for (int i = 0; i < fileSize / Long.BYTES; i++) {
-                            Assert.assertEquals(0, Unsafe.getUnsafe().getLong(addr + i * 8L));
+                            Assert.assertEquals(0, Unsafe.getLong(addr + i * 8L));
                         }
                     } finally {
                         FF.munmap(addr, fileSize, MemoryTag.MMAP_DEFAULT);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSmallFileReportsLengthErrnoNotCloseErrno() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path().of(temp.newFile().getAbsolutePath());
+                    Path missing = new Path().of(temp.getRoot().getAbsolutePath()).concat("definitely_missing")
+            ) {
+                FilesFacade ff = new TestFilesFacadeImpl() {
+                    @Override
+                    public boolean close(long fd) {
+                        boolean res = super.close(fd);
+                        Files.closeDetached(-1);
+                        return res;
+                    }
+
+                    @Override
+                    public long length(long fd) {
+                        return Files.length(missing.$());
+                    }
+                };
+
+                try (MemoryCMRImpl mem = new MemoryCMRImpl()) {
+                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not get length");
+                    Assert.assertTrue(Files.isErrnoFileDoesNotExist(e.getErrno()));
+                    Assert.assertTrue(e.isFileCannotRead());
                 }
             }
         });

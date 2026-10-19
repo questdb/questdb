@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryMARW;

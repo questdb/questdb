@@ -26,13 +26,16 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -70,13 +73,14 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * through the slave. Requires the master cursor to support random access.
  */
 public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final HorizonJoinNotKeyedRecordCursor cursor;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final JoinRecordMetadata horizonJoinMetadata;
-    private final RecordCursorFactory masterFactory;
+    private HorizonJoinNotKeyedRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private JoinRecordMetadata horizonJoinMetadata;
+    private RecordCursorFactory masterFactory;
     private final long[] offsets;
-    private final RecordCursorFactory slaveFactory;
-    private final SimpleMapValue value;
+    private RecordCursorFactory slaveFactory;
+    private @Nullable Function slaveFilter;
+    private SimpleMapValue value;
 
     public HorizonJoinNotKeyedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -85,6 +89,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
+            @Nullable Function slaveFilter,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -103,6 +108,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             this.horizonJoinMetadata = horizonJoinMetadata;
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
+            this.slaveFilter = slaveFilter;
             this.offsets = offsets;
             this.groupByFunctions = groupByFunctions;
             this.value = new SimpleMapValue(valueCount);
@@ -135,7 +141,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                     slaveTsScale
             );
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -151,11 +157,15 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            Misc.free(masterCursor);
-            Misc.free(slaveCursor);
+            Misc.free(masterCursor, th);
+            Misc.free(slaveCursor, th);
+            // of() binds the per-query tracker and reopens the allocator and ASOF map before it can throw;
+            // close() frees them under that tracker and resets isOpen so the factory stays reusable.
+            Misc.free(cursor, th);
             throw th;
         }
     }
@@ -173,17 +183,39 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         sink.optAttr("values", groupByFunctions);
         sink.setMetadata(null);
         sink.child(masterFactory);
+        if (slaveFilter != null) {
+            sink.attr("slave filter").val(slaveFilter, slaveFactory);
+        }
         sink.child(slaveFactory);
     }
 
     @Override
     protected void _close() {
-        Misc.free(value);
-        Misc.free(cursor);
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(horizonJoinMetadata);
-        Misc.freeObjList(groupByFunctions);
+        final HorizonJoinNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final JoinRecordMetadata horizonJoinMetadata = this.horizonJoinMetadata;
+        this.horizonJoinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+        final Function slaveFilter = this.slaveFilter;
+        this.slaveFilter = null;
+        final SimpleMapValue value = this.value;
+        this.value = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, value);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
+        if (slaveFactory != masterFactory) {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFilter);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private class HorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
@@ -200,11 +232,13 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         private final long[] offsets;
         private final VirtualRecord recordA;
         private final RecordSink slaveAsOfJoinMapSink;
+        private final @Nullable Function slaveFilter;
         private final HorizonJoinTimeFrameHelper slaveTimeFrameHelper;
         private final SymbolTranslatingRecord symbolTranslatingRecord;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isExhausted;
         private boolean isOpen;
+        private boolean isSlaveFilterInitialized;
         private boolean isValueBuilt;
         private RecordCursor masterCursor;
         private TimeFrameCursor slaveCursor;
@@ -226,6 +260,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                 long masterTsScale,
                 long slaveTsScale
         ) {
+            this.slaveFilter = HorizonJoinNotKeyedRecordCursorFactory.this.slaveFilter;
             this.groupByFunctions = groupByFunctions;
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.offsets = offsets;
@@ -241,29 +276,32 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
 
             Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, groupByFunctions.size());
             this.groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, groupByFunctions);
-            this.groupByAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.groupByAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, groupByAllocator);
 
             if (asOfJoinKeyTypes != null) {
                 SingleColumnType asOfValueTypes = new SingleColumnType(ColumnType.LONG);
-                this.asOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes);
+                this.asOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes, false, false);
             } else {
                 this.asOfJoinMap = null;
             }
 
             if (masterSymbolKeyColumnIndices != null) {
-                this.symbolTranslatingRecord = new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
+                this.symbolTranslatingRecord = new SymbolTranslatingRecord(configuration, masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
             } else {
                 this.symbolTranslatingRecord = null;
             }
 
             this.slaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
+                    configuration,
                     configuration.getSqlAsOfJoinLookAhead(), slaveTsScale,
                     configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold(),
                     configuration.getSqlHorizonJoinBwdScanMinGap(),
-                    configuration.getSqlHorizonJoinBwdScanSwitchFactor()
+                    configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
+                    slaveFilter,
+                    asOfJoinKeyTypes
             );
-            this.isOpen = true;
+            this.isOpen = false;
         }
 
         @Override
@@ -277,16 +315,27 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         @Override
         public void close() {
             if (isOpen) {
-                masterCursor = Misc.free(masterCursor);
-                slaveCursor = Misc.free(slaveCursor);
-                Misc.clearObjList(groupByFunctions);
-                Misc.free(groupByAllocator);
-                if (asOfJoinMap != null) {
-                    asOfJoinMap.close();
-                }
-                Misc.clear(symbolTranslatingRecord);
-                Misc.free(horizonIterator);
                 isOpen = false;
+                Throwable cleanupFailure = null;
+                try {
+                    masterCursor = Misc.free(masterCursor);
+                    slaveCursor = Misc.free(slaveCursor);
+                    Misc.clearObjList(groupByFunctions);
+                    Misc.free(groupByAllocator);
+                    if (asOfJoinMap != null) {
+                        asOfJoinMap.close();
+                    }
+                    Misc.free(slaveTimeFrameHelper);
+                    Misc.free(symbolTranslatingRecord);
+                    Misc.free(horizonIterator);
+                } catch (Throwable th) {
+                    cleanupFailure = th;
+                }
+                if (isSlaveFilterInitialized) {
+                    isSlaveFilterInitialized = false;
+                    cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, slaveFilter);
+                }
+                CairoException.rethrowCleanupFailure(cleanupFailure);
             }
         }
 
@@ -333,8 +382,13 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         }
 
         private void buildValue() {
-            final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
+            // Consult the breaker before iterating, so an empty master still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            final boolean keyedAsOfJoin = asOfJoinMap != null;
 
+            if (slaveFilter != null) {
+                slaveFilter.toTop();
+            }
             slaveTimeFrameHelper.toTop();
             if (keyedAsOfJoin) {
                 asOfJoinMap.clear();
@@ -343,7 +397,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             while (horizonIterator.next()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
@@ -354,9 +408,9 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                 Record masterRecord = masterCursor.getRecordB();
 
                 final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
-                long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
+                long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs, circuitBreaker);
 
-                long matchRowId = Long.MIN_VALUE;
+                long matchRowId;
                 if (keyedAsOfJoin) {
                     Record masterKeyRecord = masterRecord;
                     if (symbolTranslatingRecord != null) {
@@ -369,10 +423,11 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                             masterAsOfJoinMapSink,
                             slaveAsOfJoinMapSink,
                             asOfJoinMap,
-                            symbolTranslatingRecord
+                            symbolTranslatingRecord,
+                            circuitBreaker
                     );
                 } else {
-                    matchRowId = asOfRowId;
+                    matchRowId = slaveTimeFrameHelper.findNotKeyedAsOfMatch(asOfRowId, circuitBreaker);
                 }
 
                 Record matchedSlaveRecord = null;
@@ -395,15 +450,19 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                groupByAllocator.setMemoryTracker(executionContext.getMemoryTracker());
                 groupByAllocator.reopen();
                 if (asOfJoinMap != null) {
+                    asOfJoinMap.setMemoryTracker(executionContext.getMemoryTracker());
                     asOfJoinMap.reopen();
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
-            slaveTimeFrameHelper.of(slaveCursor);
+            if (slaveFilter != null) {
+                isSlaveFilterInitialized = true;
+                slaveFilter.init(slaveCursor, executionContext);
+            }
+            slaveTimeFrameHelper.of(slaveCursor, executionContext.getMemoryTracker());
 
             // Initialize horizon timestamp iterator with master cursor
             Record recordB = masterCursor.getRecordB();
@@ -414,6 +473,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
 
             // Initialize symbol translating record
             if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
 
@@ -429,6 +489,10 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
 
             isValueBuilt = false;
             isExhausted = false;
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 }

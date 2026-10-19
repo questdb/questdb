@@ -25,6 +25,7 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.ObjList;
@@ -32,6 +33,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     public static final DenyAllSecurityContext INSTANCE = new DenyAllSecurityContext();
+    private static final String SELECT_CACHE_SCOPE = "deny-all";
 
     protected DenyAllSecurityContext() {
     }
@@ -79,5 +81,24 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     @Override
     public void authorizeSystemAdmin() {
         throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public CharSequence getSelectCacheScope() {
+        // sees no object, unlike the contexts of the shared null scope, see isTableVisible()
+        return SELECT_CACHE_SCOPE;
+    }
+
+    @Override
+    public boolean isTableVisible(TableToken tableToken) {
+        // may read no object, so it may see none either
+        return false;
+    }
+
+    @Override
+    protected SecurityContext newPrincipalContext(CharSequence principal) {
+        // a deny-all context has no per-user identity and must never be downgraded to a
+        // plain read-only (i.e. read-allowing) context, so it ignores the principal
+        return this;
     }
 }

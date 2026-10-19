@@ -140,7 +140,11 @@ public class UnionStringyCastTest extends AbstractCairoTest {
         String expected = "a\ttypeOf\n" +
                 expectedStringyValue + '\t' + expectedColTypeOf + '\n' +
                 expectedCastValue + '\t' + expectedColTypeOf + '\n';
-        assertQuery(expected, query, castTableDdl, null, false, !allOrEmpty.isEmpty());
+        assertQuery(query)
+                .ddl(castTableDdl)
+                .noRandomAccess()
+                .expectSize(!allOrEmpty.isEmpty())
+                .returns(expected);
     }
 
     private void testUnionStringyRight0(String allOrEmpty) throws Exception {
@@ -150,6 +154,10 @@ public class UnionStringyCastTest extends AbstractCairoTest {
         String expected = "a\ttypeOf\n" +
                 expectedCastValue + '\t' + expectedColTypeOf + '\n' +
                 expectedStringyValue + '\t' + expectedColTypeOf + '\n';
-        assertQuery(expected, query, castTableDdl, null, false, !allOrEmpty.isEmpty());
+        assertQuery(query)
+                .ddl(castTableDdl)
+                .noRandomAccess()
+                .expectSize(!allOrEmpty.isEmpty())
+                .returns(expected);
     }
 }

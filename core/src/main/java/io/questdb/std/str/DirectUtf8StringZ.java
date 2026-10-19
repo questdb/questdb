@@ -44,7 +44,7 @@ public class DirectUtf8StringZ implements LPSZ {
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(ptr + index);
+        return Unsafe.getByte(ptr + index);
     }
 
     @Override
@@ -57,7 +57,7 @@ public class DirectUtf8StringZ implements LPSZ {
         long p = address;
         this.ascii = true;
         byte b;
-        while ((b = Unsafe.getUnsafe().getByte(p++)) != 0) {
+        while ((b = Unsafe.getByte(p++)) != 0) {
             this.ascii &= (b >= 0);
         }
         this.size = (int) (p - address - 1);

@@ -82,7 +82,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
         public Func(Function left, Function right) {
             super(left, right);
             // use zero as the no-key value to speed up zeroing the hash table
-            this.lookupCache = new DirectIntIntHashMap(16, 0.5, 0, StaticSymbolTable.VALUE_IS_NULL, MemoryTag.NATIVE_UNORDERED_MAP);
+            this.lookupCache = new DirectIntIntHashMap(16, 0.7, 0, StaticSymbolTable.VALUE_IS_NULL, MemoryTag.NATIVE_UNORDERED_MAP);
         }
 
         @Override
@@ -115,9 +115,11 @@ public class EqSymFunctionFactory implements FunctionFactory {
                     final CharSequence leftSym = leftTable.valueOf(leftKey);
                     matchingRightKey = rightTable.keyOf(leftSym);
                 } else {
-                    matchingRightKey = rightTable.containsNullValue()
-                            ? StaticSymbolTable.VALUE_IS_NULL
-                            : StaticSymbolTable.VALUE_NOT_FOUND;
+                    // NULL matches NULL no matter what rightTable.containsNullValue() says. That flag
+                    // describes the stored dictionary only; an outer join's null record and
+                    // lag()/lead() for a missing neighbor mint VALUE_IS_NULL on their own. A right
+                    // side that never emits NULL cannot match this key anyway.
+                    matchingRightKey = StaticSymbolTable.VALUE_IS_NULL;
                 }
                 lookupCache.putAt(index, leftKey + 1, matchingRightKey);
             }

@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.std.IntList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -53,11 +52,12 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBwdInterval() throws SqlException {
+    public void testBwdInterval() throws Exception {
         var partitionList = setupTableAndOpenPartitionList();
         var sql = "select * from tmp where ts in '2025-07-11T03' order by ts desc";
-        assertSql(
-                replaceTimestampSuffix("""
+        assertQuery(sql)
+                .noLeakCheck()
+                .returnsOnce(replaceTimestampSuffix("""
                         ts\td
                         2025-07-11T03:54:00.000000Z\t0.5522494170511608
                         2025-07-11T03:48:00.000000Z\t0.5298405941762054
@@ -69,28 +69,25 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
                         2025-07-11T03:12:00.000000Z\t0.6761934857077543
                         2025-07-11T03:06:00.000000Z\t0.12026122412833129
                         2025-07-11T03:00:00.000000Z\t0.9038068796506872
-                        """, timestampType.getTypeName()),
-                sql
-        );
+                        """, timestampType.getTypeName()));
         Assert.assertEquals("[3]", partitionList.toString());
-        assertSql(
-                "QUERY PLAN\n" +
-                        "PageFrame\n" +
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlan("PageFrame\n" +
                         "    Row backward scan\n" +
                         "    Interval backward scan on: tmp\n" +
                         (timestampType == TestTimestampType.MICRO ?
                                 "      intervals: [(\"2025-07-11T03:00:00.000000Z\",\"2025-07-11T03:59:59.999999Z\")]\n" :
-                                "      intervals: [(\"2025-07-11T03:00:00.000000000Z\",\"2025-07-11T03:59:59.999999999Z\")]\n"),
-                "explain " + sql
-        );
+                                "      intervals: [(\"2025-07-11T03:00:00.000000000Z\",\"2025-07-11T03:59:59.999999999Z\")]\n"));
     }
 
     @Test
-    public void testBwdLimit() throws SqlException {
+    public void testBwdLimit() throws Exception {
         var partitionList = setupTableAndOpenPartitionList();
         var sql = "select * from tmp order by ts desc limit 20,30";
-        assertSql(
-                replaceTimestampSuffix("""
+        assertQuery(sql)
+                .noLeakCheck()
+                .returnsOnce(replaceTimestampSuffix("""
                         ts\td
                         2025-07-11T07:54:00.000000Z\t0.19751370382305056
                         2025-07-11T07:48:00.000000Z\t0.8940917126581895
@@ -102,29 +99,26 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
                         2025-07-11T07:12:00.000000Z\t0.5811247005631662
                         2025-07-11T07:06:00.000000Z\t0.6551335839796312
                         2025-07-11T07:00:00.000000Z\t0.42020442539326086
-                        """, timestampType.getTypeName()),
-                sql
-        );
+                        """, timestampType.getTypeName()));
 
         Assert.assertEquals("[7]", partitionList.toString());
-        assertSql(
-                """
-                        QUERY PLAN
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlan("""
                         Limit left: 20 right: 30 skip-rows: 20 take-rows: 10
                             PageFrame
                                 Row backward scan
                                 Frame backward scan on: tmp
-                        """,
-                "explain " + sql
-        );
+                        """);
     }
 
     @Test
-    public void testFwdInterval() throws SqlException {
+    public void testFwdInterval() throws Exception {
         var partitionList = setupTableAndOpenPartitionList();
         var sql = "select * from tmp where ts in '2025-07-11T05'";
-        assertSql(
-                replaceTimestampSuffix("""
+        assertQuery(sql)
+                .noLeakCheck()
+                .returnsOnce(replaceTimestampSuffix("""
                         ts\td
                         2025-07-11T05:00:00.000000Z\t0.16381374773748514
                         2025-07-11T05:06:00.000000Z\t0.456344569609078
@@ -136,28 +130,25 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
                         2025-07-11T05:42:00.000000Z\t0.6821660861001273
                         2025-07-11T05:48:00.000000Z\t0.7230015763133606
                         2025-07-11T05:54:00.000000Z\t0.9644183832564398
-                        """, timestampType.getTypeName()),
-                sql
-        );
+                        """, timestampType.getTypeName()));
         Assert.assertEquals("[5]", partitionList.toString());
-        assertSql(
-                "QUERY PLAN\n" +
-                        "PageFrame\n" +
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlan("PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tmp\n" +
                         (timestampType == TestTimestampType.MICRO ?
                                 "      intervals: [(\"2025-07-11T05:00:00.000000Z\",\"2025-07-11T05:59:59.999999Z\")]\n" :
-                                "      intervals: [(\"2025-07-11T05:00:00.000000000Z\",\"2025-07-11T05:59:59.999999999Z\")]\n"),
-                "explain " + sql
-        );
+                                "      intervals: [(\"2025-07-11T05:00:00.000000000Z\",\"2025-07-11T05:59:59.999999999Z\")]\n"));
     }
 
     @Test
-    public void testFwdLimit() throws SqlException {
+    public void testFwdLimit() throws Exception {
         var partitionList = setupTableAndOpenPartitionList();
         var sql = "select * from tmp limit -20";
-        assertSql(
-                replaceTimestampSuffix("""
+        assertQuery(sql)
+                .noLeakCheck()
+                .returnsOnce(replaceTimestampSuffix("""
                         ts\td
                         2025-07-11T08:00:00.000000Z\t0.9441658975532605
                         2025-07-11T08:06:00.000000Z\t0.6806873134626418
@@ -179,32 +170,27 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
                         2025-07-11T09:42:00.000000Z\t0.6697969295620055
                         2025-07-11T09:48:00.000000Z\t0.4295631643526773
                         2025-07-11T09:54:00.000000Z\t0.26369335635512836
-                        """, timestampType.getTypeName()),
-                sql
-        );
+                        """, timestampType.getTypeName()));
 
         Assert.assertEquals("[8,9]", partitionList.toString());
-        assertSql(
-                """
-                        QUERY PLAN
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlan("""
                         Limit value: -20 skip-rows: 80 take-rows: 20
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tmp
-                        """,
-                "explain " + sql
-        );
+                        """);
     }
 
-    private @NotNull IntList setupTableAndOpenPartitionList() throws SqlException {
+    private @NotNull IntList setupTableAndOpenPartitionList() throws Exception {
         execute("create table tmp as (select timestamp_sequence('2025-07-11'::timestamp, 360_000_000)::" + timestampType.getTypeName() + " ts, rnd_double() d from long_sequence(100)) timestamp(ts) partition by hour");
-        assertSql(
-                """
+        assertQuery("select count from table_partitions('tmp')")
+                .noLeakCheck()
+                .returnsOnce("""
                         count
                         10
-                        """,
-                "select count from table_partitions('tmp')"
-        );
+                        """);
 
         engine.releaseAllReaders();
         var partitionList = new IntList();

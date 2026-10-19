@@ -63,6 +63,6 @@ public class JNIBenchmark {
 
     @Benchmark
     public long testJNINoop() {
-        return Files.noop();
+        return Os.smokeTest(1L, 1L);
     }
 }

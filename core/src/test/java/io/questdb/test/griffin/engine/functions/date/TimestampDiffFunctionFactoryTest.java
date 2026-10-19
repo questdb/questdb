@@ -34,107 +34,75 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testDayConstantEndNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('d', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('d', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('d', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('d', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testDayConstantSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('d', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         365
                         365
-                        """,
-                "select datediff('d', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('d', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         365
                         365
-                        """,
-                "select datediff('d', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('d', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         365
                         365
-                        """,
-                "select datediff('d', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('d', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         365
                         365
-                        """,
-                "select datediff('d', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testDayConstantStartNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('d', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('d', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('d', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('d', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -166,8 +134,9 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                 "timestamp_sequence_ns(0, 2000000000) as ts_ns " +
                 "from long_sequence(10)" +
                 ") timestamp(ts)");
-        assertQuery(
-                """
+        assertQuery("select datediff('u', 1000000::timestamp, ts) from x;")
+                .expectSize()
+                .returns("""
                         datediff
                         1000000
                         0
@@ -179,15 +148,11 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         6000000
                         7000000
                         8000000
-                        """,
-                "select datediff('u', 1000000::timestamp, ts) from x;",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('u', 1000000000::timestamp_ns, ts) from x;")
+                .expectSize()
+                .returns("""
                         datediff
                         1000000
                         0
@@ -199,15 +164,11 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         6000000
                         7000000
                         8000000
-                        """,
-                "select datediff('u', 1000000000::timestamp_ns, ts) from x;",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('n', ts, 1000000000::timestamp_ns) from x;")
+                .expectSize()
+                .returns("""
                         datediff
                         1000000000
                         0
@@ -219,15 +180,11 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         6000000000
                         7000000000
                         8000000000
-                        """,
-                "select datediff('n', ts, 1000000000::timestamp_ns) from x;",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('u', ts, 1000000::timestamp) from x;")
+                .expectSize()
+                .returns("""
                         datediff
                         1000000
                         0
@@ -239,15 +196,11 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         6000000
                         7000000
                         8000000
-                        """,
-                "select datediff('u', ts, 1000000::timestamp) from x;",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select s, datediff(s, ts, ts_ns) from x;")
+                .expectSize()
+                .returns("""
                         s\tdatediff
                         u\t0
                         u\t1000000
@@ -259,114 +212,77 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         n\t7000000000
                         u\t8000000
                         n\t9000000000
-                        """,
-                "select s, datediff(s, ts, ts_ns) from x;",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testHourConstantEndNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('h', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('h', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('h', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('h', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testHourConstantSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('h', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         8760
                         8760
-                        """,
-                "select datediff('h', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                """
+                        """);
+        assertQuery("select datediff('h', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         8760
                         8760
-                        """,
-                "select datediff('h', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                """
+                        """);
+        assertQuery("select datediff('h', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         8760
                         8760
-                        """,
-                "select datediff('h', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                """
+                        """);
+        assertQuery("select datediff('h', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         8760
                         8760
-                        """,
-                "select datediff('h', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testHourConstantStartNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('h', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('h', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('h', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('h', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -391,105 +307,73 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testMicroConstantEndNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('u', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('u', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('u', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('u', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testMicroConstantSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('u', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000000
                         31536000000000
-                        """,
-                "select datediff('u', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('u', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000000
                         31536000000000
-                        """,
-                "select datediff('u', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                """
+                        """);
+        assertQuery("select datediff('u', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000000
                         31536000000000
-                        """,
-                "select datediff('u', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                """
+                        """);
+        assertQuery("select datediff('u', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000000
                         31536000000000
-                        """,
-                "select datediff('u', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testMicroConstantStartNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('u', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('u', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('u', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('u', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -514,107 +398,75 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testMilliConstantEndNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('T', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('T', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('T', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('T', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testMilliConstantSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('T', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000
                         31536000000
-                        """,
-                "select datediff('T', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('T', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000
                         31536000000
-                        """,
-                "select datediff('T', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('T', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000
                         31536000000
-                        """,
-                "select datediff('T', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('T', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000
                         31536000000
-                        """,
-                "select datediff('T', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testMilliConstantStartNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('T', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('T', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('T', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('T', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -639,107 +491,75 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testMinuteConstantEndNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('m', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('m', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('m', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('m', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testMinuteConstantSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('m', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         525600
                         525600
-                        """,
-                "select datediff('m', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('m', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         525600
                         525600
-                        """,
-                "select datediff('m', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('m', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         525600
                         525600
-                        """,
-                "select datediff('m', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('m', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         525600
                         525600
-                        """,
-                "select datediff('m', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testMinuteConstantStartNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('m', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('m', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('m', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('m', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -764,107 +584,75 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testMonthConstantEndNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('M', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('M', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('M', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('M', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testMonthConstantSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('M', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         12
                         12
-                        """,
-                "select datediff('M', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('M', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         12
                         12
-                        """,
-                "select datediff('M', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('M', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         12
                         12
-                        """,
-                "select datediff('M', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('M', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         12
                         12
-                        """,
-                "select datediff('M', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testMonthConstantStartNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('M', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('M', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('M', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('M', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -889,105 +677,73 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testNanoConstantEndNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('n', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('n', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('n', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('n', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testNanoConstantSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('n', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000000000
                         31536000000000000
-                        """,
-                "select datediff('n', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('n', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000000000
                         31536000000000000
-                        """,
-                "select datediff('n', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                """
+                        """);
+        assertQuery("select datediff('n', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000000000
                         31536000000000000
-                        """,
-                "select datediff('n', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                """
+                        """);
+        assertQuery("select datediff('n', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000000000000
                         31536000000000000
-                        """,
-                "select datediff('n', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testNanoConstantStartNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('n', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('n', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('n', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('n', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -1012,107 +768,75 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testSecondConstantEndNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('s', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('s', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('s', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('s', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testSecondConstantSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('s', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000
                         31536000
-                        """,
-                "select datediff('s', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('s', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000
                         31536000
-                        """,
-                "select datediff('s', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('s', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000
                         31536000
-                        """,
-                "select datediff('s', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('s', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         31536000
                         31536000
-                        """,
-                "select datediff('s', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testSecondConstantStartNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('s', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('s', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('s', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('s', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -1142,107 +866,75 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testWeekConstantEndNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('w', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('w', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('w', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('w', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWeekConstantSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('w', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         52
                         52
-                        """,
-                "select datediff('w', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('w', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         52
                         52
-                        """,
-                "select datediff('w', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('w', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         52
                         52
-                        """,
-                "select datediff('w', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('w', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         52
                         52
-                        """,
-                "select datediff('w', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWeekConstantStartNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('w', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('w', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('w', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('w', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -1267,107 +959,75 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testYearConstantEndNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('y', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('y', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('y', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('y', to_timestamp_ns(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testYearConstantSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('y', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         1
                         1
-                        """,
-                "select datediff('y', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('y', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         1
                         1
-                        """,
-                "select datediff('y', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('y', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         1
                         1
-                        """,
-                "select datediff('y', to_timestamp(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('y', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         1
                         1
-                        """,
-                "select datediff('y', to_timestamp_ns(concat('202',x),'yyyy'), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testYearConstantStartNaN() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select datediff('y', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('y', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select datediff('y', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);")
+                .expectSize()
+                .returns("""
                         datediff
                         null
                         null
-                        """,
-                "select datediff('y', cast(NaN as long), to_timestamp_ns(concat('202', x+1),'yyyy')) from long_sequence(2);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test

@@ -24,10 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 @SuppressWarnings("unused")
 public interface SecurityContext extends Mutable {
@@ -39,6 +41,17 @@ public interface SecurityContext extends Mutable {
     // The user is not authenticated.
     // Either tried to authenticate and failed, or did not try to authenticate at all.
     byte AUTH_TYPE_NONE = 0;
+
+    /**
+     * Returns the security context to use during SQL validation, i.e. syntax-only
+     * compilation that must not enforce authorization. The default returns an
+     * allow-all context, which is sufficient for open-source builds; implementations
+     * that enforce permissions return a view that skips authorization while
+     * preserving identity information.
+     */
+    default SecurityContext asValidationContext() {
+        return AllowAllSecurityContext.INSTANCE;
+    }
 
     void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken);
 
@@ -75,6 +88,8 @@ public interface SecurityContext extends Mutable {
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
+    void authorizeAlterTableSetFormat(TableToken tableToken);
+
     void authorizeAlterTableSetParam(TableToken tableToken);
 
     void authorizeAlterTableSetParquetSettings(TableToken tableToken);
@@ -82,6 +97,15 @@ public interface SecurityContext extends Mutable {
     void authorizeAlterTableSetType(TableToken tableToken);
 
     void authorizeAlterView(TableToken tableToken);
+
+    /**
+     * Authorizes marking a view audited, or removing that marking. Audited views are an Enterprise
+     * feature, so the default refuses rather than silently permitting a compliance control that
+     * nothing downstream would enforce.
+     */
+    default void authorizeAuditView() {
+        throw CairoException.authorization().put("audited views are only available in QuestDB Enterprise").setCacheable(true);
+    }
 
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
@@ -95,6 +119,10 @@ public interface SecurityContext extends Mutable {
 
     void authorizeLineTcp();
 
+    void authorizeLiveViewCreate();
+
+    void authorizeLiveViewDrop(TableToken tableToken);
+
     void authorizeMatViewCreate();
 
     void authorizeMatViewDrop(TableToken tableToken);
@@ -102,6 +130,16 @@ public interface SecurityContext extends Mutable {
     void authorizeMatViewRefresh(TableToken tableToken);
 
     void authorizePGWire();
+
+    /**
+     * Authorizes {@code ALTER TABLE ... REBASE WAL}. REBASE WAL is destructive: it discards pending WAL
+     * (including queued structural changes), mints a fresh tableId and drops the old directory. It is
+     * therefore gated behind system-admin privilege rather than the table-level RESUME WAL grant, so by
+     * default it delegates to {@link #authorizeSystemAdmin()}.
+     */
+    default void authorizeRebaseWal(TableToken tableToken) {
+        authorizeSystemAdmin();
+    }
 
     void authorizeResumeWal(TableToken tableToken);
 
@@ -114,6 +152,10 @@ public interface SecurityContext extends Mutable {
     void authorizeSettings();
 
     void authorizeSqlEngineAdmin();
+
+    default void authorizeSuspendWal(TableToken tableToken) {
+        authorizeResumeWal(tableToken);
+    }
 
     void authorizeSystemAdmin();
 
@@ -177,10 +219,39 @@ public interface SecurityContext extends Mutable {
     }
 
     /**
+     * The principal to record as owner when this context auto-creates a database object during
+     * ingestion (e.g. ILP auto-creates a table or column), or {@code null} when this context carries no
+     * ACL identity that should receive an owner grant. Defaults to {@link #getPrincipal()}.
+     * <p>
+     * The identity-less allow-all / read-only contexts the ILP line-ACL bypass hands out still report a
+     * default principal from {@link #getPrincipal()} (so {@code current_user()} stays coherent), but they
+     * are not an ACL identity. Returning {@code null} here keeps anonymous ingestion from granting object
+     * ownership to a real ACL user who merely shares that default name (e.g. after the built-in admin is
+     * renamed). The full ACL contexts keep the default, so an authenticated ingesting user still owns what
+     * it auto-creates. It exists as a separate accessor because it is carried across the ILP I/O-to-writer
+     * thread hand-off, where only a serialized string survives and the originating context is gone.
+     */
+    default CharSequence getAutoCreateOwner() {
+        return getPrincipal();
+    }
+
+    /**
      * User account used for permission checks, i.e. the session user account
      * or the service account defined by an executed ASSUME statement.
      */
     CharSequence getPrincipal();
+
+    /**
+     * Returns the scope within which the select caches may share a compiled statement, or
+     * {@code null} when every context returning {@code null} may share it. Statements compile
+     * against the objects the principal may see (see {@link #isTableVisible(TableToken)}), and a
+     * compiled statement discloses metadata without executing (the PostgreSQL wire protocol
+     * describes its result columns), so principals that may see different objects must not share
+     * statements. The returned value must be immutable, since the caches keep it as part of the key.
+     */
+    default @Nullable CharSequence getSelectCacheScope() {
+        return null;
+    }
 
     /**
      * User account used in initial authentication, i.e. to start the session.
@@ -201,4 +272,32 @@ public interface SecurityContext extends Mutable {
     }
 
     boolean isSystemAdmin();
+
+    /**
+     * Returns whether the principal may learn that the object exists and read its schema, i.e.
+     * see it in catalogue queries (tables(), information_schema, pg_catalog, ...) and resolve it
+     * by name in statements that disclose metadata (SHOW CREATE, SHOW COLUMNS, SELECT, ...).
+     * Callers treat an invisible object exactly like a non-existent one, so it must not leak
+     * through error messages either.
+     * <p>
+     * The token may denote a table, a view, a materialized view or a live view. Visibility grants
+     * nothing by itself: operations on a visible object are still authorized as usual. Callers
+     * must evaluate it with the security context of the current execution, never with the one a
+     * compiled factory was built with, because compiled factories are cached and shared across
+     * principals. Implementations must not throw to signal an ordinary "not visible" outcome.
+     * <p>
+     * The default makes every object visible, which is correct for contexts that have no
+     * per-object permissions.
+     */
+    default boolean isTableVisible(TableToken tableToken) {
+        return true;
+    }
+
+    /**
+     * WAL diagnostics may expose protected tables to operators allowed to recover them without
+     * making those tables visible in ordinary catalogues or SELECT statements.
+     */
+    default boolean isWalTableVisible(TableToken tableToken) {
+        return isTableVisible(tableToken);
+    }
 }

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -47,6 +48,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.GroupingFunction;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -66,11 +68,11 @@ import org.jetbrains.annotations.NotNull;
  * aggregation per grouping set.</p>
  */
 public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final GroupingSetsRecordCursor cursor;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final ObjList<Function> keyFunctions;
-    private final ObjList<Function> recordFunctions;
+    private RecordCursorFactory base;
+    private GroupingSetsRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private ObjList<Function> keyFunctions;
+    private ObjList<Function> recordFunctions;
 
     public GroupingSetsRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -169,7 +171,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                     setCount
             );
         } catch (Throwable e) {
-            close();
+            Misc.free(this, e);
             throw e;
         }
     }
@@ -199,6 +201,36 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            if (keyFunctions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (groupByFunctions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return base.isStableWithinExecution();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
@@ -225,10 +257,21 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.freeObjList(keyFunctions);
-        Misc.free(base);
-        Misc.free(cursor);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final GroupingSetsRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        this.groupByFunctions = null; // groupByFunctions are included in recordFunctions
+        final ObjList<Function> keyFunctions = this.keyFunctions;
+        this.keyFunctions = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+
+        Throwable cleanupFailure = Misc.freeObjListBestEffort(null, recordFunctions);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     // O(N) linear scan, called only during construction (not on the data path).
@@ -274,9 +317,8 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                 ObjList<GroupingFunction> groupingFunctions,
                 int setCount
         ) {
-            super(functions);
+            super(functions, false);
             try {
-                this.isOpen = true;
                 this.groupByFunctionsUpdater = groupByFunctionsUpdater;
                 this.groupingFunctions = groupingFunctions;
                 this.mapSink = mapSink;
@@ -288,7 +330,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                 // allocation cost is modest for typical set counts (< 20).
                 this.dataMaps = new ObjList<>(setCount);
                 for (int i = 0; i < setCount; i++) {
-                    dataMaps.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
+                    dataMaps.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false));
                 }
 
                 // Pre-allocate NullingRecord wrappers (one per set)
@@ -297,8 +339,9 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                     nullingRecords.add(new NullingRecord());
                 }
 
-                this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
+                this.isOpen = false;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -308,11 +351,13 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
             buildMapConditionally();
-            long total = 0;
-            for (int i = 0; i < setCount; i++) {
-                total += dataMaps.getQuick(i).size();
+            if (baseCursor != null) {
+                baseCursor.calculateSize(circuitBreaker, counter);
             }
-            counter.add(total);
+            for (int i = currentSetIndex + 1; i < setCount; i++) {
+                counter.add(dataMaps.getQuick(i).size());
+            }
+            currentSetIndex = setCount;
         }
 
         @Override
@@ -352,9 +397,13 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
             this.baseCursor = null;
             if (!isOpen) {
                 isOpen = true;
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
                 for (int i = 0; i < setCount; i++) {
-                    dataMaps.getQuick(i).reopen();
+                    final Map dataMap = dataMaps.getQuick(i);
+                    dataMap.setMemoryTracker(memoryTracker);
+                    dataMap.reopen();
                 }
+                allocator.setMemoryTracker(memoryTracker);
                 allocator.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
@@ -367,6 +416,16 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
         @Override
         public long preComputedStateSize() {
             return isDataMapBuilt ? 1 : 0;
+        }
+
+        @Override
+        public long size() {
+            buildMapConditionally();
+            long total = 0;
+            for (int i = 0; i < setCount; i++) {
+                total += dataMaps.getQuick(i).size();
+            }
+            return total;
         }
 
         @Override
@@ -392,8 +451,9 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                 nullingRecords.getQuick(s).of(baseRecord, nulledColumnsPerSet.getQuick(s));
             }
 
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             while (managedCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 for (int s = 0; s < setCount; s++) {
                     // Set the current grouping set index so GROUPING() functions
                     // store the correct bitmask when computeFirst() is called.

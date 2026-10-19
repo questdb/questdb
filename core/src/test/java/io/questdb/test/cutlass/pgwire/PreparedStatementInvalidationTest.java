@@ -71,7 +71,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testChangeBindVariableType_insert() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table change_var_type(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -95,7 +95,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testChangeBindVariableType_select() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table change_var_type(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
                 statement.execute("insert into change_var_type (id, val, ts) values (42, 0, '1990-01-01')");
@@ -132,7 +132,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testInsertAfterDropAndRecreate() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -154,18 +154,19 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 mayDrainWalQueue();
 
                 // assert it's actually written
-                assertSql("""
+                assertQuery("select * from insert_after_drop")
+                        .noLeakCheck()
+                        .returnsOnce("""
                                 id\tval\tts
                                 43\t0\t1990-01-01T00:00:00.000000Z
-                                """,
-                        "select * from insert_after_drop");
+                                """);
             }
         });
     }
 
     @Test
     public void testInsertAllAfterColDropped() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -195,7 +196,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testInsertAllAfterColNameChange() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -218,18 +219,57 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 mayDrainWalQueue();
 
                 // assert it's actually written
-                assertSql("""
+                assertQuery("select * from insert_after_drop")
+                        .noLeakCheck()
+                        .returnsOnce("""
                                 id\tval2\tts
                                 43\t0\t1990-01-01T00:00:00.000000Z
-                                """,
-                        "select * from insert_after_drop");
+                                """);
             }
         });
     }
 
     @Test
+    public void testInsertSelectInTransactionAfterPlanWentStaleMidCopy_nonWal() throws Exception {
+        testInsertSelectInTransactionAfterPlanWentStaleMidCopy(false);
+    }
+
+    @Test
+    public void testInsertSelectInTransactionAfterPlanWentStaleMidCopy_wal() throws Exception {
+        testInsertSelectInTransactionAfterPlanWentStaleMidCopy(true);
+    }
+
+    @Test
+    public void testInsertSelectInTransactionAfterSourceTableAltered() throws Exception {
+        testInsertSelectInTransactionAfterPlanWentStale(
+                "src_tbl",
+                "ALTER TABLE src_tbl ADD COLUMN y INT",
+                """
+                        x\tcount
+                        1\t3
+                        2\t3
+                        42\t1
+                        """
+        );
+    }
+
+    @Test
+    public void testInsertSelectInTransactionAfterViewAltered() throws Exception {
+        testInsertSelectInTransactionAfterPlanWentStale(
+                "src_view",
+                "ALTER VIEW src_view AS (SELECT ts, x FROM src_tbl WHERE x > 1)",
+                """
+                        x\tcount
+                        1\t2
+                        2\t3
+                        42\t1
+                        """
+        );
+    }
+
+    @Test
     public void testInsertSpecificAfterColDropped() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -251,19 +291,20 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 mayDrainWalQueue();
 
                 // assert it's actually written
-                assertSql("""
+                assertQuery("select * from insert_after_drop")
+                        .noLeakCheck()
+                        .returnsOnce("""
                                 id\tts
                                 42\t1990-01-01T00:00:00.000000Z
                                 43\t1990-01-01T00:00:00.000000Z
-                                """,
-                        "select * from insert_after_drop");
+                                """);
             }
         });
     }
 
     @Test
     public void testInsertSpecificAfterColNameChange() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -294,7 +335,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testInsertWhileConcurrentlyAlteringTable_preparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> executeStatementWhileConcurrentlyChangingSchema(
                 connection,
                 "ALTER TABLE tango RENAME COLUMN x TO y",
                 "ALTER TABLE tango RENAME COLUMN y TO x",
@@ -308,7 +349,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testInsertWhileConcurrentlyAlteringTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "ALTER TABLE tango RENAME COLUMN x TO y",
@@ -322,7 +363,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testInsertWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "ALTER TABLE tango RENAME COLUMN x TO y",
@@ -339,7 +380,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testInsertWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
@@ -354,7 +395,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testInsertWhileConcurrentlyRecreatingTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
@@ -369,7 +410,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testInsertWhileConcurrentlyRecreatingTable_simpleStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
@@ -384,7 +425,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testPreparedStatementErrorConsistency() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             execute("create table abc(x double, y double, t timestamp) timestamp(t)");
             try (PreparedStatement ps = connection.prepareStatement("select y from abc")) {
                 for (int i = 0; i < 10; i++) {
@@ -414,7 +455,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     @Ignore("Statement executed at parse time fails when captured as server-side prepared statement and reused")
     public void testRepeatedDropCreate() throws Exception {
         Assume.assumeFalse(walEnabled); // no partitioned tables here
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             String create = "CREATE TABLE tango AS (SELECT x FROM long_sequence(10))";
             String drop = "DROP TABLE tango";
             try (Statement s = connection.createStatement()) {
@@ -428,7 +469,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectAllAfterConcurrentColAddDrop() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table select_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -514,7 +555,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectPreparedStatement_columnWithBindVariableDropped() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             connection.prepareStatement("create table x as" +
                     " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
                     " timestamp(ts) partition by hour"
@@ -552,7 +593,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectPreparedStatement_scenario() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             connection.prepareStatement("create table x as" +
                     " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
                     " timestamp(ts) partition by hour"
@@ -635,7 +676,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectStarPreparedThenColDropped() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
                     " rnd_symbol('a','b',null) symbol1 " +
@@ -675,7 +716,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectStarPreparedThenColNameChanges() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
                     " rnd_symbol('a','b',null) symbol1 " +
@@ -721,7 +762,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectStarPreparedThenColTypeChanges() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
                     " rnd_symbol('a','b',null) symbol1 " +
@@ -767,7 +808,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectTwoColsPreparedThenColAdded() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
                     " rnd_symbol('a','b',null) symbol1 " +
@@ -814,7 +855,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectTwoColsPreparedThenColDropped() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
                     " rnd_symbol('a','b',null) symbol1 " +
@@ -844,7 +885,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testSelectWhileConcurrentlyAlteringTable_preparedStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "ALTER TABLE tango RENAME COLUMN x TO y",
@@ -864,7 +905,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectWhileConcurrentlyAlteringTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "ALTER TABLE tango RENAME COLUMN x TO y",
@@ -885,7 +926,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> executeStatementWhileConcurrentlyChangingSchema(
                 connection,
                 "ALTER TABLE tango RENAME COLUMN x TO y",
                 "ALTER TABLE tango RENAME COLUMN y TO x",
@@ -904,7 +945,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectWhileConcurrentlyAlteringTable_simpleStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "ALTER TABLE tango RENAME COLUMN x TO y",
@@ -926,7 +967,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testSelectWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_EXTENDED,
-                (connection, binary, mode, port) -> {
+                (connection, _, _, _) -> {
                     try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
@@ -948,7 +989,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectWhileConcurrentlyRecreatingTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
@@ -970,7 +1011,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testSelectWhileConcurrentlyRecreatingTable_simpleStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
@@ -991,7 +1032,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testTxInsertSpecificAfterColNameChange() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -1023,7 +1064,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testTxInsertWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "ALTER TABLE tango RENAME COLUMN x TO y",
@@ -1038,7 +1079,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -1066,7 +1107,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -1095,7 +1136,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
@@ -1123,7 +1164,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateUnaffectedColWhileConcurrentlyAlteringTable_preparedStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "ALTER TABLE tango ADD COLUMN y INT",
@@ -1138,7 +1179,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateUnaffectedColWhileConcurrentlyAlteringTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET x = 42")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "ALTER TABLE tango ADD COLUMN y INT",
@@ -1154,7 +1195,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateUnaffectedColWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "ALTER TABLE tango ADD COLUMN y INT",
@@ -1169,7 +1210,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateUnaffectedColWhileConcurrentlyAlteringTable_simpleStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement s = connection.createStatement()) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "ALTER TABLE tango ADD COLUMN y INT",
@@ -1185,7 +1226,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateUnaffectedColWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "DROP TABLE tango;\n" +
@@ -1202,7 +1243,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateUnaffectedColWhileConcurrentlyRecreatingTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET x = 42")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "DROP TABLE tango;\n" +
@@ -1219,7 +1260,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateUnaffectedColWhileConcurrentlyRecreatingTable_simpleStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "DROP TABLE tango;\n" +
@@ -1238,7 +1279,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateWhileConcurrentlyAlteringTable_preparedStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "ALTER TABLE tango ADD COLUMN y INT",
@@ -1253,7 +1294,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateWhileConcurrentlyAlteringTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET y = 42")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "ALTER TABLE tango ADD COLUMN y INT",
@@ -1268,7 +1309,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "ALTER TABLE tango ADD COLUMN y INT",
@@ -1283,7 +1324,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateWhileConcurrentlyAlteringTable_simpleStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement s = connection.createStatement()) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "ALTER TABLE tango ADD COLUMN y INT",
@@ -1298,7 +1339,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "DROP TABLE tango;\n" +
@@ -1316,7 +1357,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateWhileConcurrentlyRecreatingTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET y = 42")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "DROP TABLE tango;\n" +
@@ -1334,7 +1375,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateWhileConcurrentlyRecreatingTable_simpleStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_ALL,
-                (connection, binary, mode, port) ->
+                (connection, _, _, _) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "DROP TABLE tango;\n" +
@@ -1446,6 +1487,121 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
         if (walEnabled) {
             drainWalQueue();
         }
+    }
+
+    private void testInsertSelectInTransactionAfterPlanWentStale(
+            String source,
+            String invalidatingDdl,
+            String expected
+    ) throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            execute("CREATE TABLE src_tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE dst (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO src_tbl VALUES ('2026-01-01T00:00:00.000000Z', 1), ('2026-01-02T00:00:00.000000Z', 2)");
+            execute("CREATE VIEW src_view AS (SELECT ts, x FROM src_tbl)");
+            drainWalAndViewQueues();
+
+            try (
+                    PreparedStatement insertSelect = connection.prepareStatement("INSERT INTO dst SELECT ts, x FROM " + source);
+                    Statement statement = connection.createStatement()
+            ) {
+                // Run more than once, so that the server caches the plan, by its text or in the
+                // named statement.
+                Assert.assertEquals(2, insertSelect.executeUpdate());
+                Assert.assertEquals(2, insertSelect.executeUpdate());
+
+                execute(invalidatingDdl);
+                drainWalAndViewQueues();
+
+                // The cached plan fails as stale and is recompiled, after an earlier INSERT of the
+                // same transaction parked its row in the writer the retry appends to. The row has
+                // to survive the retry.
+                connection.setAutoCommit(false);
+                Assert.assertEquals(1, statement.executeUpdate("INSERT INTO dst VALUES ('2026-01-05T00:00:00.000000Z', 42)"));
+                insertSelect.executeUpdate();
+                connection.commit();
+                connection.setAutoCommit(true);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT x, count() FROM dst ORDER BY x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    private void testInsertSelectInTransactionAfterPlanWentStaleMidCopy(boolean isWal) throws Exception {
+        // The simple protocol compiles an INSERT from its text on every execution, so only the
+        // extended modes hold a plan that can go stale.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            final String walClause = isWal ? "WAL" : "BYPASS WAL";
+            execute("CREATE TABLE src (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("CREATE TABLE dst (ts TIMESTAMP, x INT, pages STRING) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("INSERT INTO src VALUES ('2026-01-01T00:00:00.000000Z', 1), ('2026-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+
+            // touch() opens the cursor of its sub-query when the copy reads the first row, so this
+            // plan finds out that src changed only after the copy started a row in the writer.
+            try (
+                    PreparedStatement insertSelect = connection.prepareStatement("""
+                            INSERT INTO dst
+                            SELECT '2026-01-03T00:00:00.000000Z'::TIMESTAMP, 7, touch(SELECT * FROM src)
+                            FROM long_sequence(1)
+                            """);
+                    Statement statement = connection.createStatement()
+            ) {
+                // Run more than once, so that the server caches the plan, by its text or in the
+                // named statement.
+                Assert.assertEquals(1, insertSelect.executeUpdate());
+                Assert.assertEquals(1, insertSelect.executeUpdate());
+
+                execute("ALTER TABLE src ADD COLUMN y INT");
+                drainWalQueue();
+
+                connection.setAutoCommit(false);
+                Assert.assertEquals(1, statement.executeUpdate("INSERT INTO dst (ts, x) VALUES ('2026-01-03T00:00:00.000000Z', 42)"));
+                if (isWal) {
+                    // The failed copy rolls back the WAL writer, and with it the row the earlier
+                    // INSERT parked there. A retry cannot bring that row back, so the statement
+                    // has to fail instead of reporting success.
+                    try {
+                        insertSelect.executeUpdate();
+                        Assert.fail("the stale plan rolled the transaction's earlier row back, the INSERT should have failed");
+                    } catch (SQLException e) {
+                        assertMessageMatches(e, "cached query plan cannot be used because table schema has changed \\[table=src");
+                    }
+                } else {
+                    // The failed row leaves the non-WAL writer distressed, with the earlier row
+                    // still counted as uncommitted. The statement retries on that writer and
+                    // reports success, and the writer then refuses to commit. The contract is that
+                    // the client sees a failure and the transaction does not commit without its
+                    // earlier row: the statement reporting success before the COMMIT fails is what
+                    // the server does today, not a requirement, and a server that failed the
+                    // statement itself would meet the contract too.
+                    Assert.assertEquals(1, insertSelect.executeUpdate());
+                    try {
+                        connection.commit();
+                        Assert.fail("the writer is distressed, the COMMIT should have failed");
+                    } catch (SQLException e) {
+                        assertMessageMatches(e, "Table 'dst' is distressed");
+                    }
+                }
+                connection.rollback();
+                connection.setAutoCommit(true);
+            }
+            drainWalQueue();
+
+            // The client saw a failure for either table kind, and the transaction left none of
+            // its rows behind: dst holds the two rows committed before it began.
+            assertQuery("SELECT x, count() FROM dst ORDER BY x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tcount
+                            7\t2
+                            """);
+        });
     }
 
     @FunctionalInterface

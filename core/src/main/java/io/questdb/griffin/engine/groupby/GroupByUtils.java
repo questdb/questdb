@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
@@ -35,7 +37,9 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
@@ -63,6 +67,8 @@ import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
@@ -78,7 +84,6 @@ import java.util.ArrayDeque;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class GroupByUtils {
-    public static final int PROJECTION_FUNCTION_FLAG_ANY = -1;
     public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
     public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
     public static final int PROJECTION_FUNCTION_FLAG_VIRTUAL = 1;
@@ -90,6 +95,7 @@ public class GroupByUtils {
             SqlExecutionContext executionContext,
             RecordMetadata baseMetadata,
             int timestampIndex,
+            boolean isBaseTimestampAscending,
             boolean timestampUnimportant,
             ObjList<GroupByFunction> outGroupByFunctions,
             IntList outGroupByFunctionPositions,
@@ -118,7 +124,7 @@ public class GroupByUtils {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
-                int index = baseMetadata.getColumnIndexQuiet(node.token);
+                int index = SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
                 TableColumnMetadata m = null;
                 if (node.type != LITERAL || index != timestampIndex || timestampUnimportant) {
                     final Function func = functionParser.parseFunction(
@@ -143,9 +149,9 @@ public class GroupByUtils {
                     } else {
                         // it's either a function key or an aggregate function
                         m = new TableColumnMetadata(
-                                Chars.toString(column.getName()),
+                                SqlUtil.toColumnName(column.getName()),
                                 func.getType(),
-                                false,
+                                IndexType.NONE,
                                 0,
                                 func instanceof SymbolFunction && (((SymbolFunction) func).isSymbolTableStatic()),
                                 func.getMetadata()
@@ -179,9 +185,9 @@ public class GroupByUtils {
                         m = baseMetadata.getColumnMetadata(index);
                     } else {
                         m = new TableColumnMetadata(
-                                Chars.toString(column.getAlias()),
+                                SqlUtil.toColumnName(column.getAlias()),
                                 baseMetadata.getColumnType(index),
-                                baseMetadata.isColumnIndexed(index),
+                                baseMetadata.getColumnIndexType(index),
                                 baseMetadata.getIndexValueBlockCapacity(index),
                                 baseMetadata.isSymbolTableStatic(index),
                                 baseMetadata.getMetadata(index)
@@ -189,6 +195,42 @@ public class GroupByUtils {
                     }
                 }
                 projectionMetadata.add(m);
+            }
+
+            // When the user provided more than one FILL entry but fewer than the
+            // aggregate count, reject up front with the precise "not enough fill
+            // values" error. The per-aggregate validator below would otherwise
+            // clamp later aggregates onto fill[fillCount - 1] and could fire a
+            // misleading "support for X fill is not yet implemented" for any
+            // aggregate that does not accept the clamped fill type. The same
+            // count condition is re-checked in SqlCodeGenerator.generateFill as
+            // a backstop for the non-keyed FILL(value) rewrite path. Defer when
+            // FILL(NONE) is mixed with other fills -- that case has a more
+            // specific error ("FILL(NONE) cannot be combined with other fill
+            // values") that fires later in generateFill and should win. Only
+            // outerProjectionFunctions has been populated by this point, so the
+            // count uses GroupByFunction instances from that list (key columns
+            // and CAST-wrapped column functions never report as GroupByFunction
+            // per findColumnKeyIndex).
+            if (validateFill && fillCount > 1) {
+                boolean hasNoneMixed = false;
+                for (int i = 0; i < fillCount; i++) {
+                    if (SqlKeywords.isNoneKeyword(sampleByFill.getQuick(i).token)) {
+                        hasNoneMixed = true;
+                        break;
+                    }
+                }
+                if (!hasNoneMixed) {
+                    int aggregateCount = 0;
+                    for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
+                        if (outerProjectionFunctions.getQuick(i) instanceof GroupByFunction) {
+                            aggregateCount++;
+                        }
+                    }
+                    if (fillCount < aggregateCount) {
+                        throw SqlException.$(sampleByFill.getQuick(0).position, "not enough fill values");
+                    }
+                }
             }
 
             // There are two iterations over the model's columns. The first iterations create value
@@ -225,27 +267,34 @@ public class GroupByUtils {
                         // fill type. it's to close the function properly when the validation fails
                         outGroupByFunctions.add(groupByFunc);
                         outGroupByFunctionPositions.add(node.position);
+                        if (groupByFunc instanceof TwapGroupByFunction twapFunc) {
+                            twapFunc.validateTimestampArg(timestampIndex, isBaseTimestampAscending, node.position);
+                        } else if (groupByFunc instanceof SparklineGroupByFunction sparklineFunc) {
+                            sparklineFunc.validateScanDirection(isBaseTimestampAscending, node.position);
+                        }
                         if (fillCount > 0) {
-                            // index of the function relative to the list of fill values
-                            // we might have the same fill value for all functions
-                            int funcIndex = outGroupByFunctions.size();
+                            // 0-based index of the just-added aggregate. The Math.min clamp
+                            // below covers only the single-fill broadcast case (FILL(NULL)
+                            // applied to N aggregates -- every iteration lands on fill[0]).
+                            // The multi-fill count mismatch (fillCount > 1, fillCount <
+                            // aggregateCount) is rejected as "not enough fill values" up
+                            // front, so it cannot reach this loop.
+                            int funcIndex = outGroupByFunctions.size() - 1;
                             int sampleByFlags = groupByFunc.getSampleByFlags();
                             ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
                             if (validateFill) {
+                                assert (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) != 0 :
+                                        "aggregate must support FILL(NONE): " + groupByFunc.getClass().getName();
                                 if (SqlKeywords.isNullKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NULL) == 0) {
-                                    throw SqlException.$(node.position, "support for NULL fill is not yet implemented [function=").put(node)
+                                    throw SqlException.$(fillNode.position, "support for NULL fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
                                 } else if (SqlKeywords.isPrevKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_PREVIOUS) == 0) {
-                                    throw SqlException.$(node.position, "support for PREV fill is not yet implemented [function=").put(node)
+                                    throw SqlException.$(fillNode.position, "support for PREV fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
                                 } else if (SqlKeywords.isLinearKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_LINEAR) == 0) {
-                                    throw SqlException.$(node.position, "support for LINEAR fill is not yet implemented [function=").put(node)
-                                            .put(", class=").put(groupByFunc.getClass().getName())
-                                            .put(']');
-                                } else if (SqlKeywords.isNoneKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) == 0) {
-                                    throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
+                                    throw SqlException.$(fillNode.position, "support for LINEAR fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
                                 } else if (
@@ -255,7 +304,7 @@ public class GroupByUtils {
                                                 !SqlKeywords.isNoneKeyword(fillNode.token) &&
                                                 (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0
                                 ) {
-                                    throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
+                                    throw SqlException.$(fillNode.position, "support for VALUE fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
                                 }
@@ -334,15 +383,26 @@ public class GroupByUtils {
                 }
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
-        } catch (Throwable e) {
-            Misc.freeObjListAndClear(outerProjectionFunctions);
+        } catch (Throwable th) {
+            // Best-effort cleanup: attach close() failures to the primary assembly exception
+            // as suppressed instead of letting them mask it or skip the cleanup below.
+            freeAssembledProjectionFunctions(outerProjectionFunctions, innerProjectionFunctions, th);
+            // Every group-by function was also added to outerProjectionFunctions (same
+            // instance) and freed by the call above. Clear the list so callers that free
+            // it on their own error path (the JOIN callsites call
+            // Misc.freeObjList(groupByFunctions)) don't close the same instance twice.
+            outGroupByFunctions.clear();
             if (extraOuterProjectionFunctions != null) {
-                for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
-                    Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(d));
+                for (int i = 0, n = extraOuterProjectionFunctions.size(); i < n; i++) {
+                    final ObjList<Function> extra = extraOuterProjectionFunctions.getQuick(i);
+                    if (extra != null) {
+                        Misc.freeObjList(extra, th);
+                        extra.clear();
+                    }
                 }
                 extraOuterProjectionFunctions.clear();
             }
-            throw e;
+            throw th;
         }
     }
 
@@ -477,6 +537,104 @@ public class GroupByUtils {
         return -1;
     }
 
+    /**
+     * Builds a borrowed list of the non-group-by entries of {@code recordFunctions}. Cursors
+     * call this once at construction, so every subsequent cached execution initializes the
+     * non-group-by functions with a plain Theta(V) walk instead of re-classifying all
+     * P record functions with instanceof checks. Ownership stays with {@code recordFunctions}:
+     * callers must never close the returned list's entries.
+     */
+    public static ObjList<Function> extractNonGroupByFunctions(ObjList<Function> recordFunctions) {
+        final ObjList<Function> nonGroupByFunctions = new ObjList<>(recordFunctions.size());
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            final Function function = recordFunctions.getQuick(i);
+            if (!(function instanceof GroupByFunction)) {
+                nonGroupByFunctions.add(function);
+            }
+        }
+        return nonGroupByFunctions;
+    }
+
+    /**
+     * Frees the projection functions produced by {@link #assembleGroupByFunctions} exactly once
+     * when generation fails after assembly, in Theta(outer + inner) time and constant space by
+     * walking the producer's positional correspondence. The first assembly loop adds each parsed
+     * Function to both lists, so paired slots share references; the timestamp column appends null
+     * to outer and nothing to inner, so a null outer slot consumes no inner slot; the key-rewrite
+     * loop may replace an outer entry with a column-ref Function, leaving the original parsed
+     * Function reachable only through its paired inner slot; a mid-assembly failure can leave
+     * the last non-null outer entry without an inner counterpart, never the reverse. Every
+     * non-null outer entry is freed, and a paired inner entry is freed only when it is not the
+     * same reference. Closing the same Function twice would underflow allocator counters, so
+     * callers must not additionally free the group-by function list - its entries are aliased in
+     * the outer list and are already closed by this call.
+     * <p>
+     * The walk is best-effort: a throwing close() does not stop it. Every function still sees
+     * exactly one close attempt, both lists end up cleared, and the first failure rethrows once
+     * the walk completes, with later failures attached to it as suppressed. Callers already
+     * holding a primary exception must catch the rethrown failure and suppress it themselves.
+     */
+    public static void freeAssembledProjectionFunctions(
+            @Nullable ObjList<Function> outerProjectionFunctions,
+            @Nullable ObjList<Function> innerProjectionFunctions
+    ) {
+        if (outerProjectionFunctions == null) {
+            if (innerProjectionFunctions != null) {
+                final Throwable failure = Misc.freeObjListBestEffort(null, innerProjectionFunctions);
+                innerProjectionFunctions.clear();
+                CairoException.rethrowCleanupFailure(failure);
+            }
+            return;
+        }
+        final int innerSize = innerProjectionFunctions != null ? innerProjectionFunctions.size() : 0;
+        Throwable failure = null;
+        int j = 0;
+        for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
+            final Function outerFunc = outerProjectionFunctions.getQuick(i);
+            if (outerFunc == null) {
+                // timestamp placeholder: assembly added no inner counterpart
+                continue;
+            }
+            failure = Misc.freeBestEffort(failure, outerFunc);
+            if (j < innerSize) {
+                final Function innerFunc = innerProjectionFunctions.getQuick(j);
+                if (innerFunc != outerFunc) {
+                    // the key rewrite replaced the outer entry; the parsed original is
+                    // reachable only through this inner slot
+                    failure = Misc.freeBestEffort(failure, innerFunc);
+                }
+                j++;
+            }
+        }
+        // Full assembly pairs every inner entry; a mid-assembly failure leaves at most the last
+        // non-null outer entry unpaired. Either way the walk must consume the whole inner list.
+        assert j == innerSize;
+        if (innerProjectionFunctions != null) {
+            innerProjectionFunctions.clear();
+        }
+        outerProjectionFunctions.clear();
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * Variant of {@link #freeAssembledProjectionFunctions(ObjList, ObjList)} for cleanup paths
+     * that already hold a primary exception: it attaches any failure from the best-effort walk
+     * to the primary as suppressed instead of letting the failure propagate and mask it.
+     */
+    public static void freeAssembledProjectionFunctions(
+            @Nullable ObjList<Function> outerProjectionFunctions,
+            @Nullable ObjList<Function> innerProjectionFunctions,
+            @NotNull Throwable primary
+    ) {
+        try {
+            freeAssembledProjectionFunctions(outerProjectionFunctions, innerProjectionFunctions);
+        } catch (Throwable th) {
+            if (th != primary) {
+                primary.addSuppressed(th);
+            }
+        }
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {
@@ -495,59 +653,23 @@ public class GroupByUtils {
         return true;
     }
 
-    // assembleGroupByFunctions must be called before this call to get the idea of how many map values
-    // we will have. Map value count is needed to calculate offsets for map key columns.
-    public static void prepareWorkerGroupByFunctions(
-            @NotNull IQueryModel model,
-            @NotNull RecordMetadata metadata,
-            @NotNull FunctionParser functionParser,
-            @NotNull SqlExecutionContext executionContext,
-            @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @NotNull ObjList<GroupByFunction> workerGroupByFunctions
-    ) throws SqlException {
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            final ExpressionNode node = column.getAst();
-
-            if (node.type != ExpressionNode.LITERAL) {
-                // this can fail
-                final Function function = functionParser.parseFunction(
-                        node,
-                        metadata,
-                        executionContext
-                );
-
-                if (function instanceof GroupByFunction func) {
-                    // configure map value columns for group-by functions
-                    // some functions may need more than one column in values,
-                    // so we have them do all the work
-                    workerGroupByFunctions.add(func);
-                } else {
-                    // it's a key function; we don't need it
-                    Misc.free(function);
-                }
-            }
-        }
-
-        assert groupByFunctions.size() == workerGroupByFunctions.size();
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            final GroupByFunction workerGroupByFunction = workerGroupByFunctions.getQuick(i);
-            final GroupByFunction groupByFunction = groupByFunctions.getQuick(i);
-            workerGroupByFunction.initValueIndex(groupByFunction.getValueIndex());
-        }
-    }
-
     public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).setAllocator(allocator);
+        if (functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) {
+            // The list tracks worker-owned clones positionally, so iterate the owned bits
+            // directly instead of scanning every retained function: the common fully borrowed
+            // per-worker list costs a single probe instead of one probe per function.
+            for (int i = perWorkerFunctions.nextOwned(0); i > -1; i = perWorkerFunctions.nextOwned(i + 1)) {
+                functions.getQuick(i).setAllocator(allocator);
+            }
+        } else {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                functions.getQuick(i).setAllocator(allocator);
+            }
         }
     }
 
     public static void toTop(ObjList<? extends Function> args) {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            args.getQuick(i).toTop();
-        }
+        PerWorkerFunctionList.toTop(args);
     }
 
     public static void validateGroupByColumns(
@@ -602,14 +724,19 @@ public class GroupByUtils {
                             throw SqlException.$(key.position, "group by column does not match any key column is select statement");
                         }
                         QueryColumn qc = model.getAliasToColumnMap().valueAt(refColumn);
-                        if (qc.getAst().type != ExpressionNode.LITERAL && qc.getAst().type != ExpressionNode.CONSTANT
-                                && qc.getAst().type != ExpressionNode.FUNCTION && qc.getAst().type != ExpressionNode.OPERATION) {
+                        if (qc.getAst().type != ExpressionNode.LITERAL
+                                && qc.getAst().type != ExpressionNode.CONSTANT
+                                && qc.getAst().type != ExpressionNode.BIND_VARIABLE
+                                && qc.getAst().type != ExpressionNode.FUNCTION
+                                && qc.getAst().type != ExpressionNode.OPERATION) {
                             throw SqlException.$(key.position, "group by column references aggregate expression");
                         }
                     }
                     break;
                 case ExpressionNode.BIND_VARIABLE:
-                    throw SqlException.$(key.position, "bind variable is not allowed here");
+                    // a bind variable is constant per query, so GROUP BY by one
+                    // collapses to a single bucket - same semantics as a CONSTANT key.
+                    break;
                 case ExpressionNode.FUNCTION:
                 case ExpressionNode.OPERATION:
                     ObjList<QueryColumn> availableColumns = model.getBottomUpColumns();
@@ -703,7 +830,7 @@ public class GroupByUtils {
      */
     private static int findColumnKeyIndex(ExpressionNode node, Function func, RecordMetadata baseMetadata) {
         if (node.type == LITERAL) {
-            return baseMetadata.getColumnIndexQuiet(node.token);
+            return SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
         }
         if (SqlKeywords.isCastKeyword(node.token) && func instanceof ColumnFunction) {
             return ((ColumnFunction) func).getColumnIndex();

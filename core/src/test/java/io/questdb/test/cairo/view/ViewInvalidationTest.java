@@ -24,10 +24,17 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.Path;
 import org.junit.Test;
 
+import static io.questdb.test.tools.TestUtils.assertContains;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.fail;
 
 public class ViewInvalidationTest extends AbstractViewTest {
 
@@ -62,7 +69,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -111,7 +118,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -160,7 +167,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -329,6 +336,33 @@ public class ViewInvalidationTest extends AbstractViewTest {
     }
 
     @Test
+    public void testPersistedLateralNegativeLimitViewFailsClosedAndCascades() throws Exception {
+        // Upgrade-break regression (intended break): older binaries accepted a negative LIMIT in a
+        // correlated lateral body and silently produced wrong rows -- compensateLimit rewrites the
+        // LIMIT into `__lateral_rn <= limit`, which is unsatisfiable for a negative bound. This
+        // binary rejects the shape, so a stored definition carrying it must fail visibly.
+        assertPersistedLateralViewFailsClosed(
+                "select t1.ts, t1.k, l.c from " + TABLE1 + " t1 left join lateral ("
+                        + "select count() c from " + TABLE2 + " t2 where t2.k = t1.k limit -1) l on true",
+                "negative LIMIT is not supported in a correlated lateral sub-query"
+        );
+    }
+
+    @Test
+    public void testPersistedLateralOuterColumnLimitViewFailsClosedAndCascades() throws Exception {
+        // The other half of the narrowed scalar-count contract: a run-time LIMIT reading an outer
+        // column cannot be evaluated in the outer projection, so the count compensation guard
+        // cannot be built and the stored definition must be rejected rather than silently
+        // dropping the compensation.
+        assertPersistedLateralViewFailsClosed(
+                "select t1.ts, t1.k, l.c from " + TABLE1 + " t1 left join lateral ("
+                        + "select count() c from " + TABLE2 + " t2 where t2.k = t1.k limit t1.v) l on true",
+                "LIMIT referencing an outer column is not supported over a scalar count "
+                        + "in a correlated lateral sub-query; use a constant or bind variable"
+        );
+    }
+
+    @Test
     public void testRenamedColumnInsideFunctionInvalidatesView() throws Exception {
         testViewInvalidated(
                 "select ts, k, max(sqrt(v)) as v_max from " + TABLE1 + " where v > 4",
@@ -460,6 +494,106 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
     private void testViewInvalidated(String viewQuery, String breakingSql, String fixingSql, String expectedErrorMessage) throws Exception {
         testViewInvalidated(viewQuery, breakingSql, fixingSql, expectedErrorMessage, null, null);
+    }
+
+    /**
+     * Installs view SQL that this binary can no longer accept through CREATE VIEW, the way an
+     * upgrade leaves it: the definition is already on disk, written by an older binary. Goes
+     * through the same engine entry point the WAL apply path uses, so the {@code _view} file is
+     * rewritten and a recompile is enqueued exactly as it would be after a restart.
+     */
+    private static void installLegacyViewSql(String viewName, String legacySql) {
+        final TableToken viewToken = engine.verifyTableName(viewName);
+        final ViewDefinition current = engine.getViewGraph().getViewDefinition(viewToken);
+        assertNotNull(current);
+        try (
+                BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                Path path = new Path()
+        ) {
+            engine.updateViewDefinition(
+                    viewToken,
+                    legacySql,
+                    current.getDependencies(),
+                    current.getSeqTxn() + 1,
+                    writer,
+                    path
+            );
+        }
+    }
+
+    /**
+     * Pins the persisted plain-VIEW half of the lateral-guard upgrade contract: a stored definition
+     * this binary rejects must fail <em>closed</em> -- invalid with the same stable message CREATE
+     * surfaces, cascading to dependent views -- rather than compile to something wrong.
+     */
+    private void assertPersistedLateralViewFailsClosed(String legacyViewSql, String expectedErrorMessage) throws Exception {
+        // Same column shape as the legacy body, so only the lateral guard can explain the failure.
+        final String benignViewSql = "select t1.ts, t1.k, l.c from " + TABLE1 + " t1 left join lateral ("
+                + "select count() c from " + TABLE2 + " t2 where t2.k = t1.k limit 1) l on true";
+
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            createView(VIEW1, benignViewSql);
+            // A two-level dependency chain: VIEW3 reads VIEW1, VIEW4 reads VIEW3.
+            createView(VIEW3, "select ts, k, c from " + VIEW1);
+            createView(VIEW4, "select ts, k, c from " + VIEW3);
+
+            // CREATE rejects the shape outright on this binary, which is exactly why it can only
+            // reach here as an already-persisted definition. Without this the test would go
+            // vacuous the moment the guard is removed.
+            try {
+                execute("CREATE VIEW rejected_view AS (" + legacyViewSql + ")");
+                fail("expected CREATE VIEW to reject the legacy lateral shape");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), expectedErrorMessage);
+            }
+
+            // Upgrade simulation: the stored SQL becomes the shape this binary rejects.
+            installLegacyViewSql(VIEW1, legacyViewSql);
+            assertViewDefinition(VIEW1, legacyViewSql);
+            assertViewDefinitionFile(VIEW1, legacyViewSql);
+
+            detectInvalidView(VIEW1, expectedErrorMessage);
+            drainViewQueue();
+
+            // Fails closed with the same message CREATE surfaces...
+            assertViewState(VIEW1, expectedErrorMessage);
+            // ...and every view downstream of it goes invalid with the same reason, at both
+            // levels of the chain.
+            //
+            // These pin the operator-visible outcome and deliberately not the mechanism. View
+            // dependencies are flattened transitively at create time -- VIEW4's dependency set
+            // lists view1 directly, not just view3 -- so getDependentViews(VIEW1) returns both and
+            // ViewCompilerJob#compileDependentViews recompiles both, each failing on its own
+            // re-expansion of the broken body. ViewCompilerJob#invalidateDependentViews is
+            // therefore redundant at every depth and no black-box route can isolate it; these
+            // assertions still pass with it removed. They do fail if a compile failure stops
+            // producing invalid state, which is the contract that matters here.
+            assertViewState(VIEW3, expectedErrorMessage);
+            assertViewState(VIEW4, expectedErrorMessage);
+
+            // Operator-visible surface: views() reports both as invalid with the reason.
+            assertQuery("select view_name, view_status, invalidation_reason from views() order by view_name")
+                    .noLeakCheck()
+                    .expectSize(false)
+                    .returns("view_name\tview_status\tinvalidation_reason\n"
+                            + VIEW1 + "\tinvalid\t" + expectedErrorMessage + "\n"
+                            + VIEW3 + "\tinvalid\t" + expectedErrorMessage + "\n"
+                            + VIEW4 + "\tinvalid\t" + expectedErrorMessage + "\n");
+
+            // The explicit recompile path reports the same stable message.
+            compileView(VIEW1, expectedErrorMessage);
+
+            // The failure is contained: the base tables keep working and the view drops cleanly.
+            assertQuery("select count() from " + TABLE1).noLeakCheck().noRandomAccess().expectSize().returns("count\n9\n");
+            execute("DROP VIEW " + VIEW4);
+            execute("DROP VIEW " + VIEW3);
+            execute("DROP VIEW " + VIEW1);
+            drainWalQueue();
+            assertNull(getViewDefinition(VIEW1));
+        });
     }
 
     private void testViewInvalidated(String viewQuery, String breakingSql, String fixingSql, String expectedErrorMessage, String expectedCreateMetadata, String expectedFixedMetadata) throws Exception {

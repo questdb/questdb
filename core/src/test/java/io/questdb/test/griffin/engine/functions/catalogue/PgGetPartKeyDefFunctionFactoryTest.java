@@ -31,27 +31,23 @@ public class PgGetPartKeyDefFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgGetPartKeyDefFunc() throws Exception {
-        assertQuery(
-                "pg_get_partkeydef\n" +
-                        "\n",
-                "select pg_get_partkeydef(0);",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select pg_get_partkeydef(0);")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        pg_get_partkeydef
+                        
+                        """);
     }
 
     @Test
     public void testPrefixedPgGetPartKeyDefFunc() throws Exception {
-        assertQuery(
-                "pg_get_partkeydef\n" +
-                        "\n",
-                "select pg_catalog.pg_get_partkeydef(0);",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select pg_catalog.pg_get_partkeydef(0);")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        pg_get_partkeydef
+                        
+                        """);
     }
 }

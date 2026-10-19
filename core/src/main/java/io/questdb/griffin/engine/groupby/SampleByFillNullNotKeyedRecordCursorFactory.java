@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -40,9 +41,9 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
-    private final SampleByFillValueNotKeyedRecordCursor cursor;
-    private final SimpleMapValue value;
-    private final SimpleMapValue valueB;
+    private SampleByFillValueNotKeyedRecordCursor cursor;
+    private SimpleMapValue value;
+    private SimpleMapValue valueB;
 
     public SampleByFillNullNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -63,9 +64,12 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc,
+            boolean isSubDayUnit,
+            boolean isRuntimeBoundUtc
     ) throws SqlException {
-        super(base, groupByMetadata, recordFunctions);
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
             this.value = new SimpleMapValue(valueCount);
             this.valueB = new SimpleMapValue(valueCount);
@@ -89,11 +93,14 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
                     sampleFromFunc,
                     sampleFromFuncPos,
                     sampleToFunc,
-                    sampleToFuncPos
+                    sampleToFuncPos,
+                    isFromToUtc,
+                    isSubDayUnit
             );
+            cursor.setRuntimeBoundUtc(isRuntimeBoundUtc);
             peeker.setCursor(cursor);
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -112,12 +119,28 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(value);
-        Misc.free(valueB);
-        Misc.free(cursor);
+        final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
+        final SimpleMapValue value = this.value;
+        this.value = null;
+        final SimpleMapValue valueB = this.valueB;
+        this.valueB = null;
+        Throwable failure = closeSampleByOwnersBestEffort(null);
+        failure = Misc.freeBestEffort(failure, value);
+        if (valueB != value) {
+            failure = Misc.freeBestEffort(failure, valueB);
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
+    @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillValueNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
+    }
+
+    @Override
     protected AbstractNoRecordSampleByCursor getRawCursor() {
         return cursor;
     }

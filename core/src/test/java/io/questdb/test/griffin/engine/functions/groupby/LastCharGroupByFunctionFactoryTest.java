@@ -59,16 +59,13 @@ public class LastCharGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLastChar() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select last(a) a from tab")
+                .ddl("create table tab as (select '1' a union select '2' a union select '3' a)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         a
                         3
-                        """,
-                "select last(a) a from tab",
-                "create table tab as (select '1' a union select '2' a union select '3' a)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 }

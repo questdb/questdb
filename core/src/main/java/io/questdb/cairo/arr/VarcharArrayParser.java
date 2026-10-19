@@ -146,10 +146,10 @@ public final class VarcharArrayParser extends ArrayView implements FlatArrayView
     private void addValueFromMemory(long valueStart, long valueEnd) {
         long len = valueEnd - valueStart;
         if (len == 4
-                && (Unsafe.getUnsafe().getByte(valueStart) | 32) == 'n'
-                && (Unsafe.getUnsafe().getByte(valueStart + 1) | 32) == 'u'
-                && (Unsafe.getUnsafe().getByte(valueStart + 2) | 32) == 'l'
-                && (Unsafe.getUnsafe().getByte(valueStart + 3) | 32) == 'l') {
+                && (Unsafe.getByte(valueStart) | 32) == 'n'
+                && (Unsafe.getByte(valueStart + 1) | 32) == 'u'
+                && (Unsafe.getByte(valueStart + 2) | 32) == 'l'
+                && (Unsafe.getByte(valueStart + 3) | 32) == 'l') {
             nullFlags.add(true);
             values.setElem();
         } else {
@@ -181,7 +181,7 @@ public final class VarcharArrayParser extends ArrayView implements FlatArrayView
             return;
         }
 
-        byte firstChar = Unsafe.getUnsafe().getByte(lo);
+        byte firstChar = Unsafe.getByte(lo);
         if (firstChar != '{' && firstChar != '[') {
             // Single element
             shape.add(1);
@@ -193,7 +193,7 @@ public final class VarcharArrayParser extends ArrayView implements FlatArrayView
         int state = STATE_IDLE;
 
         for (long pos = lo; pos < hi; pos++) {
-            byte c = Unsafe.getUnsafe().getByte(pos);
+            byte c = Unsafe.getByte(pos);
 
             if (c == '"') {
                 if (state == STATE_IN_QUOTE) {
@@ -260,7 +260,7 @@ public final class VarcharArrayParser extends ArrayView implements FlatArrayView
     private void parse(CharSequence input) {
         assert strides.size() == 0;
 
-        if (input.length() == 0) {
+        if (input.isEmpty()) {
             return;
         }
 
@@ -358,9 +358,9 @@ public final class VarcharArrayParser extends ArrayView implements FlatArrayView
         int len = input.length();
         if (len == 4
                 && (input.charAt(0) | 32) == 'n'
-                && (input.charAt(0 + 1) | 32) == 'u'
-                && (input.charAt(0 + 2) | 32) == 'l'
-                && (input.charAt(0 + 3) | 32) == 'l') {
+                && (input.charAt(1) | 32) == 'u'
+                && (input.charAt(2) | 32) == 'l'
+                && (input.charAt(3) | 32) == 'l') {
             nullFlags.add(true);
             values.setElem();
         } else {

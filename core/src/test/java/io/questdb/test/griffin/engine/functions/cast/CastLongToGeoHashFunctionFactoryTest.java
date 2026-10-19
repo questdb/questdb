@@ -32,45 +32,53 @@ public class CastLongToGeoHashFunctionFactoryTest extends AbstractCairoTest {
     public void testSimple() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "j\n", "select cast(99889L as geohash(1c))"
-                    );
+                    assertQuery("select cast(99889L as geohash(1c))")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "j\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "n0\n", "select cast(899808896L as geohash(2c))"
-                    );
+                    assertQuery("select cast(899808896L as geohash(2c))")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "n0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "3zn0\n", "select cast(899808896L as geohash(4c))"
-                    );
+                    assertQuery("select cast(899808896L as geohash(4c))")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "3zn0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "00uu3zn0\n", "select cast(899808896L as geohash(8c))"
-                    );
+                    assertQuery("select cast(899808896L as geohash(8c))")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "00uu3zn0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "\n", "select cast(cast(null as long) as geohash(1c))"
-                    );
+                    assertQuery("select cast(cast(null as long) as geohash(1c))")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "\n", "select cast(cast(null as long) as geohash(2c))"
-                    );
+                    assertQuery("select cast(cast(null as long) as geohash(2c))")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "\n", "select cast(cast(null as long) as geohash(4c))"
-                    );
+                    assertQuery("select cast(cast(null as long) as geohash(4c))")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "\n", "select cast(cast(null as long) as geohash(8c))"
-                    );
+                    assertQuery("select cast(cast(null as long) as geohash(8c))")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "\n");
                 }
         );
     }

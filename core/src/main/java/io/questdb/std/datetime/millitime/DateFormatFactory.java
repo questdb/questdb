@@ -27,6 +27,7 @@ package io.questdb.std.datetime.millitime;
 
 import io.questdb.cairo.TimestampDateFormatFactory;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.datetime.DateFormat;
 
 import java.util.function.Function;
@@ -34,7 +35,7 @@ import java.util.function.Function;
 
 public class DateFormatFactory implements TimestampDateFormatFactory {
     public static final DateFormatFactory INSTANCE = new DateFormatFactory();
-    private final static ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
+    private final static FiberLocal<DateFormatCompiler> tlCompiler = new FiberLocal<>(DateFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = DateFormatFactory::map;
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
 

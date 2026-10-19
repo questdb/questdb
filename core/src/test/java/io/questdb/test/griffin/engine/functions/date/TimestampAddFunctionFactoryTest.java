@@ -43,8 +43,10 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                 "timestamp_sequence_ns(0, 1000000000) as ts_ns " +
                 "from long_sequence(20)" +
                 ") timestamp(ts)");
-        assertQuery(
-                """
+        assertQuery("select dateadd('u', 1000000, ts) date1, dateadd('u', 1000000, ts) date2, datediff('T', date1, date2) from x;")
+                .timestamp("date1")
+                .expectSize()
+                .returns("""
                         date1\tdate2\tdatediff
                         1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\t0
                         1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000Z\t0
@@ -66,15 +68,11 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         1970-01-01T00:00:18.000000Z\t1970-01-01T00:00:18.000000Z\t0
                         1970-01-01T00:00:19.000000Z\t1970-01-01T00:00:19.000000Z\t0
                         1970-01-01T00:00:20.000000Z\t1970-01-01T00:00:20.000000Z\t0
-                        """,
-                "select dateadd('u', 1000000, ts) date1, dateadd('u', 1000000, ts) date2, datediff('T', date1, date2) from x;",
-                "date1",
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select s, dateadd(s, 1000000, 1000000::timestamp) date1, dateadd(s, 1000000, 1000000000::timestamp_ns) date2, datediff('n', date1, date2) from x;")
+                .expectSize()
+                .returns("""
                         s\tdate1\tdate2\tdatediff
                         u\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\t0
                         T\t1970-01-01T00:16:41.000000Z\t1970-01-01T00:16:41.000000000Z\t0
@@ -96,15 +94,11 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         n\t1970-01-01T00:00:01.001000Z\t1970-01-01T00:00:01.001000000Z\t0
                         n\t1970-01-01T00:00:01.001000Z\t1970-01-01T00:00:01.001000000Z\t0
                         T\t1970-01-01T00:16:41.000000Z\t1970-01-01T00:16:41.000000000Z\t0
-                        """,
-                "select s, dateadd(s, 1000000, 1000000::timestamp) date1, dateadd(s, 1000000, 1000000000::timestamp_ns) date2, datediff('n', date1, date2) from x;",
-                null,
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select s, dateadd(s, 1000000, ts) date1, dateadd(s, 1000000, ts_ns) date2, datediff('n', date1, date2) from x;")
+                .expectSize()
+                .returns("""
                         s\tdate1\tdate2\tdatediff
                         u\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000000Z\t0
                         T\t1970-01-01T00:16:41.000000Z\t1970-01-01T00:16:41.000000000Z\t0
@@ -126,18 +120,14 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         n\t1970-01-01T00:00:17.001000Z\t1970-01-01T00:00:17.001000000Z\t0
                         n\t1970-01-01T00:00:18.001000Z\t1970-01-01T00:00:18.001000000Z\t0
                         T\t1970-01-01T00:16:59.000000Z\t1970-01-01T00:16:59.000000000Z\t0
-                        """,
-                "select s, dateadd(s, 1000000, ts) date1, dateadd(s, 1000000, ts_ns) date2, datediff('n', date1, date2) from x;",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testNullStride() throws Exception {
         for (int i = 0; i < units.length; i++) {
-            assertException("select dateadd('" + units[i] + "', null, 1587275359886758L)", 20, "`null` is not a valid stride");
+            assertQuery("select dateadd('" + units[i] + "', null, 1587275359886758L)")
+                    .fails(20, "`null` is not a valid stride");
         }
     }
 
@@ -150,7 +140,8 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testPeriodNullChar() throws Exception {
-        assertException("select dateadd('\0', 5, 1587275359886758L)", 15, "invalid time period [unit=\u0000]");
+        assertQuery("select dateadd('\0', 5, 1587275359886758L)")
+                .fails(15, "invalid time period [unit=\u0000]");
     }
 
     @Test
@@ -231,7 +222,8 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testUnknownPeriod() throws Exception {
-        assertException("select dateadd('q', -5, 1587275359886758L)", 15, "invalid time period [unit=q]");
+        assertQuery("select dateadd('q', -5, 1587275359886758L)")
+                .fails(15, "invalid time period [unit=q]");
     }
 
     @Override

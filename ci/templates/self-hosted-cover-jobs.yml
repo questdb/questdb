@@ -8,7 +8,7 @@ jobs:
         linux-griffin-root:
           poolName: "hetzner-incus"
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "coverage-griffin-root"
           includeTests: "**/griffin/*"
           javadoc_step: ""
@@ -16,7 +16,7 @@ jobs:
         linux-griffin-sub:
           poolName: "hetzner-incus"
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "coverage-griffin-sub"
           includeTests: "**/griffin/**/*"
           excludeTests: "**/griffin/*"
@@ -25,7 +25,7 @@ jobs:
         linux-fuzz1:
           poolName: "hetzner-incus"
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "coverage-fuzz1"
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
@@ -33,7 +33,7 @@ jobs:
         linux-fuzz2:
           poolName: "hetzner-incus"
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "coverage-fuzz2"
           includeTests: "**/O3*Test**,**/**Fuzz**"
           excludeTests: "**/cairo/fuzz/**"
@@ -42,7 +42,7 @@ jobs:
         linux-cairo-root:
           poolName: "hetzner-incus"
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "coverage-cairo-root"
           includeTests: "**/cairo/*"
           excludeTests: "**/O3*Test**,**/**Fuzz**"
@@ -51,7 +51,7 @@ jobs:
         linux-cairo-sub:
           poolName: "hetzner-incus"
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "coverage-cairo-sub"
           includeTests: "**/cairo/**/*"
           excludeTests: "**/cairo/*,**/O3*Test**,**/**Fuzz**"
@@ -60,7 +60,7 @@ jobs:
         linux-pgwire:
           poolName: "hetzner-incus"
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "coverage-pgwire"
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
@@ -68,7 +68,7 @@ jobs:
         linux-other:
           poolName: "hetzner-incus"
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "coverage-other"
           excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**"
           javadoc_step: ""

@@ -45,11 +45,11 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
             long hi = dataAddr + (rowCount - 1) * 4L;
             long offset = rowCount - 1;
             for (; hi >= dataAddr; hi -= 4L) {
-                int value = Unsafe.getUnsafe().getInt(hi);
+                int value = Unsafe.getInt(hi);
                 if (value != Numbers.INT_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putInt(valueIndex + 1, value);
                     }
@@ -78,25 +78,28 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
         // Zero page address means a column top; fall through to the record-based path.
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
-            for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            // Backwards: last-wins, so a forward scan would rewrite a key's entry for every later
+            // non-null row. See GroupByFunction.computeKeyedBatch().
+            for (long i = rowCount - 1; i >= 0; i--) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
+                final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
                 if (value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final int existingValue = Unsafe.getUnsafe().getInt(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.INT_NULL || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putInt(entryBase + valueColumnOffset, value);
+                    final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
+                    if (existingValue == Numbers.INT_NULL || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putInt(entryBase + valueColumnOffset, value);
                     }
                 }
             }
         } else {
-            for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            // Backwards for the same last-wins reason as the direct-column path above.
+            for (long i = rowCount - 1; i >= 0; i--) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 record.setRowIndex(rowIndex);
                 final int value = arg.getInt(record);
@@ -105,10 +108,10 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
                 if (value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final int existingValue = Unsafe.getUnsafe().getInt(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.INT_NULL || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putInt(entryBase + valueColumnOffset, value);
+                    final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
+                    if (existingValue == Numbers.INT_NULL || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putInt(entryBase + valueColumnOffset, value);
                     }
                 }
             }
@@ -137,7 +140,7 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId > destRowId || destValue.getInt(valueIndex + 1) == Numbers.INT_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putInt(valueIndex + 1, srcVal);
         }

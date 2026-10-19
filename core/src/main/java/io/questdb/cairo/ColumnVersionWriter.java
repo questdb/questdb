@@ -374,7 +374,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             updateA(writeOffset, areaSize);
         }
 
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         storeNewVersion();
 
         final int commitMode = configuration.getCommitMode();

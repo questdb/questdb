@@ -103,6 +103,18 @@ public class AbstractTest {
         SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
+    /**
+     * Builds a {@link QueryAssertion} for tests that have no ambient {@link CairoEngine} (e.g. those
+     * that drive a {@link TestServerMain}). The caller MUST supply the engine and execution context
+     * via {@link QueryAssertion#withEngine} / {@link QueryAssertion#withContext} before the terminal,
+     * typically from {@code serverMain.getEngine()} / {@code serverMain.getSqlExecutionContext()}.
+     * {@link AbstractCairoTest} overrides this with a variant bound to its own static engine.
+     */
+    protected QueryAssertion assertQuery(CharSequence query) {
+        return new QueryAssertion(null, null, () -> {
+        }, query);
+    }
+
     protected static MatViewRefreshJob createMatViewRefreshJob(CairoEngine engine) {
         return new MatViewRefreshJob(0, engine, 1);
     }
@@ -117,7 +129,7 @@ public class AbstractTest {
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainMatViewQueue(MatViewRefreshJob refreshJob) {
-        while (refreshJob.run(0)) ;
+        while (refreshJob.run()) ;
     }
 
     protected static void drainMatViewQueue(CairoEngine engine) {
@@ -128,12 +140,12 @@ public class AbstractTest {
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainMatViewTimerQueue(MatViewTimerJob timerJob) {
-        while (timerJob.run(0)) ;
+        while (timerJob.run()) ;
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainViewQueue(ViewCompilerJob compilerJob) {
-        while (compilerJob.run(0)) ;
+        while (compilerJob.run()) ;
     }
 
     protected static void drainViewQueue(CairoEngine engine) {
@@ -168,9 +180,9 @@ public class AbstractTest {
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
         CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        while (walApplyJob.run(0)) ;
-        if (checkWalTransactionsJob.run(0)) {
-            while (walApplyJob.run(0)) ;
+        while (walApplyJob.run()) ;
+        if (checkWalTransactionsJob.run()) {
+            while (walApplyJob.run()) ;
         }
     }
 

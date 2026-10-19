@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -63,14 +62,14 @@ public class LtStrFunctionFactory implements FunctionFactory {
         if (a.isConstant() && !b.isConstant()) {
             CharSequence constValue = a.getStrA(null);
             if (constValue == null) {
-                return BooleanConstant.FALSE;
+                return new StrNullSideFunc(b, true);
             }
             return new ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
             CharSequence constValue = b.getStrA(null);
             if (constValue == null) {
-                return BooleanConstant.FALSE;
+                return new StrNullSideFunc(a, false);
             }
             return new ConstOnRightFunc(a, constValue);
         }
@@ -214,6 +213,57 @@ public class LtStrFunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(right);
+        }
+    }
+
+    /**
+     * Short-circuit used when one operand is a constant NULL and the other side is a
+     * STRING-typed Function. Returning {@link io.questdb.griffin.engine.functions.constants.BooleanConstant#FALSE}
+     * directly would let the wrapping {@code NegatingFunctionFactory} (which builds
+     * {@code <=} and {@code >=} from {@code <} and {@code >}) flip the result; as a
+     * {@link NegatableBooleanFunction}, this class consumes the negation flag itself.
+     * <p>
+     * The semantics mirror the runtime {@link Chars#lessThan(CharSequence, CharSequence, boolean)} path:
+     * {@code <} / {@code >} (negated=false) always return false because at least one
+     * operand is null, and {@code <=} / {@code >=} (negated=true) return true only
+     * when the runtime side is also null (QuestDB's {@code NULL = NULL -> true}
+     * convention).
+     */
+    static final class StrNullSideFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final boolean nullOnLeft;
+
+        StrNullSideFunc(Function arg, boolean nullOnLeft) {
+            this.arg = arg;
+            this.nullOnLeft = nullOnLeft;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated && arg.getStrA(rec) == null;
+        }
+
+        @Override
+        public String getName() {
+            return negated ? ">=" : "<";
+        }
+
+        // The printed form reflects the post-Swap orientation, not the user's
+        // original SQL: `s <= null` lands here as Negating(Swapping(<)), which
+        // sets nullOnLeft=true and negated=true, so EXPLAIN reads `null >= s`.
+        // The expression is mathematically equivalent.
+        @Override
+        public void toPlan(PlanSink sink) {
+            if (nullOnLeft) {
+                sink.val("null").val(getName()).val(arg);
+            } else {
+                sink.val(arg).val(getName()).val("null");
+            }
         }
     }
 }

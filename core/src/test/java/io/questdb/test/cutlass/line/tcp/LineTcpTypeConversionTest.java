@@ -205,7 +205,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 "q\t2016-06-13T17:43:50.100402Z\n" +
                 (stringAsTagSupported
                         ? "\"questdbb\"\t2016-06-13T17:43:50.100403Z\n" +
-                        "\"q\"\t2016-06-13T17:43:50.100404Z\n"
+                          "\"q\"\t2016-06-13T17:43:50.100404Z\n"
                         : "") +
                 "100i\t2016-06-13T17:43:50.100405Z\n" +
                 "-100i\t2016-06-13T17:43:50.100406Z\n" +

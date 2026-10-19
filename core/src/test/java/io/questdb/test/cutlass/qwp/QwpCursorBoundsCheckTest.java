@@ -33,14 +33,11 @@ import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
-import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.protocol.QwpSchema;
-import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
@@ -72,9 +69,9 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 5;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
-                Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
-                Unsafe.getUnsafe().putByte(address + 1, (byte) 1); // nDims=1
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
+                Unsafe.putByte(address, (byte) 0); // no null bitmap
+                Unsafe.putByte(address + 1, (byte) 1); // nDims=1
 
                 QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
                 cursor.of(address, bufferSize, 1, TYPE_DOUBLE_ARRAY);
@@ -93,7 +90,7 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 8;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
                 // null bitmap flag is already 0 from setMemory
 
                 QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
@@ -113,7 +110,7 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 16;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(address, bufferSize, 100, TYPE_DECIMAL64);
@@ -159,29 +156,29 @@ public class QwpCursorBoundsCheckTest {
             int totalSize = tsColumnSize + intColumnSize;
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, totalSize, (byte) 0);
+                Unsafe.setMemory(address, totalSize, (byte) 0);
 
                 // Write timestamp column wire data
                 long pos = address;
-                Unsafe.getUnsafe().putByte(pos, (byte) 0);         // no null bitmap
+                Unsafe.putByte(pos, (byte) 0);         // no null bitmap
                 pos++;
-                Unsafe.getUnsafe().putByte(pos, QwpTimestampColumnCursor.ENCODING_GORILLA);
+                Unsafe.putByte(pos, QwpTimestampColumnCursor.ENCODING_GORILLA);
                 pos++;
-                Unsafe.getUnsafe().putLong(pos, ts1);              // first timestamp
+                Unsafe.putLong(pos, ts1);              // first timestamp
                 pos += 8;
-                Unsafe.getUnsafe().putLong(pos, ts2);              // second timestamp
+                Unsafe.putLong(pos, ts2);              // second timestamp
                 pos += 8;
-                Unsafe.getUnsafe().putByte(pos, (byte) 0);         // Gorilla: 1 bit '0' (DoD=0)
+                Unsafe.putByte(pos, (byte) 0);         // Gorilla: 1 bit '0' (DoD=0)
                 pos++;
 
                 // Write int column data (simulating next column in table block)
-                Unsafe.getUnsafe().putByte(pos, (byte) 0);         // no null bitmap
+                Unsafe.putByte(pos, (byte) 0);         // no null bitmap
                 pos++;
-                Unsafe.getUnsafe().putInt(pos, 100);
+                Unsafe.putInt(pos, 100);
                 pos += 4;
-                Unsafe.getUnsafe().putInt(pos, 200);
+                Unsafe.putInt(pos, 200);
                 pos += 4;
-                Unsafe.getUnsafe().putInt(pos, 300);
+                Unsafe.putInt(pos, 300);
 
                 // Step 1: Parse with valid data — verify correct behavior
                 QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
@@ -201,7 +198,7 @@ public class QwpCursorBoundsCheckTest {
                 // Step 2: Corrupt the Gorilla byte to 0xFF
                 // Prefix '1111' triggers 36-bit read (4 prefix + 32 data bits = 5 bytes)
                 long gorillaByteAddr = address + 1 + 1 + 8 + 8; // skip flag, encoding, ts1, ts2
-                Unsafe.getUnsafe().putByte(gorillaByteAddr, (byte) 0xFF);
+                Unsafe.putByte(gorillaByteAddr, (byte) 0xFF);
 
                 cursor = new QwpTimestampColumnCursor();
                 int corruptedConsumed = cursor.of(address, totalSize, 3, TYPE_TIMESTAMP, true);
@@ -241,7 +238,7 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 32;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
 
                 QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
                 cursor.of(address, bufferSize, 1000, TYPE_LONG);
@@ -278,11 +275,11 @@ public class QwpCursorBoundsCheckTest {
             long address = Unsafe.malloc(message.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < message.length; i++) {
-                    Unsafe.getUnsafe().putByte(address + i, message[i]);
+                    Unsafe.putByte(address + i, message[i]);
                 }
 
                 QwpMessageCursor cursor = new QwpMessageCursor();
-                cursor.of(address, message.length, null, null);
+                cursor.of(address, message.length, null);
 
                 try {
                     cursor.nextTable();
@@ -299,23 +296,53 @@ public class QwpCursorBoundsCheckTest {
     }
 
     @Test
+    public void testMessageCursorRejectsRowCountWithSignBitSet() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] message = new byte[]{
+                    'Q', 'W', 'P', '1', 1, 0, 1, 0, 21, 0, 0, 0,
+                    5, 'c', 'r', 'a', 's', 'h',
+                    (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x88,
+                    (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x01,
+                    1, 1, 's', TYPE_VARCHAR, 0
+            };
+            Assert.assertEquals(33, message.length);
+
+            long address = Unsafe.malloc(message.length, MemoryTag.NATIVE_DEFAULT);
+            try {
+                copyToNative(message, address);
+                QwpMessageCursor cursor = new QwpMessageCursor();
+                cursor.of(address, message.length, null);
+
+                try {
+                    cursor.nextTable();
+                    Assert.fail("expected QwpParseException for unsigned rowCount exceeding max");
+                } catch (QwpParseException e) {
+                    Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
+                }
+            } finally {
+                Unsafe.free(address, message.length, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testMessageCursorRejectsPayloadLongerThanMessageLength() throws Exception {
         assertMemoryLeak(() -> {
             int messageLength = HEADER_SIZE;
             long address = Unsafe.malloc(messageLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, messageLength, (byte) 0);
-                Unsafe.getUnsafe().putByte(address, (byte) 'Q');
-                Unsafe.getUnsafe().putByte(address + 1, (byte) 'W');
-                Unsafe.getUnsafe().putByte(address + 2, (byte) 'P');
-                Unsafe.getUnsafe().putByte(address + 3, (byte) '1');
-                Unsafe.getUnsafe().putByte(address + 4, (byte) 1);
-                Unsafe.getUnsafe().putShort(address + 6, (short) 1);
-                Unsafe.getUnsafe().putInt(address + 8, 1);
+                Unsafe.setMemory(address, messageLength, (byte) 0);
+                Unsafe.putByte(address, (byte) 'Q');
+                Unsafe.putByte(address + 1, (byte) 'W');
+                Unsafe.putByte(address + 2, (byte) 'P');
+                Unsafe.putByte(address + 3, (byte) '1');
+                Unsafe.putByte(address + 4, (byte) 1);
+                Unsafe.putShort(address + 6, (short) 1);
+                Unsafe.putInt(address + 8, 1);
 
                 QwpMessageCursor cursor = new QwpMessageCursor();
                 try {
-                    cursor.of(address, messageLength, null, null);
+                    cursor.of(address, messageLength, null);
                     Assert.fail("expected QwpParseException for truncated message payload");
                 } catch (QwpParseException e) {
                     Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
@@ -323,43 +350,6 @@ public class QwpCursorBoundsCheckTest {
                 }
             } finally {
                 Unsafe.free(address, messageLength, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testMessageCursorRejectsSchemaReferenceWithMismatchedColumnCount() throws Exception {
-        assertMemoryLeak(() -> {
-            byte[] registeredPayload = encodeTablePayloadWithFullSchema();
-            byte[] registeredMessage = wrapSingleTableMessage(registeredPayload);
-
-            byte[] referencePayload = encodeTablePayloadWithSchemaReference();
-            byte[] referenceMessage = wrapSingleTableMessage(referencePayload);
-
-            long registeredAddress = Unsafe.malloc(registeredMessage.length, MemoryTag.NATIVE_DEFAULT);
-            long referenceAddress = Unsafe.malloc(referenceMessage.length, MemoryTag.NATIVE_DEFAULT);
-            try {
-                copyToNative(registeredMessage, registeredAddress);
-                copyToNative(referenceMessage, referenceAddress);
-
-                QwpSchemaRegistry registry = new QwpSchemaRegistry();
-                QwpMessageCursor cursor = new QwpMessageCursor();
-
-                cursor.of(registeredAddress, registeredMessage.length, registry, null);
-                cursor.nextTable();
-
-                cursor.clear();
-                cursor.of(referenceAddress, referenceMessage.length, registry, null);
-                try {
-                    cursor.nextTable();
-                    Assert.fail("expected QwpParseException for schema reference column count mismatch");
-                } catch (QwpParseException e) {
-                    Assert.assertEquals(QwpParseException.ErrorCode.SCHEMA_MISMATCH, e.getErrorCode());
-                    Assert.assertTrue(e.getMessage().contains("schema column count mismatch"));
-                }
-            } finally {
-                Unsafe.free(registeredAddress, registeredMessage.length, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(referenceAddress, referenceMessage.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -414,21 +404,21 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 256;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
                 // byte 0: null bitmap flag = 0 (already zero from setMemory)
-                Unsafe.getUnsafe().putInt(address + 1, 0);
-                Unsafe.getUnsafe().putInt(address + 5, 5);
+                Unsafe.putInt(address + 1, 0);
+                Unsafe.putInt(address + 5, 5);
 
                 QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-                int consumed = cursor.of(address, legitimateSize, 1, TYPE_STRING);
+                int consumed = cursor.of(address, legitimateSize, 1, TYPE_VARCHAR);
                 Assert.assertEquals(14, consumed);
 
                 // Attacker sets offset[1] = 200 — claims 200 bytes of string data
-                Unsafe.getUnsafe().putInt(address + 5, 200);
+                Unsafe.putInt(address + 5, 200);
 
                 cursor = new QwpStringColumnCursor();
                 try {
-                    cursor.of(address, legitimateSize, 1, TYPE_STRING);
+                    cursor.of(address, legitimateSize, 1, TYPE_VARCHAR);
                     Assert.fail("expected QwpParseException for out-of-bounds string offset");
                 } catch (QwpParseException e) {
                     Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -445,11 +435,11 @@ public class QwpCursorBoundsCheckTest {
             int bufferSize = 16;
             long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+                Unsafe.setMemory(address, bufferSize, (byte) 0);
 
                 QwpStringColumnCursor cursor = new QwpStringColumnCursor();
                 // rowCount=100 needs (101)*4 = 404 bytes for offset array alone
-                cursor.of(address, bufferSize, 100, TYPE_STRING);
+                cursor.of(address, bufferSize, 100, TYPE_VARCHAR);
                 Assert.fail("expected QwpParseException for inflated rowCount");
             } catch (QwpParseException e) {
                 Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -479,6 +469,7 @@ public class QwpCursorBoundsCheckTest {
             case TYPE_SHORT:
             case TYPE_CHAR:
             case TYPE_INT:
+            case TYPE_IPV4:
             case TYPE_LONG:
             case TYPE_DATE:
                 acc = table.getFixedWidthColumn(col).getLong();
@@ -498,8 +489,10 @@ public class QwpCursorBoundsCheckTest {
                         ^ cursor.getLong256_2() ^ cursor.getLong256_3();
                 break;
             }
-            case TYPE_STRING:
             case TYPE_VARCHAR:
+            case TYPE_BINARY:
+                // BINARY shares VARCHAR's wire layout, so the string cursor decodes
+                // both. We only sample the byte length to fold into the checksum.
                 acc = table.getStringColumn(col).getUtf8Value().size();
                 break;
             case TYPE_SYMBOL: {
@@ -542,17 +535,25 @@ public class QwpCursorBoundsCheckTest {
         return acc;
     }
 
+    private static byte[] randomBytes(Rnd rnd, int len) {
+        byte[] b = new byte[len];
+        for (int i = 0; i < len; i++) {
+            b[i] = (byte) rnd.nextInt(256);
+        }
+        return b;
+    }
+
     private static byte[] copyFromNative(long address, int length) {
         byte[] dst = new byte[length];
         for (int i = 0; i < length; i++) {
-            dst[i] = Unsafe.getUnsafe().getByte(address + i);
+            dst[i] = Unsafe.getByte(address + i);
         }
         return dst;
     }
 
     private static void copyToNative(byte[] src, long address) {
         for (int i = 0; i < src.length; i++) {
-            Unsafe.getUnsafe().putByte(address + i, src[i]);
+            Unsafe.putByte(address + i, src[i]);
         }
     }
 
@@ -572,41 +573,12 @@ public class QwpCursorBoundsCheckTest {
         return buf;
     }
 
-    private static byte[] encodeTablePayloadWithFullSchema() {
-        byte[] header = encodeTableHeaderPayload(1, 1);
-        QwpSchema schema = QwpSchema.create(new QwpColumnDef[]{new QwpColumnDef("a", QwpConstants.TYPE_LONG)});
-        byte[] schemaBytes = new byte[schema.encodedSize(0)];
-        schema.encode(schemaBytes, 0, 0);
-        byte[] columnData = new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0};
-
-        byte[] payload = new byte[header.length + schemaBytes.length + columnData.length];
-        int offset = 0;
-        System.arraycopy(header, 0, payload, offset, header.length);
-        offset += header.length;
-        System.arraycopy(schemaBytes, 0, payload, offset, schemaBytes.length);
-        offset += schemaBytes.length;
-        System.arraycopy(columnData, 0, payload, offset, columnData.length);
-        return payload;
-    }
-
-    private static byte[] encodeTablePayloadWithSchemaReference() {
-        byte[] header = encodeTableHeaderPayload(1, 2);
-        byte[] schemaRef = new byte[1 + QwpVarint.encodedLength(0)];
-        QwpSchema.encodeReference(schemaRef, 0, 0);
-
-        byte[] payload = new byte[header.length + schemaRef.length];
-        System.arraycopy(header, 0, payload, 0, header.length);
-        System.arraycopy(schemaRef, 0, payload, header.length, schemaRef.length);
-        return payload;
-    }
-
     private static byte[] generateValidMessage(Rnd rnd, int iter) {
         try (QwpTableBuffer buffer = new QwpTableBuffer("fuzz_" + iter);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            encoder.setGorillaEnabled((iter & 1) != 0);
             populateFuzzTable(buffer, rnd, iter);
 
-            int size = encoder.encode(buffer, false);
+            int size = encoder.encode(buffer);
             QwpBufferWriter writer = encoder.getBuffer();
             return copyFromNative(writer.getBufferPtr(), size);
         }
@@ -614,7 +586,7 @@ public class QwpCursorBoundsCheckTest {
 
     private static long parseAndIterate(long address, int length) throws QwpParseException {
         QwpMessageCursor cursor = new QwpMessageCursor(FUZZ_MAX_ROWS_PER_TABLE);
-        cursor.of(address, length, new QwpSchemaRegistry(), new ObjList<>());
+        cursor.of(address, length, new ObjList<>());
 
         long checksum = 0;
         while (cursor.hasNextTable()) {
@@ -640,11 +612,13 @@ public class QwpCursorBoundsCheckTest {
         QwpTableBuffer.ColumnBuffer dateCol = buffer.getOrCreateColumn("b_date", TYPE_DATE, true);
         QwpTableBuffer.ColumnBuffer doubleCol = buffer.getOrCreateColumn("b_double", TYPE_DOUBLE, false);
         QwpTableBuffer.ColumnBuffer symCol = buffer.getOrCreateColumn("b_sym", TYPE_SYMBOL, true);
-        QwpTableBuffer.ColumnBuffer strCol = buffer.getOrCreateColumn("b_str", TYPE_STRING, true);
+        QwpTableBuffer.ColumnBuffer strCol = buffer.getOrCreateColumn("b_str", TYPE_VARCHAR, true);
         QwpTableBuffer.ColumnBuffer varcharCol = buffer.getOrCreateColumn("b_varchar", TYPE_VARCHAR, false);
         QwpTableBuffer.ColumnBuffer uuidCol = buffer.getOrCreateColumn("b_uuid", TYPE_UUID, true);
         QwpTableBuffer.ColumnBuffer long256Col = buffer.getOrCreateColumn("b_l256", TYPE_LONG256, true);
         QwpTableBuffer.ColumnBuffer geoCol = buffer.getOrCreateColumn("b_geo", TYPE_GEOHASH, true);
+        QwpTableBuffer.ColumnBuffer ipv4Col = buffer.getOrCreateColumn("b_ipv4", TYPE_IPV4, true);
+        QwpTableBuffer.ColumnBuffer binCol = buffer.getOrCreateColumn("b_bin", TYPE_BINARY, true);
         QwpTableBuffer.ColumnBuffer dec64Col = buffer.getOrCreateColumn("b_dec64", TYPE_DECIMAL64, true);
         QwpTableBuffer.ColumnBuffer dec128Col = buffer.getOrCreateColumn("b_dec128", TYPE_DECIMAL128, true);
         QwpTableBuffer.ColumnBuffer dec256Col = buffer.getOrCreateColumn("b_dec256", TYPE_DECIMAL256, true);
@@ -696,6 +670,9 @@ public class QwpCursorBoundsCheckTest {
                 uuidCol.addUuid(rnd.nextLong(), rnd.nextLong());
                 long256Col.addLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
                 geoCol.addGeoHash(rnd.nextGeoHashLong(30), 30);
+                // OR a high bit to keep the address out of the 0.0.0.0 NULL sentinel.
+                ipv4Col.addIPv4(rnd.nextInt() | 0x01000000);
+                binCol.addBinary(randomBytes(rnd, 1 + rnd.nextInt(8)));
                 dec64Col.addDecimal64(new Decimal64((long) rnd.nextInt(100_000) - 50_000L, 2));
                 dec128Col.addDecimal128(Decimal128.fromLong((long) rnd.nextInt(1_000_000) - 500_000L, 4));
                 dec256Col.addDecimal256(Decimal256.fromLong((long) rnd.nextInt(10_000_000) - 5_000_000L, 5));
@@ -707,6 +684,8 @@ public class QwpCursorBoundsCheckTest {
                 uuidCol.addNull();
                 long256Col.addNull();
                 geoCol.addNull();
+                ipv4Col.addNull();
+                binCol.addNull();
                 dec64Col.addNull();
                 dec128Col.addNull();
                 dec256Col.addNull();
@@ -733,22 +712,4 @@ public class QwpCursorBoundsCheckTest {
         }
     }
 
-    private static byte[] wrapSingleTableMessage(byte[] payload) {
-        byte[] message = new byte[HEADER_SIZE + payload.length];
-        int offset = 0;
-        message[offset++] = 'Q';
-        message[offset++] = 'W';
-        message[offset++] = 'P';
-        message[offset++] = '1';
-        message[offset++] = 1;
-        message[offset++] = FLAG_GORILLA;
-        message[offset++] = 1;
-        message[offset++] = 0;
-        message[offset++] = (byte) payload.length;
-        message[offset++] = (byte) (payload.length >>> 8);
-        message[offset++] = (byte) (payload.length >>> 16);
-        message[offset++] = (byte) (payload.length >>> 24);
-        System.arraycopy(payload, 0, message, offset, payload.length);
-        return message;
-    }
 }

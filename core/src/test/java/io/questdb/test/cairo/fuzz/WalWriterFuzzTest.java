@@ -142,19 +142,43 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             drainPurgeJob();
 
             int expectedTxnCount = 500;
-            assertSql("count\n" +
-                    expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            assertQuery("select count(*) from wal_transactions('chunk_seq')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" +
+                            expectedTxnCount + "\n");
 
             drainWalQueue();
 
-            assertSql("count\n" +
-                    expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            assertQuery("select count(*) from wal_transactions('chunk_seq')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" +
+                            expectedTxnCount + "\n");
 
             drainPurgeJob();
 
-            assertSql("count\n" +
-                    (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            assertQuery("select count(*) from wal_transactions('chunk_seq')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" +
+                            (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n");
         });
+    }
+
+    @Test
+    public void testChunkedSequencerWriting() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2, 0);
+        setFuzzProperties(rnd);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        Assert.assertEquals(10, node1.getConfiguration().getDefaultSeqPartTxnCount());
+        runFuzz(rnd);
     }
 
     @Test
@@ -170,7 +194,75 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.05,
                 0.05,
                 0.1,
+                0.1,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.1,
                 0.0,
+                0.8,
+                0.00,
+                0,
+                0.1,
+                0.1,
+                0.01, // addCoveringIndexProb
+                0.1 // SET FORMAT PARQUET|NATIVE probability
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testCreateTableAsParquet() throws Exception {
+        // Creates WAL table in parquet format and keeps then run all parquet supported operations.
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+        setCreateWalAsParquet(true);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.1,
+                1.0,
+                0.01,
+                0.01,
+                0.0, // partitionToParquetProb — disabled
+                0.0, // partitionToNativeProb — disabled
+                0.1,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1,
+                0.01, // addCoveringIndexProb — disabled
+                0.0 // setTableFormatProb — disabled
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testConvertPartitionToParquetWithCoveringIndex() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.1,
                 1.0,
                 0.01,
                 0.01,
@@ -182,21 +274,12 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.00,
                 0,
                 0.01,
-                0.1
+                0.1,
+                0.1, // addCoveringIndexProb
+                0.0
+
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
-        runFuzz(rnd);
-    }
-
-    @Test
-    public void testChunkedSequencerWriting() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        setTestParams(rnd);
-
-        fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2, 0);
-        setFuzzProperties(rnd);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-        Assert.assertEquals(10, node1.getConfiguration().getDefaultSeqPartTxnCount());
         runFuzz(rnd);
     }
 

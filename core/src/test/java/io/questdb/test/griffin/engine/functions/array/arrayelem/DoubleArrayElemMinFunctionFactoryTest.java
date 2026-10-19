@@ -130,20 +130,18 @@ public class DoubleArrayElemMinFunctionFactoryTest extends AbstractDoubleArrayEl
 
     @Test
     public void testAllNullArrays() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_min\nnull\n",
-                "SELECT array_elem_min(null::double[], null::double[])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_min(null::double[], null::double[])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_min\nnull\n"));
     }
 
     @Test
     public void testDifferentLengths() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_min\n[3.0,4.0,5.0]\n",
-                "SELECT array_elem_min(ARRAY[10.0, 20.0], ARRAY[3.0, 4.0, 5.0])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_min(ARRAY[10.0, 20.0], ARRAY[3.0, 4.0, 5.0])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_min\n[3.0,4.0,5.0]\n"));
     }
 
     @Test
@@ -151,30 +149,27 @@ public class DoubleArrayElemMinFunctionFactoryTest extends AbstractDoubleArrayEl
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (a DOUBLE[], b DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[5.0, 6.0], ARRAY[3.0, 4.0])");
-            assertQueryNoLeakCheck(
-                    "array_elem_min\n[3.0,4.0]\n",
-                    "SELECT array_elem_min(a, b) FROM tab",
-                    null, true, true
-            );
+            assertQuery("SELECT array_elem_min(a, b) FROM tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("array_elem_min\n[3.0,4.0]\n");
         });
     }
 
     @Test
     public void testNanElements() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_min\n[3.0,2.0]\n",
-                "SELECT array_elem_min(ARRAY[3.0, null], ARRAY[null, 2.0])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_min(ARRAY[3.0, null], ARRAY[null, 2.0])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_min\n[3.0,2.0]\n"));
     }
 
     @Test
     public void testOneNullArray() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_min\n[1.0,2.0]\n",
-                "SELECT array_elem_min(null::double[], ARRAY[1.0, 2.0])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_min(null::double[], ARRAY[1.0, 2.0])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_min\n[1.0,2.0]\n"));
     }
 
     @Test
@@ -224,11 +219,10 @@ public class DoubleArrayElemMinFunctionFactoryTest extends AbstractDoubleArrayEl
 
     @Test
     public void testThreeArraysSameLength() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_min\n[1.0,1.0]\n",
-                "SELECT array_elem_min(ARRAY[1.0, 2.0], ARRAY[3.0, 1.0], ARRAY[2.0, 4.0])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_min(ARRAY[1.0, 2.0], ARRAY[3.0, 1.0], ARRAY[2.0, 4.0])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_min\n[1.0,1.0]\n"));
     }
 
     @Test
@@ -274,10 +268,9 @@ public class DoubleArrayElemMinFunctionFactoryTest extends AbstractDoubleArrayEl
 
     @Test
     public void testTwoArraysSameLength() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "array_elem_min\n[1.0,2.0]\n",
-                "SELECT array_elem_min(ARRAY[1.0, 5.0], ARRAY[3.0, 2.0])",
-                null, true, true
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT array_elem_min(ARRAY[1.0, 5.0], ARRAY[3.0, 2.0])")
+                .noLeakCheck()
+                .expectSize()
+                .returns("array_elem_min\n[1.0,2.0]\n"));
     }
 }

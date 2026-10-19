@@ -81,7 +81,7 @@ public final class QwpVarint {
             if (bytesRead >= MAX_VARINT_BYTES) {
                 throw QwpParseException.varintOverflow();
             }
-            b = Unsafe.getUnsafe().getByte(address1++);
+            b = Unsafe.getByte(address1++);
             if (shift == 63 && (b & 0x7E) != 0) {
                 throw QwpParseException.varintOverflow();
             }
@@ -140,7 +140,7 @@ public final class QwpVarint {
             throw QwpParseException.incompleteVarint();
         }
         // Fast path: single-byte varint (values 0-127) — the common case for symbol indices
-        byte b = Unsafe.getUnsafe().getByte(address);
+        byte b = Unsafe.getByte(address);
         if ((b & CONTINUATION_BIT) == 0) {
             result.value = b;
             result.bytesRead = 1;
@@ -158,10 +158,10 @@ public final class QwpVarint {
      */
     public static long encode(long address, long value) {
         while ((value & ~DATA_MASK) != 0) {
-            Unsafe.getUnsafe().putByte(address++, (byte) ((value & DATA_MASK) | CONTINUATION_BIT));
+            Unsafe.putByte(address++, (byte) ((value & DATA_MASK) | CONTINUATION_BIT));
             value >>>= 7;
         }
-        Unsafe.getUnsafe().putByte(address++, (byte) value);
+        Unsafe.putByte(address++, (byte) value);
         return address;
     }
 
@@ -211,7 +211,7 @@ public final class QwpVarint {
             if (bytesRead >= MAX_VARINT_BYTES) {
                 throw QwpParseException.varintOverflow();
             }
-            b = Unsafe.getUnsafe().getByte(addr++);
+            b = Unsafe.getByte(addr++);
             if (shift == 63 && (b & 0x7E) != 0) {
                 throw QwpParseException.varintOverflow();
             }

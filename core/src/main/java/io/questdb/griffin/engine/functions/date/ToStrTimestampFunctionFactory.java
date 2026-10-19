@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -47,7 +48,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class ToStrTimestampFunctionFactory implements FunctionFactory {
 
-    private static final ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);
+    private static final FiberLocal<StringSink> tlSink = new FiberLocal<>(StringSink::new);
 
     @Override
     public String getSignature() {

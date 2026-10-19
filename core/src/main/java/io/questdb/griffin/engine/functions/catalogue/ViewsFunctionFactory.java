@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -37,18 +38,26 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class ViewsFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
 
     @Override
     public String getSignature() {
@@ -83,6 +92,9 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
+            cursor.securityContext = executionContext.getSecurityContext();
             cursor.toTop(executionContext.getCairoEngine());
             return cursor;
         }
@@ -105,7 +117,9 @@ public class ViewsFunctionFactory implements FunctionFactory {
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
             private final ViewsRecord record = new ViewsRecord();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private CairoEngine engine;
+            private SecurityContext securityContext;
             private int viewIndex = 0;
 
             @Override
@@ -121,8 +135,9 @@ public class ViewsFunctionFactory implements FunctionFactory {
             public boolean hasNext() {
                 final int n = viewTokens.size();
                 for (; viewIndex < n; viewIndex++) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final TableToken viewToken = viewTokens.get(viewIndex);
-                    if (viewToken.isSystem()) {
+                    if (viewToken.isSystem() || !securityContext.isTableVisible(viewToken)) {
                         continue;
                     }
                     if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {

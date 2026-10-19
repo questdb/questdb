@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.model;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
@@ -79,7 +80,7 @@ public class MutableModelsTest {
         model.setColumnNamePos(10);
         model.setColumnType(ColumnType.STRING);
         model.setCastType(ColumnType.INT, 20);
-        model.setIndexed(true, 30, 256);
+        model.setIndexType(IndexType.BITMAP, 30, 256);
         model.setIsDedupKey();
         model.setSymbolCacheFlag(true);
         model.setSymbolCapacity(1024);
@@ -374,8 +375,8 @@ public class MutableModelsTest {
         LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = new LowerCaseCharSequenceObjHashMap<>();
         withClauses.put("cte1", WithClauseModel.FACTORY.newInstance());
         model.of(42, withClauses, QueryModel.FACTORY.newInstance());
-        // Force initialization of withClauses field
-        model.getWithClauses();
+        // of() sets every field, so clear() has each one to reset
+        Assert.assertSame(withClauses, model.getWithClauses());
         assertDifferentFromFresh(model, WithClauseModel.FACTORY.newInstance());
 
         model.clear();

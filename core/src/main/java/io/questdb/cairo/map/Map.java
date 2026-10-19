@@ -28,7 +28,9 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -131,7 +133,7 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * {@code batchAddr}. Each packed long has the layout:
      * {@code [isNew:1][rowIndex:24][offset:39]}, where {@code offset} is the
      * byte distance from Map's base address to the <b>start of the value
-     * region</b> of that entry — not to the entry start. This keeps the
+     * region</b> of that entry, not to the entry start. This keeps the
      * encoding uniform across fixed- and variable-size maps and lets
      * consumers address per-column values as
      * {@code entryBase + offset + valueOffsets[valueIndex]}.
@@ -213,6 +215,25 @@ public interface Map extends Mutable, Closeable, Reopenable {
     }
 
     void setKeyCapacity(int keyCapacity);
+
+    /**
+     * Binds a per-query native memory tracker to this map. All subsequent
+     * {@code Unsafe.malloc} / {@code realloc} / {@code free} calls performed by the
+     * map route through tracker-aware overloads so that allocations are charged to
+     * the active workload's per-query counter in addition to the global counter.
+     * <p>
+     * A {@code null} tracker means no per-query charging: allocations go to the
+     * global counter only, as before. The caller owns the tracker's lifetime and
+     * must call this with {@code null} (or replace with a new tracker) before the
+     * bound tracker is closed or returned to its provider's pool; the map must not
+     * outlive the tracker it was bound to.
+     * <p>
+     * Abstract on purpose: a new allocating map that forgets to wire the tracker
+     * would silently charge the global counter only - the exact asymmetric wiring
+     * the per-query memory limit exists to prevent. A non-allocating map should
+     * still implement this as an explicit no-op.
+     */
+    void setMemoryTracker(@Nullable MemoryTracker tracker);
 
     long size();
 

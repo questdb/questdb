@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -36,6 +37,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -49,6 +51,12 @@ import io.questdb.std.str.Path;
 
 public class FilesFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
+
+    @Override
+    public int getExecutionRequirements() {
+        // authorizes the caller, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
 
     @Override
     public String getSignature() {
@@ -78,8 +86,8 @@ public class FilesFunctionFactory implements FunctionFactory {
 
     public static class FilesRecordCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(FilesRecordCursorFactory.class);
-        private final FilesRecordCursor cursor;
-        private final Path path = new Path(MemoryTag.NATIVE_PATH);
+        private FilesRecordCursor cursor;
+        private Path path = new Path(MemoryTag.NATIVE_PATH);
 
         public FilesRecordCursorFactory(CairoConfiguration configuration, CharSequence root) {
             super(METADATA);
@@ -90,7 +98,12 @@ public class FilesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.toTop();
+            // Unlike import_files() and export_files(), files() lists any path it is given, the
+            // database root included, where table and column file names would disclose every
+            // table and its schema. Authorized per execution, since compiled factories are shared.
+            executionContext.getSecurityContext().authorizeSystemAdmin();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            cursor.toTop(executionContext.getCircuitBreaker());
             return cursor;
         }
 
@@ -106,8 +119,13 @@ public class FilesFunctionFactory implements FunctionFactory {
 
         @Override
         protected void _close() {
-            cursor.close();
-            Misc.free(path);
+            final FilesRecordCursor cursor = this.cursor;
+            this.cursor = null;
+            final Path path = this.path;
+            this.path = null;
+            Throwable failure = Misc.freeBestEffort(null, cursor);
+            failure = Misc.freeBestEffort(failure, path);
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 

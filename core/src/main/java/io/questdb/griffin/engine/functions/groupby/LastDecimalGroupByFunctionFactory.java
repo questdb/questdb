@@ -77,7 +77,9 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            if (rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
 
         @Override
@@ -105,7 +107,9 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            if (rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
 
         @Override
@@ -133,7 +137,9 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            if (rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
 
         @Override
@@ -161,7 +167,9 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            if (rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
 
         @Override
@@ -188,7 +196,9 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            if (rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
 
         @Override
@@ -215,7 +225,9 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            if (rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
 
         @Override

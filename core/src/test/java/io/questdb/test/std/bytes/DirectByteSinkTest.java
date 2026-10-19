@@ -26,16 +26,19 @@ package io.questdb.test.std.bytes;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.ByteSequence;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.function.Supplier;
 
 public class DirectByteSinkTest {
+
     @Test
     public void testBasics() {
         final long mallocCount0 = Unsafe.getMallocCount();
@@ -144,18 +147,18 @@ public class DirectByteSinkTest {
             try (NativeByteSink directSink = sink.borrowDirectByteSink()) {
                 final long impl = directSink.ptr();
                 Assert.assertNotEquals(ptr, impl);
-                final long implPtr = Unsafe.getUnsafe().getLong(impl);
-                Unsafe.getUnsafe().putByte(implPtr, (byte) 'd');
-                Unsafe.getUnsafe().putLong(impl, implPtr + 1);
+                final long implPtr = Unsafe.getLong(impl);
+                Unsafe.putByte(implPtr, (byte) 'd');
+                Unsafe.putLong(impl, implPtr + 1);
                 Assert.assertEquals(4, sink.size());
                 Assert.assertEquals(32, sink.allocatedCapacity());
                 final long newImplPtr = DirectByteSink.implBook(impl, 400);
                 final long newImplPtr2 = DirectByteSink.implBook(impl, 400);  // idempotent
                 Assert.assertEquals(newImplPtr, newImplPtr2);
-                Assert.assertEquals(newImplPtr, Unsafe.getUnsafe().getLong(impl));
+                Assert.assertEquals(newImplPtr, Unsafe.getLong(impl));
                 Assert.assertEquals(512, sink.allocatedCapacity());
-                final long implLo = Unsafe.getUnsafe().getLong(impl + 8);
-                final long implHi = Unsafe.getUnsafe().getLong(impl + 16);
+                final long implLo = Unsafe.getLong(impl + 8);
+                final long implHi = Unsafe.getLong(impl + 16);
                 Assert.assertEquals(512, implHi - implLo);
             }
 
@@ -166,16 +169,17 @@ public class DirectByteSinkTest {
             Assert.assertEquals((byte) 'd', sink.byteAt(3));
             Assert.assertEquals(512, sink.allocatedCapacity());
         }
-
     }
 
     @Test
     public void testOver2GiB() {
+        // The 2GiB overflow boundary this guards is platform-independent, but filling >2GB of
+        // native memory is very slow on the hosted Mac and Windows runners, so run on Linux only.
+        Assume.assumeTrue(Os.isLinux());
         try (
                 DirectByteSink oneMegChunk = new DirectByteSink(32, MemoryTag.NATIVE_DIRECT_BYTE_SINK);
                 DirectByteSink dbs = new DirectByteSink(32, MemoryTag.NATIVE_DIRECT_BYTE_SINK)
         ) {
-
             final int oneMiB = 1024 * 1024;
             for (int i = 0; i < oneMiB; i++) {
                 oneMegChunk.put((byte) '0');

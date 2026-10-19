@@ -28,6 +28,8 @@ public interface MetricsRegistry extends Target {
 
     void addTarget(Target target);
 
+    void removeTarget(Target target);
+
     AtomicLongGauge newAtomicLongGauge(CharSequence name);
 
     CounterWithTwoLabels newCounter(

@@ -27,11 +27,21 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.MemoryTracker;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public record ChainedSymbolShortCircuit(
         @NotNull SymbolJoinKeyMapping[] mappings
 ) implements SymbolShortCircuit {
+
+    @Override
+    public void close() {
+        // Misc.free() would null out the array elements, while the chain stays reusable
+        for (int i = 0, n = mappings.length; i < n; i++) {
+            mappings[i].close();
+        }
+    }
 
     @Override
     public boolean isShortCircuit(Record masterRecord) {
@@ -47,6 +57,20 @@ public record ChainedSymbolShortCircuit(
     public void of(TimeFrameCursor slaveCursor) {
         for (int i = 0, n = mappings.length; i < n; i++) {
             mappings[i].of(slaveCursor);
+        }
+    }
+
+    @Override
+    public void reopen() {
+        for (int i = 0, n = mappings.length; i < n; i++) {
+            mappings[i].reopen();
+        }
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        for (int i = 0, n = mappings.length; i < n; i++) {
+            mappings[i].setMemoryTracker(tracker);
         }
     }
 }

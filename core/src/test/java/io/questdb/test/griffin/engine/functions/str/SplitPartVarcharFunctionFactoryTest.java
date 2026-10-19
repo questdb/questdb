@@ -58,20 +58,12 @@ public class SplitPartVarcharFunctionFactoryTest extends AbstractFunctionFactory
 
     @Test
     public void testNegativeIndex() throws Exception {
-        assertQuery(
-                "split_part\n" + "ghi\n",
-                "select split_part('abc~@~def~@~ghi'::varchar, '~@~'::varchar, -1)",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                "split_part\n" + "ghi\n",
-                "select split_part('abc,def,ghi,jkl'::varchar, cast(',' as varchar), -2)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select split_part('abc~@~def~@~ghi'::varchar, '~@~'::varchar, -1)")
+                .expectSize()
+                .returns("split_part\nghi\n");
+        assertQuery("select split_part('abc,def,ghi,jkl'::varchar, cast(',' as varchar), -2)")
+                .expectSize()
+                .returns("split_part\nghi\n");
     }
 
     @Test
@@ -92,52 +84,39 @@ public class SplitPartVarcharFunctionFactoryTest extends AbstractFunctionFactory
 
     @Test
     public void testPositiveIndex() throws Exception {
-        assertQuery(
-                "split_part\n" + "def\n",
-                "select split_part('abc~@~def~@~ghi::varchar', '~@~'::varchar, 2)",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                "split_part\n" + "def\n",
-                "select split_part('abc,def,ghi,jkl'::varchar, cast(',' as varchar), 2)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select split_part('abc~@~def~@~ghi::varchar', '~@~'::varchar, 2)")
+                .expectSize()
+                .returns("split_part\ndef\n");
+        assertQuery("select split_part('abc,def,ghi,jkl'::varchar, cast(',' as varchar), 2)")
+                .expectSize()
+                .returns("split_part\ndef\n");
     }
 
     @Test
     public void testRuntimeConstant() throws Exception {
-        assertQuery(
-                "split_part\nabc\n",
-                "select split_part('abc,QuestDB,sql'::varchar, ',', (now() % 1 + 1)::int)",
-                "",
-                true,
-                true
-        );
+        assertQuery("select split_part('abc,QuestDB,sql'::varchar, ',', (now() % 1 + 1)::int)")
+                .expectSize()
+                .returns("split_part\nabc\n");
     }
 
     @Test
     public void testSinkIsCleared() throws Exception {
         for (int i = 0; i < 10; i++) {
-            assertQuery(
-                    "split_part\n" +
+            assertQuery("select split_part(x, cast('.' as varchar), 3) from\n" +
+                    "(select      cast('a.b' as varchar) as x\n" +
+                    "union select cast('c.d' as varchar) as x\n" +
+                    "union select cast('e.f.g' as varchar) as x\n" +
+                    "union select cast('h.i.j' as varchar) as x\n" +
+                    "union select cast('k.l' as varchar) as x\n" +
+                    "union select cast('m.n' as varchar) as x)")
+                    .noRandomAccess()
+                    .returns("split_part\n" +
                             "\n" +
                             "\n" +
                             "g\n" +
                             "j\n" +
                             "\n" +
-                            "\n",
-                    "select split_part(x, cast('.' as varchar), 3) from\n" +
-                            "(select      cast('a.b' as varchar) as x\n" +
-                            "union select cast('c.d' as varchar) as x\n" +
-                            "union select cast('e.f.g' as varchar) as x\n" +
-                            "union select cast('h.i.j' as varchar) as x\n" +
-                            "union select cast('k.l' as varchar) as x\n" +
-                            "union select cast('m.n' as varchar) as x)", null, false, false
-            );
+                            "\n");
         }
     }
 

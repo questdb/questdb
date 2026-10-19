@@ -37,9 +37,25 @@ import org.jetbrains.annotations.NotNull;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class FailureFileFacade implements FilesFacade {
+    // Three arming modes, selected by armedThread / queryWorkerNamePrefix:
+    //   1. Global (both null): any thread counts and fires (WAL/recovery harness).
+    //   2. Single-thread (armedThread != null): only the arming thread (serial
+    //      query fuzzer, so a background job cannot trip the fault).
+    //   3. Query-execution scope (queryWorkerNamePrefix != null): the arming
+    //      thread and the query pool's workers count and fire; any other thread is
+    //      ignored and recorded in contaminatingThreadName (parallel query fuzzer:
+    //      a FILE fault may fire on a reduce worker, and a background op leaking
+    //      into the quiesced query phase is reported, not silently absorbed).
+    private volatile Thread armedThread;
+    // Mode 3: the arming (test) thread, always admitted alongside the query pool.
+    private volatile Thread armingThread;
+    // Mode 3: name of an unexpected thread that touched the armed facade, or null.
+    private volatile String contaminatingThreadName;
     private final AtomicInteger failureGenerated = new AtomicInteger();
     private final FilesFacade ff;
     private final AtomicInteger osCallsCount = new AtomicInteger(0);
+    // Mode 3: name prefix of the query pool's worker threads, or null otherwise.
+    private volatile String queryWorkerNamePrefix;
 
     public FailureFileFacade(@NotNull FilesFacade filesFacade) {
         this.ff = filesFacade;
@@ -69,6 +85,10 @@ public class FailureFileFacade implements FilesFacade {
     public void clearFailures() {
         osCallsCount.set(0);
         failureGenerated.set(0);
+        armedThread = null;
+        armingThread = null;
+        queryWorkerNamePrefix = null;
+        contaminatingThreadName = null;
     }
 
     @Override
@@ -79,6 +99,16 @@ public class FailureFileFacade implements FilesFacade {
     @Override
     public boolean closeRemove(long fd, LPSZ path) {
         return ff.closeRemove(fd, path);
+    }
+
+    /**
+     * In query-execution scope (mode 3), the name of an unexpected thread that
+     * touched the armed facade -- i.e. a background job that leaked into the
+     * quiesced query phase -- or null if none did. The parallel query fuzzer
+     * asserts this stays null after a FILE fault.
+     */
+    public String contaminatingThreadName() {
+        return contaminatingThreadName;
     }
 
     @Override
@@ -487,14 +517,43 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     public void setToFailAfter(int ioFailureCallCount) {
+        // Default (unscoped): any thread's op counts and fires. Arm only when not
+        // already armed so a pending fault is not reset by a concurrent caller.
+        armedThread = null;
         int osCalls;
-
         while (true) {
             osCalls = osCallsCount.get();
             if (osCalls > 0 || osCallsCount.compareAndSet(osCalls, ioFailureCallCount)) {
                 return;
             }
         }
+    }
+
+    /**
+     * Arms the fault scoped to the calling thread: only file ops issued by this
+     * thread count down and fire. See {@link #armedThread} for why the query
+     * fuzzer needs this over the unscoped {@link #setToFailAfter(int)}.
+     */
+    public void setToFailAfterOnCurrentThread(int ioFailureCallCount) {
+        // Only the arming thread counts down and fires (see checkForFailure), so
+        // the same thread both writes and reads osCallsCount and no CAS guard is
+        // needed against concurrent decrements.
+        osCallsCount.set(ioFailureCallCount);
+        armedThread = Thread.currentThread();
+    }
+
+    /**
+     * Arms the fault scoped to the query execution (mode 3): ops from the arming
+     * thread and from query-pool workers (name starts with {@code queryWorkerNamePrefix})
+     * count down and fire; any other thread is ignored and recorded in
+     * {@link #contaminatingThreadName()}.
+     */
+    public void setToFailAfterOnQueryThreads(int ioFailureCallCount, String queryWorkerNamePrefix) {
+        armedThread = null;
+        armingThread = Thread.currentThread();
+        contaminatingThreadName = null;
+        this.queryWorkerNamePrefix = queryWorkerNamePrefix;
+        osCallsCount.set(ioFailureCallCount);
     }
 
     @Override
@@ -566,6 +625,21 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     private boolean checkForFailure() {
+        final Thread current = Thread.currentThread();
+        // Mode 2: single-thread scope. Ignore ops on every other thread so the
+        // fault stays on the query under test and off engine background jobs.
+        final Thread armed = armedThread;
+        if (armed != null && current != armed) {
+            return false;
+        }
+        // Mode 3: query-execution scope. Admit the arming thread and the query
+        // pool's workers; ignore any other thread and record it as contamination
+        // so it neither consumes a count nor fires. Mode 1 (both null) admits all.
+        final String prefix = queryWorkerNamePrefix;
+        if (prefix != null && current != armingThread && !current.getName().startsWith(prefix)) {
+            contaminatingThreadName = current.getName();
+            return false;
+        }
         boolean fail = osCallsCount.decrementAndGet() == 0;
         if (fail) {
             failureGenerated.incrementAndGet();

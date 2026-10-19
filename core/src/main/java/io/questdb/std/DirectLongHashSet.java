@@ -25,9 +25,12 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.Reopenable;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -49,17 +52,22 @@ import java.io.Closeable;
  * }
  * </pre>
  */
-public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
-    public static final double DEFAULT_LOAD_FACTOR = 0.4;
+public class DirectLongHashSet implements Closeable, Mutable, Reopenable, Sinkable {
+    public static final double DEFAULT_LOAD_FACTOR = 0.7;
     private static final int MIN_CAPACITY = 16;
+    private final int initialCapacity;
     private final double loadFactor;
+    private final int maxResizes;
     private final int memoryTag;
+    private final int unchargedKeyCapacity;
     private int capacity;
     private int free;
     private boolean hasZero;
     private int mask;
     private long memLimit;
     private long memStart;
+    private @Nullable MemoryTracker memoryTracker;
+    private int resizeCount;
     private int size;
 
     public DirectLongHashSet(int capacity) {
@@ -71,22 +79,25 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
     }
 
     public DirectLongHashSet(int capacity, double loadFactor, int memoryTag) {
-        if (loadFactor <= 0d || loadFactor >= 1d) {
-            throw new IllegalArgumentException("0 < loadFactor < 1");
-        }
+        this(capacity, loadFactor, memoryTag, Integer.MAX_VALUE, 0, true);
+    }
 
+    public DirectLongHashSet(int capacity, double loadFactor, int memoryTag, int maxResizes, int unchargedKeyCapacity, boolean openOnInit) {
+        if (!(loadFactor > 0 && loadFactor < 1) || capacity < 0 || maxResizes < 0 || unchargedKeyCapacity < 0) {
+            throw new IllegalArgumentException("invalid long set configuration");
+        }
+        double slots = Math.max(MIN_CAPACITY, Math.ceil(capacity / loadFactor));
+        if (slots > Numbers.MAX_SAFE_INT_POW_2) {
+            throw CairoException.nonCritical().put("long set capacity overflow");
+        }
+        this.initialCapacity = Numbers.ceilPow2((int) slots);
         this.loadFactor = loadFactor;
         this.memoryTag = memoryTag;
-        this.capacity = Math.max(Numbers.ceilPow2((int) (capacity / loadFactor)), MIN_CAPACITY);
-        this.mask = this.capacity - 1;
-        this.free = (int) (this.capacity * loadFactor);
-        this.size = 0;
-        this.hasZero = false;
-
-        long sizeBytes = (long) this.capacity * Long.BYTES;
-        this.memStart = Unsafe.malloc(sizeBytes, memoryTag);
-        this.memLimit = memStart + sizeBytes;
-        Vect.memset(memStart, sizeBytes, 0);
+        this.maxResizes = maxResizes;
+        this.unchargedKeyCapacity = unchargedKeyCapacity;
+        if (openOnInit) {
+            reopen();
+        }
     }
 
     public boolean add(long key) {
@@ -105,7 +116,7 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         if (memStart != 0) {
             Vect.memset(memStart, memLimit - memStart, 0);
             size = 0;
-            free = (int) (capacity * loadFactor);
+            free = Math.max(1, (int) (capacity * loadFactor));
             hasZero = false;
         }
     }
@@ -113,12 +124,14 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
     @Override
     public void close() {
         if (memStart != 0) {
-            Unsafe.free(memStart, memLimit - memStart, memoryTag);
+            Unsafe.free(memStart, memLimit - memStart, memoryTag, memoryTracker);
             memStart = memLimit = 0;
             size = 0;
             free = 0;
             hasZero = false;
+            capacity = 0;
         }
+        memoryTracker = null;
     }
 
     public boolean contains(long key) {
@@ -141,7 +154,7 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         long addr = memStart + (index * Long.BYTES);
 
         for (; ; ) {
-            long k = Unsafe.getUnsafe().getLong(addr);
+            long k = Unsafe.getLong(addr);
             if (k == 0) {
                 return (int) index;
             } else if (k == key) {
@@ -150,6 +163,25 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
             index = (index + 1) & mask;
             addr = memStart + (index * Long.BYTES);
         }
+    }
+
+    @Override
+    public void reopen() {
+        if (memStart == 0) {
+            long sizeBytes = (long) initialCapacity * Long.BYTES;
+            long address = Unsafe.malloc(sizeBytes, memoryTag, memoryTracker);
+            memStart = address;
+            memLimit = address + sizeBytes;
+            capacity = initialCapacity;
+            mask = capacity - 1;
+            resizeCount = 0;
+            clear();
+        }
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        assert memStart == 0 || this.memoryTracker == memoryTracker;
+        this.memoryTracker = memoryTracker;
     }
 
     public int size() {
@@ -171,7 +203,7 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         }
 
         for (long addr = memStart; addr < memLimit; addr += Long.BYTES) {
-            long key = Unsafe.getUnsafe().getLong(addr);
+            long key = Unsafe.getLong(addr);
             if (key != 0) {
                 temp.add(key);
             }
@@ -187,9 +219,9 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         long addr = memStart + (index * Long.BYTES);
 
         for (; ; ) {
-            long k = Unsafe.getUnsafe().getLong(addr);
+            long k = Unsafe.getLong(addr);
             if (k == 0) {
-                Unsafe.getUnsafe().putLong(addr, key);
+                Unsafe.putLong(addr, key);
                 size++;
                 if (--free == 0) {
                     try {
@@ -217,15 +249,22 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
     }
 
     private void rehash() {
+        final boolean isCharged = size >= unchargedKeyCapacity;
+        if (isCharged && resizeCount == maxResizes) {
+            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in long set");
+        }
+        if (capacity >= Numbers.MAX_SAFE_INT_POW_2) {
+            throw CairoException.nonCritical().put("long set capacity overflow");
+        }
         int newCapacity = capacity * 2;
         long newSizeBytes = (long) newCapacity * Long.BYTES;
-        long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
+        long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag, memoryTracker);
         Vect.memset(newMemStart, newSizeBytes, 0);
 
         int newMask = newCapacity - 1;
 
         for (long addr = memStart; addr < memLimit; addr += Long.BYTES) {
-            long key = Unsafe.getUnsafe().getLong(addr);
+            long key = Unsafe.getLong(addr);
             if (key == 0) {
                 continue;
             }
@@ -233,18 +272,21 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
             long newIndex = Hash.hashLong64(key) & newMask;
             long newAddr = newMemStart + (newIndex * Long.BYTES);
 
-            while (Unsafe.getUnsafe().getLong(newAddr) != 0) {
+            while (Unsafe.getLong(newAddr) != 0) {
                 newIndex = (newIndex + 1) & newMask;
                 newAddr = newMemStart + (newIndex * Long.BYTES);
             }
-            Unsafe.getUnsafe().putLong(newAddr, key);
+            Unsafe.putLong(newAddr, key);
         }
 
-        Unsafe.free(memStart, memLimit - memStart, memoryTag);
+        Unsafe.free(memStart, memLimit - memStart, memoryTag, memoryTracker);
         memStart = newMemStart;
         memLimit = newMemStart + newSizeBytes;
         capacity = newCapacity;
         mask = newMask;
-        free = (int) ((capacity - size) * loadFactor);
+        free = Math.max(1, (int) (capacity * loadFactor) - size);
+        if (isCharged) {
+            resizeCount++;
+        }
     }
 }

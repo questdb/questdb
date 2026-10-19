@@ -54,7 +54,7 @@ public class FanOut implements Barrier {
         Barrier root = null;
 
         final long current = this.barrier != null ? this.barrier.current() : -1;
-        Unsafe.getUnsafe().loadFence();
+        Unsafe.loadFence();
 
         do {
             Holder h = this.holder;
@@ -68,7 +68,7 @@ public class FanOut implements Barrier {
                 root = barrier.root();
                 root.setBarrier(this.barrier);
                 root.setCurrent(current);
-                Unsafe.getUnsafe().storeFence();
+                Unsafe.storeFence();
             }
             _new = new Holder();
             _new.barriers.addAll(h.barriers);
@@ -79,7 +79,7 @@ public class FanOut implements Barrier {
                 _new.waitStrategies.add(barrier.getWaitStrategy());
             }
             _new.setupWaitStrategy();
-            if (Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, h, _new)) {
+            if (Unsafe.cas(this, HOLDER, h, _new)) {
                 // catch up with others
                 if (root != null && this.barrier != null) {
                     root.setCurrent(this.barrier.current());
@@ -88,7 +88,7 @@ public class FanOut implements Barrier {
             }
         } while (true);
 
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         return this;
     }
 
@@ -121,7 +121,7 @@ public class FanOut implements Barrier {
     }
 
     public void remove(SCSequence barrier) {
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
 
         Holder _new;
         do {
@@ -151,11 +151,17 @@ public class FanOut implements Barrier {
                 _new.waitStrategies.addAll(h.waitStrategies);
             }
             _new.setupWaitStrategy();
-            if (Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, h, _new)) {
+            if (Unsafe.cas(this, HOLDER, h, _new)) {
                 break;
             }
         } while (true);
         barrier.reset();
+    }
+
+    public void resume(SCSequence subscriber) {
+        // gate the publisher before catching up, so the publisher cannot lap the catch-up position
+        subscriber.setCurrent(barrier.current());
+        subscriber.setCurrent(barrier.current());
     }
 
     @Override
@@ -177,6 +183,10 @@ public class FanOut implements Barrier {
         for (int i = 0, n = barriers.size(); i < n; i++) {
             barriers.getQuick(i).setCurrent(value);
         }
+    }
+
+    public void suspend(SCSequence subscriber) {
+        subscriber.setCurrent(Long.MAX_VALUE);
     }
 
     @Override

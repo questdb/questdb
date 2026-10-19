@@ -66,11 +66,11 @@ public class StableAwareStringHolder implements CharSequence {
         if (direct) {
             // we could cache the direct pointer, but then we would need to invalidate it when the pointer changes
             // and we assume of() is called more frequently than charAt()
-            long directPtr = Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE);
+            long directPtr = Unsafe.getLong(ptr + HEADER_SIZE);
             assert directPtr != 0;
-            return Unsafe.getUnsafe().getChar(directPtr + 2L * index);
+            return Unsafe.getChar(directPtr + 2L * index);
         } else {
-            return Unsafe.getUnsafe().getChar(ptr + HEADER_SIZE + 2L * index);
+            return Unsafe.getChar(ptr + HEADER_SIZE + 2L * index);
         }
     }
 
@@ -79,13 +79,12 @@ public class StableAwareStringHolder implements CharSequence {
         if (cs == null) {
             return;
         }
-        if (cs instanceof DirectString) {
-            DirectString ds = (DirectString) cs;
+        if (cs instanceof DirectString ds) {
             if (ds.isStable()) {
                 direct = true;
                 checkCapacity(4); // pointer is 8 bytes = 4 chars
-                Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, ds.ptr());
-                Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, cs.length());
+                Unsafe.putLong(ptr + HEADER_SIZE, ds.ptr());
+                Unsafe.putInt(ptr + LEN_OFFSET, cs.length());
                 return;
             }
         }
@@ -94,9 +93,9 @@ public class StableAwareStringHolder implements CharSequence {
         checkCapacity(thatLen);
         long lo = ptr + HEADER_SIZE;
         for (int i = 0; i < thatLen; i++) {
-            Unsafe.getUnsafe().putChar(lo + 2L * i, cs.charAt(i));
+            Unsafe.putChar(lo + 2L * i, cs.charAt(i));
         }
-        Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, thatLen);
+        Unsafe.putInt(ptr + LEN_OFFSET, thatLen);
     }
 
     public long colouredPtr() {
@@ -105,7 +104,7 @@ public class StableAwareStringHolder implements CharSequence {
 
     @Override
     public int length() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + LEN_OFFSET) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + LEN_OFFSET) : 0;
     }
 
     public StableAwareStringHolder of(long colouredPtr) {
@@ -132,7 +131,7 @@ public class StableAwareStringHolder implements CharSequence {
     }
 
     private int capacity() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr) : 0;
     }
 
     private void checkCapacity(int nChars) {
@@ -147,11 +146,11 @@ public class StableAwareStringHolder implements CharSequence {
         long newSize = ((long) newCapacity << 1) + HEADER_SIZE;
         if (ptr == 0) {
             ptr = allocator.malloc(newSize);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
-            Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, 0);
+            Unsafe.putInt(ptr, newCapacity);
+            Unsafe.putInt(ptr + LEN_OFFSET, 0);
         } else {
             ptr = allocator.realloc(ptr, ((long) capacity << 1) + HEADER_SIZE, newSize);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
+            Unsafe.putInt(ptr, newCapacity);
         }
 
         assert ptr != 0;
@@ -161,7 +160,7 @@ public class StableAwareStringHolder implements CharSequence {
 
     private void clear() {
         if (ptr != 0) {
-            Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, 0);
+            Unsafe.putInt(ptr + LEN_OFFSET, 0);
             direct = false;
         }
     }

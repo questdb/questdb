@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -125,17 +126,15 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
                     String expected = """
                             QUERY PLAN
                             PageFrame
-                            &nbsp;&nbsp;&nbsp;&nbsp;Row forward scan
-                            &nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: table1
+                                Row forward scan
+                                Frame forward scan on: table1
                             """;
                     StringSink sink = new StringSink();
                     while (!done.get() && error.get() == null) {
-                        sink.clear();
-                        engine.print("EXPLAIN SELECT * FROM " + VIEW1, sink, ctx);
+                        printExplain(VIEW1, sink, ctx, done);
                         TestUtils.assertEquals(expected, sink);
 
-                        sink.clear();
-                        engine.print("EXPLAIN SELECT * FROM " + VIEW2, sink, ctx);
+                        printExplain(VIEW2, sink, ctx, done);
                         TestUtils.assertEquals(expected, sink);
 
                         queryCount.incrementAndGet();
@@ -169,19 +168,49 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // Verify views are still queryable (no corrupted state)
-            assertSql(
-                    """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
-                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            k2\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            v\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            """,
-                    "SHOW COLUMNS FROM " + VIEW1
-            );
+            assertQuery("SHOW COLUMNS FROM " + VIEW1)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            k2\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            v\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """);
 
             LOG.info().$("Cycles detected: ").$(cycleDetectedCount.get())
                     .$(", queries executed: ").$(queryCount.get()).$();
         });
+    }
+
+    // EXPLAIN opens the cursor of the plan it prints, and like a SELECT it refuses a plan compiled
+    // before a concurrent ALTER VIEW changed a view the plan reads. PGWire and HTTP recompile on
+    // that signal up to the configured recompile attempt limit, then fail the query. The writer
+    // threads commit their ALTER VIEWs in a burst, and a run of them can outlast that limit, so
+    // this reader retries without a limit while the writers run. It applies the limit only to the
+    // attempts that start after the writers stop, so a plan that stays stale once the views stop
+    // changing fails the test instead of hanging it.
+    private static void printExplain(
+            String viewName,
+            StringSink sink,
+            SqlExecutionContext ctx,
+            AtomicBoolean isWritersDone
+    ) throws SqlException {
+        final int maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+        int boundedAttempts = 0;
+        while (true) {
+            // The main thread sets the flag after it joins both writers, so an attempt that sees
+            // it set compiles after the last ALTER VIEW committed.
+            final boolean isBounded = isWritersDone.get();
+            try {
+                engine.print("EXPLAIN SELECT * FROM " + viewName, sink, ctx);
+                return;
+            } catch (TableReferenceOutOfDateException e) {
+                if (isBounded && ++boundedAttempts == maxRecompileAttempts) {
+                    throw e;
+                }
+            }
+        }
     }
 }

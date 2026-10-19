@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -37,9 +38,11 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
@@ -63,6 +66,12 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
 
     @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
+
+    @Override
     public String getSignature() {
         return "information_schema.tables()";
     }
@@ -84,7 +93,9 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
         private final boolean hideTelemetryTable;
         private final CharSequence sysTablePrefix;
         private final CharSequence tempPendingRenameTablePrefix;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private CairoEngine engine;
+        private SecurityContext securityContext;
         private TableToken tableToken;
 
         public InformationSchemaTablesCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
@@ -96,7 +107,10 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            circuitBreaker = executionContext.getCircuitBreaker();
             engine = executionContext.getCairoEngine();
+            securityContext = executionContext.getSecurityContext();
             cursor.toTop();
             return cursor;
         }
@@ -114,7 +128,9 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             cursor.close();
+            circuitBreaker = null;
             engine = null;
+            securityContext = null;
         }
 
         private class TableListRecordCursor implements NoRandomAccessRecordCursor {
@@ -134,6 +150,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (tableIndex < 0) {
                     engine.getTableTokens(tableBucket, false);
                     tableIndex = -1;
@@ -142,8 +159,9 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                 int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
                     tableToken = tableBucket.get(tableIndex);
-                    if (TableUtils.isFinalTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) &&
-                            !isSystemTable(tableToken)) {
+                    if (TableUtils.isFinalTableName(tableToken.getTableName(), tempPendingRenameTablePrefix)
+                            && !isSystemTable(tableToken)
+                            && securityContext.isTableVisible(tableToken)) {
                         break;
                     }
                 }
@@ -180,7 +198,10 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                     if (col == COLUMN_IS_TYPED) {
                         return false;
                     }
-                    return col == COLUMN_IS_INSERTABLE_INTO;
+                    if (col == COLUMN_IS_INSERTABLE_INTO) {
+                        return !tableToken.isView() && !tableToken.isMatView() && !tableToken.isLiveView();
+                    }
+                    return false;
                 }
 
                 @Override
@@ -195,6 +216,13 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                         return Constants.PUBLIC_SCHEMA;
                     }
                     if (col == COLUMN_TYPE) {
+                        if (tableToken.isLiveView()) {
+                            return "LIVE VIEW";
+                        } else if (tableToken.isMatView()) {
+                            return "MATERIALIZED VIEW";
+                        } else if (tableToken.isView()) {
+                            return "VIEW";
+                        }
                         return "BASE TABLE";
                     }
                     return null;

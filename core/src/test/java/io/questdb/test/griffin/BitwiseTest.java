@@ -140,9 +140,10 @@ public class BitwiseTest extends AbstractCairoTest {
     }
 
     private void assertBitwiseOp(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        expected, sql
-        ));
+        assertMemoryLeak(() -> assertQuery(sql)
+                .noLeakCheck()
+                .expectSize()
+                .returns("column\n" +
+                        expected));
     }
 }

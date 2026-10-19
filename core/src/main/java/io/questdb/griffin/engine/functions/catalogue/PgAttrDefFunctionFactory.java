@@ -26,18 +26,24 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,12 +54,20 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 public class PgAttrDefFunctionFactory implements FunctionFactory {
 
     static final RecordMetadata METADATA;
     private static final Log LOG = LogFactory.getLog(PgAttrDefFunctionFactory.class);
     private static final String SIGNATURE = "pg_attrdef()";
+
+    @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
 
     @Override
     public String getSignature() {
@@ -78,13 +92,16 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
     }
 
     private static class AttrDefCatalogueCursor implements NoRandomAccessRecordCursor {
+        private final StringSink dirNameSink = new StringSink();
         private final AttrDefCatalogueCursor.DiskReadingRecord diskReadingRecord = new AttrDefCatalogueCursor.DiskReadingRecord();
         private final FilesFacade ff;
         private final Path path;
         private final int plimit;
         private final long tempMem;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int columnCount;
         private int columnIndex = 0;
+        private CairoEngine engine;
         // pointer to a struct containing file info,
         // special values:
         //  0: cursor opened, but hasNext() has not been called yet
@@ -93,6 +110,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         private boolean foundMetadataFile = false;
         private boolean hasNextFile = true;
         private boolean readNextFileFromDisk = true;
+        private SecurityContext securityContext;
         private int tableId = -1;
 
         public AttrDefCatalogueCursor(CairoConfiguration configuration, Path path, long tempMem) {
@@ -152,21 +170,35 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
             tableId = -1;
         }
 
+        // The scan reads the db root rather than the table registry, so it maps each directory
+        // back to its table to skip the ones the principal may not see. A directory that no
+        // registered table owns, e.g. a dropped table waiting for purge, has no permissions to
+        // check and stays listed.
+        private boolean isVisibleTableDir(long pUtf8NameZ) {
+            dirNameSink.clear();
+            Utf8s.utf8ToUtf16Z(pUtf8NameZ, dirNameSink);
+            final TableToken tableToken = engine.getTableTokenByDirName(dirNameSink);
+            return tableToken == null || securityContext.isTableVisible(tableToken);
+        }
+
         private boolean next0() {
             do {
+                // scans the db directory reading metadata files per table, so observe the breaker each iteration
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (readNextFileFromDisk) {
                     foundMetadataFile = false;
                     final long pUtf8NameZ = ff.findName(findFileStruct);
                     if (hasNextFile) {
-                        if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))) {
+                        if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))
+                                && isVisibleTableDir(pUtf8NameZ)) {
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 long fd = ff.openRO(path.$());
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                        tableId = Unsafe.getUnsafe().getInt(tempMem);
+                                        tableId = Unsafe.getInt(tempMem);
                                         if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
                                             foundMetadataFile = true;
-                                            columnCount = Unsafe.getUnsafe().getInt(tempMem);
+                                            columnCount = Unsafe.getInt(tempMem);
                                         } else {
                                             LOG.error().$("Could not read column count [fd=").$(fd).$(", errno=").$(ff.errno()).I$();
                                         }
@@ -241,7 +273,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
     private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
         private final AttrDefCatalogueCursor cursor;
-        private final Path path;
+        private Path path;
         private long tempMem;
 
         public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
@@ -258,6 +290,10 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
+            cursor.engine = executionContext.getCairoEngine();
+            cursor.securityContext = executionContext.getSecurityContext();
             cursor.toTop();
             return cursor;
         }
@@ -274,8 +310,21 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         @Override
         protected void _close() {
-            Misc.free(path);
-            tempMem = Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            final Path path = this.path;
+            this.path = null;
+            final long tempMem = this.tempMem;
+            this.tempMem = 0;
+            Throwable failure = Misc.freeBestEffort(null, path);
+            try {
+                Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            } catch (Throwable th) {
+                if (failure == null) {
+                    failure = th;
+                } else if (failure != th) {
+                    failure.addSuppressed(th);
+                }
+            }
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 

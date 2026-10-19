@@ -29,9 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
@@ -41,15 +39,16 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -137,6 +136,12 @@ public class TablesFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
+
+    @Override
     public String getSignature() {
         return "tables()";
     }
@@ -165,22 +170,20 @@ public class TablesFunctionFactory implements FunctionFactory {
     public static class TablesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(TablesCursorFactory.class);
         private final TablesRecordCursor cursor;
-        private final CharSequenceObjMap<CairoTable> tableCache;
-        private long tableCacheVersion = -1;
+        private final VisibleTablesSnapshot tables;
 
         public TablesCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
-            tableCache = DefaultLocalCacheSnapshotFactory.INSTANCE.newInstance(configuration);
-            cursor = new TablesRecordCursor(tableCache);
+            tables = new VisibleTablesSnapshot(configuration);
+            cursor = new TablesRecordCursor(tables);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             final CairoEngine engine = executionContext.getCairoEngine();
-            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
-            }
-            cursor.of(engine.getRecentWriteTracker(), engine.getTableSequencerAPI());
+            tables.refresh(executionContext);
+            cursor.of(engine.getRecentWriteTracker(), engine.getTableSequencerAPI(), executionContext.getCircuitBreaker());
             cursor.toTop();
             return cursor;
         }
@@ -202,15 +205,16 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final CharSequenceObjMap<CairoTable> tableCache;
+            private final VisibleTablesSnapshot tables;
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private int iteratorIdx = -1;
             private int iteratorLim;
             private RecentWriteTracker recentWriteTracker;
             private TableSequencerAPI tableSequencerAPI;
 
-            public TablesRecordCursor(CharSequenceObjMap<CairoTable> tableCache) {
-                this.tableCache = tableCache;
-                this.iteratorLim = tableCache.size() - 1;
+            public TablesRecordCursor(VisibleTablesSnapshot tables) {
+                this.tables = tables;
+                this.iteratorLim = tables.size() - 1;
             }
 
             @Override
@@ -224,18 +228,20 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (iteratorIdx < iteratorLim) {
-                    record.of(tableCache.getAt(++iteratorIdx), recentWriteTracker, tableSequencerAPI);
+                    record.of(tables.getQuick(++iteratorIdx), recentWriteTracker, tableSequencerAPI);
                     return true;
                 }
                 return false;
             }
 
-            public void of(RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI) {
+            public void of(RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI, SqlExecutionCircuitBreaker circuitBreaker) {
                 this.recentWriteTracker = recentWriteTracker;
                 this.tableSequencerAPI = tableSequencerAPI;
-                // can is refreshed every time cursor is refreshed
-                this.iteratorLim = tableCache.size() - 1;
+                this.circuitBreaker = circuitBreaker;
+                // the visible tables are refreshed every time the cursor is opened
+                this.iteratorLim = tables.size() - 1;
             }
 
             @Override
@@ -276,7 +282,9 @@ public class TablesFunctionFactory implements FunctionFactory {
                 @Override
                 public char getChar(int col) {
                     if (col == TABLE_TYPE_COLUMN) {
-                        if (table.getTableToken().isMatView()) {
+                        if (table.getTableToken().isLiveView()) {
+                            return 'L';
+                        } else if (table.getTableToken().isMatView()) {
                             return 'M';
                         } else if (table.getTableToken().isView()) {
                             return 'V';
@@ -431,6 +439,12 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));                       // 5
         metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));                        // 6
         metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));                      // 7
+        // A materialized view is discoverable two ways: the matView BOOLEAN here and
+        // table_type='M' (column 13). A live view carries only table_type='L' - there
+        // is deliberately NO liveView BOOLEAN. Adding one would renumber columns 9-44
+        // (every position-based consumer and the whole tables() projection matrix), so
+        // the asymmetry is documented and locked by a test (LiveViewTest#testTablesReportsLiveView)
+        // rather than papered over with a new column.
         metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));                     // 8
         metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));                // 9
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));              // 10

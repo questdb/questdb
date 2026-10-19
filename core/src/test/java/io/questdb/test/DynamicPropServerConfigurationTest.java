@@ -37,19 +37,50 @@ import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.Services;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
+import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.window.WindowMapState;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.metrics.QueryTracingJob;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.http.HttpUtils;
 import io.questdb.test.cutlass.http.TestHttpClient;
+import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
@@ -58,6 +89,8 @@ import org.postgresql.util.PSQLException;
 
 import java.io.File;
 import java.io.FileWriter;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -66,12 +99,23 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
+import static io.questdb.cutlass.http.HttpConstants.SESSION_COOKIE_NAME;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.QWP_ORIGINS_TEST_BOOT_CONFIG;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.assertCredentialUpgradeSwitched;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.assertQwpBrowserUpgrade;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialOffer;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialProtocol;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialUpgrade;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
 
@@ -131,6 +175,105 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity();
                 Assert.assertEquals(1000, capacity);
+            }
+        });
+    }
+
+    @Test
+    public void testCairoMemoryLimitsReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                CairoConfiguration cairoConfig = serverMain.getConfiguration().getCairoConfiguration();
+                // All three workloads default to unlimited.
+                Assert.assertEquals(0, cairoConfig.getQueryMemoryLimitBytes());
+                Assert.assertEquals(0, cairoConfig.getMatViewRefreshMemoryLimitBytes());
+                Assert.assertEquals(0, cairoConfig.getWalApplyMemoryLimitBytes());
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.query.memory.limit.bytes=1000000\n");
+                    w.write("cairo.mat.view.refresh.memory.limit.bytes=2000000\n");
+                    w.write("cairo.wal.apply.memory.limit.bytes=3000000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                // The reloaded limits are visible through the config getters...
+                Assert.assertEquals(1_000_000, cairoConfig.getQueryMemoryLimitBytes());
+                Assert.assertEquals(2_000_000, cairoConfig.getMatViewRefreshMemoryLimitBytes());
+                Assert.assertEquals(3_000_000, cairoConfig.getWalApplyMemoryLimitBytes());
+
+                // ...and through a tracker freshly acquired after the reload, since the provider
+                // reads the configured limit on each acquisition.
+                assertTrackerLimit(serverMain, MemoryTrackerWorkload.QUERY, 1_000_000);
+                assertTrackerLimit(serverMain, MemoryTrackerWorkload.MAT_VIEW_REFRESH, 2_000_000);
+                assertTrackerLimit(serverMain, MemoryTrackerWorkload.WAL_APPLY, 3_000_000);
+            }
+        });
+    }
+
+    @Test
+    public void testQueryMemoryLimitReloadUnblocksQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Seed two tables whose hash join build map needs far more tracked memory
+                // than the low limit configured below. Seeding runs under the default
+                // unlimited limit, so it is never constrained. A hash join drives the breach
+                // because its build map fails at a single deterministic site with the
+                // per-query OOM message intact, keeping the client-visible error stable.
+                try (Connection conn = getConnection("admin", "quest")) {
+                    try (PreparedStatement stmt = conn.prepareStatement(
+                            "CREATE TABLE master AS (SELECT cast(x AS varchar) k FROM long_sequence(100_000))")) {
+                        stmt.execute();
+                    }
+                    try (PreparedStatement stmt = conn.prepareStatement(
+                            "CREATE TABLE slave AS (SELECT cast(x AS varchar) k, x AS v FROM long_sequence(100_000))")) {
+                        stmt.execute();
+                    }
+                }
+
+                final String query = "SELECT count(*) AS c FROM (SELECT master.k, slave.v FROM master JOIN slave ON k)";
+
+                // Configure a too-low per-query memory limit and reload it in.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.query.memory.limit.bytes=65536\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertEquals(65_536, serverMain.getConfiguration().getCairoConfiguration().getQueryMemoryLimitBytes());
+
+                // The aggregation's hash map blows past 64 KiB, so the query fails with an
+                // out-of-memory error tagged with the QUERY workload.
+                try (
+                        Connection conn = getConnection("admin", "quest");
+                        PreparedStatement stmt = conn.prepareStatement(query)
+                ) {
+                    stmt.executeQuery();
+                    Assert.fail("expected out-of-memory error under the low query memory limit");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getMessage(), "workload=QUERY");
+                }
+
+                // Bump the limit to unlimited and reload it in.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.query.memory.limit.bytes=0\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertEquals(0, serverMain.getConfiguration().getCairoConfiguration().getQueryMemoryLimitBytes());
+
+                // The very same query now runs to completion: a freshly acquired tracker reads
+                // the reloaded (unlimited) limit.
+                try (
+                        Connection conn = getConnection("admin", "quest");
+                        PreparedStatement stmt = conn.prepareStatement(query);
+                        ResultSet rs = stmt.executeQuery()
+                ) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertEquals(100_000, rs.getLong(1));
+                }
             }
         });
     }
@@ -207,6 +350,130 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // [5] Should we re-register, we'll get a different ID.
                 final long watchId2 = serverMain.getEngine().getConfigReloader().watch(listener);
                 Assert.assertNotEquals("re-register should return a new watchId", watchId, watchId2);
+            }
+        });
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntime() throws Exception {
+        assertFiberLimitsReloadIntoExistingRuntime(
+                "shared.network.worker",
+                DynamicPropServerConfiguration::getSharedWorkerPoolNetworkConfiguration
+        );
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntimeForHttp() throws Exception {
+        assertFiberLimitsReloadIntoExistingRuntime(
+                "http.worker",
+                DynamicPropServerConfiguration::getHttpServerConfiguration
+        );
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntimeForMatViewRefresh() throws Exception {
+        assertFiberLimitsReloadIntoExistingRuntime(
+                "mat.view.refresh.worker",
+                DynamicPropServerConfiguration::getMatViewRefreshPoolConfiguration
+        );
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntimeForPg() throws Exception {
+        assertFiberLimitsReloadIntoExistingRuntime(
+                "pg.worker",
+                DynamicPropServerConfiguration::getPGWireConfiguration
+        );
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntimeForSharedQuery() throws Exception {
+        assertFiberLimitsReloadIntoExistingRuntime(
+                "shared.query.worker",
+                DynamicPropServerConfiguration::getSharedWorkerPoolQueryConfiguration
+        );
+    }
+
+    private void assertFiberLimitsReloadIntoExistingRuntime(
+            String keyPrefix,
+            Function<DynamicPropServerConfiguration, WorkerPoolConfiguration> poolConfiguration
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter writer = new FileWriter(serverConf)) {
+                writer.write(keyPrefix + ".fiber.enabled=true\n");
+                writer.write(keyPrefix + ".fiber.max.live=2\n");
+                writer.write(keyPrefix + ".fiber.max.retained=1\n");
+                writer.write(keyPrefix + ".fiber.mount.budget=3\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                try (WorkerPool pool = new WorkerPool(poolConfiguration.apply(configuration))) {
+                    final FiberRuntime runtime = pool.getFiberRuntime();
+
+                    try (FileWriter writer = new FileWriter(serverConf)) {
+                        writer.write(keyPrefix + ".fiber.enabled=true\n");
+                        writer.write(keyPrefix + ".fiber.max.live=5\n");
+                        writer.write(keyPrefix + ".fiber.max.retained=4\n");
+                        writer.write(keyPrefix + ".fiber.mount.budget=7\n");
+                    }
+
+                    Assert.assertTrue(configuration.reload());
+                    Assert.assertSame(runtime, pool.getFiberRuntime());
+                    Assert.assertEquals(5, runtime.getMaxLiveFiberCount());
+                    Assert.assertEquals(4, runtime.getMaxRetainedFiberCount());
+                    Assert.assertEquals(7, runtime.getMountBudget());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFiberMaxLiveIncreaseWakesCapacityWaiter() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter writer = new FileWriter(serverConf)) {
+                writer.write("shared.network.worker.fiber.max.live=2\n");
+                writer.write("shared.network.worker.fiber.max.retained=2\n");
+                writer.write("shared.network.worker.fiber.mount.budget=1\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                try (WorkerPool pool = new WorkerPool(configuration.getSharedWorkerPoolNetworkConfiguration())) {
+                    final FiberRuntime runtime = pool.getFiberRuntime();
+                    final Fiber reservedFiber = runtime.tryReserveFiber();
+                    Assert.assertNotNull(reservedFiber);
+                    final AtomicLong wakeReason = new AtomicLong(FiberWaitCoordinator.REASON_NONE);
+                    final FiberTask waiter = new FiberTask() {
+                        @Override
+                        protected boolean runStep() {
+                            wakeReason.set(runtime.awaitCapacity());
+                            return true;
+                        }
+                    };
+                    try {
+                        Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(waiter));
+                        Assert.assertEquals(1, runtime.drain(1));
+                        Assert.assertFalse(waiter.isDone());
+                        Assert.assertEquals(1, runtime.getParkedFiberCount());
+
+                        try (FileWriter writer = new FileWriter(serverConf)) {
+                            writer.write("shared.network.worker.fiber.max.live=3\n");
+                            writer.write("shared.network.worker.fiber.max.retained=2\n");
+                            writer.write("shared.network.worker.fiber.mount.budget=1\n");
+                        }
+
+                        Assert.assertTrue(configuration.reload());
+                        Assert.assertEquals(1, runtime.drain(1));
+                        Assert.assertTrue(waiter.isDone());
+                        Assert.assertEquals(FiberWaitCoordinator.REASON_CAPACITY, wakeReason.get());
+                    } finally {
+                        runtime.releaseReservedFiber(reservedFiber, reservedFiber.getReservationEpoch());
+                        runtime.beginQuiesce();
+                        runtime.drain(64);
+                        runtime.awaitClosed();
+                    }
+                }
             }
         });
     }
@@ -430,6 +697,24 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                         "{\"query\":\"select rpad('QuestDB', 150, '0');\",\"columns\":[{\"name\":\"rpad('QuestDB', 150, '0')\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"QuestDB00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"]],\"count\":1}",
                         query
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testJoinSymbolTranslationCacheCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.join.symbol.translation.cache.capacity=1000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlJoinSymbolTranslationCacheCapacity();
+                Assert.assertEquals(1000, capacity);
             }
         });
     }
@@ -1025,6 +1310,444 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testQwpBrowserAllowedOriginsReloadOnBothEndpoints() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    assertQwpBrowserUpgrade(port, path, "http://localhost:" + port, true);
+                    assertQwpBrowserUpgrade(port, path, "https://app.example.com", false);
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("qwp.browser.allowed.origins=https://app.example.com, http://other.example.com:3000\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                String basicAuthorization = "Authorization: Basic "
+                        + Base64.getEncoder().encodeToString("admin:quest".getBytes(StandardCharsets.US_ASCII)) + "\r\n";
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    assertQwpBrowserUpgrade(port, path, "http://localhost:" + port, true);
+                    assertQwpBrowserUpgrade(port, path, "https://app.example.com", true);
+                    assertQwpBrowserUpgrade(port, path, "http://other.example.com:3000", true);
+                    assertQwpBrowserUpgrade(port, path, "https://app.example.com:8443", false);
+                    assertQwpBrowserUpgrade(port, path, "https://app.example.com.evil.com", false);
+                    // Even with authentication disabled, a cross-origin upgrade that
+                    // carries an Authorization header is refused, listed origin or not.
+                    String listedHeader = browserCredentialUpgrade(port, path, "https://app.example.com",
+                            "questdb.qwp.v1", basicAuthorization);
+                    Assert.assertTrue(listedHeader, listedHeader.startsWith("HTTP/1.1 401"));
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("qwp.browser.allowed.origins=https://new.example.com\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    assertQwpBrowserUpgrade(port, path, "https://app.example.com", false);
+                    assertQwpBrowserUpgrade(port, path, "https://new.example.com", true);
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    // Removing the property restores same-origin-only behavior.
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    assertQwpBrowserUpgrade(port, path, "https://new.example.com", false);
+                    assertQwpBrowserUpgrade(port, path, "http://localhost:" + port, true);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQwpBrowserCredentialRefusesAuthorizationHeaderAndNonWebSocketUpgrade() throws Exception {
+        // A valid credential from a listed origin authenticates only a WebSocket
+        // upgrade that carries no Authorization header. Accepting the header case
+        // would switch protocols (101); accepting a non-WebSocket upgrade would
+        // reach the handshake check (400).
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                w.write("http.user=admin\nhttp.password=quest\n");
+                w.write("qwp.browser.allowed.origins=https://app.example.com\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String basic = Base64.getEncoder().encodeToString("admin:quest".getBytes(StandardCharsets.US_ASCII));
+                String goodOffer = browserCredentialOffer("Basic " + basic);
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    String control = browserCredentialUpgrade(port, path, "https://app.example.com", goodOffer, "");
+                    Assert.assertTrue(control, control.startsWith("HTTP/1.1 101"));
+
+                    String withHeader = browserCredentialUpgrade(port, path, "https://app.example.com", goodOffer,
+                            "Authorization: Basic " + basic + "\r\n");
+                    Assert.assertTrue(withHeader, withHeader.startsWith("HTTP/1.1 401"));
+
+                    try (Socket socket = new Socket("localhost", port)) {
+                        socket.setSoTimeout(5_000);
+                        String request = QwpWireTestFixtures.browserUpgradeRequestWithOrigin(
+                                path, "localhost:" + port, "https://app.example.com",
+                                "Sec-WebSocket-Protocol: " + goodOffer + "\r\n"
+                        ).replace("Upgrade: websocket\r\n", "Upgrade: h2c\r\n");
+                        socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+                        String notWebSocket = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+                        Assert.assertTrue(notWebSocket, notWebSocket.startsWith("HTTP/1.1 401"));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQwpBrowserCredentialSubprotocolOnBothEndpoints() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                w.write("http.user=admin\nhttp.password=quest\n");
+                w.write("qwp.browser.allowed.origins=https://app.example.com\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String credential = browserCredentialProtocol(
+                        "Basic " + Base64.getEncoder().encodeToString("admin:quest".getBytes(StandardCharsets.US_ASCII)));
+                String goodOffer = "questdb.qwp.v1, " + credential;
+                final HttpFullFatServerConfiguration httpConfiguration = serverMain.getConfiguration().getHttpServerConfiguration();
+                final ObjList<String> qwpPaths = new ObjList<>();
+                for (ObjHashSet<String> contextPaths : List.of(httpConfiguration.getContextPathQWP(), httpConfiguration.getContextPathQWPRead())) {
+                    Assert.assertTrue(contextPaths.size() > 0);
+                    for (int i = 0, n = contextPaths.size(); i < n; i++) {
+                        qwpPaths.add(contextPaths.get(i));
+                    }
+                }
+                for (int i = 0, n = qwpPaths.size(); i < n; i++) {
+                    final String path = qwpPaths.getQuick(i);
+                    assertCredentialUpgradeSwitched(
+                            browserCredentialUpgrade(port, path + "?session=true", "https://app.example.com", goodOffer, ""));
+
+                    String bad = browserCredentialUpgrade(port, path, "https://other.example.com", goodOffer, "");
+                    Assert.assertTrue(bad, bad.startsWith("HTTP/1.1 401"));
+                    Assert.assertFalse(bad, bad.contains("Set-Cookie:"));
+                }
+                String bothProtocols = "questdb.qwp.v1, questdb.qwp.durable-ack.v1, " + credential;
+                String ingress = browserCredentialUpgrade(port, "/write/v4", "https://app.example.com", bothProtocols, "");
+                Assert.assertTrue(ingress, ingress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
+                Assert.assertFalse(ingress, ingress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
+                String egress = browserCredentialUpgrade(port, "/read/v1", "https://app.example.com", bothProtocols, "");
+                Assert.assertTrue(egress, egress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
+                Assert.assertFalse(egress, egress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
+                String durableOnly = "questdb.qwp.durable-ack.v1, " + credential;
+                String durableIngress = browserCredentialUpgrade(port, "/write/v4", "https://app.example.com", durableOnly, "");
+                Assert.assertTrue(durableIngress, durableIngress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
+                String durableEgress = browserCredentialUpgrade(port, "/read/v1", "https://app.example.com", durableOnly, "");
+                Assert.assertTrue(durableEgress, durableEgress.startsWith("HTTP/1.1 401"));
+                String sessionCookie = createHttpSessionCookie(port);
+                String normalSession = browserCredentialUpgrade(port, "/write/v4", "http://localhost:" + port,
+                        "questdb.qwp.v1", "Cookie: " + sessionCookie + "\r\n");
+                Assert.assertTrue(normalSession, normalSession.startsWith("HTTP/1.1 101"));
+                String badCredential = "questdb.qwp.v1, questdb.qwp.authorization.!";
+                String invalid = browserCredentialUpgrade(port, "/read/v1?session=true", "https://app.example.com", badCredential,
+                        "Cookie: " + sessionCookie + "\r\n");
+                Assert.assertTrue(invalid, invalid.startsWith("HTTP/1.1 401"));
+                Assert.assertFalse(invalid, invalid.contains("Set-Cookie:"));
+                String forbidden = browserCredentialUpgrade(port, "/write/v4", "http://localhost:" + port, goodOffer,
+                        "Cookie: " + sessionCookie + "\r\n");
+                Assert.assertTrue(forbidden, forbidden.startsWith("HTTP/1.1 401"));
+                String missingDialect = browserCredentialUpgrade(port, "/write/v4", "https://app.example.com", credential, "");
+                Assert.assertTrue(missingDialect, missingDialect.startsWith("HTTP/1.1 401"));
+                String outsideQwp = browserCredentialUpgrade(port, "/exec?query=select%201", "https://app.example.com", goodOffer, "");
+                Assert.assertTrue(outsideQwp, outsideQwp.startsWith("HTTP/1.1 401"));
+            }
+        });
+    }
+
+    @Test
+    public void testQwpBrowserCredentialSubprotocolOnCustomBoundEndpoints() throws Exception {
+        // The credential gate must follow request routing: a QWP handler bound on
+        // a URL outside the default context paths accepts the browser credential
+        // exactly like the default paths, and keeps the ingress/egress split.
+        final String customWritePath = "/custom/qwp/write";
+        final String customReadPath = "/custom/qwp/read";
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                w.write("http.user=admin\nhttp.password=quest\n");
+                w.write("qwp.browser.allowed.origins=https://app.example.com\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap()) {
+                @Override
+                protected Services services() {
+                    return new Services() {
+                        @Override
+                        public @Nullable HttpServer createHttpServer(
+                                ServerConfiguration configuration,
+                                CairoEngine cairoEngine,
+                                WorkerPool networkSharedPool,
+                                int sharedQueryWorkerCount,
+                                AtomicBoolean acceptOpen
+                        ) {
+                            final HttpServer server = super.createHttpServer(
+                                    configuration, cairoEngine, networkSharedPool, sharedQueryWorkerCount, acceptOpen);
+                            if (server != null) {
+                                final HttpFullFatServerConfiguration httpConfiguration = configuration.getHttpServerConfiguration();
+                                server.bind(new HttpRequestHandlerFactory() {
+                                    @Override
+                                    public ObjHashSet<String> getUrls() {
+                                        return new ObjHashSet<>() {{
+                                            add(customWritePath);
+                                        }};
+                                    }
+
+                                    @Override
+                                    public HttpRequestHandler newInstance() {
+                                        return new QwpIngressHttpProcessor(cairoEngine, httpConfiguration);
+                                    }
+                                });
+                                server.bind(new HttpRequestHandlerFactory() {
+                                    @Override
+                                    public ObjHashSet<String> getUrls() {
+                                        return new ObjHashSet<>() {{
+                                            add(customReadPath);
+                                        }};
+                                    }
+
+                                    @Override
+                                    public HttpRequestHandler newInstance() {
+                                        return new QwpEgressHttpProcessor(cairoEngine, httpConfiguration, sharedQueryWorkerCount);
+                                    }
+                                });
+                            }
+                            return server;
+                        }
+                    };
+                }
+            }) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String credential = browserCredentialProtocol(
+                        "Basic " + Base64.getEncoder().encodeToString("admin:quest".getBytes(StandardCharsets.US_ASCII)));
+                String goodOffer = "questdb.qwp.v1, " + credential;
+                String basicAuthorization = "Authorization: Basic " + Base64.getEncoder().encodeToString(
+                        "admin:quest".getBytes(StandardCharsets.US_ASCII)) + "\r\n";
+                for (String path : new String[]{customWritePath, customReadPath}) {
+                    // The header-authenticated upgrade proves the QWP handler serves this path.
+                    String headerAuth = browserCredentialUpgrade(port, path, "http://localhost:" + port, "questdb.qwp.v1", basicAuthorization);
+                    Assert.assertTrue(headerAuth, headerAuth.startsWith("HTTP/1.1 101"));
+
+                    assertCredentialUpgradeSwitched(browserCredentialUpgrade(port, path, "https://app.example.com", goodOffer, ""));
+
+                    String bad = browserCredentialUpgrade(port, path, "https://other.example.com", goodOffer, "");
+                    Assert.assertTrue(bad, bad.startsWith("HTTP/1.1 401"));
+                }
+                String durableOnly = "questdb.qwp.durable-ack.v1, " + credential;
+                String durableIngress = browserCredentialUpgrade(port, customWritePath, "https://app.example.com", durableOnly, "");
+                Assert.assertTrue(durableIngress, durableIngress.startsWith("HTTP/1.1 101"));
+                Assert.assertTrue(durableIngress, durableIngress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
+                String durableEgress = browserCredentialUpgrade(port, customReadPath, "https://app.example.com", durableOnly, "");
+                Assert.assertTrue(durableEgress, durableEgress.startsWith("HTTP/1.1 401"));
+            }
+        });
+    }
+
+    @Test
+    public void testQwpBrowserCrossOriginGateSkipsNonQwpEndpoints() throws Exception {
+        // Only the QWP upgrade endpoints refuse ambient credentials from another
+        // origin. A REST request carrying a foreign Origin still authenticates
+        // with the session cookie or the Authorization header.
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                w.write("http.user=admin\nhttp.password=quest\n");
+                w.write("qwp.browser.allowed.origins=https://app.example.com\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String basicAuthorization = "Authorization: Basic "
+                        + Base64.getEncoder().encodeToString("admin:quest".getBytes(StandardCharsets.US_ASCII)) + "\r\n";
+                String cookie = "Cookie: " + createHttpSessionCookie(port) + "\r\n";
+                for (String origin : new String[]{"https://app.example.com", "https://other.example.com"}) {
+                    for (String credentials : new String[]{cookie, basicAuthorization}) {
+                        try (Socket socket = new Socket("localhost", port)) {
+                            socket.setSoTimeout(5_000);
+                            String request = "GET /exec?query=select%201 HTTP/1.1\r\n"
+                                    + "Host: localhost:" + port + "\r\n"
+                                    + "Origin: " + origin + "\r\n"
+                                    + credentials
+                                    + "Connection: close\r\n\r\n";
+                            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+                            String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+                            Assert.assertTrue(response, response.startsWith("HTTP/1.1 200"));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQwpBrowserListedOriginIgnoresAmbientCredentials() throws Exception {
+        // A browser attaches the session cookie, and any cached Basic credentials,
+        // to a WebSocket opened by a same-site page on another origin. Neither may
+        // authenticate a cross-origin upgrade, even from a listed origin: only the
+        // credential subprotocol can. Same-origin upgrades keep using them.
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                w.write("http.user=admin\nhttp.password=quest\n");
+                w.write("qwp.browser.allowed.origins=https://app.example.com\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String basic = Base64.getEncoder().encodeToString("admin:quest".getBytes(StandardCharsets.US_ASCII));
+                String credentialOffer = browserCredentialOffer("Basic " + basic);
+                String basicAuthorization = "Authorization: Basic " + basic + "\r\n";
+                String cookie = "Cookie: " + createHttpSessionCookie(port) + "\r\n";
+                String sameOrigin = "http://localhost:" + port;
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    // Positive controls: the cookie and the header authenticate a
+                    // same-origin upgrade, and the credential a listed-origin one.
+                    String sameOriginCookie = browserCredentialUpgrade(port, path, sameOrigin, "questdb.qwp.v1", cookie);
+                    Assert.assertTrue(sameOriginCookie, sameOriginCookie.startsWith("HTTP/1.1 101"));
+                    String sameOriginHeader = browserCredentialUpgrade(port, path, sameOrigin, "questdb.qwp.v1", basicAuthorization);
+                    Assert.assertTrue(sameOriginHeader, sameOriginHeader.startsWith("HTTP/1.1 101"));
+                    String listedCredential = browserCredentialUpgrade(port, path, "https://app.example.com", credentialOffer, "");
+                    Assert.assertTrue(listedCredential, listedCredential.startsWith("HTTP/1.1 101"));
+
+                    String listedCookie = browserCredentialUpgrade(port, path + "?session=true", "https://app.example.com",
+                            "questdb.qwp.v1", cookie);
+                    Assert.assertTrue(listedCookie, listedCookie.startsWith("HTTP/1.1 401"));
+                    Assert.assertFalse(listedCookie, listedCookie.contains("Set-Cookie:"));
+                    String listedHeader = browserCredentialUpgrade(port, path + "?session=true", "https://app.example.com",
+                            "questdb.qwp.v1", basicAuthorization);
+                    Assert.assertTrue(listedHeader, listedHeader.startsWith("HTTP/1.1 401"));
+                    Assert.assertFalse(listedHeader, listedHeader.contains("Set-Cookie:"));
+                    String unlistedCookie = browserCredentialUpgrade(port, path, "https://other.example.com",
+                            "questdb.qwp.v1", cookie);
+                    Assert.assertTrue(unlistedCookie, unlistedCookie.startsWith("HTTP/1.1 401"));
+                    Assert.assertFalse(unlistedCookie, unlistedCookie.contains("Set-Cookie:"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQwpBrowserTlsTerminationEnabled() throws Exception {
+        // The QWP upgrade processors read this flag off the object
+        // ServerConfiguration.getHttpServerConfiguration() returns, which is
+        // HttpServerConfigurationWrapper and not the PropServerConfiguration
+        // behind it. Asserting through PropServerConfiguration alone passes
+        // even when the wrapper drops the property on the floor.
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                Assert.assertTrue(
+                        serverMain.getConfiguration().getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testQwpBrowserTlsTerminationSameOriginUsesAmbientCredentials() throws Exception {
+        // Behind a TLS-terminating proxy the socket is plaintext, yet the Web
+        // Console's Origin is https://. HttpConnectionContext must treat that
+        // Origin as same-origin, like the QWP processors do, so the session cookie
+        // and the Authorization header still authenticate the upgrade; an http://
+        // Origin becomes cross-origin and gets no cookie authentication.
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                w.write("http.user=admin\nhttp.password=quest\n");
+                w.write(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String basicAuthorization = "Authorization: Basic "
+                        + Base64.getEncoder().encodeToString("admin:quest".getBytes(StandardCharsets.US_ASCII)) + "\r\n";
+                String cookie = "Cookie: " + createHttpSessionCookie(port) + "\r\n";
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    String httpsCookie = browserCredentialUpgrade(port, path, "https://localhost:" + port,
+                            "questdb.qwp.v1", cookie);
+                    Assert.assertTrue(httpsCookie, httpsCookie.startsWith("HTTP/1.1 101"));
+                    String httpsHeader = browserCredentialUpgrade(port, path, "https://localhost:" + port,
+                            "questdb.qwp.v1", basicAuthorization);
+                    Assert.assertTrue(httpsHeader, httpsHeader.startsWith("HTTP/1.1 101"));
+                    String httpCookie = browserCredentialUpgrade(port, path, "http://localhost:" + port,
+                            "questdb.qwp.v1", cookie);
+                    Assert.assertTrue(httpCookie, httpCookie.startsWith("HTTP/1.1 401"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQwpBrowserUpgradeRefusalReasonIsLogged() throws Exception {
+        // Every refused browser upgrade gets the same generic 401 body, so only the
+        // server log can tell a proxy that broke same-origin or an unlisted origin
+        // apart from a bad credential. The credential itself must never be logged.
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                w.write("http.user=admin\nhttp.password=quest\n");
+                w.write("qwp.browser.allowed.origins=https://app.example.com\n");
+            }
+            final LogCapture capture = new LogCapture();
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                capture.start();
+                int port = serverMain.getHttpServerPort();
+                String basic = "Basic " + Base64.getEncoder().encodeToString("admin:quest".getBytes(StandardCharsets.US_ASCII));
+                String wrongBasic = "Basic " + Base64.getEncoder().encodeToString("admin:wrong".getBytes(StandardCharsets.US_ASCII));
+                String credential = browserCredentialProtocol(basic);
+                String offer = "questdb.qwp.v1, " + credential;
+
+                // A TLS terminator without qwp.browser.tls.termination.enabled turns the
+                // page's own https Origin cross-origin, so its session cookie no longer counts.
+                String proxiedCookie = browserCredentialUpgrade(port, "/read/v1", "https://localhost:" + port,
+                        "questdb.qwp.v1", "Cookie: " + createHttpSessionCookie(port) + "\r\n");
+                assertQwpUpgradeRefused(capture, proxiedCookie,
+                        "Origin is not same-origin with Host on QWP WebSocket; a cross-origin browser upgrade cannot authenticate with cookies");
+                String unlisted = browserCredentialUpgrade(port, "/write/v4", "https://www.app.example.com", offer, "");
+                assertQwpUpgradeRefused(capture, unlisted,
+                        "QWP browser credential rejected: it is accepted only on a QWP WebSocket upgrade from an origin listed in qwp.browser.allowed.origins");
+                String withHeader = browserCredentialUpgrade(port, "/read/v1", "https://app.example.com", offer,
+                        "Authorization: " + basic + "\r\n");
+                assertQwpUpgradeRefused(capture, withHeader, "QWP browser credential rejected: the upgrade also carries an Authorization header");
+                String malformed = browserCredentialUpgrade(port, "/write/v4", "https://app.example.com",
+                        "questdb.qwp.v1, questdb.qwp.authorization.!", "");
+                assertQwpUpgradeRefused(capture, malformed,
+                        "QWP browser credential rejected: the questdb.qwp.authorization subprotocol must carry exactly one unpadded base64url");
+                String wrongPassword = browserCredentialUpgrade(port, "/read/v1", "https://app.example.com",
+                        browserCredentialOffer(wrongBasic), "");
+                assertQwpUpgradeRefused(capture, wrongPassword, "QWP browser credential rejected: authentication failed");
+                capture.drain();
+                capture.assertNotLogged(credential);
+                capture.assertNotLogged(basic);
+                // wrongBasic is the only credential here that is decoded and handed to the authenticator
+                capture.assertNotLogged(browserCredentialProtocol(wrongBasic));
+                capture.assertNotLogged(wrongBasic);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
     public void testReloadDisabled() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -1521,6 +2244,87 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         });
     }
 
+    @Test
+    public void testWindowMapFusionReload() throws Exception {
+        // The switch is read once per compile rather than held anywhere, so what the reload has
+        // to reach is the next compile - not the value alone. The assertion is therefore the
+        // binding a fresh compile produces, which is the only thing the two settings differ in:
+        // the results and the EXPLAIN plan are identical either way.
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                final CairoEngine engine = serverMain.getEngine();
+                try (SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1)
+                        .with(AllowAllSecurityContext.INSTANCE)) {
+                    engine.execute(
+                            "CREATE TABLE t (ts TIMESTAMP, k SYMBOL, x DOUBLE, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                            executionContext
+                    );
+                    Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isSqlWindowMapFusionEnabled());
+                    assertWindowMapFusion(engine, executionContext, true);
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("cairo.sql.window.map.fusion.enabled=false\n");
+                    }
+
+                    assertReloadConfigEventually();
+
+                    assertFalse(serverMain.getConfiguration().getCairoConfiguration().isSqlWindowMapFusionEnabled());
+                    assertWindowMapFusion(engine, executionContext, false);
+
+                    // And back, because an escape hatch a reload cannot undo is half of one.
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("cairo.sql.window.map.fusion.enabled=true\n");
+                    }
+
+                    assertReloadConfigEventually();
+
+                    Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isSqlWindowMapFusionEnabled());
+                    assertWindowMapFusion(engine, executionContext, true);
+                }
+            }
+        });
+    }
+
+    private static void assertQwpUpgradeRefused(LogCapture capture, String response, String reason) {
+        Assert.assertTrue(response, response.startsWith("HTTP/1.1 401"));
+        capture.waitFor(reason);
+    }
+
+    private static void assertWindowMapFusion(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            boolean expectedFused
+    ) throws SqlException {
+        final String sql = "SELECT ts, sum(x) OVER w, count(y) OVER w FROM t "
+                + "WINDOW w AS (PARTITION BY k ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)";
+        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            // A projection wrapper can sit above the window factory, so the search walks the
+            // whole chain rather than unwrapping one known level.
+            RecordCursorFactory root = factory;
+            while (root != null && !(root instanceof WindowRecordCursorFactory)) {
+                root = root.getBaseFactory();
+            }
+            Assert.assertNotNull("no window factory in the tree", root);
+            final ObjList<WindowMapState> states = ((WindowRecordCursorFactory) root).getWindowMapStates();
+            if (expectedFused) {
+                Assert.assertNotNull("the compile bound no window map group", states);
+                Assert.assertEquals(1, states.size());
+            } else {
+                Assert.assertNull("the compile bound a window map group with fusion off", states);
+            }
+        }
+    }
+
+    private static String createHttpSessionCookie(int port) {
+        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+            HttpClient.ResponseHeaders response = HttpUtils.newHttpRequest(httpClient, port, "select 1", "admin", "quest", "true");
+            HttpUtils.awaitStatusCode(response, "200");
+            return SESSION_COOKIE_NAME + '=' + HttpUtils.assertSessionCookie(response, false);
+        }
+    }
+
     private static Connection getConnection(String user, String pass) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", user);
@@ -1563,6 +2367,19 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             }
             Os.sleep(nextSleepingTimeMillis);
             nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
+    }
+
+    private void assertTrackerLimit(ServerMain serverMain, MemoryTrackerWorkload workload, long expectedLimit) {
+        MemoryTracker tracker = serverMain.getEngine().getMemoryTrackerProvider().acquire(
+                AllowAllSecurityContext.INSTANCE,
+                1,
+                workload
+        );
+        try {
+            Assert.assertEquals(expectedLimit, tracker.getLimit());
+        } finally {
+            tracker.close();
         }
     }
 

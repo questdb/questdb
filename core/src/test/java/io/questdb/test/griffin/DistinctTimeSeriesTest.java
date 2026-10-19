@@ -67,38 +67,37 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     "select distinct * from x"
             );
 
-            assertSql(
-                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n", "select distinct * from x where 1 != 1"
-            );
+            assertQuery("select distinct * from x where 1 != 1")
+                    .noLeakCheck()
+                    .returns("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n");
         });
     }
 
     @Test
     public void testCursorCorrectness() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                "i\tsym\tts\n" +
-                        "1\tmsft\t1970-01-06T18:53:20.000000Z\n" +
-                        "2\tmsft\t1970-01-06T18:58:50.000000Z\n" +
-                        "3\tibm\t1970-01-06T19:04:20.000000Z\n" +
-                        "4\tgoogl\t1970-01-06T19:09:50.000000Z\n" +
-                        "5\tgoogl\t1970-01-06T19:15:20.000000Z\n" +
-                        "6\tgoogl\t1970-01-06T19:20:50.000000Z\n" +
-                        "7\tgoogl\t1970-01-06T19:26:20.000000Z\n" +
-                        "8\tibm\t1970-01-06T19:31:50.000000Z\n" +
-                        "9\tmsft\t1970-01-06T19:37:20.000000Z\n" +
-                        "10\tibm\t1970-01-06T19:42:50.000000Z\n",
-                "select distinct * from x order by ts",
-                "create table x as (" +
+        assertMemoryLeak(() -> assertQuery("select distinct * from x order by ts")
+                .ddl("create table x as (" +
                         "select" +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm','googl') sym," +
                         " timestamp_sequence(500000000000L,330000000L) ts" +
                         " from long_sequence(10)" +
-                        ") timestamp (ts) partition by DAY",
-                "ts",
-                true,
-                true
-        ));
+                        ") timestamp (ts) partition by DAY")
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        i\tsym\tts
+                        1\tmsft\t1970-01-06T18:53:20.000000Z
+                        2\tmsft\t1970-01-06T18:58:50.000000Z
+                        3\tibm\t1970-01-06T19:04:20.000000Z
+                        4\tgoogl\t1970-01-06T19:09:50.000000Z
+                        5\tgoogl\t1970-01-06T19:15:20.000000Z
+                        6\tgoogl\t1970-01-06T19:20:50.000000Z
+                        7\tgoogl\t1970-01-06T19:26:20.000000Z
+                        8\tibm\t1970-01-06T19:31:50.000000Z
+                        9\tmsft\t1970-01-06T19:37:20.000000Z
+                        10\tibm\t1970-01-06T19:42:50.000000Z
+                        """));
     }
 
     @Test
@@ -129,79 +128,73 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                             ") timestamp (ts) partition by DAY"
             );
 
-            assertSql(
-                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n", "select distinct * from x"
-            );
+            assertQuery("select distinct * from x")
+                    .noLeakCheck()
+                    .returns("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n");
         });
     }
 
     @Test
     public void testTimestampAscOrder() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "sym\tts\n" +
-                    "msft\t1970-01-06T18:53:20.000000Z\n" +
-                    "msft\t1970-01-06T18:58:50.000000Z\n" +
-                    "ibm\t1970-01-06T19:04:20.000000Z\n" +
-                    "googl\t1970-01-06T19:09:50.000000Z\n" +
-                    "googl\t1970-01-06T19:15:20.000000Z\n" +
-                    "googl\t1970-01-06T19:20:50.000000Z\n" +
-                    "googl\t1970-01-06T19:26:20.000000Z\n" +
-                    "ibm\t1970-01-06T19:31:50.000000Z\n" +
-                    "msft\t1970-01-06T19:37:20.000000Z\n" +
-                    "ibm\t1970-01-06T19:42:50.000000Z\n";
-            assertQuery(
-                    expected,
-                    "select distinct sym, ts from x order by ts",
-                    "create table x as (" +
+            String expected = """
+                    sym\tts
+                    msft\t1970-01-06T18:53:20.000000Z
+                    msft\t1970-01-06T18:58:50.000000Z
+                    ibm\t1970-01-06T19:04:20.000000Z
+                    googl\t1970-01-06T19:09:50.000000Z
+                    googl\t1970-01-06T19:15:20.000000Z
+                    googl\t1970-01-06T19:20:50.000000Z
+                    googl\t1970-01-06T19:26:20.000000Z
+                    ibm\t1970-01-06T19:31:50.000000Z
+                    msft\t1970-01-06T19:37:20.000000Z
+                    ibm\t1970-01-06T19:42:50.000000Z
+                    """;
+            assertQuery("select distinct sym, ts from x order by ts")
+                    .ddl("create table x as (" +
                             "select" +
                             " cast(x as int) i," +
                             " rnd_symbol('msft','ibm','googl') sym," +
                             " timestamp_sequence(500000000000L,330000000L) ts" +
                             " from long_sequence(10)" +
-                            ") timestamp (ts) partition by DAY",
-                    "ts###ASC",
-                    // duplicate timestamp and symbol shouldn't change the result
-                    "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')",
-                    expected,
-                    true,
-                    false,
-                    true
-            );
+                            ") timestamp (ts) partition by DAY")
+                    .mutateWith(// duplicate timestamp and symbol shouldn't change the result
+                            "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')")
+                    .timestampAsc("ts")
+                    .sizeMayVary()
+                    .returns(expected, expected);
         });
     }
 
     @Test
     public void testTimestampDescOrder() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "sym\tts\n" +
-                    "ibm\t1970-01-06T19:42:50.000000Z\n" +
-                    "msft\t1970-01-06T19:37:20.000000Z\n" +
-                    "ibm\t1970-01-06T19:31:50.000000Z\n" +
-                    "googl\t1970-01-06T19:26:20.000000Z\n" +
-                    "googl\t1970-01-06T19:20:50.000000Z\n" +
-                    "googl\t1970-01-06T19:15:20.000000Z\n" +
-                    "googl\t1970-01-06T19:09:50.000000Z\n" +
-                    "ibm\t1970-01-06T19:04:20.000000Z\n" +
-                    "msft\t1970-01-06T18:58:50.000000Z\n" +
-                    "msft\t1970-01-06T18:53:20.000000Z\n";
-            assertQuery(
-                    expected,
-                    "select distinct sym, ts from (x order by ts desc) order by ts desc",
-                    "create table x as (" +
+            String expected = """
+                    sym\tts
+                    ibm\t1970-01-06T19:42:50.000000Z
+                    msft\t1970-01-06T19:37:20.000000Z
+                    ibm\t1970-01-06T19:31:50.000000Z
+                    googl\t1970-01-06T19:26:20.000000Z
+                    googl\t1970-01-06T19:20:50.000000Z
+                    googl\t1970-01-06T19:15:20.000000Z
+                    googl\t1970-01-06T19:09:50.000000Z
+                    ibm\t1970-01-06T19:04:20.000000Z
+                    msft\t1970-01-06T18:58:50.000000Z
+                    msft\t1970-01-06T18:53:20.000000Z
+                    """;
+            assertQuery("select distinct sym, ts from (x order by ts desc) order by ts desc")
+                    .ddl("create table x as (" +
                             "select" +
                             " cast(x as int) i," +
                             " rnd_symbol('msft','ibm','googl') sym," +
                             " timestamp_sequence(500000000000L,330000000L) ts" +
                             " from long_sequence(10)" +
-                            ") timestamp (ts) partition by DAY",
-                    "ts###DESC",
-                    // duplicate timestamp and symbol shouldn't change the result
-                    "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')",
-                    expected,
-                    true,
-                    true,
-                    false
-            );
+                            ") timestamp (ts) partition by DAY")
+                    .mutateWith(// duplicate timestamp and symbol shouldn't change the result
+                            "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')")
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(expected, expected);
         });
     }
 }

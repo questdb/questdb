@@ -84,7 +84,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testAlterCommandAddColumn() throws Exception {
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = """
                     plug,room=6A watts="1" 2631819999000
                     plug,room=6B watts="22" 1631817902842
@@ -123,7 +123,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     public void testAlterCommandDropAllPartitions() throws Exception {
         long day1 = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? MicrosTimestampDriver.floor("2023-02-27") * 1000 : NanosTimestampDriver.floor("2023-02-27");
         long day2 = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? MicrosTimestampDriver.floor("2023-02-28") * 1000 : NanosTimestampDriver.floor("2023-02-28");
-        runInContext((server) -> {
+        runInContext((_) -> {
             final AtomicLong ilpProducerWatts = new AtomicLong(0L);
             final AtomicBoolean keepSending = new AtomicBoolean(true);
             final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
@@ -185,7 +185,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testAlterCommandDropLastPartition() throws Exception {
-        runInContext((server) -> {
+        runInContext((_) -> {
             long day1 = MicrosTimestampDriver.floor("2023-02-27") * 1000; // <-- last partition
 
             TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY);
@@ -242,7 +242,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         long day1 = 0;
         long day2 = MicrosTimestampDriver.floor("1970-02-02") * 1000;
         long day3 = MicrosTimestampDriver.floor("1970-03-03") * 1000;
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
             send(lineData);
 
@@ -267,7 +267,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testAlterCommandRenameAndReAddColumnDifferentType() throws Exception {
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = """
                     plug,label=Power,room=6A watts="1" 2631819999000
                     plug,label=Power,room=6B watts="22" 1631817902842
@@ -305,7 +305,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testAlterCommandRenameAndReAddColumnSameType() throws Exception {
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = """
                     plug,label=Power,room=6A watts="1" 2631819999000
                     plug,label=Power,room=6B watts="22" 1631817902842
@@ -345,7 +345,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     public void testAlterCommandSequenceReleased() throws Exception {
         long day1 = 0;
         long day2 = MicrosTimestampDriver.floor("1970-02-02") * 1000;
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
             send(lineData);
             lineData = "plug,room=6B watts=\"22\" " + day2 + "\n";
@@ -379,7 +379,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testAlterCommandTableMetaModifications() throws Exception {
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = """
                     plug,label=Power,room=6A watts="1" 2631819999000
                     plug,label=Power,room=6B watts="22" 1631817902842
@@ -435,7 +435,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     public void testAlterCommandTruncateTable() throws Exception {
         long day1 = MicrosTimestampDriver.floor("2023-02-27") * 1000;
         long day2 = MicrosTimestampDriver.floor("2023-02-28") * 1000;
-        runInContext((server) -> {
+        runInContext((_) -> {
             final AtomicLong ilpProducerWatts = new AtomicLong(0L);
             final AtomicBoolean keepSending = new AtomicBoolean(true);
             final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
@@ -516,7 +516,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     @Test
     public void testAlterTableAddIndex() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = """
                     plug,label=Power,room=6A watts="1" 2631819999000
                     plug,label=Power,room=6B watts="22" 1631817902842
@@ -549,7 +549,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testDropColumnAddDuplicate() throws Exception {
-        runInContext((server) -> {
+        runInContext((_) -> {
             send(
                     """
                             plug,room=6A watts="1",power=220 2631819999000
@@ -576,7 +576,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     @Test
     public void testDropColumnConcurrently() throws Exception {
         final int rows = 10_000;
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = "plug,room=0i watts=\"1\",power=220 2631819999000\n";
             // pre-create the table
             send(lineData);
@@ -607,7 +607,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     @Test
     public void testDropColumnConcurrentlyManyAttempts() throws Exception {
         final int rows = 15_000;
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = "plug,room=0i watts=\"1\",power=220 2631819999000\n";
             // pre-create the table
             send(lineData);
@@ -635,7 +635,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testDropColumnInTheMiddle() throws Exception {
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = """
                     plug,room=6A watts="1",power=220 2631819999000
                     plug,room=6B watts="22" 1631817902842
@@ -665,7 +665,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     @Test
     public void testRandomColumnAddedDeleted() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
-        runInContext((server) -> {
+        runInContext((_) -> {
             IntList columnsAdded = new IntList();
 
             Rnd rnd = new Rnd();
@@ -738,7 +738,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     @Test
     public void testRenameColumnConcurrently() throws Exception {
         final int rows = 10_000;
-        runInContext((server) -> {
+        runInContext((_) -> {
             String lineData = "plug,room=0i watts=\"1\",power=220 2631819999000\n";
             // pre-create the table
             send(lineData);
@@ -767,7 +767,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testSymbolColumnDeletedAndAdded() throws Exception {
-        runInContext((server) -> {
+        runInContext((_) -> {
             send(
                     """
                             plug,room=6A watts="1",power=220 2631819999000
@@ -823,7 +823,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         SOCountDownLatch releaseAllLatch = new SOCountDownLatch(3);
         AtomicBoolean stopThreads = new AtomicBoolean(false);
 
-        engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+        engine.setPoolListener((factoryType, _, name, event, _, _) -> {
             if (Chars.equalsNc("plug", name.getTableName())) {
                 if (PoolListener.isWalOrWriter(factoryType)) {
                     if (event == PoolListener.EV_RETURN) {
@@ -882,7 +882,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int n = 0; n < lineDataBytes.length; n++) {
-                        Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+                        Unsafe.putByte(bufaddr + n, lineDataBytes[n]);
                     }
                     int sent = 0;
                     Rnd rnd = TestUtils.generateRandom(LOG);
@@ -913,7 +913,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         sqlException = null;
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
 
-        engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+        engine.setPoolListener((factoryType, _, name, event, _, _) -> {
             if (PoolListener.isWalOrWriter(factoryType)
                     && (event == PoolListener.EV_RETURN)
                     && Chars.equalsNc("plug", name.getTableName())) {
@@ -932,7 +932,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int n = 0; n < lineDataBytes.length; n++) {
-                        Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+                        Unsafe.putByte(bufaddr + n, lineDataBytes[n]);
                     }
                     int rc = Net.send(fd, bufaddr, lineDataBytes.length);
                     Assert.assertEquals(lineDataBytes.length, rc);

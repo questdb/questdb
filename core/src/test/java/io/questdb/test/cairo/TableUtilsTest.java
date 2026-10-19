@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
@@ -33,6 +34,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -40,6 +42,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -90,7 +93,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -121,7 +125,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -151,7 +156,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -315,17 +321,17 @@ public class TableUtilsTest extends AbstractTest {
                     int size = ColumnType.sizeOf(columnType);
                     if (size > 0) {
                         TableUtils.setNull(columnType, mem2, 1);
-                        Unsafe.getUnsafe().putLong(mem1, TableUtils.getNullLong(columnType, 0));
-                        Unsafe.getUnsafe().putLong(mem1 + 8, TableUtils.getNullLong(columnType, 1));
-                        Unsafe.getUnsafe().putLong(mem1 + 16, TableUtils.getNullLong(columnType, 2));
-                        Unsafe.getUnsafe().putLong(mem1 + 24, TableUtils.getNullLong(columnType, 3));
+                        Unsafe.putLong(mem1, TableUtils.getNullLong(columnType, 0));
+                        Unsafe.putLong(mem1 + 8, TableUtils.getNullLong(columnType, 1));
+                        Unsafe.putLong(mem1 + 16, TableUtils.getNullLong(columnType, 2));
+                        Unsafe.putLong(mem1 + 24, TableUtils.getNullLong(columnType, 3));
 
                         String type = ColumnType.nameOf(columnType);
                         for (int b = 0; b < size; b++) {
                             Assert.assertEquals(
                                     type,
-                                    Unsafe.getUnsafe().getByte(mem1 + b),
-                                    Unsafe.getUnsafe().getByte(mem2 + b)
+                                    Unsafe.getByte(mem1 + b),
+                                    Unsafe.getByte(mem2 + b)
                             );
                         }
                     }
@@ -335,6 +341,89 @@ public class TableUtilsTest extends AbstractTest {
             Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testSymbolDataHasNullsAcrossScanChunks() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long rowCount = TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS + 2L;
+            final long size = rowCount * Integer.BYTES;
+            final long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Vect.memset(address, size, 0);
+                Assert.assertFalse(TableUtils.symbolDataHasNulls(address, rowCount));
+                final long[] nullRows = {0, TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS - 1, TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS, rowCount - 1};
+                for (long row : nullRows) {
+                    Unsafe.putInt(address + row * Integer.BYTES, SymbolTable.VALUE_IS_NULL);
+                    Assert.assertTrue("null at row " + row, TableUtils.symbolDataHasNulls(address, rowCount));
+                    Unsafe.putInt(address + row * Integer.BYTES, 0);
+                }
+                Assert.assertFalse(TableUtils.symbolDataHasNulls(address, rowCount));
+            } finally {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCheckStoragePolicyTtlHoursExactBoundary() {
+        // Storage policies measure partition age from the partition floor (its start), not the
+        // ceiling that table TTL uses. Partition 2024-01-01 with a 24h policy becomes eligible
+        // once maxTimestamp reaches exactly 24h past the partition floor.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723); // 2024-01-01
+        long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
+        long maxTimestamp = partitionFloor + driver.fromHours(24);
+
+        Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, 24));
+        // one microsecond before the boundary — not yet eligible
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp - 1, 24));
+    }
+
+    @Test
+    public void testCheckStoragePolicyTtlMonthsBoundary() {
+        // Negative TTL means months; storage policies measure the gap from the partition floor.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.MONTH);
+        long partitionTimestamp = driver.fromDays(19_723); // 2024-01-01
+        long partitionFloor = txReader.getPartitionFloor(partitionTimestamp); // 2024-01-01
+        // 3 months after the floor: 2024-04-01
+        long maxTimestamp = partitionFloor + driver.fromDays(91);
+        Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, -3));
+        // 2 months after the floor: not enough for a 3-month policy
+        long maxTimestamp2Months = partitionFloor + driver.fromDays(60);
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp2Months, -3));
+    }
+
+    @Test(expected = AssertionError.class)
+    public void testCheckStoragePolicyTtlRejectsZero() {
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723);
+        long maxTimestamp = partitionTimestamp + driver.fromHours(100);
+
+        TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, 0);
+    }
+
+    @Test
+    public void testCheckStoragePolicyTtlShiftsOnePartitionVsTtl() {
+        // Storage policy ages from the partition floor while table TTL ages from the ceiling,
+        // so a storage policy threshold is effectively one partition wider. With daily
+        // partitions and a 1h setting, the partition is eligible for storage policy as soon as
+        // the next (active) partition starts, while table TTL still treats it as too young.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723); // 2024-01-01
+        // maxTimestamp sits exactly at the start of the next partition (2024-01-02).
+        long maxTimestamp = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
+
+        Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, 1));
+        Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp, 1));
     }
 
     @Test

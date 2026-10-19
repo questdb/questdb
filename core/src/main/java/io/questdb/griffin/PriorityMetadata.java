@@ -77,6 +77,19 @@ public class PriorityMetadata extends AbstractRecordMetadata {
             if (keyIndex < 0) {
                 return columnNameIndexMap.valueAt(keyIndex);
             }
+            // The base splits a composed name on the dot, so this metadata reports splitsOnDot and
+            // SqlUtil.getColumnIndexQuiet skips its quote-strip retry for a DOTTED protected alias to
+            // avoid mis-splitting it against the base. But this metadata's own projection columns store a
+            // content-dotted name clean (a.b) and match it verbatim, so retry the LOCAL map with the
+            // protective quotes stripped - only for a dotted interior (an operator token has no dot and
+            // is already handled by SqlUtil's retry, which must keep preferring the base). Checking only
+            // the local map here cannot mis-split against the base.
+            if (SqlUtil.quoteProtectedInteriorDot(columnName, lo, hi) > -1) {
+                keyIndex = columnNameIndexMap.keyIndex(columnName, lo + 1, hi - 1);
+                if (keyIndex < 0) {
+                    return columnNameIndexMap.valueAt(keyIndex);
+                }
+            }
             return -1;
         }
         return index + virtualColumnReservedSlots;
@@ -88,5 +101,13 @@ public class PriorityMetadata extends AbstractRecordMetadata {
             return columnMetadata.getQuick(index);
         }
         return baseMetadata.getColumnMetadata(index - virtualColumnReservedSlots);
+    }
+
+    @Override
+    public boolean splitsOnDot() {
+        // getColumnIndexQuiet delegates the ranged lookup to the base, so a wrapped join splits on
+        // the dot too; forward the flag so the compiler's quote-strip retry skips it (as it does for
+        // a bare join) instead of mis-splitting a dotted alias into an unrelated table.column.
+        return baseMetadata.splitsOnDot();
     }
 }

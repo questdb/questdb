@@ -32,20 +32,24 @@ public class MatViewTimerTask implements ValueHolder<MatViewTimerTask> {
     public static final int ADD = 0;
     public static final ObjectFactory<MatViewTimerTask> ITEM_FACTORY = MatViewTimerTask::new;
     public static final int REMOVE = 1;
+    public static final int RETRY = 3;
     public static final int UPDATE = 2;
     private TableToken matViewToken;
     private int operation = -1;
+    private long retryAfterMicros;
 
     @Override
     public void clear() {
         matViewToken = null;
         operation = -1;
+        retryAfterMicros = 0;
     }
 
     @Override
     public void copyTo(MatViewTimerTask dest) {
         dest.matViewToken = matViewToken;
         dest.operation = operation;
+        dest.retryAfterMicros = retryAfterMicros;
     }
 
     public TableToken getMatViewToken() {
@@ -54,6 +58,10 @@ public class MatViewTimerTask implements ValueHolder<MatViewTimerTask> {
 
     public int getOperation() {
         return operation;
+    }
+
+    public long getRetryAfterMicros() {
+        return retryAfterMicros;
     }
 
     public MatViewTimerTask ofAdd(TableToken matViewToken) {
@@ -65,6 +73,13 @@ public class MatViewTimerTask implements ValueHolder<MatViewTimerTask> {
     public MatViewTimerTask ofRemove(TableToken matViewToken) {
         this.matViewToken = matViewToken;
         this.operation = REMOVE;
+        return this;
+    }
+
+    public MatViewTimerTask ofRetry(TableToken matViewToken, long retryAfterMicros) {
+        this.matViewToken = matViewToken;
+        this.operation = RETRY;
+        this.retryAfterMicros = retryAfterMicros;
         return this;
     }
 

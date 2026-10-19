@@ -66,7 +66,7 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
         // Read value bit from value bitmap
         int byteIndex = currentValueIndex >>> 3;
         int bitIndex = currentValueIndex & 7;
-        byte b = Unsafe.getUnsafe().getByte(valueBitmapAddress + byteIndex);
+        byte b = Unsafe.getByte(valueBitmapAddress + byteIndex);
         currentValue = (b & (1 << bitIndex)) != 0;
         currentValueIndex++;
         return false;
@@ -120,7 +120,7 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
             );
         }
         int nullCount;
-        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+        if (Unsafe.getByte(dataAddress + offset) != 0) {
             offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {

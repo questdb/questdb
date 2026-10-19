@@ -66,7 +66,7 @@ public class GroupByArraySink implements Mutable {
     }
 
     public ArrayView getArray() {
-        if (ptr == 0 || Unsafe.getUnsafe().getInt(ptr) < 0) {
+        if (ptr == 0 || Unsafe.getInt(ptr) < 0) {
             return null;
         }
         return ArrayTypeDriver.getCompactPlainValue(ptr, type, nDims, borrowedArray);
@@ -75,7 +75,7 @@ public class GroupByArraySink implements Mutable {
     public GroupByArraySink of(long ptr) {
         this.ptr = ptr;
         if (ptr != 0) {
-            int dataSize = Unsafe.getUnsafe().getInt(ptr);
+            int dataSize = Unsafe.getInt(ptr);
             this.allocatedSize = Integer.BYTES + dataSize;
         } else {
             this.allocatedSize = 0;

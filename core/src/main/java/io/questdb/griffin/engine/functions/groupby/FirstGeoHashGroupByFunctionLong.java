@@ -51,7 +51,7 @@ class FirstGeoHashGroupByFunctionLong extends GeoLongFunction implements GroupBy
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putLong(valueIndex + 1, Unsafe.getUnsafe().getLong(dataAddr));
+                mapValue.putLong(valueIndex + 1, Unsafe.getLong(dataAddr));
             }
         }
     }
@@ -64,7 +64,9 @@ class FirstGeoHashGroupByFunctionLong extends GeoLongFunction implements GroupBy
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        // empty
+        if (rowId < mapValue.getLong(valueIndex)) {
+            computeFirst(mapValue, record, rowId);
+        }
     }
 
     @Override

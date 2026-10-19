@@ -104,6 +104,14 @@ public interface BinaryFunction extends Function {
         return getLeft().isRandom() || getRight().isRandom();
     }
 
+    // Within-execution stability composes independently of determinism: an arg may be
+    // non-deterministic yet stable (bind variable, now()), or appear deterministic through
+    // isNonDeterministic() yet be unstable (a cursor arg wrapping an rnd_* projection).
+    @Override
+    default boolean isStableWithinExecution() {
+        return getLeft().isStableWithinExecution() && getRight().isStableWithinExecution();
+    }
+
     @Override
     default boolean isRuntimeConstant() {
         final Function l = getLeft();

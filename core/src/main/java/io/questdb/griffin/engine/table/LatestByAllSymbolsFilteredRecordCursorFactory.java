@@ -25,28 +25,23 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    private Function filter;
 
     public LatestByAllSymbolsFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
-            @NotNull RecordSink recordSink,
-            @Transient @NotNull ColumnTypes partitionByColumnTypes,
             @NotNull IntList partitionByColumnIndexes,
             @Nullable IntList partitionBySymbolCounts,
             @Nullable Function filter,
@@ -56,13 +51,11 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
-            Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes);
+            this.filter = filter;
             this.cursor = new LatestByAllSymbolsFilteredRecordCursor(
                     configuration,
                     metadata,
-                    map,
                     rows,
-                    recordSink,
                     filter,
                     partitionByColumnIndexes,
                     partitionBySymbolCounts
@@ -81,14 +74,31 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllSymbolsFiltered");
+        LatestByCompiledFilter.addJitAttr(sink, filter);
         sink.optAttr("filter", ((LatestByAllSymbolsFilteredRecordCursor) cursor).getFilter());
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
     }
 
     @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
+    }
+
+    @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final PageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        final Function filter = this.filter;
+        this.filter = null;
+        failure = Misc.freeBestEffort(failure, filter);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

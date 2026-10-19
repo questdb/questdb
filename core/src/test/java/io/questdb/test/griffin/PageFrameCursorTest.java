@@ -87,15 +87,15 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                                 long count = frame.getPartitionHi() - frame.getPartitionLo();
                                 while (count > 0) {
                                     //validate that index column has correct offsets
-                                    final long offset = Unsafe.getUnsafe().getLong(fixAddress);
+                                    final long offset = Unsafe.getLong(fixAddress);
                                     Assert.assertTrue(offset >= 0 && offset < size);
                                     fixAddress += 8;
                                     long varAddress = topOfVarAddress + offset;
-                                    int len = Unsafe.getUnsafe().getInt(varAddress); // string len
+                                    int len = Unsafe.getInt(varAddress); // string len
                                     varAddress += 4;
                                     if (len != -1) {
                                         for (int i = 0; i < len; i++) {
-                                            actualSink.put(Unsafe.getUnsafe().getChar(varAddress + i * 2L));
+                                            actualSink.put(Unsafe.getChar(varAddress + i * 2L));
                                         }
                                     }
                                     actualSink.put('\n');
@@ -144,14 +144,14 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                                 long count = frame.getPartitionHi() - frame.getPartitionLo();
                                 while (count > 0) {
                                     // validate that index column has correct offsets
-                                    Assert.assertEquals(varAddress - topOfVarAddress, Unsafe.getUnsafe().getLong(fixAddress));
+                                    Assert.assertEquals(varAddress - topOfVarAddress, Unsafe.getLong(fixAddress));
                                     fixAddress += 8;
 
-                                    int len = Unsafe.getUnsafe().getInt(varAddress); // string len
+                                    int len = Unsafe.getInt(varAddress); // string len
                                     varAddress += 4;
                                     if (len != -1) {
                                         for (int i = 0; i < len; i++) {
-                                            actualSink.put(Unsafe.getUnsafe().getChar(varAddress + i * 2L));
+                                            actualSink.put(Unsafe.getChar(varAddress + i * 2L));
                                         }
                                         varAddress += len * 2L;
                                     }

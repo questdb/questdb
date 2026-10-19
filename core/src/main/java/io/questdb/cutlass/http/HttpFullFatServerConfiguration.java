@@ -27,6 +27,8 @@ package io.questdb.cutlass.http;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.ObjHashSet;
 
@@ -45,6 +47,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     ObjHashSet<String> CONTEXT_PATH_QWP = new ObjHashSet<>() {{
         add("/write/v4");
         add("/api/v4/write");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_QWP_READ = new ObjHashSet<>() {{
+        add("/read/v1");
+        add("/api/v1/read");
     }};
     ObjHashSet<String> CONTEXT_PATH_IMPORT = new ObjHashSet<>() {{
         add("/imp");
@@ -87,6 +93,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
         return CONTEXT_PATH_QWP;
     }
 
+    default ObjHashSet<String> getContextPathQWPRead() {
+        return CONTEXT_PATH_QWP_READ;
+    }
+
     default ObjHashSet<String> getContextPathILPPing() {
         return new ObjHashSet<>() {{
             add("/ping");
@@ -123,13 +133,27 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     String getPassword();
 
+    /**
+     * The current QWP WebSocket browser allowlist; custom configurations default to same-origin only.
+     */
+    default QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+        return QwpBrowserAllowedOrigins.EMPTY;
+    }
+
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
 
     String getUsername();
 
     boolean isAcceptingWrites();
 
+    @Override
+    default WorkerPoolMode getWorkerPoolMode() {
+        return isFiberEnabled() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
+    }
+
     boolean isQueryCacheEnabled();
+
+    boolean isQwpBrowserTlsTerminationEnabled();
 
     boolean isSettingsReadOnly();
 }

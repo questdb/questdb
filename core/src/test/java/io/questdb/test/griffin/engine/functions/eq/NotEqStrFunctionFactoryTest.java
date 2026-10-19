@@ -71,9 +71,9 @@ public class NotEqStrFunctionFactoryTest extends AbstractCairoTest {
                     " from long_sequence(30)" +
                     ")");
 
-            assertSql(
-                    expected, "x where a <> b"
-            );
+            assertQuery("x where a <> b")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -100,9 +100,9 @@ public class NotEqStrFunctionFactoryTest extends AbstractCairoTest {
                     " from long_sequence(10)" +
                     ")");
 
-            assertSql(
-                    expected, "x where a <> 'TJ'"
-            );
+            assertQuery("x where a <> 'TJ'")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -128,9 +128,9 @@ public class NotEqStrFunctionFactoryTest extends AbstractCairoTest {
                     " from long_sequence(10)" +
                     ")");
 
-            assertSql(
-                    expected, "x where 'TJ' <> a"
-            );
+            assertQuery("x where 'TJ' <> a")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -163,9 +163,9 @@ public class NotEqStrFunctionFactoryTest extends AbstractCairoTest {
                     " from long_sequence(20)" +
                     ")");
 
-            assertSql(
-                    expected, "x where a <> null"
-            );
+            assertQuery("x where a <> null")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -198,9 +198,9 @@ public class NotEqStrFunctionFactoryTest extends AbstractCairoTest {
                     " from long_sequence(20)" +
                     ")");
 
-            assertSql(
-                    expected, "x where null <> a"
-            );
+            assertQuery("x where null <> a")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 }

@@ -24,19 +24,23 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 class SelectedRecordCursor implements RecordCursor {
     private final IntList columnCrossIndex;
     private final SelectedRecord recordA;
     private final SelectedRecord recordB;
     private RecordCursor baseCursor;
+    private IntHashSet baseUsedColumns;
 
     public SelectedRecordCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
         this.recordA = new SelectedRecord(columnCrossIndex);
@@ -107,13 +111,40 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
+        if (columnIndexes == null) {
+            baseCursor.setParentUsedColumns(null);
+            return;
+        }
+        if (baseUsedColumns == null) {
+            baseUsedColumns = new IntHashSet(columnIndexes.size());
+        } else {
+            baseUsedColumns.clear();
+        }
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            baseUsedColumns.add(columnCrossIndex.getQuick(columnIndexes.get(i)));
+        }
+        baseCursor.setParentUsedColumns(baseUsedColumns);
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        baseCursor.setParquetDecodeHint(hint);
+    }
+
+    @Override
+    public void setRecordAtRows(@Nullable RowIdSource source) {
+        baseCursor.setRecordAtRows(source);
+    }
+
+    @Override
     public long size() {
         return baseCursor.size();
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
-        baseCursor.skipRows(rowCount);
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        baseCursor.skipRows(rowCount, maxRowsAfterSkip);
     }
 
     @Override

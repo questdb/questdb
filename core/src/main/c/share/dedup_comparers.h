@@ -311,9 +311,12 @@ template<typename T, int ItemSize>
 class MergeStrBinColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
-        const T l_val_offset = col_index >= this->get_column_top()
-                               ? this->get_column_data<int64_t>()[col_index]
-                               : -1;
+        // Var-data offsets are always 64-bit; T only parameterizes the length-prefix width used by
+        // compare_str_bin (int32 for STRING, int64 for BINARY). Reading the offset into T would
+        // truncate STRING offsets >= 2^31 to a negative value, pointing ~2 GiB before the buffer.
+        const int64_t l_val_offset = col_index >= this->get_column_top()
+                                     ? this->get_column_data<int64_t>()[col_index]
+                                     : -1;
 
         assertm(l_val_offset < this->get_column_var_data_len(), "ERROR: column aux data point beyond var data buffer");
         const uint8_t *l_val_ptr = col_index >= this->get_column_top() ?

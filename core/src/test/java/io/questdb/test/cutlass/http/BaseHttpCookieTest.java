@@ -86,6 +86,106 @@ public abstract class BaseHttpCookieTest extends AbstractBootstrapTest {
         });
     }
 
+    protected void testIdleSessionEvictedBySweep(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier, AtomicLong currentMicros) throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain questdb = serverMainSupplier.get()) {
+                questdb.start();
+
+                final HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
+                final long sessionTimeout = questdb.getConfiguration().getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout();
+
+                final String idleSessionId;
+
+                // authenticate with username + pwd, and pass 'session=true'
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT x FROM long_sequence(3)", USER, PASSWORD, "true");
+
+                    // successful authentication with username + pwd
+                    awaitStatusCode(responseHeaders, "200");
+
+                    // assert that session cookie is set
+                    idleSessionId = assertSessionCookie(responseHeaders, isSecure());
+
+                    assertChunkedBody(responseHeaders, "{" +
+                            "\"query\":\"SELECT x FROM long_sequence(3)\"," +
+                            "\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[[1],[2],[3]]," +
+                            "\"count\":3" +
+                            "}");
+                }
+
+                final HttpSessionStore.SessionInfo idleSession = assertSession(sessionStore, idleSessionId, currentMicros.get(), sessionTimeout);
+
+                // move the clock forward, but not past the idle session's expiry yet,
+                // and open a second session; the login request carries no cookie,
+                // so it does not run an eviction sweep
+                currentMicros.addAndGet(3 * sessionTimeout / 4);
+
+                final String activeSessionId;
+
+                // authenticate again with username + pwd, and pass 'session=true'
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT x FROM long_sequence(3)", USER, PASSWORD, "true");
+
+                    // successful authentication with username + pwd
+                    awaitStatusCode(responseHeaders, "200");
+
+                    // assert that a separate session is created
+                    activeSessionId = assertSessionCookie(responseHeaders, isSecure());
+                    assertNotEquals(idleSessionId, activeSessionId);
+
+                    assertChunkedBody(responseHeaders, "{" +
+                            "\"query\":\"SELECT x FROM long_sequence(3)\"," +
+                            "\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[[1],[2],[3]]," +
+                            "\"count\":3" +
+                            "}");
+                }
+
+                assertSession(sessionStore, activeSessionId, currentMicros.get(), sessionTimeout);
+
+                // move the clock past the idle session's expiry; the active session
+                // is neither expired nor due to rotate at this point
+                currentMicros.addAndGet(sessionTimeout / 4 + sessionTimeout / 8);
+
+                // the expired idle session stays in the store until a sweep collects it
+                assertNotNull(sessionStore.getSession(idleSessionId));
+
+                // a request on the active session piggybacks the eviction sweep
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT x FROM long_sequence(2)", SESSION_COOKIE_NAME, activeSessionId);
+
+                    // successful authentication with the session cookie
+                    awaitStatusCode(responseHeaders, "200");
+
+                    // no rotation is due, no new cookie is issued
+                    assertNoSessionCookie(responseHeaders);
+
+                    assertChunkedBody(responseHeaders, "{" +
+                            "\"query\":\"SELECT x FROM long_sequence(2)\"," +
+                            "\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[[1],[2]]," +
+                            "\"count\":2" +
+                            "}");
+                }
+
+                // the sweep removed the idle session from the store
+                assertNull(sessionStore.getSession(idleSessionId));
+
+                // sweep eviction removes the map entry without invalidating the session object
+                assertFalse(idleSession.isInvalid());
+
+                // the active session survived the sweep, and its lifetime was extended
+                final HttpSessionStore.SessionInfo activeSession = sessionStore.getSession(activeSessionId);
+                assertNotNull(activeSession);
+                assertEquals(currentMicros.get() + sessionTimeout, activeSession.getExpiresAt());
+            }
+        });
+    }
+
     protected void testRotatedSessionDestroyed(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier, AtomicLong currentMicros, boolean closeWithNewSessionId) throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain questdb = serverMainSupplier.get()) {

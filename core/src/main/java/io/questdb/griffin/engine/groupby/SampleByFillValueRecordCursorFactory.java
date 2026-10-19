@@ -58,7 +58,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final SampleByFillValueRecordCursor cursor;
+    private SampleByFillValueRecordCursor cursor;
 
     public SampleByFillValueRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -93,7 +93,11 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 valueTypes,
                 groupByMetadata,
                 groupByFunctions,
-                recordFunctions
+                recordFunctions,
+                timezoneNameFunc,
+                offsetFunc,
+                sampleFromFunc,
+                sampleToFunc
         );
         try {
             final ObjList<Function> placeholderFunctions = createPlaceholderFunctions(
@@ -126,8 +130,13 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     sampleToFuncPos
             );
         } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
-            Misc.free(map);
+            // The superclass already adopted the record functions, base factory, map, and
+            // temporal parameter functions; the unreturned partial object would strand them.
+            // close() frees everything except the map, which _close() reaches only through the
+            // cursor - not constructed yet - so free it directly. The record functions are
+            // freed by close() and must not be freed here as well.
+            Misc.free(map, e);
+            Misc.free(this, e);
             throw e;
         }
     }
@@ -148,15 +157,18 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             int type,
             ExpressionNode fillNode
     ) throws SqlException {
+        final CharSequence fillValue = toFillValue(fillNode);
         try {
             return switch (ColumnType.tagOf(type)) {
-                case ColumnType.INT -> IntConstant.newInstance(Numbers.parseInt(fillNode.token));
-                case ColumnType.IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillNode.token));
-                case ColumnType.LONG -> LongConstant.newInstance(Numbers.parseLong(fillNode.token));
-                case ColumnType.FLOAT -> FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));
-                case ColumnType.DOUBLE -> DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));
-                case ColumnType.SHORT -> ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));
-                case ColumnType.BYTE -> ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));
+                case ColumnType.INT -> IntConstant.newInstance(Numbers.parseInt(fillValue));
+                case ColumnType.IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillValue));
+                case ColumnType.LONG -> LongConstant.newInstance(Numbers.parseLong(fillValue));
+                case ColumnType.FLOAT -> FloatConstant.newInstance(Numbers.parseFloat(fillValue));
+                case ColumnType.DOUBLE -> DoubleConstant.newInstance(Numbers.parseDouble(fillValue));
+                case ColumnType.SHORT -> ShortConstant.newInstance((short) Numbers.parseInt(fillValue));
+                case ColumnType.BYTE -> ByteConstant.newInstance((byte) Numbers.parseInt(fillValue));
+                // A negated literal is not a quoted timestamp, so this arm reads the raw token and
+                // rejects FILL(-1) at the minus sign, as the GROUP BY path does.
                 case ColumnType.TIMESTAMP -> {
                     if (!Chars.isQuoted(fillNode.token)) {
                         throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token)
@@ -168,7 +180,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                         throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             };
         } catch (NumericException e) {
-            throw SqlException.position(fillNode.position).put("invalid fill value: ").put(fillNode.token);
+            throw SqlException.position(fillNode.position).put("invalid fill value: ").put(fillValue);
         }
     }
 
@@ -216,6 +228,31 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             }
         }
         return placeholderFunctions;
+    }
+
+    // The parser turns FILL(-1) into a unary minus node over the unsigned constant "1", so its
+    // token is "-". This returns the signed text "-1" for that shape, which the Numbers parsers
+    // read exactly as they read any negative literal. Numbers.parseInt() and Numbers.parseLong()
+    // reject a value outside the int or long range, but createPlaceHolderFunction() narrows a
+    // SHORT or BYTE fill value from parseInt() with a plain (short) or (byte) cast, so those two
+    // types get only the int range check: FILL(-129) on a BYTE column fills 127. Any other node
+    // keeps its own token, so FILL(-abc) still fails at the minus sign as before.
+    private static CharSequence toFillValue(ExpressionNode fillNode) {
+        if (fillNode.type == ExpressionNode.OPERATION
+                && fillNode.paramCount == 1
+                && Chars.equals(fillNode.token, '-')
+                && fillNode.rhs != null
+                && fillNode.rhs.type == ExpressionNode.CONSTANT) {
+            return "-" + fillNode.rhs.token;
+        }
+        return fillNode.token;
+    }
+
+    @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillValueRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
     }
 
     @Override

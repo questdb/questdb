@@ -89,6 +89,10 @@ public class ExpressionParser {
     private final SqlParser sqlParser;
     private final WindowExprTreeBuilder windowExprTreeBuilder = new WindowExprTreeBuilder();
     private final ObjectPool<WindowExpression> windowExpressionPool;
+    // Gates the live-view-only ANCHOR clause. Off by default so a normal query
+    // rejects ANCHOR instead of parsing and silently dropping it; SqlParser turns
+    // it on for a CREATE LIVE VIEW body and for a live-view re-compile.
+    private boolean anchorAllowed = false;
     private boolean stopOnTopINOperator = false;
 
     ExpressionParser(
@@ -144,6 +148,10 @@ public class ExpressionParser {
         // however, '/dd' does not exist, tok is just the potential geohash chars constant, with leading '#'
         final int len = tok.length();
         return len <= 1 || tok.charAt(1) != '#';
+    }
+
+    public void setAnchorAllowed(boolean anchorAllowed) {
+        this.anchorAllowed = anchorAllowed;
     }
 
     public void setStopOnTopINOperator(boolean stopOnTop) {
@@ -336,8 +344,19 @@ public class ExpressionParser {
                 || branchTag == BRANCH_RIGHT_PARENTHESIS;
     }
 
+    // The '.' branch glues a dot written straight after an unquoted constant onto the constant's
+    // token, as in `1.`, so this checks whether the top of the stack is a constant ending in a dot.
+    // In valid input no other dot leaves such a constant on top: a dot extends a literal, as in
+    // `t.`, and glues to nothing after a type such as `decimal(10,2)`. Malformed input can, as in
+    // `1.ARRAY[2].`, where the stray dot leaves the earlier `1.` on top. A `(` after it then ends the
+    // value, and the malformed declaration still fails.
+    private boolean isConstantEndingInDot() {
+        final ExpressionNode node = opStack.peek();
+        return node != null && node.type == ExpressionNode.CONSTANT && Chars.endsWith(node.token, '.');
+    }
+
     private boolean isCount() {
-        return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
+        return opStack.size() >= 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
 
     private boolean isExtractFunctionOnStack() {
@@ -537,11 +556,13 @@ public class ExpressionParser {
      * Parses an expression within a window clause context.
      * Uses a separate tree builder to avoid state conflicts with the outer expression parsing.
      * Saves and restores parser state since we're calling parseExpr recursively.
+     * {@code subQueryAllowed} lets the expression contain a sub-query; see {@link WindowExprTreeBuilder}.
      */
     private ExpressionNode parseWindowExpr(
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean subQueryAllowed
     ) throws SqlException {
         // Save stack bottoms - we need to isolate the inner parseExpr from the outer context
         // This prevents the inner parseExpr from seeing/popping items from the outer expression
@@ -555,16 +576,22 @@ public class ExpressionParser {
         int savedArgStackDepthStackBottom = argStackDepthStack.bottom();
         argStackDepthStack.setBottom(argStackDepthStack.sizeRaw());
 
+        final boolean savedSubQueryAllowed = windowExprTreeBuilder.subQueryAllowed;
         try {
             // Reuse the tree builder to avoid allocations
             windowExprTreeBuilder.reset();
+            windowExprTreeBuilder.subQueryAllowed = subQueryAllowed;
             parseExpr(lexer, windowExprTreeBuilder, sqlParserCallback, decls);
             return windowExprTreeBuilder.getResult();
         } finally {
-            // Restore stack bottoms
-            opStack.setBottom(savedOpStackBottom);
-            paramCountStack.setBottom(savedParamCountStackBottom);
-            argStackDepthStack.setBottom(savedArgStackDepthStackBottom);
+            windowExprTreeBuilder.subQueryAllowed = savedSubQueryAllowed;
+            // Restore stack bottoms. On an error unwind the inner parseExpr's catch already cleared
+            // these stacks (bottom=0), so a saved bottom raised by an enclosing lambda frame can
+            // exceed the emptied stack; clamp to avoid a masking IllegalStateException that would hide
+            // the real positioned error. No-op on the happy path (sizeRaw() >= the saved bottom).
+            opStack.setBottom(Math.min(savedOpStackBottom, opStack.sizeRaw()));
+            paramCountStack.setBottom(Math.min(savedParamCountStackBottom, paramCountStack.sizeRaw()));
+            argStackDepthStack.setBottom(Math.min(savedArgStackDepthStackBottom, argStackDepthStack.sizeRaw()));
         }
     }
 
@@ -620,7 +647,7 @@ public class ExpressionParser {
         } else {
             // Expression followed by optional time unit and PRECEDING or FOLLOWING
             lexer.unparseLast();
-            ExpressionNode boundExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
+            ExpressionNode boundExpr = parseWindowExpr(lexer, sqlParserCallback, decls, false);
 
             // Check for optional time unit (HOUR, MINUTE, SECOND, etc.) - only valid for RANGE mode
             tok = SqlUtil.fetchNext(lexer);
@@ -947,7 +974,7 @@ public class ExpressionParser {
         // validate is Query is allowed
         onNode(listener, node, argStackDepth, BRANCH_NONE);
         // we can compile query if all is well
-        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback, decls, false);
+        node.queryModel = sqlParser.parseExpressionSubQuery(lexer, sqlParserCallback, decls);
         argStackDepth = onNode(listener, node, argStackDepth, BRANCH_NONE);
 
         // pop our control node if sub-query hasn't done it
@@ -1049,6 +1076,19 @@ public class ExpressionParser {
         return false;
     }
 
+    /**
+     * Empties the parse stacks. {@link #parseExpr} empties them only on a {@link SqlException}; any
+     * other {@link Throwable}, such as a {@link StackOverflowError} from a deeply nested statement,
+     * unwinds past it and leaves their entries and raised bottoms behind, so
+     * {@link SqlParser#clear()} calls this before every statement.
+     */
+    void clear() {
+        argStackDepthStack.clear();
+        opStack.clear();
+        paramCountStack.clear();
+        scopeStack.clear();
+    }
+
     void parseExpr(
             GenericLexer lexer,
             ExpressionParserListener listener,
@@ -1063,7 +1103,7 @@ public class ExpressionParser {
             int betweenAndCount = 0;
             int caseCount = 0;
             int argStackDepth = 0;
-            int betweenStartCaseCount = 0;
+            int betweenStartScopeDepth = 0;
             savedScopeStackBottom = scopeStack.getBottom();
             scopeStack.setBottom(scopeStack.sizeRaw());
             boolean parsedDeclaration = false;
@@ -1106,7 +1146,15 @@ public class ExpressionParser {
                             } else {
                                 // attach dot to existing literal or constant
                                 ExpressionNode en = opStack.peek();
-                                ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
+                                if (en != null && en.token instanceof GenericLexer.FloatingSequence floatingToken) {
+                                    floatingToken.setHi(lastPos + 1);
+                                } else {
+                                    // The dot has no literal to glue to. This happens for a dangling
+                                    // member access right after a value-producing construct such as
+                                    // 'case ... end.col', whose result sits on the operand stack
+                                    // rather than as a gluable token on the op stack.
+                                    throw SqlException.$(lastPos, "'.' is unexpected here");
+                                }
                             }
                         }
                         if (prevBranch == BRANCH_DOT || prevBranch == BRANCH_DOT_DEREFERENCE) {
@@ -1268,9 +1316,17 @@ public class ExpressionParser {
                     }
 
                     case '(':
-                        // check that we are handling a declare variable, and we have finished parsing it
-                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && prevBranch != BRANCH_LITERAL
-                                && !(prevBranch == BRANCH_OPERATOR && Chars.equals(opStack.peek().token, ":="))
+                        // A bracket after a finished declared value starts the statement that
+                        // follows it, as in `DECLARE @x := 1 (SELECT @x)`. The value is finished
+                        // only outside every bracket and right after a complete operand. After an
+                        // operator or a comma the bracket is the value's own operand, as in
+                        // `1 + (2)` or `f(a, (SELECT ...))`, and after a literal it opens a call.
+                        // An array type such as `::double[]` completes an operand at its `]`, and a
+                        // number such as `1.` completes one at its decimal point.
+                        if (parsedDeclaration && scopeStack.size() == 0
+                                && (isCompletedOperand(prevBranch) && prevBranch != BRANCH_LITERAL
+                                || prevBranch == BRANCH_ARRAY_TYPE_QUALIFIER_END
+                                || prevBranch == BRANCH_DOT && isConstantEndingInDot())
                         ) {
                             lexer.unparseLast();
                             break OUT;
@@ -1332,7 +1388,9 @@ public class ExpressionParser {
                                 while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '(')) {
                                     // special case - (*) expression
                                     if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
-                                        argStackDepth = onNode(listener, node, 2, prevBranch);
+                                        // the rescued star is count's argument, not a binary operator
+                                        node.paramCount = 0;
+                                        argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         continue;
                                     }
                                     if (thisWasCast && prevBranch != BRANCH_GEOHASH && prevBranch != BRANCH_DECIMAL) {
@@ -1528,7 +1586,8 @@ public class ExpressionParser {
                                 processDefaultBranch = true;
                             }
                         } else if (SqlKeywords.isAndKeyword(tok)) {
-                            if (caseCount == betweenStartCaseCount && betweenCount > betweenAndCount) {
+                            if (scopeStack.size() == betweenStartScopeDepth
+                                    && betweenCount > betweenAndCount) {
                                 betweenAndCount++;
                                 thisBranch = BRANCH_BETWEEN_END;
                                 argStackDepth = popAndOpStack(listener, argStackDepth, prevBranch);
@@ -1603,7 +1662,7 @@ public class ExpressionParser {
                                 throw SqlException.$(lastPos, "between statements cannot be nested");
                             }
                             betweenCount++;
-                            betweenStartCaseCount = caseCount;
+                            betweenStartScopeDepth = scopeStack.size();
                         }
                         processDefaultBranch = true;
                         break;
@@ -1616,7 +1675,13 @@ public class ExpressionParser {
 
                         if (prevBranch != BRANCH_LITERAL && SqlKeywords.isSelectKeyword(tok)) {
                             thisBranch = BRANCH_LAMBDA;
-                            if (betweenCount > 0) {
+                            // A scalar subquery is a valid BETWEEN bound, e.g.
+                            // `ts BETWEEN (select ...) AND (select ...)`. It is always parenthesised,
+                            // so it lives at a deeper scope than the BETWEEN itself; only a bare
+                            // SELECT directly in the operand position (same scope) is rejected. The
+                            // AND separator is matched at betweenStartScopeDepth (see the 'a'/'A'
+                            // branch), so a subquery's own AND at a deeper scope is not miscounted.
+                            if (betweenCount > 0 && scopeStack.size() == betweenStartScopeDepth) {
                                 throw SqlException.$(lastPos, "constant expected");
                             }
                             argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback, decls);
@@ -1903,6 +1968,23 @@ public class ExpressionParser {
                                             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         }
 
+                                        // The flush has counted the values the final branch delivered. An
+                                        // empty bracket, as in 'case when a then () end', delivers none, yet
+                                        // paramCount counts one for the branch all the same. Emitted with
+                                        // that count, the CASE would take an operand of the expression
+                                        // around it in place of the missing value, or none at all.
+                                        if (argStackDepth == 0) {
+                                            throw missingArgs(lastPos);
+                                        }
+
+                                        // The final branch's value is already accounted for in paramCount and is
+                                        // re-added below, so clear the local depth the flush loop left behind. This
+                                        // keeps argStackDepth in step with the listener's operand stack: a CASE
+                                        // expression yields exactly one value. An inflated depth here would let a
+                                        // trailing binary operator (e.g. 'case ... end &') pass the arity guard with a
+                                        // missing operand.
+                                        argStackDepth = 0;
+
                                         // 'when/else' have been clearing argStackDepth to ensure expressions between
                                         // 'when' and 'when' do not pick up arguments outside of scope now we need to
                                         // restore stack depth before 'case' entry
@@ -1910,9 +1992,15 @@ public class ExpressionParser {
                                             argStackDepth += argStackDepthStack.pop();
                                         }
 
-                                        // exiting CASE context, pop stuff off the stacks
-                                        Scope scope = scopeStack.pop();
-                                        assert scope == Scope.CASE : "Should have popped CASE, but got " + scope;
+                                        // exiting CASE context, pop stuff off the stacks. An END written
+                                        // inside a bracket that is still open, as in 'case when x then
+                                        // a[1, 2, 3, end]', finds the bracket's scope on top in place of
+                                        // the CASE's.
+                                        // The flush above finds no CASE at all after 'case.*', whose
+                                        // wildcard replaces it.
+                                        if (node == null || scopeStack.pop() != Scope.CASE) {
+                                            throw SqlException.$(node != null ? node.position : lastPos, "unbalanced 'case'");
+                                        }
                                         node.paramCount = paramCount;
                                         // add the number of 'case' arguments to the original stack depth
                                         argStackDepth = onNode(listener, node, argStackDepth + paramCount, prevBranch);
@@ -1944,6 +2032,16 @@ public class ExpressionParser {
                                             argCount++;
                                         }
 
+                                        // Past the first keyword, the tokens before this one are the operand
+                                        // of a WHEN or the value of a THEN, and END counts one operand for
+                                        // each. The check above refuses a keyword that directly follows
+                                        // another. An empty bracket, as in 'case when () then 1 end',
+                                        // delivers no value either. Ahead of the first keyword no value is
+                                        // valid: it is the searched form, 'case when'.
+                                        if (paramCount > 0 && argStackDepth == 0) {
+                                            throw missingArgs(lastPos);
+                                        }
+
                                         if (paramCount == 0) {
                                             if (argCount == 0) {
                                                 // this is 'case when', we will indicate that this is regular 'case'
@@ -1968,9 +2066,17 @@ public class ExpressionParser {
                                                 break;
                                         }
 
-                                        if (node != null) {
-                                            opStack.push(node);
+                                        // A WHEN, THEN or ELSE written inside a bracket that is still open,
+                                        // as in 'case when (a when b) then c end', has just flushed that
+                                        // bracket off the operator stack along with its content. Parsing on
+                                        // would let the bracket's ')', ']' or ',' flush the CASE as well,
+                                        // and leave END, or the bracket itself, with nothing to close.
+                                        // The flush finds no CASE at all after 'case.*', whose wildcard
+                                        // replaces it, or once the AND of a BETWEEN has flushed it.
+                                        if (node == null || scopeStack.peek() != Scope.CASE) {
+                                            throw SqlException.$(node != null ? node.position : lastPos, "unbalanced 'case'");
                                         }
+                                        opStack.push(node);
 
                                         argStackDepth = 0;
                                         paramCount++;
@@ -2009,13 +2115,24 @@ public class ExpressionParser {
                                 cse.put(en.token).put(GenericLexer.unquoteIfNoDots(tok));
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
-                            } else {
+                            } else if (en.token instanceof GenericLexer.FloatingSequence) {
                                 final GenericLexer.FloatingSequence fsA = (GenericLexer.FloatingSequence) en.token;
                                 // vanilla 'a.b', just concat tokens efficiently
                                 fsA.setHi(lexer.getTokenHi());
+                            } else {
+                                // 'en' is not a valid qualifier for a dotted name. This happens for
+                                // malformed input such as "tables()/.env", where the top of the stack
+                                // is a pending operator ('/') rather than an identifier. Reject it
+                                // cleanly instead of letting the cast above fail with an internal
+                                // ClassCastException (which would surface as a 500/critical error).
+                                throw SqlException.$(lastPos, "'.' is unexpected here");
                             }
                         } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
-                            argStackDepth++;
+                            // The bracket ahead of the dot has delivered the value to read the
+                            // member from, and the flush counts the member. The '.' takes those two,
+                            // so this branch adds no operand of its own. Counting one here would let
+                            // the next operator through with an operand missing, as in '(a).b +',
+                            // and it would then take an operand that belongs to something else.
                             final ExpressionNode dotDereference = expressionNodePool.next().of(
                                     ExpressionNode.OPERATION, activeRegistry.dot.operator.token,
                                     activeRegistry.dot.precedence, lastPos);
@@ -2193,7 +2310,10 @@ public class ExpressionParser {
             paramCountStack.clear();
             throw e;
         } finally {
-            scopeStack.setBottom(savedScopeStackBottom);
+            // The SqlException catch already cleared scopeStack (bottom=0); a nested frame's
+            // savedScopeStackBottom can then exceed the emptied stack, so clamp to avoid a masking
+            // IllegalStateException. No-op on the happy path (sizeRaw() >= savedScopeStackBottom).
+            scopeStack.setBottom(Math.min(savedScopeStackBottom, scopeStack.sizeRaw()));
             argStackDepthStack.popAll();
             paramCountStack.popAll();
         }
@@ -2282,7 +2402,7 @@ public class ExpressionParser {
                     break;
                 }
                 lexer.unparseLast();
-                ExpressionNode partitionExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
+                ExpressionNode partitionExpr = parseWindowExpr(lexer, sqlParserCallback, decls, false);
                 windowCol.getPartitionBy().add(partitionExpr);
                 expectingExpression = false;
                 tok = SqlUtil.fetchNext(lexer);
@@ -2303,7 +2423,7 @@ public class ExpressionParser {
             }
 
             do {
-                ExpressionNode orderExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
+                ExpressionNode orderExpr = parseWindowExpr(lexer, sqlParserCallback, decls, false);
                 if (orderExpr == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
                 }
@@ -2324,8 +2444,8 @@ public class ExpressionParser {
             } while (tok.charAt(0) == ',');
         }
 
-        // Handle ROWS/RANGE/GROUPS/CUMULATIVE frame specification
-        if (!Chars.equals(tok, ')')) {
+        // Handle ROWS/RANGE/GROUPS/CUMULATIVE frame specification (or ANCHOR if no frame)
+        if (!Chars.equals(tok, ')') && !SqlKeywords.isAnchorKeyword(tok)) {
             int framingMode = -1;
             int frameModePos = lexer.lastTokenPosition();
 
@@ -2365,9 +2485,80 @@ public class ExpressionParser {
             }
         }
 
+        // Live-view ANCHOR clause. Slots after the frame clause and before
+        // the closing ')'. Two forms:
+        //   ANCHOR EXPRESSION <expr>
+        //   ANCHOR DAILY '<HH:MM>' ['<tz>']
+        // CREATE LIVE VIEW validation enforces "ANCHOR + bounded frame is rejected",
+        // not here — the parser only captures the syntax.
+        if (tok != null && SqlKeywords.isAnchorKeyword(tok)) {
+            int anchorPos = lexer.lastTokenPosition();
+            if (!anchorAllowed) {
+                // Only a live view acts on the clause: nothing outside the live-view
+                // code generator reads WindowExpression's anchor, so accepting it in a
+                // normal query would parse it and silently drop it.
+                throw SqlException.$(anchorPos, "ANCHOR is only supported in a live view query");
+            }
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'expression' or 'daily' expected after 'anchor'");
+            }
+            if (SqlKeywords.isExpressionKeyword(tok)) {
+                // accept a sub-query here: SqlParser.walkAnchorExpressionForPurity() rejects it
+                // with the live view's own message
+                ExpressionNode expr = parseWindowExpr(lexer, sqlParserCallback, decls, true);
+                if (expr == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expression expected after 'anchor expression'");
+                }
+                windowCol.setAnchorExpression(expr, anchorPos);
+                tok = SqlUtil.fetchNext(lexer);
+            } else if (SqlKeywords.isDailyKeyword(tok)) {
+                CharSequence timeTok = SqlUtil.fetchNext(lexer);
+                if (timeTok == null || !Chars.isQuoted(timeTok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "quoted 'HH:MM' expected after 'daily'");
+                }
+                int timeUsPos = lexer.lastTokenPosition();
+                CharSequence timeStr = GenericLexer.unquote(timeTok);
+                long timeUs = parseDailyTimeOfDayUs(timeStr, timeUsPos);
+                tok = SqlUtil.fetchNext(lexer);
+                CharSequence tz = null;
+                if (tok != null && Chars.isQuoted(tok)) {
+                    CharacterStoreEntry tzEntry = characterStore.newEntry();
+                    tzEntry.put(GenericLexer.unquote(tok));
+                    tz = tzEntry.toImmutable();
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+                windowCol.setAnchorDaily(timeUs, tz, anchorPos);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'expression' or 'daily' expected after 'anchor'");
+            }
+        }
+
         if (tok == null || tok.charAt(0) != ')') {
             throw SqlException.$(lexer.lastTokenPosition(), "')' expected to close window specification");
         }
+    }
+
+    /**
+     * Parses an HH:MM time-of-day literal into microseconds since midnight.
+     */
+    private static long parseDailyTimeOfDayUs(CharSequence tok, int position) throws SqlException {
+        int len = tok.length();
+        if (len != 5 || tok.charAt(2) != ':') {
+            throw SqlException.$(position, "ANCHOR DAILY expects 'HH:MM' (e.g. '00:00')");
+        }
+        int hours;
+        int minutes;
+        try {
+            hours = io.questdb.std.Numbers.parseInt(tok, 0, 2);
+            minutes = io.questdb.std.Numbers.parseInt(tok, 3, 5);
+        } catch (io.questdb.std.NumericException e) {
+            throw SqlException.$(position, "ANCHOR DAILY expects 'HH:MM' (e.g. '00:00')");
+        }
+        if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+            throw SqlException.$(position, "ANCHOR DAILY 'HH:MM' out of range");
+        }
+        return ((long) hours * 60L + minutes) * 60L * 1_000_000L;
     }
 
     private enum Scope {
@@ -2381,13 +2572,29 @@ public class ExpressionParser {
      */
     private static class WindowExprTreeBuilder implements ExpressionParserListener {
         private final ObjStack<ExpressionNode> stack = new ObjStack<>();
+        private boolean subQueryAllowed;
 
         public ExpressionNode getResult() {
             return stack.peek();
         }
 
         @Override
-        public void onNode(ExpressionNode node) {
+        public void onNode(ExpressionNode node) throws SqlException {
+            if (node.type == ExpressionNode.QUERY) {
+                if (node.queryModel == null) {
+                    // processLambdaQuery() validation request, sent before it parses the sub-query and
+                    // calls onNode() again with the parsed model. Like ExpressionTreeBuilder, don't push
+                    // the node here, or it ends up on the stack twice and replaces its sibling operand.
+                    return;
+                }
+                // A window spec never registers the sub-query for optimisation, so it cannot run in
+                // PARTITION BY, ORDER BY or a frame bound. Rejecting it only after processLambdaQuery()
+                // parses it keeps the sub-query's own syntax errors ahead of this one.
+                if (!subQueryAllowed) {
+                    throw SqlException.$(node.position, "query is not allowed here");
+                }
+            }
+
             // Match ExpressionTreeBuilder's behavior exactly
             switch (node.paramCount) {
                 case 0:

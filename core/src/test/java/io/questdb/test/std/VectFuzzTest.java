@@ -110,12 +110,18 @@ public class VectFuzzTest {
                                 Assert.assertEquals("int min, count: 0", Numbers.INT_NULL, Vect.minInt(ptr, 0));
                                 Assert.assertEquals("int max, count: 0", Numbers.INT_NULL, Vect.maxInt(ptr, 0));
                                 Assert.assertEquals("int count, count: 0", 0, Vect.countInt(ptr, 0));
+                                Assert.assertEquals("int min max count, count: 0", 0, Vect.minMaxCountInt(ptr, 0, countPtr));
+                                Assert.assertEquals("int min max count min, count: 0", Numbers.INT_NULL, Unsafe.getInt(countPtr));
+                                Assert.assertEquals("int min max count max, count: 0", Numbers.INT_NULL, Unsafe.getInt(countPtr + Integer.BYTES));
                             } else {
                                 Assert.assertEquals("int sum, count: " + count, 0, Vect.sumInt(ptr, count));
                                 Assert.assertEquals("int sum acc, count: " + count, 0, Vect.sumIntAcc(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("int min, count: " + count, 0, Vect.minInt(ptr, count));
                                 Assert.assertEquals("int max, count: " + count, 0, Vect.maxInt(ptr, count));
                                 Assert.assertEquals("int count, count: " + count, count, Vect.countInt(ptr, count));
+                                Assert.assertEquals("int min max count, count: " + count, count, Vect.minMaxCountInt(ptr, count, countPtr));
+                                Assert.assertEquals("int min max count min, count: " + count, 0, Unsafe.getInt(countPtr));
+                                Assert.assertEquals("int min max count max, count: " + count, 0, Unsafe.getInt(countPtr + Integer.BYTES));
                             }
                         }
                     },
@@ -189,7 +195,7 @@ public class VectFuzzTest {
                 // 0,0,0,2,2,2,4,4,4 ...
                 for (int i = 0; i < count; i++) {
                     long value = (i / 3) * 2;
-                    Unsafe.getUnsafe().putLong(addr + i * 2 * Long.BYTES, value);
+                    Unsafe.putLong(addr + i * 2 * Long.BYTES, value);
                 }
 
                 // Existing
@@ -227,7 +233,7 @@ public class VectFuzzTest {
                 // 0,0,0,2,2,2,4,4,4 ...
                 for (int i = 0; i < count; i++) {
                     long value = (i / 3) * 2;
-                    Unsafe.getUnsafe().putLong(addr + i * 2 * Long.BYTES, value);
+                    Unsafe.putLong(addr + i * 2 * Long.BYTES, value);
                 }
 
                 // Existing
@@ -258,139 +264,17 @@ public class VectFuzzTest {
     public void testDedupWithKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(null);
-            int indexLen = rnd.nextInt(100_000);
+            assertDedupWithKey(rnd, rnd.nextInt(100_000));
+        });
+    }
 
-            int keyCount = 1 + rnd.nextInt(3);
-            assert keyCount > 0 && keyCount < 5;
-
-            ObjList<DirectLongList> keys = new ObjList<>();
-            int keyMax = 1 + rnd.nextInt(4);
-
-            try (DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-                for (int i = 0; i < keyCount; i++) {
-                    keys.add(new DirectLongList(indexLen, MemoryTag.NATIVE_DEFAULT));
-                }
-
-                LongHashSet distinctKeys = new LongHashSet();
-                LongList tsAndKey = new LongList();
-
-                // Generate data
-                int tsVal = 1000;
-                for (int i = 0; i < indexLen; i++) {
-                    if (rnd.nextDouble() < 0.1) {
-                        tsVal += rnd.nextInt(50);
-                    }
-                    index.add(tsVal);
-                    index.add(i);
-
-                    // Encode keys in 4 byte integer
-                    int combinedKey = 0;
-                    for (int k = 0; k < keyCount; k++) {
-                        int keyVal = rnd.nextInt(keyMax);
-                        keys.get(k).add(keyVal);
-                        combinedKey = combinedKey << 8;
-                        combinedKey += keyVal;
-                    }
-                    distinctKeys.add(Numbers.encodeLowHighInts(tsVal, combinedKey));
-                    tsAndKey.add(Numbers.encodeLowHighInts(combinedKey, tsVal));
-                }
-
-                // Squash keys from longs to ints
-                for (int k = 0; k < keyCount; k++) {
-                    DirectLongList keyList = keys.get(k);
-                    for (int i = 0; i < indexLen / 2 + 1; i++) {
-                        int high = 2 * i + 1 < indexLen ? (int) getIndexChecked(keyList, 2L * i + 1) : 0;
-                        int low = 2 * i < indexLen ? (int) getIndexChecked(keyList, 2L * i) : 0;
-                        keyList.set(i, Numbers.encodeLowHighInts(low, high));
-                    }
-                }
-
-                try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
-                    try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-                        colBuffs.setDedupColumnCount(keyCount);
-                        long dedupColBuffPtr = colBuffs.allocateBlock();
-                        for (int k = 0; k < keyCount; k++) {
-                            long addr = DedupColumnCommitAddresses.setColValues(
-                                    dedupColBuffPtr,
-                                    k,
-                                    ColumnType.SYMBOL,
-                                    4,
-                                    0
-                            );
-
-                            DedupColumnCommitAddresses.setColAddressValues(
-                                    addr,
-                                    keys.get(k).getAddress(),
-                                    0L,
-                                    0L
-                            );
-
-                            DedupColumnCommitAddresses.setO3DataAddressValues(
-                                    addr,
-                                    0L,
-                                    0L,
-                                    0L
-                            );
-
-                            DedupColumnCommitAddresses.setReservedValuesSet2(
-                                    addr,
-                                    0L,
-                                    0L
-                            );
-                        }
-                        copy.setPos(indexLen * 2L);
-
-                        long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
-                                index.getAddress(),
-                                indexLen,
-                                index.getAddress(),
-                                copy.getAddress(),
-                                keyCount,
-                                DedupColumnCommitAddresses.getAddress(dedupColBuffPtr)
-                        );
-                        if (distinctKeys.size() == indexLen && dedupCount == -2) {
-                            // No duplicates detected and that's correct. Assert that index is not messed up.
-                            dedupCount = indexLen;
-                        } else {
-                            Assert.assertEquals(distinctKeys.size(), dedupCount);
-                        }
-
-                        // assert indexes of the rows are distinct and in correct range
-                        boolean[] indexFound = new boolean[(int) indexLen];
-                        tsAndKey.sort();
-                        int expectedValueIndex = -1;
-                        long expectedValue = -1;
-
-                        for (int i = 0; i < dedupCount; i++) {
-                            expectedValueIndex = getNextDistinctIndex(tsAndKey, expectedValueIndex, expectedValue);
-                            expectedValue = tsAndKey.get(expectedValueIndex);
-
-                            long rowIndex = getIndexChecked(index, i * 2L + 1L);
-                            Assert.assertTrue("row index not in expected range", rowIndex >= 0 && rowIndex < indexLen);
-                            Assert.assertFalse("row index is not distinct", indexFound[(int) rowIndex]);
-                            indexFound[(int) rowIndex] = true;
-
-                            Assert.assertEquals(Numbers.decodeHighInt(expectedValue), getIndexChecked(index, i * 2L));
-                            int expectedCombinedKey = Numbers.decodeLowInt(expectedValue);
-
-                            int combinedKey = 0;
-                            for (int k = 0; k < keyCount; k++) {
-                                DirectLongList keyList = keys.get(k);
-                                Assert.assertTrue("key index not in expected range", rowIndex / 2L < keyList.size());
-                                long keyLong = getIndexChecked(keyList, rowIndex / 2L);
-                                int key = rowIndex % 2 == 0 ? Numbers.decodeLowInt(keyLong) : Numbers.decodeHighInt(keyLong);
-                                Assert.assertTrue(key < 256);
-                                combinedKey = combinedKey << 8;
-                                combinedKey += key;
-                            }
-
-                            Assert.assertEquals(expectedCombinedKey, combinedKey);
-                        }
-                    }
-                }
-            } finally {
-                Misc.freeObjList(keys);
-            }
+    @Test
+    public void testDedupWithKeyBoundaries() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd(1, 2);
+            assertDedupWithKey(rnd, 0);
+            assertDedupWithKey(rnd, 1);
+            assertDedupWithKey(rnd, 2);
         });
     }
 
@@ -404,15 +288,15 @@ public class VectFuzzTest {
 
             try {
                 for (int i = 0; i < maxSize; i += Integer.BYTES) {
-                    Unsafe.getUnsafe().putInt(a + i, i);
-                    Unsafe.getUnsafe().putInt(b + i, i);
+                    Unsafe.putInt(a + i, i);
+                    Unsafe.putInt(b + i, i);
                 }
 
                 for (int size : sizes) {
                     Assert.assertTrue(Vect.memeq(a, b, size));
                 }
 
-                Unsafe.getUnsafe().putInt(b, -1);
+                Unsafe.putInt(b, -1);
 
                 for (int size : sizes) {
                     Assert.assertFalse(Vect.memeq(a, b, size));
@@ -437,7 +321,7 @@ public class VectFuzzTest {
                 // initialize from buffer
                 // with 1, 4, 8, 12 ... integers
                 for (int i = 0; i < buffSize; i += Integer.BYTES) {
-                    Unsafe.getUnsafe().putInt(from + i, i);
+                    Unsafe.putInt(from + i, i);
                 }
 
                 int offset = 0;
@@ -446,7 +330,7 @@ public class VectFuzzTest {
                     Vect.memmove(to, from + offset, size);
 
                     for (int i = 0; i < size; i += Integer.BYTES) {
-                        int actual = Unsafe.getUnsafe().getInt(to + i);
+                        int actual = Unsafe.getInt(to + i);
                         Assert.assertEquals(i + offset, actual);
                     }
 
@@ -705,6 +589,86 @@ public class VectFuzzTest {
     }
 
     @Test
+    public void testMergeDedupStringKeyOffsetAbove2GiB() throws Exception {
+        // Regression test for the SIGSEGV in the native dedup merge with a STRING dedup key.
+        // MergeStrBinColumnComparer<int32_t, 2> reads the existing-column var-data offset into
+        // a 32-bit int, so an offset >= 2^31 is sign-flipped negative and
+        // (var_data_base + offset) lands ~2 GiB BELOW the mapped buffer.
+        //
+        // With the bug present this crashes the JVM inside merge_dedup_long_index_int_keys
+        // (hs_err_pid log, problematic frame "libquestdb.so ... MergeStrBinColumnComparer<int, 2>").
+        // In the rare case the wild address is mapped, the comparison goes wrong instead and the
+        // assertion below fails - either way the test is red on the buggy library. With the offset
+        // read as int64_t the comparer reads the real string and the merge returns the single row.
+        TestUtils.assertMemoryLeak(() -> {
+            final long bigOffset = 1L << 31;          // 2_147_483_648 -> INT_MIN when truncated to int32
+            final long colVarLen = bigOffset + 16;    // room for [int32 len][1 UTF-16 char] at bigOffset
+            // Sparse: only the page at bigOffset is touched, so RSS stays ~one page despite the 2 GiB span.
+            final long colVar = Unsafe.malloc(colVarLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                // Existing-column STRING value "A" parked at the >2 GiB offset: len=1 char, then 'A'.
+                Unsafe.putInt(colVar + bigOffset, 1);
+                Unsafe.putChar(colVar + bigOffset + 4, 'A');
+
+                try (DirectLongList src = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);       // existing-column timestamps
+                     DirectLongList colAux = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);    // STRING .i: int64 offsets
+                     DirectLongList index = new DirectLongList(2, MemoryTag.NATIVE_DEFAULT);     // O3 (ts, rowIndex) pairs
+                     DirectLongList o3Aux = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);     // O3 STRING .i
+                     DirectLongList o3Var = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);     // O3 STRING .d
+                     DirectLongList dest = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT)) {
+
+                    // One existing row at ts=1000, its string sitting at the huge offset.
+                    src.add(1000);
+                    colAux.add(bigOffset);
+
+                    // One O3 row at the SAME ts=1000 -> forces the dedup conflict path -> invokes the comparer.
+                    index.add(1000);   // ts
+                    index.add(0);      // O3 row index -> comparer's index_index
+
+                    // O3 STRING value "A" at offset 0, so a correct comparison yields equal.
+                    Unsafe.putInt(o3Var.getAddress(), 1);
+                    Unsafe.putChar(o3Var.getAddress() + 4, 'A');
+                    o3Aux.add(0);
+
+                    dest.setPos(4);
+                    try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
+                        colBuffs.setDedupColumnCount(1);
+                        long block = colBuffs.allocateBlock();
+                        long addr = DedupColumnCommitAddresses.setColValues(
+                                block,
+                                0,
+                                ColumnType.STRING,
+                                -1, // var-len marker
+                                0   // column top
+                        );
+                        DedupColumnCommitAddresses.setColAddressValues(addr, colAux.getAddress(), colVar, colVarLen);
+                        DedupColumnCommitAddresses.setO3DataAddressValues(addr, o3Aux.getAddress(), o3Var.getAddress(), 6);
+
+                        long mergedCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(
+                                src.getAddress(),
+                                0,
+                                src.size() - 1,
+                                index.getAddress(),
+                                0,
+                                index.size() / 2 - 1,
+                                dest.getAddress(),
+                                1,
+                                DedupColumnCommitAddresses.getAddress(block)
+                        );
+
+                        // Timestamps collide and the STRING keys are equal, so the O3 row (index 0)
+                        // wins -> exactly one merged row {ts=1000, i=0}.
+                        dest.setPos(mergedCount * 2);
+                        Assert.assertEquals("1000 0:i", printMergeIndex(dest));
+                    }
+                }
+            } finally {
+                Unsafe.free(colVar, colVarLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testMergeFourSameSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int count = 1_000_000;
@@ -714,17 +678,17 @@ public class VectFuzzTest {
             long indexPtr4 = seedAndSort(count);
 
             long struct = Unsafe.malloc(Long.BYTES * 8, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().putLong(struct, indexPtr1);
-            Unsafe.getUnsafe().putLong(struct + Long.BYTES, count);
+            Unsafe.putLong(struct, indexPtr1);
+            Unsafe.putLong(struct + Long.BYTES, count);
 
-            Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
-            Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count);
+            Unsafe.putLong(struct + 2 * Long.BYTES, indexPtr2);
+            Unsafe.putLong(struct + 3 * Long.BYTES, count);
 
-            Unsafe.getUnsafe().putLong(struct + 4 * Long.BYTES, indexPtr3);
-            Unsafe.getUnsafe().putLong(struct + 5 * Long.BYTES, count);
+            Unsafe.putLong(struct + 4 * Long.BYTES, indexPtr3);
+            Unsafe.putLong(struct + 5 * Long.BYTES, count);
 
-            Unsafe.getUnsafe().putLong(struct + 6 * Long.BYTES, indexPtr4);
-            Unsafe.getUnsafe().putLong(struct + 7 * Long.BYTES, count);
+            Unsafe.putLong(struct + 6 * Long.BYTES, indexPtr4);
+            Unsafe.putLong(struct + 7 * Long.BYTES, count);
 
             long targetSize = 4 * count * 2L * Long.BYTES;
             long targetAddr = Unsafe.malloc(targetSize, MemoryTag.NATIVE_DEFAULT);
@@ -766,12 +730,12 @@ public class VectFuzzTest {
             long indexPtr3 = seedAndSort(count3);
 
             long struct = Unsafe.malloc(Long.BYTES * 6, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().putLong(struct, indexPtr1);
-            Unsafe.getUnsafe().putLong(struct + Long.BYTES, count1);
-            Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
-            Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count2);
-            Unsafe.getUnsafe().putLong(struct + 4 * Long.BYTES, indexPtr3);
-            Unsafe.getUnsafe().putLong(struct + 5 * Long.BYTES, count3);
+            Unsafe.putLong(struct, indexPtr1);
+            Unsafe.putLong(struct + Long.BYTES, count1);
+            Unsafe.putLong(struct + 2 * Long.BYTES, indexPtr2);
+            Unsafe.putLong(struct + 3 * Long.BYTES, count2);
+            Unsafe.putLong(struct + 4 * Long.BYTES, indexPtr3);
+            Unsafe.putLong(struct + 5 * Long.BYTES, count3);
 
             long targetSize = (count1 + count2 + count3) * 2L * Long.BYTES;
             long targetAddr = Unsafe.malloc(targetSize, MemoryTag.NATIVE_DEFAULT);
@@ -798,10 +762,10 @@ public class VectFuzzTest {
             long indexPtr2 = seedAndSort(count2);
 
             long struct = Unsafe.malloc(Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().putLong(struct, indexPtr1);
-            Unsafe.getUnsafe().putLong(struct + Long.BYTES, count1);
-            Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
-            Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count2);
+            Unsafe.putLong(struct, indexPtr1);
+            Unsafe.putLong(struct + Long.BYTES, count1);
+            Unsafe.putLong(struct + 2 * Long.BYTES, indexPtr2);
+            Unsafe.putLong(struct + 3 * Long.BYTES, count2);
 
             long targetSize = (count1 + count2) * 2L * Long.BYTES;
             long targetAddr = Unsafe.malloc(targetSize, MemoryTag.NATIVE_DEFAULT);
@@ -827,10 +791,10 @@ public class VectFuzzTest {
             long indexPtr2 = seedAndSort(count2);
 
             long struct = Unsafe.malloc(Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().putLong(struct, indexPtr1);
-            Unsafe.getUnsafe().putLong(struct + Long.BYTES, count1);
-            Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
-            Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count2);
+            Unsafe.putLong(struct, indexPtr1);
+            Unsafe.putLong(struct + Long.BYTES, count1);
+            Unsafe.putLong(struct + 2 * Long.BYTES, indexPtr2);
+            Unsafe.putLong(struct + 3 * Long.BYTES, count2);
 
             long targetSize = (count1 + count2) * 2L * Long.BYTES;
             long targetAddr = Unsafe.malloc(targetSize, MemoryTag.NATIVE_DEFAULT);
@@ -855,10 +819,10 @@ public class VectFuzzTest {
             long indexPtr2 = seedAndSort(count);
 
             long struct = Unsafe.malloc(Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().putLong(struct, indexPtr1);
-            Unsafe.getUnsafe().putLong(struct + Long.BYTES, count);
-            Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
-            Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count);
+            Unsafe.putLong(struct, indexPtr1);
+            Unsafe.putLong(struct + Long.BYTES, count);
+            Unsafe.putLong(struct + 2 * Long.BYTES, indexPtr2);
+            Unsafe.putLong(struct + 3 * Long.BYTES, count);
 
             long targetSize = (2 * count) * 2L * Long.BYTES;
             long targetAddr = Unsafe.malloc(targetSize, MemoryTag.NATIVE_DEFAULT);
@@ -883,6 +847,48 @@ public class VectFuzzTest {
                 Assert.fail();
             } catch (IllegalArgumentException e) {
                 TestUtils.assertContains(e.getMessage(), "Count of indexes to merge should at least be 2.");
+            }
+        });
+    }
+
+    @Test
+    public void testMinMaxCountInt() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long minMax = Unsafe.malloc(2L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final int[] counts = new int[302];
+                for (int i = 0; i < 300; i++) {
+                    counts[i] = i + 1;
+                }
+                counts[300] = 10_007;
+                counts[301] = 1_048_577;
+                for (int count : counts) {
+                    for (int nullPeriod : new int[]{0, 1, 7}) {
+                        final long size = (long) count * Integer.BYTES;
+                        final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            int expectedMin = Numbers.INT_NULL;
+                            int expectedMax = Numbers.INT_NULL;
+                            long expectedCount = 0;
+                            for (int i = 0; i < count; i++) {
+                                final int v = nullPeriod != 0 && i % nullPeriod == 0 ? Numbers.INT_NULL : rnd.nextInt();
+                                Unsafe.putInt(ptr + (long) i * Integer.BYTES, v);
+                                if (v != Numbers.INT_NULL) {
+                                    expectedMin = expectedCount++ == 0 ? v : Math.min(expectedMin, v);
+                                }
+                                expectedMax = Math.max(expectedMax, v);
+                            }
+                            final String name = "count: " + count + ", nullPeriod: " + nullPeriod;
+                            Assert.assertEquals(name, expectedCount, Vect.minMaxCountInt(ptr, count, minMax));
+                            Assert.assertEquals(name, expectedMin, Unsafe.getInt(minMax));
+                            Assert.assertEquals(name, expectedMax, Unsafe.getInt(minMax + Integer.BYTES));
+                        } finally {
+                            Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(minMax, 2L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -1124,11 +1130,11 @@ public class VectFuzzTest {
             for (int i = 0; i < maxSize; i++) {
                 long offset = (2 * i + 1) * Long.BYTES;
                 long expected = (i % 2 == 0) ? i + 1 : i - 1;
-                Unsafe.getUnsafe().putLong(index + offset, expected);
+                Unsafe.putLong(index + offset, expected);
             }
 
             for (int i = 0; i < maxSize; i++) {
-                Unsafe.getUnsafe().putLong(src + i * Long.BYTES, i);
+                Unsafe.putLong(src + i * Long.BYTES, i);
             }
 
             try {
@@ -1136,7 +1142,7 @@ public class VectFuzzTest {
                     Vect.indexReshuffle64Bit(src, dst, index, size);
 
                     for (int i = 0; i < size; i++) {
-                        long actual = Unsafe.getUnsafe().getLong(dst + i * typeBytes);
+                        long actual = Unsafe.getLong(dst + i * typeBytes);
                         long expected = (i % 2 == 0) ? i + 1 : i - 1;
                         if (expected != actual) {
                             Assert.assertEquals("Failed to init reshuffle size=" + size
@@ -1166,7 +1172,7 @@ public class VectFuzzTest {
                     for (double val : values) {
                         Vect.setMemoryDouble(buffer, val, size);
                         for (int i = 0; i < size; i++) {
-                            double actual = Unsafe.getUnsafe().getDouble(buffer + i * typeBytes);
+                            double actual = Unsafe.getDouble(buffer + i * typeBytes);
                             if (val != actual && !(Double.isNaN(val) && Double.isNaN(actual))) {
                                 Assert.assertEquals("Failed to set for size=" + size + ", value=" + val + ", pos=" + i, val, actual, 1E-24);
                             }
@@ -1193,7 +1199,7 @@ public class VectFuzzTest {
                     for (float val : values) {
                         Vect.setMemoryFloat(buffer, val, size);
                         for (int i = 0; i < size; i++) {
-                            float actual = Unsafe.getUnsafe().getFloat(buffer + i * typeBytes);
+                            float actual = Unsafe.getFloat(buffer + i * typeBytes);
                             if (val != actual && !(Float.isNaN(val) && Float.isNaN(actual))) {
                                 Assert.assertEquals("Failed to set for size=" + size + ", value=" + val + ", pos=" + i, val, actual, 1E-20);
                             }
@@ -1220,7 +1226,7 @@ public class VectFuzzTest {
                     for (int val : values) {
                         Vect.setMemoryInt(buffer, val, size);
                         for (int i = 0; i < size; i++) {
-                            long actual = Unsafe.getUnsafe().getInt(buffer + i * typeBytes);
+                            long actual = Unsafe.getInt(buffer + i * typeBytes);
                             if (val != actual) {
                                 Assert.assertEquals("Failed to set for size=" + size + ", value=" + val + ", pos=" + i, val, actual);
                             }
@@ -1246,7 +1252,7 @@ public class VectFuzzTest {
                     for (long val : values) {
                         Vect.setMemoryLong(buffer, val, size);
                         for (int i = 0; i < size; i++) {
-                            long actual = Unsafe.getUnsafe().getLong(buffer + i * Long.BYTES);
+                            long actual = Unsafe.getLong(buffer + i * Long.BYTES);
                             if (val != actual) {
                                 Assert.assertEquals("Failed to set for size=" + size + ", value=" + val + ", pos=" + i, val, actual);
                             }
@@ -1289,15 +1295,15 @@ public class VectFuzzTest {
                         // and overflow past the filled region (+1 sentinel element)
                         long poison = 0xBADB_ADBA_DBAD_BAD0L;
                         for (int i = 0; i <= size; i++) {
-                            Unsafe.getUnsafe().putLong(addr + (long) i * elementBytes, poison);
-                            Unsafe.getUnsafe().putLong(addr + (long) i * elementBytes + Long.BYTES, poison);
+                            Unsafe.putLong(addr + (long) i * elementBytes, poison);
+                            Unsafe.putLong(addr + (long) i * elementBytes + Long.BYTES, poison);
                         }
 
                         Vect.setMemoryLong128(addr, long0, long1, size);
 
                         for (int i = 0; i < size; i++) {
-                            long actualLo = Unsafe.getUnsafe().getLong(addr + (long) i * elementBytes);
-                            long actualHi = Unsafe.getUnsafe().getLong(addr + (long) i * elementBytes + Long.BYTES);
+                            long actualLo = Unsafe.getLong(addr + (long) i * elementBytes);
+                            long actualHi = Unsafe.getLong(addr + (long) i * elementBytes + Long.BYTES);
                             if (actualLo != long0 || actualHi != long1) {
                                 Assert.fail("setMemoryLong128 failed at element " + i + " of " + size
                                         + " (offset=" + offset + ")"
@@ -1308,8 +1314,8 @@ public class VectFuzzTest {
 
                         // Verify no overflow past the filled region
                         if (size > 0) {
-                            long overflowLo = Unsafe.getUnsafe().getLong(addr + (long) size * elementBytes);
-                            long overflowHi = Unsafe.getUnsafe().getLong(addr + (long) size * elementBytes + Long.BYTES);
+                            long overflowLo = Unsafe.getLong(addr + (long) size * elementBytes);
+                            long overflowHi = Unsafe.getLong(addr + (long) size * elementBytes + Long.BYTES);
                             if (overflowLo != poison || overflowHi != poison) {
                                 Assert.fail("setMemoryLong128 overflow at element " + size + " of " + size
                                         + " (offset=" + offset + ")"
@@ -1355,20 +1361,20 @@ public class VectFuzzTest {
                         long poison = 0xBADB_ADBA_DBAD_BAD0L;
                         for (int i = 0; i <= size; i++) {
                             long base = addr + (long) i * elementBytes;
-                            Unsafe.getUnsafe().putLong(base, poison);
-                            Unsafe.getUnsafe().putLong(base + Long.BYTES, poison);
-                            Unsafe.getUnsafe().putLong(base + 2 * Long.BYTES, poison);
-                            Unsafe.getUnsafe().putLong(base + 3 * Long.BYTES, poison);
+                            Unsafe.putLong(base, poison);
+                            Unsafe.putLong(base + Long.BYTES, poison);
+                            Unsafe.putLong(base + 2 * Long.BYTES, poison);
+                            Unsafe.putLong(base + 3 * Long.BYTES, poison);
                         }
 
                         Vect.setMemoryLong256(addr, long0, long1, long2, long3, size);
 
                         for (int i = 0; i < size; i++) {
                             long base = addr + (long) i * elementBytes;
-                            long a0 = Unsafe.getUnsafe().getLong(base);
-                            long a1 = Unsafe.getUnsafe().getLong(base + Long.BYTES);
-                            long a2 = Unsafe.getUnsafe().getLong(base + 2 * Long.BYTES);
-                            long a3 = Unsafe.getUnsafe().getLong(base + 3 * Long.BYTES);
+                            long a0 = Unsafe.getLong(base);
+                            long a1 = Unsafe.getLong(base + Long.BYTES);
+                            long a2 = Unsafe.getLong(base + 2 * Long.BYTES);
+                            long a3 = Unsafe.getLong(base + 3 * Long.BYTES);
                             if (a0 != long0 || a1 != long1 || a2 != long2 || a3 != long3) {
                                 Assert.fail("setMemoryLong256 failed at element " + i + " of " + size
                                         + " (offset=" + offset + ")"
@@ -1386,10 +1392,10 @@ public class VectFuzzTest {
                         // Verify no overflow past the filled region
                         if (size > 0) {
                             long base = addr + (long) size * elementBytes;
-                            long o0 = Unsafe.getUnsafe().getLong(base);
-                            long o1 = Unsafe.getUnsafe().getLong(base + Long.BYTES);
-                            long o2 = Unsafe.getUnsafe().getLong(base + 2 * Long.BYTES);
-                            long o3 = Unsafe.getUnsafe().getLong(base + 3 * Long.BYTES);
+                            long o0 = Unsafe.getLong(base);
+                            long o1 = Unsafe.getLong(base + Long.BYTES);
+                            long o2 = Unsafe.getLong(base + 2 * Long.BYTES);
+                            long o3 = Unsafe.getLong(base + 3 * Long.BYTES);
                             if (o0 != poison || o1 != poison || o2 != poison || o3 != poison) {
                                 Assert.fail("setMemoryLong256 overflow at element " + size + " of " + size
                                         + " (offset=" + offset + ")"
@@ -1425,7 +1431,7 @@ public class VectFuzzTest {
                         for (short val : values) {
                             Vect.setMemoryShort(buffer + offset, val, size);
                             for (int i = 0; i < size; i++) {
-                                short actual = Unsafe.getUnsafe().getShort(buffer + offset + i * typeBytes);
+                                short actual = Unsafe.getShort(buffer + offset + i * typeBytes);
                                 if (val != actual) {
                                     Assert.assertEquals("Failed to set for size=" + size + ", value=" + val + ", pos=" + i, val, actual);
                                 }
@@ -1673,9 +1679,9 @@ public class VectFuzzTest {
             final long indexAddr = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
                 seedMem2Longs(1, indexAddr);
-                long expected = Unsafe.getUnsafe().getLong(indexAddr);
+                long expected = Unsafe.getLong(indexAddr);
                 Vect.sortLongIndexAscInPlace(indexAddr, 1);
-                Assert.assertEquals(expected, Unsafe.getUnsafe().getLong(indexAddr));
+                Assert.assertEquals(expected, Unsafe.getLong(indexAddr));
             } finally {
                 Unsafe.free(indexAddr, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
@@ -1701,36 +1707,170 @@ public class VectFuzzTest {
         return sink.toString();
     }
 
+    private void assertDedupWithKey(Rnd rnd, int indexLen) {
+        int keyCount = 1 + rnd.nextInt(3);
+        assert keyCount > 0 && keyCount < 5;
+
+        ObjList<DirectLongList> keys = new ObjList<>();
+        int keyMax = 1 + rnd.nextInt(4);
+
+        try (DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < keyCount; i++) {
+                keys.add(new DirectLongList(indexLen, MemoryTag.NATIVE_DEFAULT));
+            }
+
+            LongHashSet distinctKeys = new LongHashSet();
+            LongList tsAndKey = new LongList();
+
+            // Generate data
+            int tsVal = 1000;
+            for (int i = 0; i < indexLen; i++) {
+                if (rnd.nextDouble() < 0.1) {
+                    tsVal += rnd.nextInt(50);
+                }
+                index.add(tsVal);
+                index.add(i);
+
+                // Encode keys in 4 byte integer
+                int combinedKey = 0;
+                for (int k = 0; k < keyCount; k++) {
+                    int keyVal = rnd.nextInt(keyMax);
+                    keys.get(k).add(keyVal);
+                    combinedKey = combinedKey << 8;
+                    combinedKey += keyVal;
+                }
+                distinctKeys.add(Numbers.encodeLowHighInts(tsVal, combinedKey));
+                tsAndKey.add(Numbers.encodeLowHighInts(combinedKey, tsVal));
+            }
+
+            // Squash keys from longs to ints
+            for (int k = 0; k < keyCount; k++) {
+                DirectLongList keyList = keys.get(k);
+                for (int i = 0; i < (indexLen + 1) / 2; i++) {
+                    int high = 2 * i + 1 < indexLen ? (int) getIndexChecked(keyList, 2L * i + 1) : 0;
+                    int low = 2 * i < indexLen ? (int) getIndexChecked(keyList, 2L * i) : 0;
+                    keyList.set(i, Numbers.encodeLowHighInts(low, high));
+                }
+            }
+
+            try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
+                try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+                    colBuffs.setDedupColumnCount(keyCount);
+                    long dedupColBuffPtr = colBuffs.allocateBlock();
+                    for (int k = 0; k < keyCount; k++) {
+                        long addr = DedupColumnCommitAddresses.setColValues(
+                                dedupColBuffPtr,
+                                k,
+                                ColumnType.SYMBOL,
+                                4,
+                                0
+                        );
+
+                        DedupColumnCommitAddresses.setColAddressValues(
+                                addr,
+                                keys.get(k).getAddress(),
+                                0L,
+                                0L
+                        );
+
+                        DedupColumnCommitAddresses.setO3DataAddressValues(
+                                addr,
+                                0L,
+                                0L,
+                                0L
+                        );
+
+                        DedupColumnCommitAddresses.setReservedValuesSet2(
+                                addr,
+                                0L,
+                                0L
+                        );
+                    }
+                    copy.setPos(indexLen * 2L);
+
+                    long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
+                            index.getAddress(),
+                            indexLen,
+                            index.getAddress(),
+                            copy.getAddress(),
+                            keyCount,
+                            DedupColumnCommitAddresses.getAddress(dedupColBuffPtr)
+                    );
+                    if (distinctKeys.size() == indexLen && dedupCount == -2) {
+                        // No duplicates detected and that's correct. Assert that index is not messed up.
+                        dedupCount = indexLen;
+                    } else {
+                        Assert.assertEquals(distinctKeys.size(), dedupCount);
+                    }
+
+                    // assert indexes of the rows are distinct and in correct range
+                    boolean[] indexFound = new boolean[(int) indexLen];
+                    tsAndKey.sort();
+                    int expectedValueIndex = -1;
+                    long expectedValue = -1;
+
+                    for (int i = 0; i < dedupCount; i++) {
+                        expectedValueIndex = getNextDistinctIndex(tsAndKey, expectedValueIndex, expectedValue);
+                        expectedValue = tsAndKey.get(expectedValueIndex);
+
+                        long rowIndex = getIndexChecked(index, i * 2L + 1L);
+                        Assert.assertTrue("row index not in expected range", rowIndex >= 0 && rowIndex < indexLen);
+                        Assert.assertFalse("row index is not distinct", indexFound[(int) rowIndex]);
+                        indexFound[(int) rowIndex] = true;
+
+                        Assert.assertEquals(Numbers.decodeHighInt(expectedValue), getIndexChecked(index, i * 2L));
+                        int expectedCombinedKey = Numbers.decodeLowInt(expectedValue);
+
+                        int combinedKey = 0;
+                        for (int k = 0; k < keyCount; k++) {
+                            DirectLongList keyList = keys.get(k);
+                            Assert.assertTrue("key index not in expected range", rowIndex / 2L < keyList.size());
+                            long keyLong = getIndexChecked(keyList, rowIndex / 2L);
+                            int key = rowIndex % 2 == 0 ? Numbers.decodeLowInt(keyLong) : Numbers.decodeHighInt(keyLong);
+                            Assert.assertTrue(key < 256);
+                            combinedKey = combinedKey << 8;
+                            combinedKey += key;
+                        }
+
+                        Assert.assertEquals(expectedCombinedKey, combinedKey);
+                    }
+                }
+            }
+        } finally {
+            Misc.freeObjList(keys);
+        }
+    }
+
     private void assertEqualLongs(long expected, long actual, int longCount) {
         for (int i = 0; i < longCount; i++) {
-            if (Unsafe.getUnsafe().getLong(expected + i * 8L) != Unsafe.getUnsafe().getLong(actual + i * 8L)) {
-                Assert.assertEquals("Longs at " + i + " are not equal", Unsafe.getUnsafe().getLong(expected + i * 8L), Unsafe.getUnsafe().getLong(actual + i * 8L));
+            if (Unsafe.getLong(expected + i * 8L) != Unsafe.getLong(actual + i * 8L)) {
+                Assert.assertEquals("Longs at " + i + " are not equal", Unsafe.getLong(expected + i * 8L), Unsafe.getLong(actual + i * 8L));
             }
         }
     }
 
     private void assertIndexAsc(int count, long indexAddr) {
-        long v = Unsafe.getUnsafe().getLong(indexAddr);
+        long v = Unsafe.getLong(indexAddr);
         for (int i = 1; i < count; i++) {
-            long next = Unsafe.getUnsafe().getLong(indexAddr + i * 2L * Long.BYTES);
+            long next = Unsafe.getLong(indexAddr + i * 2L * Long.BYTES);
             Assert.assertTrue(next >= v);
             v = next;
         }
     }
 
     private void assertIndexAsc(int count, long indexAddr, long initialAddrA, long initialAddrB, long min, long max) {
-        long v = Unsafe.getUnsafe().getLong(indexAddr);
+        long v = Unsafe.getLong(indexAddr);
         Assert.assertTrue(v >= min && v <= max);
         for (int i = 1; i < count; i++) {
-            long ts = Unsafe.getUnsafe().getLong(indexAddr + i * 2L * Long.BYTES);
-            long idx = Unsafe.getUnsafe().getLong(indexAddr + i * 2L * Long.BYTES + Long.BYTES);
+            long ts = Unsafe.getLong(indexAddr + i * 2L * Long.BYTES);
+            long idx = Unsafe.getLong(indexAddr + i * 2L * Long.BYTES + Long.BYTES);
             Assert.assertTrue(ts >= min && ts <= max);
             Assert.assertTrue(ts >= v);
             if (idx < 0) {
-                Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrA + idx * Long.BYTES));
+                Assert.assertEquals(ts, Unsafe.getLong(initialAddrA + idx * Long.BYTES));
             } else {
                 idx = (idx << 1) >> 1;
-                Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrB + idx * 2L * Long.BYTES));
+                Assert.assertEquals(ts, Unsafe.getLong(initialAddrB + idx * 2L * Long.BYTES));
             }
 
             v = ts;
@@ -1783,23 +1923,23 @@ public class VectFuzzTest {
     private void seedMem1Long(int count, long p, long min, long max) {
         for (int i = 0; i < count; i++) {
             final long z = min + (max > min ? rnd.nextLong(max - min) : 0);
-            Unsafe.getUnsafe().putLong(p + (long) i * Long.BYTES, z);
+            Unsafe.putLong(p + (long) i * Long.BYTES, z);
         }
     }
 
     private void seedMem2Longs(int count, long p) {
         for (int i = 0; i < count; i++) {
             final long z = rnd.nextPositiveLong();
-            Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES, z);
-            Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES + 8, i);
+            Unsafe.putLong(p + i * 2L * Long.BYTES, z);
+            Unsafe.putLong(p + i * 2L * Long.BYTES + 8, i);
         }
     }
 
     private void seedMem2Longs(int count, long p, long min, long max) {
         for (int i = 0; i < count; i++) {
             final long z = min + (max > min ? rnd.nextLong(max - min) : 0);
-            Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES, z);
-            Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES + 8, i);
+            Unsafe.putLong(p + i * 2L * Long.BYTES, z);
+            Unsafe.putLong(p + i * 2L * Long.BYTES + 8, i);
         }
     }
 
@@ -1906,7 +2046,7 @@ public class VectFuzzTest {
                     long ts = startTs;
                     for (int c = 0; c < commits; c++) {
                         for (int r = 0; r < rowsPerCommit; r++) {
-                            Unsafe.getUnsafe().putLong(segmentAddr + (c * rowsPerCommit + r) * 2L * Long.BYTES, ts);
+                            Unsafe.putLong(segmentAddr + (c * rowsPerCommit + r) * 2L * Long.BYTES, ts);
                             ts += tsIncrement;
                         }
                         segmentCopyInfo.addTxn((long) c * rowsPerCommit, c * segmentCount + s, rowsPerCommit, s, startTs, ts - tsIncrement);
@@ -1915,7 +2055,7 @@ public class VectFuzzTest {
                 }
 
                 for (int lr = 0; lr < lagRows; lr++) {
-                    Unsafe.getUnsafe().putLong(lagBuf + (long) lr * Long.BYTES, startTs + tsIncrement * lr);
+                    Unsafe.putLong(lagBuf + (long) lr * Long.BYTES, startTs + tsIncrement * lr);
                 }
 
                 long indexFormat = Vect.radixSortManySegmentsIndexAsc(
@@ -1944,8 +2084,8 @@ public class VectFuzzTest {
                 long lastTs = startTs;
                 long segmentIdMask = (1L << (segmentBytes * 8)) - 1;
                 for (long r = 0; r < totalRows; r++) {
-                    long ts = Unsafe.getUnsafe().getLong(buf1 + r * 2L * Long.BYTES);
-                    long idx = Unsafe.getUnsafe().getLong(buf1 + r * 2L * Long.BYTES + Long.BYTES);
+                    long ts = Unsafe.getLong(buf1 + r * 2L * Long.BYTES);
+                    long idx = Unsafe.getLong(buf1 + r * 2L * Long.BYTES + Long.BYTES);
 
                     if (ts < lastTs) {
                         Assert.fail("Micros are not in order, row=" + r + ", actual=" + ts + ", last=" + lastTs);

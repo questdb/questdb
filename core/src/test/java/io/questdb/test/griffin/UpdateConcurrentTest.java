@@ -41,7 +41,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -61,8 +61,8 @@ import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 
 public class UpdateConcurrentTest extends AbstractCairoTest {
-    private static final ThreadLocal<SCSequence> eventSubSequence = new ThreadLocal<>(SCSequence::new);
-    private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<SCSequence> eventSubSequence = new CarrierLocal<>(SCSequence::new);
+    private static final CarrierLocal<StringSink> readerSink = new CarrierLocal<>(StringSink::new);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {

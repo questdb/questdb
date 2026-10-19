@@ -64,7 +64,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(dataLo + index);
+        return Unsafe.getByte(dataLo + index);
     }
 
     @Override
@@ -75,7 +75,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public int intAt(int offset) {
-        return Unsafe.getUnsafe().getInt(dataLo + offset);
+        return Unsafe.getInt(dataLo + offset);
     }
 
     @Override
@@ -90,7 +90,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public long longAt(int offset) {
-        return Unsafe.getUnsafe().getLong(dataLo + offset);
+        return Unsafe.getLong(dataLo + offset);
     }
 
     /**
@@ -129,7 +129,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public short shortAt(int offset) {
-        return Unsafe.getUnsafe().getShort(dataLo + offset);
+        return Unsafe.getShort(dataLo + offset);
     }
 
     @Override
@@ -155,7 +155,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
         // use getLong. For VarcharSlice, tailPadding is 0, so strings of 6-7 bytes
         // would overread past the buffer boundary. Use byte-by-byte for those cases.
         if (size + tailPadding() >= Long.BYTES) {
-            return Unsafe.getUnsafe().getLong(prefixLo) & VARCHAR_INLINED_PREFIX_MASK;
+            return Unsafe.getLong(prefixLo) & VARCHAR_INLINED_PREFIX_MASK;
         }
         // Construct the prefix byte-by-byte for short strings or strings without
         // enough tail padding (e.g., VarcharSlice format where adjacent strings
@@ -163,7 +163,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
         long prefix = 0;
         int n = Math.min(size, VARCHAR_INLINED_PREFIX_BYTES);
         for (int i = 0; i < n; i++) {
-            prefix |= (Unsafe.getUnsafe().getByte(prefixLo + i) & 0xFFL) << (i * 8);
+            prefix |= (Unsafe.getByte(prefixLo + i) & 0xFFL) << (i * 8);
         }
         return prefix;
     }

@@ -38,7 +38,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -60,7 +60,7 @@ import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 
 public class PGUpdateConcurrentTest extends BasePGTest {
-    private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> readerSink = new CarrierLocal<>(StringSink::new);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -155,12 +155,16 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     update.close();
                 }
 
-                assertSql("ts\tx\n" +
-                        "1970-01-01T00:00:00.000000Z\t5\n" +
-                        "1970-01-01T00:00:01.000000Z\t5\n" +
-                        "1970-01-01T00:00:02.000000Z\t5\n" +
-                        "1970-01-01T00:00:03.000000Z\t5\n" +
-                        "1970-01-01T00:00:04.000000Z\t5\n", "testUpdateTimeout");
+                assertQuery("testUpdateTimeout")
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                ts\tx
+                                1970-01-01T00:00:00.000000Z\t5
+                                1970-01-01T00:00:01.000000Z\t5
+                                1970-01-01T00:00:02.000000Z\t5
+                                1970-01-01T00:00:03.000000Z\t5
+                                1970-01-01T00:00:04.000000Z\t5
+                                """);
             }
         });
     }

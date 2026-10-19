@@ -47,7 +47,7 @@ public interface TxnScoreboard extends QuietCloseable {
      * Ignores min/max txn values and increments the counter. Must be called only when there is
      * an active reader that already acquired this txn.
      * <p>
-     * Used by {@link io.questdb.cairo.pool.ReaderPool#getCopyOf(TableReader)}.
+     * Used by io.questdb.cairo.pool.ReaderPool#getCopyOf()
      */
     boolean incrementTxn(int id, long txn);
 

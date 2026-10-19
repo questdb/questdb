@@ -31,38 +31,41 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
 
     @Test
     public void testConstantNull() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select string_distinct_agg(null::varchar, ',') from x")
+                .ddl("create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         string_distinct_agg
                         
-                        """,
-                "select string_distinct_agg(null::varchar, ',') from x",
-                "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testConstantString() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select string_distinct_agg('aaa'::varchar, ',') from x")
+                .ddl("create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         string_distinct_agg
                         aaa
-                        """,
-                "select string_distinct_agg('aaa'::varchar, ',') from x",
-                "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupKeyed() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, string_distinct_agg(s, ',') from x order by a")
+                .ddl("create table x as (" +
+                        "select * from (" +
+                        "   select " +
+                        "       rnd_symbol('a','b','c','d','e','f') a," +
+                        "       rnd_varchar('abc', 'aaa', 'bbb', 'ccc') s, " +
+                        "       timestamp_sequence(0, 100000) ts " +
+                        "   from long_sequence(30)" +
+                        ") timestamp(ts))")
+                .expectSize()
+                .returns("""
                         a\tstring_distinct_agg
                         a\tbbb,abc,aaa
                         b\tccc,abc,bbb
@@ -70,131 +73,101 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
                         d\tbbb,abc
                         e\tabc,ccc
                         f\tccc,abc,bbb
-                        """,
-                "select a, string_distinct_agg(s, ',') from x order by a",
-                "create table x as (" +
-                        "select * from (" +
-                        "   select " +
-                        "       rnd_symbol('a','b','c','d','e','f') a," +
-                        "       rnd_varchar('abc', 'aaa', 'bbb', 'ccc') s, " +
-                        "       timestamp_sequence(0, 100000) ts " +
-                        "   from long_sequence(30)" +
-                        ") timestamp(ts))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupKeyedAllNulls() throws Exception {
-        assertQuery(
-                """
-                        a\tstring_distinct_agg
-                        a\t
-                        b\t
-                        c\t
-                        """,
-                "select a, string_distinct_agg(s, ',') from x order by a",
-                "create table x as (" +
+        assertQuery("select a, string_distinct_agg(s, ',') from x order by a")
+                .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol('a','b','c') a," +
                         "       null::varchar s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(5)" +
-                        ") timestamp(ts))",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(ts))")
+                .expectSize()
+                .returns("""
+                        a\tstring_distinct_agg
+                        a\t
+                        b\t
+                        c\t
+                        """);
     }
 
     @Test
     public void testGroupKeyedManyRows() throws Exception {
-        assertQuery(
-                """
-                        max
-                        15
-                        """,
-                "select max(length(agg)) from (select a, string_distinct_agg(s, ',') agg from x)",
-                "create table x as (" +
+        assertQuery("select max(length(agg)) from (select a, string_distinct_agg(s, ',') agg from x)")
+                .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol(200,10,10,0) a," +
                         "       rnd_varchar('abc', 'aaa', 'bbb', 'ccc') s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(1000)" +
-                        ") timestamp(ts))",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        max
+                        15
+                        """);
     }
 
     @Test
     public void testGroupKeyedSomeNulls() throws Exception {
-        assertQuery(
-                """
-                        a\tstring_distinct_agg
-                        \taaa
-                        a\taaa
-                        """,
-                "select a, string_distinct_agg(s, ',') from x",
-                "create table x as (" +
+        assertQuery("select a, string_distinct_agg(s, ',') from x")
+                .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol(null, 'a') a," +
                         "       rnd_varchar(null, 'aaa') s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(20)" +
-                        ") timestamp(ts))",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(ts))")
+                .expectSize()
+                .returns("""
+                        a\tstring_distinct_agg
+                        \taaa
+                        a\taaa
+                        """);
     }
 
     @Test
     public void testGroupNotKeyed() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select string_distinct_agg(s, ',') from x")
+                .ddl("create table x as (select * from (select rnd_varchar('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         string_distinct_agg
                         abc,bbb,aaa,ccc
-                        """,
-                "select string_distinct_agg(s, ',') from x",
-                "create table x as (select * from (select rnd_varchar('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderByNotSupported() throws Exception {
         execute("create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))");
-        assertException("select string_distinct_agg(ts, ',' ORDER BY ts) from x", 35, "ORDER BY not supported for string_distinct_agg");
-        assertException("select string_distinct_agg(ts, ',' order by ts) from x", 35, "ORDER BY not supported for string_distinct_agg");
+        assertQuery("select string_distinct_agg(ts, ',' ORDER BY ts) from x")
+                .fails(35, "ORDER BY not supported for string_distinct_agg");
+        assertQuery("select string_distinct_agg(ts, ',' order by ts) from x")
+                .fails(35, "ORDER BY not supported for string_distinct_agg");
     }
 
     @Test
     public void testSkipNull() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select string_distinct_agg(s, ',') from x")
+                .ddl("create table x as (select * from (select cast(null as varchar) s from long_sequence(5)))")
+                .mutateWith("insert into x select 'abc' from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         string_distinct_agg
                         
-                        """,
-                "select string_distinct_agg(s, ',') from x",
-                "create table x as (select * from (select cast(null as varchar) s from long_sequence(5)))",
-                null,
-                "insert into x select 'abc' from long_sequence(1)",
-                """
+                        """, """
                         string_distinct_agg
                         abc
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
     }
 }

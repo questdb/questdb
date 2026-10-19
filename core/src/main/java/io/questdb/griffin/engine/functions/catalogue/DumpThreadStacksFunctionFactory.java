@@ -39,6 +39,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
@@ -49,6 +50,24 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "dump_thread_stacks()";
 
+    public static void dumpThreadStack(ThreadInfo threadInfo, LogRecord record, PrintStream errorStream) {
+        try {
+            final Thread.State state = threadInfo.getThreadState();
+            record.$('\n');
+            record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
+            final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
+            for (final StackTraceElement stackTraceElement : stackTraceElements) {
+                record.$("\n\t\tat ").$(stackTraceElement);
+            }
+            record.$("\n\n");
+        } catch (Throwable th) {
+            errorStream.println("error dumping threads");
+            th.printStackTrace(errorStream);
+        } finally {
+            record.$();
+        }
+    }
+
     public static void dumpThreadStacks() {
         final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
         final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 20);
@@ -58,21 +77,7 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
         for (ThreadInfo threadInfo : threadInfos) {
             // it turns out it is possible to have null "infos"
             if (threadInfo != null) {
-                final LogRecord record = LOG.advisory();
-                try {
-                    final Thread.State state = threadInfo.getThreadState();
-                    record.$('\n');
-                    record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
-                    final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
-                    for (final StackTraceElement stackTraceElement : stackTraceElements) {
-                        record.$("\n\t\tat ").$(stackTraceElement);
-                    }
-                    record.$("\n\n");
-                } catch (Throwable th) {
-                    record.$("error dumping threads: ").$(th);
-                } finally {
-                    record.$();
-                }
+                dumpThreadStack(threadInfo, LOG.advisory(), System.err);
             }
         }
     }

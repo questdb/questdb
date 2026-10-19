@@ -25,15 +25,13 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SymbolMapReader;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -53,14 +51,14 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR = FilterOnValuesRecordCursorFactory::compareStrFunctions;
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
     private final int columnIndex;
-    private final PageFrameRecordCursorImpl cursor;
-    private final ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
-    private final Function filter;
     private final boolean followedOrderByAdvice;
     private final boolean heapCursorUsed;
     private final int orderDirection;
-    private final RowCursorFactory rowCursorFactory;
+    private PageFrameRecordCursorImpl cursor;
+    private ObjList<FunctionBasedRowCursorFactory> cursorFactories;
+    private Function filter;
+    private RowCursorFactory rowCursorFactory;
 
     public FilterOnValuesRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -68,7 +66,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull @Transient ObjList<Function> keyValues,
             int columnIndex,
-            @NotNull @Transient TableReader reader,
             @Nullable Function filter,
             int orderByMnemonic,
             boolean orderByKeyColumn,
@@ -86,14 +83,8 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         this.orderDirection = orderDirection;
         cursorFactories = new ObjList<>(nKeyValues);
         cursorFactoriesIdx = new int[]{0};
-        final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
         for (int i = 0; i < nKeyValues; i++) {
-            final Function symbol = keyValues.get(i);
-            if (symbol.isConstant()) {
-                addSymbolKey(symbolMapReader.keyOf(symbol.getStrA(null)), symbol, indexDirection);
-            } else {
-                addSymbolKey(SymbolTable.VALUE_NOT_FOUND, symbol, indexDirection);
-            }
+            addSymbolKey(keyValues.get(i), indexDirection);
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
             heapCursorUsed = false;
@@ -155,44 +146,12 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         }
     }
 
-    private void addSymbolKey(int symbolKey, Function symbolFunction, int indexDirection) {
+    private void addSymbolKey(Function symbolFunction, int indexDirection) {
         final FunctionBasedRowCursorFactory rowCursorFactory;
         if (filter == null) {
-            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(
-                        columnIndex,
-                        symbolFunction,
-                        cursorFactories.size() == 0,
-                        indexDirection
-                );
-            } else {
-                rowCursorFactory = new SymbolIndexRowCursorFactory(
-                        columnIndex,
-                        symbolKey,
-                        cursorFactories.size() == 0,
-                        indexDirection,
-                        symbolFunction
-                );
-            }
+            rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(columnIndex, symbolFunction, indexDirection);
         } else {
-            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                rowCursorFactory = new DeferredSymbolIndexFilteredRowCursorFactory(
-                        columnIndex,
-                        symbolFunction,
-                        filter,
-                        cursorFactories.size() == 0,
-                        indexDirection
-                );
-            } else {
-                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(
-                        columnIndex,
-                        symbolKey,
-                        filter,
-                        cursorFactories.size() == 0,
-                        indexDirection,
-                        symbolFunction
-                );
-            }
+            rowCursorFactory = new DeferredSymbolIndexFilteredRowCursorFactory(columnIndex, symbolFunction, filter, indexDirection);
         }
         cursorFactories.add(rowCursorFactory);
     }
@@ -229,9 +188,25 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(filter);
-        Misc.free(cursor);
+        final PageFrameRecordCursorImpl cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<FunctionBasedRowCursorFactory> cursorFactories = this.cursorFactories;
+        this.cursorFactories = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final RowCursorFactory rowCursorFactory = this.rowCursorFactory;
+        this.rowCursorFactory = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, rowCursorFactory);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, cursorFactories);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

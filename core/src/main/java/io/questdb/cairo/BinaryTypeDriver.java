@@ -43,9 +43,9 @@ public class BinaryTypeDriver extends StringTypeDriver {
     @Override
     public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
         for (int row = 0; row < rowCount; row++) {
-            long offset = Unsafe.getUnsafe().getLong(auxMemAddr + (long) row * Long.BYTES);
-            long iLen = Unsafe.getUnsafe().getLong(auxMemAddr + (long) (row + 1) * Long.BYTES) - offset;
-            long dLen = Unsafe.getUnsafe().getLong(dataMemAddr + offset);
+            long offset = Unsafe.getLong(auxMemAddr + (long) row * Long.BYTES);
+            long iLen = Unsafe.getLong(auxMemAddr + (long) (row + 1) * Long.BYTES) - offset;
+            long dLen = Unsafe.getLong(dataMemAddr + offset);
             int lenLen = 8;
             long dStorageLen = dLen > 0 ? dLen + lenLen : lenLen;
             if (iLen != dStorageLen) {

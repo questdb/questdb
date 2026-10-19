@@ -30,7 +30,7 @@ public class DirectByteSequenceView implements BinarySequence, Mutable {
 
     @Override
     public byte byteAt(long index) {
-        return Unsafe.getUnsafe().getByte(address + index);
+        return Unsafe.getByte(address + index);
     }
 
     @Override

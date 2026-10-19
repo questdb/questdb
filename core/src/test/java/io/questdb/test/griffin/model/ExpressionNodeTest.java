@@ -24,13 +24,153 @@
 
 package io.questdb.test.griffin.model;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.ScalarTimestampBoundHolder;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.str.AsciiCharSequence;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ExpressionNodeTest {
+
+    @Test
+    public void testClearResetsInheritedTimestampOrder() {
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 1);
+        final ExpressionNode node = pool.next().of(ExpressionNode.LITERAL, "ts", 0, 0);
+        Assert.assertFalse(node.isTimestampOrderInherited);
+
+        node.isTimestampOrderInherited = true;
+        node.clear();
+        Assert.assertFalse(node.isTimestampOrderInherited);
+
+        node.isTimestampOrderInherited = true;
+        node.of(ExpressionNode.LITERAL, "other_ts", 0, 0);
+        Assert.assertFalse(node.isTimestampOrderInherited);
+
+        node.isTimestampOrderInherited = true;
+        pool.clear();
+        Assert.assertSame(node, pool.next());
+        Assert.assertFalse(node.isTimestampOrderInherited);
+    }
+
+    @Test
+    public void testClearResetsOptimiserAndOffset() {
+        // WhereClauseParser rebuilds an and_offset wrapper that SqlOptimiser marked over any column,
+        // and rejects an unmarked one over a non-timestamp column as a hand-written call. ExpressionNode
+        // instances are pooled, so a mark surviving clear() would let a later hand-written and_offset
+        // that lands on a recycled node be rebuilt instead of rejected.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 1);
+        final ExpressionNode node = pool.next().of(ExpressionNode.FUNCTION, "and_offset", 0, 0);
+        Assert.assertFalse(node.isOptimiserAndOffset);
+
+        node.isOptimiserAndOffset = true;
+        node.clear();
+        Assert.assertFalse(node.isOptimiserAndOffset);
+
+        node.isOptimiserAndOffset = true;
+        node.of(ExpressionNode.FUNCTION, "and_offset", 0, 0);
+        Assert.assertFalse(node.isOptimiserAndOffset);
+
+        node.isOptimiserAndOffset = true;
+        pool.clear();
+        Assert.assertSame(node, pool.next());
+        Assert.assertFalse(node.isOptimiserAndOffset);
+    }
+
+    @Test
+    public void testDeepCloneAndCopyFromCarryInheritedTimestampOrder() {
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 4);
+        final ExpressionNode node = pool.next().of(ExpressionNode.LITERAL, "ts", 0, 0);
+        node.isTimestampOrderInherited = true;
+
+        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
+        Assert.assertNotSame(node, clone);
+        Assert.assertTrue(clone.isTimestampOrderInherited);
+
+        final ExpressionNode copy = pool.next().copyFrom(node);
+        Assert.assertTrue(copy.isTimestampOrderInherited);
+
+        node.isTimestampOrderInherited = false;
+        Assert.assertTrue(clone.isTimestampOrderInherited);
+        copy.copyFrom(node);
+        Assert.assertFalse(copy.isTimestampOrderInherited);
+        Assert.assertFalse(ExpressionNode.deepClone(pool, node).isTimestampOrderInherited);
+    }
+
+    @Test
+    public void testDeepCloneAndCopyFromCarryLateralDepth() {
+        // LateralJoinRewriter pass 1 tags correlated refs with lateralDepth and later passes
+        // branch on it (allLiteralsAreCorrelated, hasCorrelatedExprAtDepth, unqualified-ref
+        // substitution). deepClone must carry the tag like copyFrom does, per the
+        // "update deepClone method after adding a new field" invariant in ExpressionNode.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
+
+        final ExpressionNode node = pool.next().of(ExpressionNode.LITERAL, "x", 0, 0);
+        node.lateralDepth = 2;
+
+        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
+        Assert.assertEquals(2, clone.lateralDepth);
+
+        final ExpressionNode copy = pool.next().copyFrom(node);
+        Assert.assertEquals(2, copy.lateralDepth);
+    }
+
+    @Test
+    public void testDeepCloneAndCopyFromCarryOptimiserAndOffset() {
+        // A copy of an and_offset wrapper that SqlOptimiser marked is still the optimiser's wrapper, so
+        // deepClone() and copyFrom() carry the mark; without it, WhereClauseParser would reject a copy
+        // over a non-timestamp column as a hand-written call
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 4);
+        final ExpressionNode node = pool.next().of(ExpressionNode.FUNCTION, "and_offset", 0, 0);
+        node.isOptimiserAndOffset = true;
+
+        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
+        Assert.assertNotSame(node, clone);
+        Assert.assertTrue(clone.isOptimiserAndOffset);
+
+        final ExpressionNode copy = pool.next().copyFrom(node);
+        Assert.assertTrue(copy.isOptimiserAndOffset);
+
+        node.isOptimiserAndOffset = false;
+        Assert.assertTrue(clone.isOptimiserAndOffset);
+        copy.copyFrom(node);
+        Assert.assertFalse(copy.isOptimiserAndOffset);
+        Assert.assertFalse(ExpressionNode.deepClone(pool, node).isOptimiserAndOffset);
+    }
+
+    @Test
+    public void testDeepCloneAndCopyFromCarryScalarBoundHolder() {
+        // The holder is a compile-time link shared by reference (like queryModel): the pruning
+        // bound publishes a single frozen value into it and every residual re-compile - including
+        // ones fed a cloned filter expression on the filter-stealing path - must read that same
+        // holder. Dropping it on clone makes FunctionParser re-open the sub-query per worker.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
+        final ScalarTimestampBoundHolder holder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP);
+
+        final ExpressionNode node = pool.next().of(ExpressionNode.QUERY, "query", 0, 0);
+        node.scalarBoundHolder = holder;
+
+        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
+        Assert.assertSame(holder, clone.scalarBoundHolder);
+
+        final ExpressionNode copy = pool.next().copyFrom(node);
+        Assert.assertSame(holder, copy.scalarBoundHolder);
+    }
+
+    @Test
+    public void testClearResetsScalarBoundHolder() {
+        // ExpressionNode instances are pooled and recycled across compiles. A holder surviving
+        // clear() would let a later, unrelated query resolve its sub-query node to a stale
+        // ScalarSubQueryBoundRefFunction and read a bound frozen by a previous execution.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
+        final ExpressionNode node = pool.next().of(ExpressionNode.QUERY, "query", 0, 0);
+        node.scalarBoundHolder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP);
+
+        node.clear();
+        Assert.assertNull(node.scalarBoundHolder);
+    }
 
     @Test
     public void testDeepHashCodeConsistentWithCompareNodesExact() {

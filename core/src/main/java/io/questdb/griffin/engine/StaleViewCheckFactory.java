@@ -94,11 +94,10 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        for (int i = 0, n = viewTokens.length; i < n; i++) {
-            var token = viewTokens[i];
-            long txn = viewTxns[i];
-            engine.verifyViewToken(token, txn);
-        }
+        // Consult the breaker once at open, so a view read whose base cursor is served from a cached
+        // result (and therefore performs no per-frame checks) still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        verifyViews();
         return base.getCursor(executionContext);
     }
 
@@ -109,6 +108,11 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        // Parquet export and QWP egress open a cached plan here rather than through getCursor(),
+        // so a view redefined since the plan compiled has to be caught here too. Otherwise the
+        // plan keeps serving the old body, and whatever the new definition compiles in, such as
+        // Enterprise's audit of a view re-created WITH AUDIT, never reaches it.
+        verifyViews();
         return base.getPageFrameCursor(executionContext, order);
     }
 
@@ -125,6 +129,17 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
+    }
+
+    @Override
+    public boolean producesMaterializedPageFrames() {
+        // Must delegate to the immediate base like supportsPageFrameCursor() /
+        // getPageFrameCursor() do: getBaseFactory() here returns base.getBaseFactory()
+        // (it skips this wrapper's own base for top-K peeling), so the default
+        // getBaseFactory()-delegating implementation would step over a metadata-only
+        // producer (e.g. a single-key covering scan) and wrongly report it as
+        // materialized -- re-opening the all-null covered-column parquet export.
+        return base.producesMaterializedPageFrames();
     }
 
     @Override
@@ -155,5 +170,11 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    private void verifyViews() {
+        for (int i = 0, n = viewTokens.length; i < n; i++) {
+            engine.verifyViewToken(viewTokens[i], viewTxns[i]);
+        }
     }
 }

@@ -47,7 +47,7 @@ public class LastDoubleGroupByFunction extends FirstDoubleGroupByFunction {
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putDouble(valueIndex + 1, Unsafe.getUnsafe().getDouble(dataAddr + ((long) rowCount - 1) * Double.BYTES));
+                mapValue.putDouble(valueIndex + 1, Unsafe.getDouble(dataAddr + ((long) rowCount - 1) * Double.BYTES));
             }
         }
     }
@@ -69,26 +69,32 @@ public class LastDoubleGroupByFunction extends FirstDoubleGroupByFunction {
         // Zero page address means a column top; fall through to the record-based path.
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
-            for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            // Backwards: last-wins keeps only the max-rowId value, so a forward scan rewrites the
+            // slot for every later row (O(N) writes); a backward walk writes each key once.
+            for (long i = rowCount - 1; i >= 0; i--) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long rowId = baseRowId + rowIndex;
                 final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                if (rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                    Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                    Unsafe.getUnsafe().putDouble(entryBase + valueColumnOffset, Unsafe.getUnsafe().getDouble(argAddr + (rowIndex << 3)));
+                if (rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                    Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                    Unsafe.putDouble(entryBase + valueColumnOffset, Unsafe.getDouble(argAddr + (rowIndex << 3)));
                 }
             }
         } else {
+            // Forward: this fallback reads the argument (arg.get*(record)) inside the guard, so it
+            // must visit rows in ascending rowId order to evaluate every row's argument, matching the
+            // row-by-row path and last_not_null. A backward walk would evaluate only each key's
+            // winning row and could swallow a throwing expression on a losing row.
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long rowId = baseRowId + rowIndex;
                 final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                if (rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
+                if (rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
                     record.setRowIndex(rowIndex);
-                    Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                    Unsafe.getUnsafe().putDouble(entryBase + valueColumnOffset, arg.getDouble(record));
+                    Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                    Unsafe.putDouble(entryBase + valueColumnOffset, arg.getDouble(record));
                 }
             }
         }

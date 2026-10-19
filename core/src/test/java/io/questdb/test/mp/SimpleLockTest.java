@@ -26,6 +26,7 @@ package io.questdb.test.mp;
 
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -262,6 +263,26 @@ public class SimpleLockTest {
         } finally {
             lock.unlock();
             thread.join();
+        }
+    }
+
+    @Test
+    public void testTryLockWhileInterrupted() throws Exception {
+        final SimpleWaitingLock lock = new SimpleWaitingLock();
+        final long timeoutMillis = 500;
+        Assert.assertTrue(lock.tryLock());
+        try {
+            TestUtils.assertInterruptedWaitTimesOutWithoutSpin(
+                    "SimpleWaitingLock tryLock",
+                    TimeUnit.MILLISECONDS.toNanos(timeoutMillis),
+                    () -> lock.tryLock(timeoutMillis, TimeUnit.MILLISECONDS),
+                    () -> lock.tryLock(30, TimeUnit.SECONDS),
+                    lock::unlock
+            );
+        } finally {
+            if (lock.isLocked()) {
+                lock.unlock();
+            }
         }
     }
 }

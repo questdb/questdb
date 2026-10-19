@@ -38,10 +38,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
@@ -433,7 +431,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
         }
     }
 
-    private static void createTableWithColumnTops(String createTable, String tableName) throws SqlException {
+    private static void createTableWithColumnTops(String createTable, String tableName) throws Exception {
         execute(createTable);
         execute("alter table " + tableName + " add column день symbol");
         execute("alter table " + tableName + " add column str string");
@@ -459,7 +457,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
         );
     }
 
-    private static void insertData(String tableName) throws SqlException {
+    private static void insertData(String tableName) throws Exception {
         Rnd rnd = sqlExecutionContext.getRandom();
         long seed0 = rnd.getSeed0();
         long seed1 = rnd.getSeed1();
@@ -507,7 +505,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 " rnd_bin(2,10, 2) o";
     }
 
-    private void appendData(boolean withColTopO3, boolean withWalTxn) throws SqlException {
+    private void appendData(boolean withColTopO3, boolean withWalTxn) throws Exception {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 
@@ -533,11 +531,13 @@ public class EngineMigrationTest extends AbstractCairoTest {
         }
     }
 
-    private void assertAppendedData(boolean withColTopO3, boolean withWalTxn) throws SqlException {
+    private void assertAppendedData(boolean withColTopO3, boolean withWalTxn) throws Exception {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        assertSql(
-                """
+        assertQuery("select * FROM t_year LIMIT -10")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         109\tP\t-12455\t263934\t49960\t0.679264\t0.09831693674866282\t1977-08-08T19:44:03.856Z\t1969-12-31T23:59:55.049605Z\tHQBJP\tc\tfalse\taaa\t0xbe15104d1d36d615cac36ab298393e52b06836c8abd67a44787ce11d6fc88eab\t00000000 37 58 2c 0d b0 d0 9c 57 02 75\t2096-10-02T07:10:00.000000Z
                         73\tB\t-1271\t-47644\t4999\t0.858377\t0.12392055368261845\t1975-06-03T19:26:19.012Z\t1969-12-31T23:59:55.604499Z\t\tc\ttrue\taaa\t0x4f669e76b0311ac3438ec9cc282caa7043a05a3edd41f45aa59f873d1c729128\t00000000 34 01 0e 4d 2b 00 fa 34\t2103-02-04T02:43:20.000000Z
@@ -549,64 +549,66 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         20\tM\t-7043\t251501\t-85499\t0.94033486\t0.9135840078861264\t1977-05-12T19:20:06.113Z\t1969-12-31T23:59:54.045277Z\tHOXL\tbbbbbb\tfalse\tbbbbbb\t0xc3b0de059fff72dbd7b99af08ac0d1cddb2990725a3338e377155edb531cb644\t\t2141-02-13T00:03:20.000000Z
                         26\tG\t-24830\t-56840\t-32956\t0.8282491\t0.017280895313585898\t1982-07-16T03:52:53.454Z\t1969-12-31T23:59:54.115165Z\tJEJH\taaa\tfalse\tbbbbbb\t0x16f70de9c6af11071d35d9faec5d18fd1cf3bbbc825b72a92ecb8ff0286bf649\t00000000 c2 62 f8 53 7d 05 65\t2147-06-16T19:36:40.000000Z
                         127\tY\t19592\t224361\t37963\t0.6930264\t0.006817672510656014\t1975-11-29T09:47:45.706Z\t1969-12-31T23:59:56.186242Z\t\t\ttrue\taaa\t0x88926dd483caaf4031096402997f21c833b142e887fa119e380dc9b54493ff70\t00000000 23 c3 9d 75 26 f2 0d b5 7a 3f\t2153-10-17T15:10:00.000000Z
-                        """,
-                "select * FROM t_year LIMIT -10"
-        );
+                        """);
 
         if (withColTopO3) {
-            assertSql("""
-                    x\tm\tts\tдень\tstr
-                    1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ
-                    6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
-                    12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB
-                    14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN
-                    16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL
-                    19\tb\t1970-01-01T19:27:00.000000Z\ta\tTZODWKOCPF
-                    21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM
-                    24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB
-                    31\ta\t1970-01-02T07:27:00.000000Z\ta\tGFI
-                    32\ta\t1970-01-02T08:27:00.000000Z\ta\tVZWEV
-                    33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD
-                    34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI
-                    35\t\t1970-01-02T11:27:00.000000Z\ta\tPTYXYGYFUX
-                    1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN
-                    4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
-                    5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB
-                    7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH
-                    9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
-                    8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE
-                    10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV
-                    9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG
-                    """, "t_col_top_ooo_day where день = 'a'"
-            );
+            assertQuery("t_col_top_ooo_day where день = 'a'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tm\tts\tдень\tstr
+                            1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ
+                            6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
+                            12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB
+                            14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN
+                            16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL
+                            19\tb\t1970-01-01T19:27:00.000000Z\ta\tTZODWKOCPF
+                            21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM
+                            24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB
+                            31\ta\t1970-01-02T07:27:00.000000Z\ta\tGFI
+                            32\ta\t1970-01-02T08:27:00.000000Z\ta\tVZWEV
+                            33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD
+                            34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI
+                            35\t\t1970-01-02T11:27:00.000000Z\ta\tPTYXYGYFUX
+                            1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN
+                            4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
+                            5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB
+                            7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH
+                            9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
+                            8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE
+                            10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV
+                            9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG
+                            """);
         }
 
         if (withWalTxn) {
-            assertSql("""
-                    x\tm\tts\tдень\tstr
-                    3\tc\t1970-01-05T04:30:00.000000Z\ta\tBLJTFSDQIE
-                    2\ta\t1970-01-05T05:25:00.000000Z\tc\tXHFVWSWSR
-                    4\t\t1970-01-05T05:30:00.000000Z\ta\tNEL
-                    3\tc\t1970-01-05T06:25:00.000000Z\t\tFCLTJC
-                    5\tc\t1970-01-05T06:30:00.000000Z\t\tGOFBJEB
-                    4\tc\t1970-01-05T07:25:00.000000Z\tb\tNTO
-                    6\tc\t1970-01-05T07:30:00.000000Z\tb\tKPXZEW
-                    5\tb\t1970-01-05T08:25:00.000000Z\tc\tKLGMXS
-                    7\ta\t1970-01-05T08:30:00.000000Z\ta\tFWMLBWUYKD
-                    6\tb\t1970-01-05T09:25:00.000000Z\t\tYOPHNIMYFF
-                    8\tb\t1970-01-05T09:30:00.000000Z\ta\tYQZ
-                    7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH
-                    9\tb\t1970-01-05T10:30:00.000000Z\tb\tOQMEYOJYZ
-                    8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE
-                    10\tc\t1970-01-05T11:30:00.000000Z\tb\tGQY
-                    9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG
-                    10\ta\t1970-01-05T13:25:00.000000Z\t\tRZLCBDMIGQ
-                    """, "t_col_top_ooo_day_wal where ts > '1970-01-05T04:25'"
-            );
+            assertQuery("t_col_top_ooo_day_wal where ts > '1970-01-05T04:25'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tm\tts\tдень\tstr
+                            3\tc\t1970-01-05T04:30:00.000000Z\ta\tBLJTFSDQIE
+                            2\ta\t1970-01-05T05:25:00.000000Z\tc\tXHFVWSWSR
+                            4\t\t1970-01-05T05:30:00.000000Z\ta\tNEL
+                            3\tc\t1970-01-05T06:25:00.000000Z\t\tFCLTJC
+                            5\tc\t1970-01-05T06:30:00.000000Z\t\tGOFBJEB
+                            4\tc\t1970-01-05T07:25:00.000000Z\tb\tNTO
+                            6\tc\t1970-01-05T07:30:00.000000Z\tb\tKPXZEW
+                            5\tb\t1970-01-05T08:25:00.000000Z\tc\tKLGMXS
+                            7\ta\t1970-01-05T08:30:00.000000Z\ta\tFWMLBWUYKD
+                            6\tb\t1970-01-05T09:25:00.000000Z\t\tYOPHNIMYFF
+                            8\tb\t1970-01-05T09:30:00.000000Z\ta\tYQZ
+                            7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH
+                            9\tb\t1970-01-05T10:30:00.000000Z\tb\tOQMEYOJYZ
+                            8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE
+                            10\tc\t1970-01-05T11:30:00.000000Z\tb\tGQY
+                            9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG
+                            10\ta\t1970-01-05T13:25:00.000000Z\t\tRZLCBDMIGQ
+                            """);
         }
     }
 
-    private void assertColTops() throws SqlException {
+    private void assertColTops() throws Exception {
         String part1Expected = """
                 x\tm\tts\ty
                 1\ta\t1970-01-01T00:03:20.000000Z\tnull
@@ -645,132 +647,156 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 30\te\t1988-05-18T23:10:00.000000Z\t30
                 """;
 
-        assertSql(part1Expected, "t_col_top_year where y = null");
-        assertSql(part2Expected, "t_col_top_year where y != null");
+        assertQuery("t_col_top_year where y = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns(part1Expected);
+        assertQuery("t_col_top_year where y != null")
+                .noLeakCheck()
+                .expectSize()
+                .returns(part2Expected);
 
-        assertSql(part1Expected, "t_col_top_none where y = null");
-        assertSql(part2Expected, "t_col_top_none where y != null");
+        assertQuery("t_col_top_none where y = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns(part1Expected);
+        assertQuery("t_col_top_none where y != null")
+                .noLeakCheck()
+                .expectSize()
+                .returns(part2Expected);
 
-        assertSql("""
-                x\tm\tts\tдень
-                1\tc\t1970-01-01T00:33:20.000000Z\tnull
-                2\tb\t1970-01-01T06:06:40.000000Z\tnull
-                3\tb\t1970-01-01T11:40:00.000000Z\tnull
-                4\tc\t1970-01-01T17:13:20.000000Z\tnull
-                5\tc\t1970-01-01T22:46:40.000000Z\tnull
-                6\tc\t1970-01-02T04:20:00.000000Z\tnull
-                7\tb\t1970-01-02T09:53:20.000000Z\tnull
-                8\t\t1970-01-02T15:26:40.000000Z\tnull
-                9\t\t1970-01-02T21:00:00.000000Z\tnull
-                10\tc\t1970-01-03T02:33:20.000000Z\tnull
-                11\tb\t1970-01-03T08:06:40.000000Z\tnull
-                12\tb\t1970-01-03T13:40:00.000000Z\tnull
-                13\tb\t1970-01-03T19:13:20.000000Z\tnull
-                14\tb\t1970-01-04T00:46:40.000000Z\tnull
-                15\t\t1970-01-04T06:20:00.000000Z\tnull
-                """, "t_col_top_день where день = null"
-        );
+        assertQuery("t_col_top_день where день = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        x\tm\tts\tдень
+                        1\tc\t1970-01-01T00:33:20.000000Z\tnull
+                        2\tb\t1970-01-01T06:06:40.000000Z\tnull
+                        3\tb\t1970-01-01T11:40:00.000000Z\tnull
+                        4\tc\t1970-01-01T17:13:20.000000Z\tnull
+                        5\tc\t1970-01-01T22:46:40.000000Z\tnull
+                        6\tc\t1970-01-02T04:20:00.000000Z\tnull
+                        7\tb\t1970-01-02T09:53:20.000000Z\tnull
+                        8\t\t1970-01-02T15:26:40.000000Z\tnull
+                        9\t\t1970-01-02T21:00:00.000000Z\tnull
+                        10\tc\t1970-01-03T02:33:20.000000Z\tnull
+                        11\tb\t1970-01-03T08:06:40.000000Z\tnull
+                        12\tb\t1970-01-03T13:40:00.000000Z\tnull
+                        13\tb\t1970-01-03T19:13:20.000000Z\tnull
+                        14\tb\t1970-01-04T00:46:40.000000Z\tnull
+                        15\t\t1970-01-04T06:20:00.000000Z\tnull
+                        """);
 
-        assertSql("""
-                x\tm\tts\tдень
-                16\te\t1970-01-03T07:36:40.000000Z\t16
-                17\tf\t1970-01-03T08:10:00.000000Z\t17
-                18\te\t1970-01-03T08:43:20.000000Z\t18
-                19\t\t1970-01-03T09:16:40.000000Z\t19
-                20\te\t1970-01-03T09:50:00.000000Z\t20
-                21\td\t1970-01-03T10:23:20.000000Z\t21
-                22\td\t1970-01-03T10:56:40.000000Z\t22
-                23\tf\t1970-01-03T11:30:00.000000Z\t23
-                24\t\t1970-01-03T12:03:20.000000Z\t24
-                25\td\t1970-01-03T12:36:40.000000Z\t25
-                26\te\t1970-01-03T13:10:00.000000Z\t26
-                27\te\t1970-01-03T13:43:20.000000Z\t27
-                28\tf\t1970-01-03T14:16:40.000000Z\t28
-                29\te\t1970-01-03T14:50:00.000000Z\t29
-                30\td\t1970-01-03T15:23:20.000000Z\t30
-                """, "t_col_top_день where день != null"
-        );
+        assertQuery("t_col_top_день where день != null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        x\tm\tts\tдень
+                        16\te\t1970-01-03T07:36:40.000000Z\t16
+                        17\tf\t1970-01-03T08:10:00.000000Z\t17
+                        18\te\t1970-01-03T08:43:20.000000Z\t18
+                        19\t\t1970-01-03T09:16:40.000000Z\t19
+                        20\te\t1970-01-03T09:50:00.000000Z\t20
+                        21\td\t1970-01-03T10:23:20.000000Z\t21
+                        22\td\t1970-01-03T10:56:40.000000Z\t22
+                        23\tf\t1970-01-03T11:30:00.000000Z\t23
+                        24\t\t1970-01-03T12:03:20.000000Z\t24
+                        25\td\t1970-01-03T12:36:40.000000Z\t25
+                        26\te\t1970-01-03T13:10:00.000000Z\t26
+                        27\te\t1970-01-03T13:43:20.000000Z\t27
+                        28\tf\t1970-01-03T14:16:40.000000Z\t28
+                        29\te\t1970-01-03T14:50:00.000000Z\t29
+                        30\td\t1970-01-03T15:23:20.000000Z\t30
+                        """);
     }
 
-    private void assertColTopsO3() throws SqlException {
-        assertSql("""
-                x\tm\tts\tдень\tstr
-                6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
-                4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
-                9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
-                """, "t_col_top_ooo_day where m = 'c' and день = 'a'"
-        );
+    private void assertColTopsO3() throws Exception {
+        assertQuery("t_col_top_ooo_day where m = 'c' and день = 'a'")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        x\tm\tts\tдень\tstr
+                        6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
+                        4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
+                        9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
+                        """);
 
-        assertSql("""
-                x\tm\tts\tдень\tstr
-                81\tc\t1970-01-04T09:00:00.000000Z\t\t
-                82\tc\t1970-01-04T10:00:00.000000Z\t\t
-                84\ta\t1970-01-04T12:00:00.000000Z\t\t
-                85\tb\t1970-01-04T13:00:00.000000Z\t\t
-                86\tb\t1970-01-04T14:00:00.000000Z\t\t
-                87\tb\t1970-01-04T15:00:00.000000Z\t\t
-                88\tc\t1970-01-04T16:00:00.000000Z\t\t
-                89\tc\t1970-01-04T17:00:00.000000Z\t\t
-                90\ta\t1970-01-04T18:00:00.000000Z\t\t
-                92\ta\t1970-01-04T20:00:00.000000Z\t\t
-                93\tb\t1970-01-04T21:00:00.000000Z\t\t
-                94\ta\t1970-01-04T22:00:00.000000Z\t\t
-                96\ta\t1970-01-05T00:00:00.000000Z\t\t
-                2\ta\t1970-01-05T03:30:00.000000Z\tc\tWTBBMMDB
-                3\tb\t1970-01-05T04:30:00.000000Z\tc\tGXIID
-                4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
-                6\ta\t1970-01-05T07:30:00.000000Z\tc\tQYDQVLY
-                7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR
-                8\tb\t1970-01-05T09:30:00.000000Z\tc\tMLMGICUW
-                9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
-                """, "t_col_top_ooo_day where m != null limit -20"
-        );
+        assertQuery("t_col_top_ooo_day where m != null limit -20")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        x\tm\tts\tдень\tstr
+                        81\tc\t1970-01-04T09:00:00.000000Z\t\t
+                        82\tc\t1970-01-04T10:00:00.000000Z\t\t
+                        84\ta\t1970-01-04T12:00:00.000000Z\t\t
+                        85\tb\t1970-01-04T13:00:00.000000Z\t\t
+                        86\tb\t1970-01-04T14:00:00.000000Z\t\t
+                        87\tb\t1970-01-04T15:00:00.000000Z\t\t
+                        88\tc\t1970-01-04T16:00:00.000000Z\t\t
+                        89\tc\t1970-01-04T17:00:00.000000Z\t\t
+                        90\ta\t1970-01-04T18:00:00.000000Z\t\t
+                        92\ta\t1970-01-04T20:00:00.000000Z\t\t
+                        93\tb\t1970-01-04T21:00:00.000000Z\t\t
+                        94\ta\t1970-01-04T22:00:00.000000Z\t\t
+                        96\ta\t1970-01-05T00:00:00.000000Z\t\t
+                        2\ta\t1970-01-05T03:30:00.000000Z\tc\tWTBBMMDB
+                        3\tb\t1970-01-05T04:30:00.000000Z\tc\tGXIID
+                        4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
+                        6\ta\t1970-01-05T07:30:00.000000Z\tc\tQYDQVLY
+                        7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR
+                        8\tb\t1970-01-05T09:30:00.000000Z\tc\tMLMGICUW
+                        9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
+                        """);
 
-        assertSql("""
-                x\tm\tts\tдень\tstr
-                71\tc\t1970-01-03T23:00:00.000000Z\t\t
-                72\tb\t1970-01-04T00:00:00.000000Z\t\t
-                76\tc\t1970-01-04T04:00:00.000000Z\t\t
-                77\tc\t1970-01-04T05:00:00.000000Z\t\t
-                78\tb\t1970-01-04T06:00:00.000000Z\t\t
-                79\ta\t1970-01-04T07:00:00.000000Z\t\t
-                81\tc\t1970-01-04T09:00:00.000000Z\t\t
-                82\tc\t1970-01-04T10:00:00.000000Z\t\t
-                84\ta\t1970-01-04T12:00:00.000000Z\t\t
-                85\tb\t1970-01-04T13:00:00.000000Z\t\t
-                86\tb\t1970-01-04T14:00:00.000000Z\t\t
-                87\tb\t1970-01-04T15:00:00.000000Z\t\t
-                88\tc\t1970-01-04T16:00:00.000000Z\t\t
-                89\tc\t1970-01-04T17:00:00.000000Z\t\t
-                90\ta\t1970-01-04T18:00:00.000000Z\t\t
-                92\ta\t1970-01-04T20:00:00.000000Z\t\t
-                93\tb\t1970-01-04T21:00:00.000000Z\t\t
-                94\ta\t1970-01-04T22:00:00.000000Z\t\t
-                96\ta\t1970-01-05T00:00:00.000000Z\t\t
-                7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR
-                """, "t_col_top_ooo_day where день = null and m != null limit -20"
-        );
+        assertQuery("t_col_top_ooo_day where день = null and m != null limit -20")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        x\tm\tts\tдень\tstr
+                        71\tc\t1970-01-03T23:00:00.000000Z\t\t
+                        72\tb\t1970-01-04T00:00:00.000000Z\t\t
+                        76\tc\t1970-01-04T04:00:00.000000Z\t\t
+                        77\tc\t1970-01-04T05:00:00.000000Z\t\t
+                        78\tb\t1970-01-04T06:00:00.000000Z\t\t
+                        79\ta\t1970-01-04T07:00:00.000000Z\t\t
+                        81\tc\t1970-01-04T09:00:00.000000Z\t\t
+                        82\tc\t1970-01-04T10:00:00.000000Z\t\t
+                        84\ta\t1970-01-04T12:00:00.000000Z\t\t
+                        85\tb\t1970-01-04T13:00:00.000000Z\t\t
+                        86\tb\t1970-01-04T14:00:00.000000Z\t\t
+                        87\tb\t1970-01-04T15:00:00.000000Z\t\t
+                        88\tc\t1970-01-04T16:00:00.000000Z\t\t
+                        89\tc\t1970-01-04T17:00:00.000000Z\t\t
+                        90\ta\t1970-01-04T18:00:00.000000Z\t\t
+                        92\ta\t1970-01-04T20:00:00.000000Z\t\t
+                        93\tb\t1970-01-04T21:00:00.000000Z\t\t
+                        94\ta\t1970-01-04T22:00:00.000000Z\t\t
+                        96\ta\t1970-01-05T00:00:00.000000Z\t\t
+                        7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR
+                        """);
 
-        assertSql("""
-                x\tm\tts\tдень\tstr
-                6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
-                12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB
-                14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN
-                16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL
-                21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM
-                24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB
-                33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD
-                34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI
-                1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN
-                4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
-                5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB
-                9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
-                10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV
-                """, "t_col_top_ooo_day where день = 'a'"
-        );
+        assertQuery("t_col_top_ooo_day where день = 'a'")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        x\tm\tts\tдень\tstr
+                        6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
+                        12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB
+                        14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN
+                        16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL
+                        21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM
+                        24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB
+                        33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD
+                        34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI
+                        1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN
+                        4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
+                        5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB
+                        9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
+                        10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV
+                        """);
     }
 
-    private void assertData(boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn) throws SqlException {
+    private void assertData(boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn) throws Exception {
         assertNoneNts();
         assertNone();
         assertDay();
@@ -793,10 +819,12 @@ public class EngineMigrationTest extends AbstractCairoTest {
         }
     }
 
-    private void assertDay() throws SqlException {
+    private void assertDay() throws Exception {
 
-        assertSql(
-                """
+        assertQuery("t_day where m = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         77\tW\t-29635\t36806\t39204\t0.024422824\t0.4452645911659644\t1974-10-14T05:22:22.780Z\t1970-01-01T00:00:00.181107Z\tJJDSR\tbbbbbb\ttrue\t\t0xd89fec5fab3f4af1a0ca0ec5d6448e2d798d79cb982de744b96a662a0b9f32d7\t00000000 aa 41 c5 55 ef\t1970-06-12T00:56:40.000000Z
                         63\tI\t-32736\t467385\t-76685\tnull\t0.31674150508412846\t1975-03-23T06:58:43.118Z\t1970-01-01T00:00:00.400171Z\tVIRB\t\tfalse\t\t0xf6f008b8e0bd93ffe884685ca40e1575d3389fdb74d0af7b8e349d4900aaf080\t00000000 1e 18\t1970-07-28T08:03:20.000000Z
@@ -804,22 +832,23 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         40\tS\t-20754\t640026\tnull\t0.06777322\tnull\t1974-08-22T14:47:36.113Z\t1969-12-31T23:59:57.637072Z\tMXCV\tbbbbbb\tfalse\t\t0x99addce59fcc0d3d9830ab914dab674c60bb78c3b0ee86df40da1c6ee057e8d1\t00000000 36 ab\t1970-11-21T01:50:00.000000Z
                         62\tZ\t-5605\t897677\t-25929\tnull\t0.5082431508355564\t1980-04-18T20:36:30.440Z\t1969-12-31T23:59:54.628420Z\tSPTT\tbbbbbb\ttrue\t\t0xa240ef161b45a1e48cf44c1c5bb6f9ab9d0f3bc8b1362801a7f6d25047c701e6\t00000000 cf b3\t1970-12-14T05:23:20.000000Z
                         117\tY\t-14561\tnull\t-89408\t0.06261629\t0.6810629367436306\t1980-11-24T14:57:59.806Z\t1969-12-31T23:59:59.009732Z\tXVBHB\taaa\tfalse\t\t0xc8d5d8e5f9c2007489b7325f72e6f3d0a2402a0318a5834ee45764d96505b53b\t\t1971-11-03T07:10:00.000000Z
-                        """,
-                "t_day where m = null"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select distinct k from t_day order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         k
                         
                         aaa
                         bbbbbb
                         c
-                        """, "select distinct k from t_day order by k"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("t_day")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         108\tJ\t-11076\tnull\t29326\t0.16564327\t0.18227834647927288\t1973-07-03T11:43:25.390Z\t1969-12-31T23:59:58.122080Z\t\tc\tfalse\tbbbbbb\t0xef8b237502911d607b2c40a4af457c366e7571b9df3a7c23e8da1ba561cec298\t\t1970-01-01T00:03:20.000000Z
                         56\tJ\t-20167\t278104\t-3552\t0.52233934\tnull\t1976-09-08T12:29:54.721Z\t1969-12-31T23:59:58.405688Z\tLEOOT\t\tfalse\tbbbbbb\t0x778a900a82a7b55e93023940ab7f1c09b5899bf0ee7c97de971dba16373fc809\t00000000 5d fd 71 5b f4\t1970-01-24T03:36:40.000000Z
@@ -851,15 +880,15 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         54\tU\t-30570\t374221\tnull\t0.7460444\t0.7437656766929067\t1980-12-01T08:11:10.449Z\t1969-12-31T23:59:57.538081Z\t\tbbbbbb\ttrue\tbbbbbb\t0x1edcdcb17865610639479e2958bfb643aa4861ba1f6724e5ae3ac4819410bc23\t00000000 ce a4 ea 3d c9\t1971-09-18T00:03:20.000000Z
                         89\tX\t-5823\t133431\tnull\t0.11185706\t0.16347836851309816\t1982-07-31T14:53:51.284Z\t1969-12-31T23:59:57.661336Z\tYEKNP\t\ttrue\taaa\t0x21ef7ce14b550b25832181a273bc6a92948314655a3b28352acb6fd98d895a10\t\t1971-10-11T03:36:40.000000Z
                         117\tY\t-14561\tnull\t-89408\t0.06261629\t0.6810629367436306\t1980-11-24T14:57:59.806Z\t1969-12-31T23:59:59.009732Z\tXVBHB\taaa\tfalse\t\t0xc8d5d8e5f9c2007489b7325f72e6f3d0a2402a0318a5834ee45764d96505b53b\t\t1971-11-03T07:10:00.000000Z
-                        """,
-                "t_day"
-        );
+                        """);
     }
 
-    private void assertDayO3() throws SqlException {
+    private void assertDayO3() throws Exception {
 
-        assertSql(
-                """
+        assertQuery("t_day_ooo where m = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         113\tD\t-5450\t304258\t-35463\tnull\tnull\t\t1970-01-01T00:00:00.098394Z\tBGNP\t\tfalse\t\t0x77e1be06c460b246870c47c1891e7fd0ac87f7392b452025c6125e52fbd1dca5\t00000000 9a 09 23 b7 fe e0 66 8e ab be\t1970-01-01T00:56:40.000000Z
                         21\tU\t9394\t116017\t28613\t0.9541228\t0.4462835932759871\t\t1969-12-31T23:59:52.698389Z\tJKUJD\tbbbbbb\ttrue\t\t0x77ff57ae7d4edbc04e01b7136579e35b6825ef23c1058aa9773e4dc6440131c1\t\t1970-01-24T04:30:00.000000Z
@@ -869,22 +898,23 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         103\tP\t-12598\t836287\t9492\t0.63984436\t0.790078109706257\t1972-05-29T16:00:17.462Z\t1969-12-31T23:59:53.580725Z\tJVKW\taaa\tfalse\t\t0x61399f22a34531046a48b5b5f2d4aec3a9030c063a55bc306c9c559bb3c93d06\t\t1970-10-05T18:43:20.000000Z
                         51\tS\t22146\t687421\t-55216\t0.3373062\t0.9526743205271402\t1975-10-16T05:00:17.425Z\t1970-01-01T00:00:00.009806Z\tHVYVJ\tc\tfalse\t\t0x945cf7e9f2855229a488c243dfc766564ebc51a2dd0ab714916913d81e6c9883\t00000000 16 4b\t1970-10-05T19:36:40.000000Z
                         66\tD\t-5300\t814924\t23886\t0.79929304\t0.6834975299862411\t\t1969-12-31T23:59:55.960730Z\tRUCW\t\ttrue\t\t0xe6e8724e0d55db8bc5c2baab99008d37d61065128bd9ac80cdc779c297ba2d9b\t00000000 7d bf aa 4e c7 70 67 76\t1970-11-21T01:50:00.000000Z
-                        """,
-                "t_day_ooo where m = null"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select distinct k from t_day_ooo order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         k
                         
                         aaa
                         bbbbbb
                         c
-                        """, "select distinct k from t_day_ooo order by k"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("t_day_ooo")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         67\tD\t4054\t129626\t-74037\t0.7729607\t0.7504751831632615\t1973-12-02T23:46:21.858Z\t\tTRJK\tc\ttrue\tc\t0xadab9269a1afcfa8a209c923df856c3267c5f44b36a8e8be5304bb5970a2cbf4\t00000000 39 ae 3a 61 47 59\t1970-01-01T00:03:20.000000Z
                         113\tD\t-5450\t304258\t-35463\tnull\tnull\t\t1970-01-01T00:00:00.098394Z\tBGNP\t\tfalse\t\t0x77e1be06c460b246870c47c1891e7fd0ac87f7392b452025c6125e52fbd1dca5\t00000000 9a 09 23 b7 fe e0 66 8e ab be\t1970-01-01T00:56:40.000000Z
@@ -916,12 +946,12 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         78\tG\t-17940\t80875\t-51648\t0.6760418\t0.11832421260528181\t1975-05-31T11:59:53.684Z\t1969-12-31T23:59:58.301229Z\t\tc\ttrue\tc\t0x865d10d8ed10c87e834c69559a9466d6c203e9ee6688fb00a82be0da997d3319\t00000000 5b e4 24 6e 3b 78\t1970-10-28T23:10:00.000000Z
                         66\tD\t-5300\t814924\t23886\t0.79929304\t0.6834975299862411\t\t1969-12-31T23:59:55.960730Z\tRUCW\t\ttrue\t\t0xe6e8724e0d55db8bc5c2baab99008d37d61065128bd9ac80cdc779c297ba2d9b\t00000000 7d bf aa 4e c7 70 67 76\t1970-11-21T01:50:00.000000Z
                         116\tW\t1209\tnull\t-54703\t0.38266093\t0.8336512245695875\t1973-04-20T21:58:44.387Z\t1969-12-31T23:59:57.953146Z\tWQLO\t\ttrue\taaa\t0x63d3edab19deae0e8de4fd1623e40b3592c091ab093e983862af3f4b563813ce\t00000000 21 13\t1970-11-21T02:43:20.000000Z
-                        """,
-                "t_day_ooo"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("o3_0")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tt
                         \t\t2014-09-10T01:00:00.000000Z
                         \t\t2014-09-10T01:00:00.000000Z
@@ -1124,8 +1154,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         \t\t2014-09-11T01:00:09.700000Z
                         \t\t2014-09-11T01:00:09.800000Z
                         \t\t2014-09-11T01:00:09.900000Z
-                        """, "o3_0"
-        );
+                        """);
     }
 
     private void assertMetadataCache(boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn, boolean ignoreMaxLag) {
@@ -1165,10 +1194,12 @@ public class EngineMigrationTest extends AbstractCairoTest {
         }
     }
 
-    private void assertMissingPartitions() throws SqlException {
+    private void assertMissingPartitions() throws Exception {
         execute("alter table t_col_top_день_missing_parts drop partition where ts < '1970-01-02'");
-        assertSql(
-                """
+        assertQuery("t_col_top_день_missing_parts where день = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         x\tm\tts\tдень
                         6\tc\t1970-01-02T04:20:00.000000Z\tnull
                         7\tb\t1970-01-02T09:53:20.000000Z\tnull
@@ -1178,11 +1209,12 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         11\tb\t1970-01-03T08:06:40.000000Z\tnull
                         12\tb\t1970-01-03T13:40:00.000000Z\tnull
                         13\tb\t1970-01-03T19:13:20.000000Z\tnull
-                        """, "t_col_top_день_missing_parts where день = null"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("t_col_top_день_missing_parts where день != null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         x\tm\tts\tдень
                         16\te\t1970-01-03T07:36:40.000000Z\t16
                         17\tf\t1970-01-03T08:10:00.000000Z\t17
@@ -1199,13 +1231,14 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         28\tf\t1970-01-03T14:16:40.000000Z\t28
                         29\te\t1970-01-03T14:50:00.000000Z\t29
                         30\td\t1970-01-03T15:23:20.000000Z\t30
-                        """, "t_col_top_день_missing_parts where день != null"
-        );
+                        """);
     }
 
-    private void assertMonth() throws SqlException {
-        assertSql(
-                """
+    private void assertMonth() throws Exception {
+        assertQuery("t_month where m = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         119\tV\t3178\t837756\t-81585\t0.7627065\t0.5219904713000894\t1978-05-08T19:14:22.368Z\t1969-12-31T23:59:59.756314Z\tNCPVU\tbbbbbb\tfalse\t\t0x92e216e13e061220bcc73ae25c8f5957ced00e989db8c99c77b67aaf034c0258\t00000000 5f a3 32\t1970-01-01T00:03:20.000000Z
                         121\tR\t-32248\t396050\t-35751\t0.78169966\t0.9959337662774681\t\t1969-12-31T23:59:58.588233Z\tDVQMI\tc\ttrue\t\t0xa5bb89788829b308c718693d412ea1d96036838211b943c2609c2d1104b89752\t00000000 31 5e e0\t1970-08-20T11:36:40.000000Z
@@ -1215,29 +1248,31 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         25\tZ\t-6353\t96442\t-49636\tnull\t0.40549501732612403\t1971-07-13T02:33:26.128Z\t1969-12-31T23:59:55.204464Z\t\t\tfalse\t\t0xb9b7551ff3f855ab6cf5a8f96caceffc3ed28138e7ede3ed9ec0ec50fa4f863b\t00000000 bb f4 7c 7a c2 a4 77 a6 8f aa\t1987-02-11T00:03:20.000000Z
                         71\tD\t694\t772203\t-32603\t0.9552407\t0.2769130518011955\t1978-12-25T19:08:51.960Z\t1969-12-31T23:59:55.754471Z\t\tc\tfalse\t\t0x310d0e7a171e7f3c97f6387cdfad01f8cd2b0e4fd8b234fba3804ab8de1f8951\t00000000 80 24 24 8c d4 48 55 31 89\t1987-09-30T11:36:40.000000Z
                         103\tL\t18557\tnull\t-19361\t0.11996418\tnull\t1970-08-08T18:27:58.955Z\t1969-12-31T23:59:58.439595Z\t\tc\ttrue\t\t0xbc7827bb6dc3ce15b85b002a9fea625b95bdcc28b3dfce1e85524b903924c9c2\t00000000 18 e2 56 c6 ce\t1988-05-18T23:10:00.000000Z
-                        """,
-                "t_month where m = null"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select distinct k from t_month order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         k
                         
                         aaa
                         bbbbbb
                         c
-                        """, "select distinct k from t_month order by k"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select count() from t_month")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         count
                         30
-                        """, "select count() from t_month"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("t_month")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         119\tV\t3178\t837756\t-81585\t0.7627065\t0.5219904713000894\t1978-05-08T19:14:22.368Z\t1969-12-31T23:59:59.756314Z\tNCPVU\tbbbbbb\tfalse\t\t0x92e216e13e061220bcc73ae25c8f5957ced00e989db8c99c77b67aaf034c0258\t00000000 5f a3 32\t1970-01-01T00:03:20.000000Z
                         121\tR\t-32248\t396050\t-35751\t0.78169966\t0.9959337662774681\t\t1969-12-31T23:59:58.588233Z\tDVQMI\tc\ttrue\t\t0xa5bb89788829b308c718693d412ea1d96036838211b943c2609c2d1104b89752\t00000000 31 5e e0\t1970-08-20T11:36:40.000000Z
@@ -1269,14 +1304,14 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         25\tZ\t-6353\t96442\t-49636\tnull\t0.40549501732612403\t1971-07-13T02:33:26.128Z\t1969-12-31T23:59:55.204464Z\t\t\tfalse\t\t0xb9b7551ff3f855ab6cf5a8f96caceffc3ed28138e7ede3ed9ec0ec50fa4f863b\t00000000 bb f4 7c 7a c2 a4 77 a6 8f aa\t1987-02-11T00:03:20.000000Z
                         71\tD\t694\t772203\t-32603\t0.9552407\t0.2769130518011955\t1978-12-25T19:08:51.960Z\t1969-12-31T23:59:55.754471Z\t\tc\tfalse\t\t0x310d0e7a171e7f3c97f6387cdfad01f8cd2b0e4fd8b234fba3804ab8de1f8951\t00000000 80 24 24 8c d4 48 55 31 89\t1987-09-30T11:36:40.000000Z
                         103\tL\t18557\tnull\t-19361\t0.11996418\tnull\t1970-08-08T18:27:58.955Z\t1969-12-31T23:59:58.439595Z\t\tc\ttrue\t\t0xbc7827bb6dc3ce15b85b002a9fea625b95bdcc28b3dfce1e85524b903924c9c2\t00000000 18 e2 56 c6 ce\t1988-05-18T23:10:00.000000Z
-                        """,
-                "t_month"
-        );
+                        """);
     }
 
-    private void assertMonthO3() throws SqlException {
-        assertSql(
-                """
+    private void assertMonthO3() throws Exception {
+        assertQuery("t_month_ooo where m = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         76\tC\t-6159\tnull\t-47298\tnull\t0.04029576739795815\t1980-04-06T13:17:02.619Z\t1969-12-31T23:59:58.847174Z\tLCDE\taaa\ttrue\t\t0x8e5ff8afa4bb22ba555224aff85d7ae59e70afeef8bf7911cd2730f82982745b\t00000000 4f f8 0b 28 e3 e1 8a\t1970-01-10T06:16:40.000000Z
                         89\tR\t16737\t700506\tnull\t0.8182188\t0.48212733968742016\t1975-11-12T07:08:04.487Z\t1969-12-31T23:59:54.459793Z\tOCZXQ\tbbbbbb\tfalse\t\t0xace30dd772e713688fbec5064d883f3d63e84502157622acae3baa02ee6dc8b4\t00000000 73 ac 38 fe\t1970-02-18T14:43:20.000000Z
@@ -1285,29 +1320,31 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         39\tX\t-51\t722893\t-59953\t0.58863914\t0.6523221269876124\t1975-04-04T19:38:40.208Z\t1969-12-31T23:59:53.255009Z\t\tbbbbbb\ttrue\t\t0x650974c3396b94babeadba139e982b7ac53bbab68a52aecd53ee535940320d7f\t00000000 ad 33\t1970-03-04T12:03:20.000000Z
                         35\tK\t-24686\t474219\t-44332\t0.25079244\t0.5236698757856622\t1970-08-23T01:09:12.705Z\t1969-12-31T23:59:52.435593Z\t\taaa\ttrue\t\t0x459cc9560b19d18f53c435d3bdade7537d85f7f1e808a3f9b9cd793021444a58\t00000000 d7 a3 d4 71 f6\t1970-03-09T03:10:00.000000Z
                         74\tZ\t25607\tnull\t-28785\t0.12615377\t0.040739265188051266\t1976-02-23T13:06:41.835Z\t1969-12-31T23:59:57.049228Z\tPNVF\taaa\ttrue\t\t0x363a46a2eb524da5414d7fa89ef213b068d1deba7f3c9494b1ba038517282210\t00000000 d1 d8 bf 0f 44\t1970-03-11T10:43:20.000000Z
-                        """,
-                "t_month_ooo where m = null"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select distinct k from t_month_ooo order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         k
                         
                         aaa
                         bbbbbb
                         c
-                        """, "select distinct k from t_month_ooo order by k"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select count() from t_month_ooo")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         count
                         30
-                        """, "select count() from t_month_ooo"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("t_month_ooo")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         52\tT\t16706\t68378\t-78657\t0.42829126\t0.7036706174814127\t1979-08-31T00:24:50.963Z\t1970-01-01T00:00:00.025861Z\t\tc\ttrue\taaa\t0xdef84e0878262440d0ba4a828304a4a587b372b44bb0b41a4b2afd479b9f1a5d\t00000000 5e 40 a1 90 1a 89 45\t1970-01-01T00:03:20.000000Z
                         75\tO\t-24469\t329502\t68133\t0.20968294\t0.16862809174782356\t1979-08-24T21:09:47.607Z\t1969-12-31T23:59:54.013525Z\tNXOT\t\tfalse\tc\t0x7b989002d6aa701281bbcd72bd1f7e608e4adc097857a6bc65e761ec15e1c225\t00000000 a5 81\t1970-01-03T07:36:40.000000Z
@@ -1339,14 +1376,14 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         41\tE\t-17464\t414570\t-44496\tnull\t0.49098295150202786\t1980-09-10T18:34:09.161Z\t1969-12-31T23:59:59.087691Z\tRXWC\tc\tfalse\tc\t0xd4eee3564ee48f798a1c255e732fba3d3b69e155c2eefaa535f7b353cfaeb3f5\t00000000 1b 70 df ce 89 df 09 cd\t1970-03-06T19:36:40.000000Z
                         35\tK\t-24686\t474219\t-44332\t0.25079244\t0.5236698757856622\t1970-08-23T01:09:12.705Z\t1969-12-31T23:59:52.435593Z\t\taaa\ttrue\t\t0x459cc9560b19d18f53c435d3bdade7537d85f7f1e808a3f9b9cd793021444a58\t00000000 d7 a3 d4 71 f6\t1970-03-09T03:10:00.000000Z
                         74\tZ\t25607\tnull\t-28785\t0.12615377\t0.040739265188051266\t1976-02-23T13:06:41.835Z\t1969-12-31T23:59:57.049228Z\tPNVF\taaa\ttrue\t\t0x363a46a2eb524da5414d7fa89ef213b068d1deba7f3c9494b1ba038517282210\t00000000 d1 d8 bf 0f 44\t1970-03-11T10:43:20.000000Z
-                        """,
-                "t_month_ooo"
-        );
+                        """);
     }
 
-    private void assertNone() throws SqlException {
-        assertSql(
-                """
+    private void assertNone() throws Exception {
+        assertQuery("t_none where m = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         35\tN\t-27680\t935010\t96731\t0.39818722\t0.6951385535362276\t1977-06-23T09:50:16.611Z\t1969-12-31T23:59:56.584555Z\tUMMZS\taaa\tfalse\t\t0x6282dda91ca20ccda519bc9c0850a07eaa0106bdfb6d9cb66a8b4eb2174a93ff\t00000000 66 94 89\t1970-01-01T00:00:00.000100Z
                         123\tW\t-9190\t4359\t53700\t0.5511841\t0.7751886508004251\t\t1969-12-31T23:59:56.997792Z\t\taaa\ttrue\t\t0xb53a88f6d83626dbba48ceb2cd9f1f07ae01938cee1007258d8b20fb9ccc2ead\t00000000 33 6e\t1970-01-01T00:03:20.000100Z
@@ -1355,29 +1392,31 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         111\tP\t-329\t311595\t-45587\t0.8941438\t0.7579806386710018\t1978-03-20T18:13:35.843Z\t1969-12-31T23:59:54.837806Z\tBCZI\taaa\tfalse\t\t0x4099211c7746712f1eafc5dd81b883a70842384e566d4677022f1bcf3743bcd7\t\t1970-01-01T00:20:00.000100Z
                         109\tC\t18436\t792419\t-4632\t0.45481485\t0.4127332979349321\t1977-05-27T20:12:14.870Z\t1969-12-31T23:59:56.408102Z\tWXCYX\tc\ttrue\t\t0xeabafb21d80fdee5ee61d9b1164bab329cae4ab2116295ca3cb2022847cd5463\t00000000 52 c6 94 c3 18 c9 7c 70 9f\t1970-01-01T00:36:40.000100Z
                         72\tR\t-30107\t357231\tnull\t0.862236\t0.2232959099494619\t1980-03-14T04:19:57.116Z\t1969-12-31T23:59:58.790561Z\tTDTF\taaa\tfalse\t\t0xdb80a4d5776e596386f3c6ec12ee8cfe67efb684ddbe470d799808408f62675f\t\t1970-01-01T01:13:20.000100Z
-                        """,
-                "t_none where m = null"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select distinct k from t_none order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         k
                         
                         aaa
                         bbbbbb
                         c
-                        """, "select distinct k from t_none order by k"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select count() from t_none")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         count
                         30
-                        """, "select count() from t_none"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("t_none")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         35\tN\t-27680\t935010\t96731\t0.39818722\t0.6951385535362276\t1977-06-23T09:50:16.611Z\t1969-12-31T23:59:56.584555Z\tUMMZS\taaa\tfalse\t\t0x6282dda91ca20ccda519bc9c0850a07eaa0106bdfb6d9cb66a8b4eb2174a93ff\t00000000 66 94 89\t1970-01-01T00:00:00.000100Z
                         123\tW\t-9190\t4359\t53700\t0.5511841\t0.7751886508004251\t\t1969-12-31T23:59:56.997792Z\t\taaa\ttrue\t\t0xb53a88f6d83626dbba48ceb2cd9f1f07ae01938cee1007258d8b20fb9ccc2ead\t00000000 33 6e\t1970-01-01T00:03:20.000100Z
@@ -1409,14 +1448,14 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         124\tB\t-17121\t-5234\t-51881\t0.4302147\tnull\t1978-02-23T09:04:24.042Z\t1969-12-31T23:59:58.232565Z\t\t\ttrue\tc\t0x9dbf5fdd03586800c0c0031b11dca914a7f9a315f2636c92b3ab2c18e5048644\t\t1970-01-01T01:30:00.000100Z
                         74\tP\t-6108\t692153\t-13210\t0.9183027\t0.4972049796950656\t1975-12-19T18:26:40.375Z\t1970-01-01T00:00:00.503530Z\t\t\ttrue\tbbbbbb\t0x70a45fae3a920cb74e272e9dfde7bb12618178f7feba5021382a8c47a28fefa4\t\t1970-01-01T01:33:20.000100Z
                         41\tS\t14835\t790240\t20957\tnull\t0.30583440932161066\t1977-04-04T23:35:16.699Z\t1969-12-31T23:59:55.741431Z\tWKGZ\tbbbbbb\tfalse\tc\t0x266d0651dbeb8bcf8c484ee474dc1f93b352346df86ce19f9846b46e3dbd5e87\t00000000 54 67 7d 39 dc 8c 6c 6b ac\t1970-01-01T01:36:40.000100Z
-                        """,
-                "t_none"
-        );
+                        """);
     }
 
-    private void assertNoneNts() throws SqlException {
-        assertSql(
-                """
+    private void assertNoneNts() throws Exception {
+        assertQuery("t_none_nts where m = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to
                         120\tB\t10795\t469264\t11722\t0.625966\tnull\t\t1969-12-31T23:59:55.466926Z\tQSRL\taaa\tfalse\t\t0x2f171b3f06f6387d2fd2b4a60ba2ba3b45430a38ef1cd9dc5bee3da4840085a6\t00000000 92 fe 69 38 e1 77 9a e7 0c 89
                         71\tB\t18904\t857617\t31118\t0.18336213\t0.6455967424250787\t1976-10-15T11:00:30.016Z\t1970-01-01T00:00:00.254417Z\tKRGII\taaa\ttrue\t\t0x3eef3f158e0843624d0fa2564c3517679a2dfd07dad695f78d5c4bed8432de98\t00000000 b0 ec 0b 92 58 7d 24 bc 2e 60
@@ -1424,28 +1463,30 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         87\tL\t-2003\t842028\t12726\t0.7280037\tnull\t1982-02-21T09:56:08.687Z\t1969-12-31T23:59:52.977649Z\tFDYP\taaa\tfalse\t\t0x6fc129c805c2f5075fd086d7ede63e98492997ce455a2c2962e616e3a640fbca\t00000000 5b d6 cf 09 69 01
                         115\tN\t312\t335480\t4602\t0.14756352\t0.23673087740006105\t\t1969-12-31T23:59:57.132665Z\tRTPIQ\taaa\tfalse\t\t0xb139c160cb54bc065e565229e0e964b83e2dbd2d9d8d4081a00e467f6e96e622\t00000000 af 38 71 1f e1 e4 91 7d e9
                         27\tJ\t-15254\t978974\t-36356\t0.7910659\t0.7128505998532723\t1976-03-14T08:19:05.571Z\t1969-12-31T23:59:56.726487Z\tPZNYV\t\ttrue\t\t0x39af691594d0654567af4ec050eea188b8074532ac9f3c87c68ce6f3720e2b62\t00000000 20 13
-                        """,
-                "t_none_nts where m = null"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select count() from t_none_nts")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         count
                         30
-                        """, "select count() from t_none_nts"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select distinct k from t_none_nts order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         k
                         
                         aaa
                         bbbbbb
                         c
-                        """, "select distinct k from t_none_nts order by k"
-        );
-        assertSql(
-                """
+                        """);
+        assertQuery("t_none_nts")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to
                         76\tT\t-11455\t269293\t-12569\tnull\t0.9344604857394011\t1975-06-01T05:39:43.711Z\t1969-12-31T23:59:54.300840Z\tXGZS\t\tfalse\tbbbbbb\t0xa0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88c8b1863d4316f9c7\t
                         84\tG\t21781\t18201\t-29318\t0.87567717\t0.1985581797355932\t1972-06-01T21:02:08.250Z\t1969-12-31T23:59:59.060058Z\tWLPDX\tbbbbbb\tfalse\taaa\t0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\t00000000 30 78
@@ -1477,14 +1518,14 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         87\tL\t-2003\t842028\t12726\t0.7280037\tnull\t1982-02-21T09:56:08.687Z\t1969-12-31T23:59:52.977649Z\tFDYP\taaa\tfalse\t\t0x6fc129c805c2f5075fd086d7ede63e98492997ce455a2c2962e616e3a640fbca\t00000000 5b d6 cf 09 69 01
                         115\tN\t312\t335480\t4602\t0.14756352\t0.23673087740006105\t\t1969-12-31T23:59:57.132665Z\tRTPIQ\taaa\tfalse\t\t0xb139c160cb54bc065e565229e0e964b83e2dbd2d9d8d4081a00e467f6e96e622\t00000000 af 38 71 1f e1 e4 91 7d e9
                         27\tJ\t-15254\t978974\t-36356\t0.7910659\t0.7128505998532723\t1976-03-14T08:19:05.571Z\t1969-12-31T23:59:56.726487Z\tPZNYV\t\ttrue\t\t0x39af691594d0654567af4ec050eea188b8074532ac9f3c87c68ce6f3720e2b62\t00000000 20 13
-                        """,
-                "t_none_nts"
-        );
+                        """);
     }
 
-    private void assertWalTxn() throws SqlException {
-        assertSql(
-                """
+    private void assertWalTxn() throws Exception {
+        assertQuery("t_col_top_ooo_day_wal where день = 'a'")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         x\tm\tts\tдень\tstr
                         1\tb\t1970-01-01T01:30:00.000000Z\ta\tUVFMQXL
                         4\t\t1970-01-01T04:30:00.000000Z\ta\tTOKMJCP
@@ -1500,42 +1541,45 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         4\t\t1970-01-05T05:30:00.000000Z\ta\tNEL
                         7\ta\t1970-01-05T08:30:00.000000Z\ta\tFWMLBWUYKD
                         8\tb\t1970-01-05T09:30:00.000000Z\ta\tYQZ
-                        """, "t_col_top_ooo_day_wal where день = 'a'"
-        );
+                        """);
     }
 
-    private void assertYear() throws SqlException {
-        assertSql(
-                """
+    private void assertYear() throws Exception {
+        assertQuery("t_year where m = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         92\tF\t28028\tnull\tnull\t0.25543988\t0.18371611611756045\t1981-02-16T02:44:16.585Z\t1969-12-31T23:59:59.627107Z\t\tc\ttrue\t\t0x9de662c110ea4073e8728187e8352d5fc9d79f015b315fe985b29ab573d60b7d\t\t1982-09-04T15:10:00.000000Z
                         27\tZ\t16702\t241981\t-97518\tnull\t0.11513682045365181\t1978-06-15T03:10:19.987Z\t1969-12-31T23:59:56.486114Z\tPWGBN\tc\tfalse\t\t0x57f7ca4006c25f277854b37a145d2d6eb1a2709c5a91109c72459255ef20260d\t\t2001-09-09T01:50:00.000000Z
                         115\tV\t1407\t828287\t-19261\t0.5616952\t0.6751819291749697\t1976-02-13T23:55:05.568Z\t1970-01-01T00:00:00.341973Z\tPOVR\taaa\tfalse\t\t0xa52d6aeb2bb452b5d536e81d23cc0ccccb3ab47e72e6c8d19f42388a80bda41e\t\t2033-05-18T03:36:40.000000Z
                         51\tS\t51\tnull\t3911\t0.54980594\t0.21143168923450806\t1971-07-24T11:46:39.611Z\t1969-12-31T23:59:59.584289Z\tXORR\tc\tfalse\t\t0x793dc8ec3035a4d52f345b2d97c3d52c6cc96e4115ea53bb73f55836b900abc8\t00000000 ac d5 a5 c6 3a 4e 29 ca c3 65\t2090-06-01T11:36:40.000000Z
                         83\tL\t-32289\t127321\t40837\t0.1335336\t0.515824820198022\t\t1969-12-31T23:59:53.582959Z\tKFMO\taaa\tfalse\t\t0x8131875cd498c4b888762e985137f4e843b8167edcd59cf345c105202f875495\t\t2109-06-06T22:16:40.000000Z
-                        """,
-                "t_year where m = null"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select distinct k from t_year order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         k
                         
                         aaa
                         bbbbbb
                         c
-                        """, "select distinct k from t_year order by k"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select count() from t_year")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         count
                         30
-                        """, "select count() from t_year"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("t_year")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         112\tY\t18252\t527691\t-61919\t0.60099024\t0.11234979325337158\t1979-08-14T20:45:18.393Z\t1969-12-31T23:59:59.440365Z\tLVKR\tbbbbbb\tfalse\taaa\t0x8d70ff24aa6bc1ef633fa3240281dbf15c141df8f68b896d654ad128c2cc260e\t\t1970-01-01T00:03:20.000000Z
                         89\tM\t10579\t312660\t-34472\t0.43812627\t0.9857252839045136\t1976-10-12T22:39:24.028Z\t1969-12-31T23:59:55.269914Z\tXWLUK\taaa\tfalse\tc\t0xead0f34ae4973cadeecfae4b49c48a80ebc4fdd2342465cac8cc5c88521b09ee\t\t1976-05-03T19:36:40.000000Z
@@ -1567,14 +1611,14 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         20\tM\t-7043\t251501\t-85499\t0.94033486\t0.9135840078861264\t1977-05-12T19:20:06.113Z\t1969-12-31T23:59:54.045277Z\tHOXL\tbbbbbb\tfalse\tbbbbbb\t0xc3b0de059fff72dbd7b99af08ac0d1cddb2990725a3338e377155edb531cb644\t\t2141-02-13T00:03:20.000000Z
                         26\tG\t-24830\t-56840\t-32956\t0.8282491\t0.017280895313585898\t1982-07-16T03:52:53.454Z\t1969-12-31T23:59:54.115165Z\tJEJH\taaa\tfalse\tbbbbbb\t0x16f70de9c6af11071d35d9faec5d18fd1cf3bbbc825b72a92ecb8ff0286bf649\t00000000 c2 62 f8 53 7d 05 65\t2147-06-16T19:36:40.000000Z
                         127\tY\t19592\t224361\t37963\t0.6930264\t0.006817672510656014\t1975-11-29T09:47:45.706Z\t1969-12-31T23:59:56.186242Z\t\t\ttrue\taaa\t0x88926dd483caaf4031096402997f21c833b142e887fa119e380dc9b54493ff70\t00000000 23 c3 9d 75 26 f2 0d b5 7a 3f\t2153-10-17T15:10:00.000000Z
-                        """,
-                "t_year"
-        );
+                        """);
     }
 
-    private void assertYearO3() throws SqlException {
-        assertSql(
-                """
+    private void assertYearO3() throws Exception {
+        assertQuery("t_year_ooo where m = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         30\tY\t28953\t940414\tnull\t0.14894158\t0.7201409952630464\t1973-04-19T19:30:20.534Z\t1969-12-31T23:59:52.777697Z\tCINNT\tc\ttrue\t\t0xa95f8be5525f99c26e4a67960aea1b73283d2a67ee18dcd8598b67e75160219d\t00000000 34 9c\t1972-07-14T22:16:40.000000Z
                         20\tG\t-32702\t466493\t10882\t0.55115765\t0.9010953692323533\t1972-07-20T02:41:59.050Z\t1969-12-31T23:59:52.899932Z\tIMDCR\tbbbbbb\ttrue\t\t0xcf43b4a50c2f74dc88b0b3ebba859e225933bd4072be924aadb205299e434030\t\t1972-07-14T22:16:40.000000Z
@@ -1582,29 +1626,31 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         96\tR\t16953\t215865\t61524\tnull\tnull\t1972-10-04T00:24:18.418Z\t1969-12-31T23:59:56.858900Z\tRJYVL\taaa\tfalse\t\t0x11ed4bbe74444f5e5292bb1ea309179799270b730708699d9b2ab296918fa38b\t\t1975-09-15T08:03:20.000000Z
                         55\tJ\t-27369\t927084\t95531\t0.18054938\t0.897470515136098\t1975-10-12T05:31:12.519Z\t1969-12-31T23:59:55.291662Z\tSNCQ\tbbbbbb\ttrue\t\t0xd8dd0c4574b8b817b4a20e63c638e3a661ce46dbb8356b314e8c222a0238c229\t00000000 cd dd ee 68 e0\t1976-12-21T07:10:00.000000Z
                         30\tH\t-39\tnull\t-59605\t0.26782525\t0.9748023951436231\t1970-07-07T01:26:05.143Z\t1969-12-31T23:59:56.029262Z\tPMYE\t\ttrue\t\t0x3b483074de6cc58a4dbde91603ddb6977f61d7b6275ba8735566b5b68a4470c8\t00000000 88 ed d7\t1978-11-15T17:50:00.000000Z
-                        """,
-                "t_year_ooo where m = null"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select distinct k from t_year_ooo order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         k
                         
                         aaa
                         bbbbbb
                         c
-                        """, "select distinct k from t_year_ooo order by k"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("select count() from t_year_ooo")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         count
                         30
-                        """, "select count() from t_year_ooo"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("t_year_ooo")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts
                         30\tE\t14468\t886907\tnull\t0.88576806\t0.31572235047445973\t1981-01-11T21:58:27.911Z\t1970-01-01T00:00:00.415843Z\tVBRV\t\ttrue\tbbbbbb\t0x96cc4fbcf71c771f8c667acbcfd84633b80d15f0235584bbbc044a6042cc92e7\t00000000 a6 c4 93 ba e3 49 e9 00 72 9a\t1970-01-01T00:03:20.000000Z
                         113\tU\t-2695\t631042\t86722\t0.8057087\t0.22402711640228767\t1980-05-14T09:54:57.177Z\t1969-12-31T23:59:52.124262Z\tFRWQ\tc\tfalse\taaa\t0x5a7919272adc71e952998dfe330e0c8444b617902e3a8304aaeb546ee505d2fc\t00000000 7a 9e 98 62 91 37 59 e6 c6\t1970-01-01T00:03:20.000000Z
@@ -1636,9 +1682,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         124\tT\t-11263\t816098\t3226\t0.57710207\t0.6861586888119515\t1970-09-07T07:15:07.438Z\t1969-12-31T23:59:52.423847Z\tFHXM\tc\tfalse\tc\t0xa53f9fb342e92d02af45bc4664a03cc08ec2870883768abf6d607389e20eca5c\t00000000 0b b1 ec\t1978-03-29T06:16:40.000000Z
                         87\tZ\t13370\t597583\t-75904\t0.64399195\tnull\t1974-05-11T12:57:45.268Z\t1969-12-31T23:59:54.233609Z\tYUKU\tbbbbbb\ttrue\taaa\t0x878d272bf8aaf1418efa5ede5895af6aab253098b9889b19d6950c05179f68ba\t00000000 12 57 47 87 4e a8 48 36\t1978-11-15T17:50:00.000000Z
                         30\tH\t-39\tnull\t-59605\t0.26782525\t0.9748023951436231\t1970-07-07T01:26:05.143Z\t1969-12-31T23:59:56.029262Z\tPMYE\t\ttrue\t\t0x3b483074de6cc58a4dbde91603ddb6977f61d7b6275ba8735566b5b68a4470c8\t00000000 88 ed d7\t1978-11-15T17:50:00.000000Z
-                        """,
-                "t_year_ooo"
-        );
+                        """);
     }
 
     @NotNull
@@ -1676,7 +1720,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
         });
     }
 
-    private void generateMigrationTables() throws SqlException, NumericException {
+    private void generateMigrationTables() throws Exception {
         execute(
                 "create table t_none_nts as (" +
                         "select" +

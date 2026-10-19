@@ -35,15 +35,15 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb', null) s from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, s from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select s, avg(x) x, avg(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             s\tx\ty
                             \t-42.416851774028935\t-42.416851774028935
                             aaa\t69.63866351306847\t69.63866351306847
                             bbb\t-81.60838215412348\t-81.60838215412348
-                            """,
-                    "select s, avg(x) x, avg(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -53,15 +53,15 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb', null) s from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, s from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select s, max(x) x, max(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             s\tx\ty
                             \t32765\t32765
                             aaa\t32767\t32767
                             bbb\t32765\t32765
-                            """,
-                    "select s, max(x) x, max(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -71,15 +71,15 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb', null) s from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, s from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select s, min(x) x, min(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             s\tx\ty
                             \t-32768\t-32768
                             aaa\t-32768\t-32768
                             bbb\t-32767\t-32767
-                            """,
-                    "select s, min(x) x, min(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -89,15 +89,15 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb', null) s from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, s from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select s, sum(x) x, sum(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             s\tx\ty
                             \t-1413075\t-1413075
                             aaa\t2326001\t2326001
                             bbb\t-2716335\t-2716335
-                            """,
-                    "select s, sum(x) x, sum(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -107,8 +107,10 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, ts from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select hour(ts), avg(x) x, avg(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             hour\tx\ty
                             0\t358.3847222222222\t358.3847222222222
                             1\t157.76157407407408\t157.76157407407408
@@ -134,9 +136,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
                             21\t677.4603535353535\t677.4603535353535
                             22\t15.899747474747475\t15.899747474747475
                             23\t34.224242424242426\t34.224242424242426
-                            """,
-                    "select hour(ts), avg(x) x, avg(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -146,8 +146,10 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, ts from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select hour(ts), max(x) x, max(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             hour\tx\ty
                             0\t32675\t32675
                             1\t32767\t32767
@@ -173,9 +175,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
                             21\t32751\t32751
                             22\t32742\t32742
                             23\t32716\t32716
-                            """,
-                    "select hour(ts), max(x) x, max(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -185,8 +185,10 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, ts from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select hour(ts), min(x) x, min(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             hour\tx\ty
                             0\t-32752\t-32752
                             1\t-32752\t-32752
@@ -212,9 +214,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
                             21\t-32735\t-32735
                             22\t-32750\t-32750
                             23\t-32767\t-32767
-                            """,
-                    "select hour(ts), min(x) x, min(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -224,8 +224,10 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, ts from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select hour(ts), sum(x) x, sum(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             hour\tx\ty
                             0\t1548222\t1548222
                             1\t681530\t681530
@@ -251,9 +253,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
                             21\t2682743\t2682743
                             22\t62963\t62963
                             23\t135528\t135528
-                            """,
-                    "select hour(ts), sum(x) x, sum(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -263,8 +263,10 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, timestamp_sequence_ns(0, 10000000000) ts from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, ts from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select hour(ts), avg(x) x, avg(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             hour\tx\ty
                             0\t358.3847222222222\t358.3847222222222
                             1\t157.76157407407408\t157.76157407407408
@@ -290,9 +292,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
                             21\t677.4603535353535\t677.4603535353535
                             22\t15.899747474747475\t15.899747474747475
                             23\t34.224242424242426\t34.224242424242426
-                            """,
-                    "select hour(ts), avg(x) x, avg(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -302,8 +302,10 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, timestamp_sequence_ns(0, 10000000000) ts from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, ts from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select hour(ts), max(x) x, max(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             hour\tx\ty
                             0\t32675\t32675
                             1\t32767\t32767
@@ -329,9 +331,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
                             21\t32751\t32751
                             22\t32742\t32742
                             23\t32716\t32716
-                            """,
-                    "select hour(ts), max(x) x, max(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -341,8 +341,10 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, timestamp_sequence_ns(0, 10000000000) ts from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, ts from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select hour(ts), min(x) x, min(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             hour\tx\ty
                             0\t-32752\t-32752
                             1\t-32752\t-32752
@@ -368,9 +370,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
                             21\t-32735\t-32735
                             22\t-32750\t-32750
                             23\t-32767\t-32767
-                            """,
-                    "select hour(ts), min(x) x, min(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -380,8 +380,10 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x, timestamp_sequence_ns(0, 10000000000) ts from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, ts from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select hour(ts), sum(x) x, sum(y) y from abc order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             hour\tx\ty
                             0\t1548222\t1548222
                             1\t681530\t681530
@@ -407,9 +409,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
                             21\t2682743\t2682743
                             22\t62963\t62963
                             23\t135528\t135528
-                            """,
-                    "select hour(ts), sum(x) x, sum(y) y from abc order by 1"
-            );
+                            """);
         });
     }
 
@@ -419,13 +419,14 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table abc (x short)");
 
-            assertSql(
-                    """
+            assertQuery("select max(x) x from abc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             x
                             null
-                            """,
-                    "select max(x) x from abc"
-            );
+                            """);
         });
     }
 
@@ -435,13 +436,14 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x from long_sequence(100000));");
             execute("create table abc as (select x, x::short y from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select max(x) x, max(y) y from abc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             x\ty
                             32767\t32767
-                            """,
-                    "select max(x) x, max(y) y from abc"
-            );
+                            """);
         });
     }
 
@@ -451,13 +453,14 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table abc (x short)");
 
-            assertSql(
-                    """
+            assertQuery("select min(x) x from abc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             x
                             null
-                            """,
-                    "select min(x) x from abc"
-            );
+                            """);
         });
     }
 
@@ -467,13 +470,14 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x from long_sequence(100000));");
             execute("create table abc as (select x, x::short y from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select min(x) x, min(y) y from abc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             x\ty
                             -32768\t-32768
-                            """,
-                    "select min(x) x, min(y) y from abc"
-            );
+                            """);
         });
     }
 
@@ -483,17 +487,18 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x from long_sequence(100000));");
             execute("create table abc as (select x, x::short y from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select avg(x) avg_x, avg(y) avg_y, " +
+                    "sum(x) sum_x, sum(y) sum_y, " +
+                    "min(x) min_x, min(y) min_y, " +
+                    "max(x) max_x, max(y) max_y " +
+                    "from abc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             avg_x\tavg_y\tsum_x\tsum_y\tmin_x\tmin_y\tmax_x\tmax_y
                             25.14927\t25.14927\t2514927\t2514927\t-32768\t-32768\t32767\t32767
-                            """,
-                    "select avg(x) avg_x, avg(y) avg_y, " +
-                            "sum(x) sum_x, sum(y) sum_y, " +
-                            "min(x) min_x, min(y) min_y, " +
-                            "max(x) max_x, max(y) max_y " +
-                            "from abc"
-            );
+                            """);
         });
     }
 
@@ -502,17 +507,18 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (x short, y long)");
 
-            assertSql(
-                    """
+            assertQuery("select avg(x) avg_x, avg(y) avg_y, " +
+                    "sum(x) sum_x, sum(y) sum_y, " +
+                    "min(x) min_x, min(y) min_y, " +
+                    "max(x) max_x, max(y) max_y " +
+                    "from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             avg_x\tavg_y\tsum_x\tsum_y\tmin_x\tmin_y\tmax_x\tmax_y
                             null\tnull\tnull\tnull\tnull\tnull\tnull\tnull
-                            """,
-                    "select avg(x) avg_x, avg(y) avg_y, " +
-                            "sum(x) sum_x, sum(y) sum_y, " +
-                            "min(x) min_x, min(y) min_y, " +
-                            "max(x) max_x, max(y) max_y " +
-                            "from x"
-            );
+                            """);
         });
     }
 
@@ -522,13 +528,14 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table abc (x short)");
 
-            assertSql(
-                    """
+            assertQuery("select sum(x) x from abc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             x
                             null
-                            """,
-                    "select sum(x) x from abc"
-            );
+                            """);
         });
     }
 
@@ -538,13 +545,14 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table temp as (select rnd_short()::long x from long_sequence(100000));");
             execute("create table abc as (select x, x::short y from temp)");
 
-            assertSql(
-                    """
+            assertQuery("select sum(x) x, sum(y) y from abc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             x\ty
                             2514927\t2514927
-                            """,
-                    "select sum(x) x, sum(y) y from abc"
-            );
+                            """);
         });
     }
 }

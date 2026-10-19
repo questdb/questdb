@@ -27,7 +27,6 @@ package io.questdb.test.cairo.o3;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -114,15 +113,13 @@ public class O3MaxLagRetentionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertO3MaxLagValues() throws SqlException {
-        TestUtils.assertSql(
-                engine,
-                sqlExecutionContext,
-                "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
-                sink,
-                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "1\tmy_table\ttimestamp\tDAY\t250000\t240000000\n"
-        );
+    private void assertO3MaxLagValues() throws Exception {
+        assertQuery("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                        "1\tmy_table\ttimestamp\tDAY\t250000\t240000000\n");
     }
 
     private void createTable() throws SqlException {
