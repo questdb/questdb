@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -958,6 +959,28 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         // A reader pinned before a split still reads the parent's old tail. An O3 row at the
         // parent's max timestamp goes into a new split together with the parent's rows at that timestamp.
         assertSplitParentTailSurvivesO3AppendAtMaxTimestamp(true);
+    }
+
+    @Test
+    public void testSplitParentAppendAtMaxTimestampAfterNeighborRewriteAppendsInPlace() throws Exception {
+        // The reader opened after the split, so it never saw the parent's moved rows. A rewrite of the
+        // neighboring split bumps that split's name txn, which must not make the reader count as pinning
+        // the parent's tail: the row at the parent's max timestamp appends in place.
+        assertSplitParentAppendAtMaxTimestampAfterNeighborRewrite(false, false);
+    }
+
+    @Test
+    public void testSplitParentAppendAtMaxTimestampAfterNeighborRewriteCopiesWhenReaderPinned() throws Exception {
+        // The reader opened before the split and still reads the parent's old tail. All parent rows share
+        // the max timestamp, so the writer cannot resplit and copies the parent.
+        assertSplitParentAppendAtMaxTimestampAfterNeighborRewrite(true, false);
+    }
+
+    @Test
+    public void testSplitParentAppendAtMaxTimestampAfterNeighborRewriteCopiesWhenReaderPinnedAndWriterReopened() throws Exception {
+        // A reopened writer does not remember when the parent last split and falls back to the
+        // neighbor's name txn, which still has to protect the pinned reader.
+        assertSplitParentAppendAtMaxTimestampAfterNeighborRewrite(true, true);
     }
 
     @Test
@@ -1995,6 +2018,92 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         } catch (NumericException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private void assertSplitParentAppendAtMaxTimestampAfterNeighborRewrite(boolean isReaderBeforeSplit, boolean isWriterReopened) throws Exception {
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            // 1000 rows at the parent's max timestamp and a tail to split off
+            execute("INSERT INTO x SELECT x::INT, '2020-02-03T10' FROM long_sequence(1000)");
+            execute("INSERT INTO x SELECT (1000 + x)::INT, '2020-02-03T12' FROM long_sequence(10)");
+
+            RecordCursorFactory cursorFactory = null;
+            RecordCursor cursor = null;
+            try {
+                if (isReaderBeforeSplit) {
+                    cursorFactory = select("SELECT count() FROM x");
+                    cursor = cursorFactory.getCursor(sqlExecutionContext);
+                }
+
+                // split off the tail: the parent keeps the 1000 rows at 10:00
+                execute("INSERT INTO x VALUES (1_000_000, '2020-02-03T11')");
+                final long parentNameTxn;
+                final long splitNameTxn;
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(1000, reader.getPartitionRowCountFromMetadata(0));
+                    parentNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                    splitNameTxn = reader.getTxFile().getPartitionNameTxn(1);
+                }
+
+                if (!isReaderBeforeSplit) {
+                    cursorFactory = select("SELECT count() FROM x");
+                    cursor = cursorFactory.getCursor(sqlExecutionContext);
+                }
+                final int expectedCount = isReaderBeforeSplit ? 1010 : 1011;
+
+                // rewrite the neighboring split: the O3 row lands inside it and the split is too small to resplit
+                execute("INSERT INTO x VALUES (1_000_001, '2020-02-03T11:30')");
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                    Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(1) > splitNameTxn);
+                }
+
+                if (isWriterReopened) {
+                    engine.releaseInactive();
+                }
+
+                final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+                // one row at the parent's max timestamp
+                execute("INSERT INTO x VALUES (1_000_002, '2020-02-03T10')");
+                final long written = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore;
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(1001, reader.getPartitionRowCountFromMetadata(0));
+                    if (isReaderBeforeSplit) {
+                        Assert.assertEquals(1001, written);
+                        Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(0) > parentNameTxn);
+                    } else {
+                        Assert.assertEquals(1, written);
+                        Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                    }
+                }
+
+                cursor.toTop();
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals("count\n" + expectedCount + "\n", sink);
+            } finally {
+                Misc.free(cursor);
+                Misc.free(cursorFactory);
+            }
+
+            final StringBuilder expectedAt10 = new StringBuilder("i\n");
+            for (int i = 1; i <= 1000; i++) {
+                expectedAt10.append(i).append('\n');
+            }
+            expectedAt10.append("1000002\n");
+            assertQuery("SELECT i FROM x WHERE ts = '2020-02-03T10'")
+                    .noLeakCheck()
+                    .returns(expectedAt10.toString());
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1013\n");
+        });
     }
 
     private void assertPinnedSplitParentCopiedOnLargeO3Append(boolean isSpanningIntoSplit) throws Exception {
