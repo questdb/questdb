@@ -63,10 +63,10 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * holds it serves disk rows with {@code ts < seamTs} and the pinned in-mem slot
  * for {@code ts >= seamTs}, skipping the hot tail partition(s) of the LV table.
  * The fence ({@code slot.lvSeqTxn == diskReader.seqTxn}) plus a
- * tier-addressable-projection and unfiltered-scan requirement keep this
- * safe; anything else falls back to disk-only. See {@link LiveViewRecordCursor} for the routing details.
- * {@link #toPlan} surfaces the static, query-shape part of this decision as the
- * {@code inMemory} EXPLAIN attribute (see {@link #isInMemRoutable}).
+ * tier-addressable-projection and unfiltered-scan requirement keep this safe;
+ * anything else falls back to disk-only. See {@link LiveViewRecordCursor} for the
+ * routing details. {@link #toPlan} surfaces the static, query-shape part of this
+ * decision as the {@code inMemory} EXPLAIN attribute (see {@link #isInMemRoutable}).
  * <p>
  * The read gets the tier and the engine's page-frame machinery, not one or the
  * other. {@link #supportsPageFrameCursor} follows the base, so a filtered live-view
