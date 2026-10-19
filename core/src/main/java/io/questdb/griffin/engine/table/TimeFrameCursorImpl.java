@@ -330,6 +330,12 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public void recordAtRowIndex(Record record, long rowIndex) {
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryRecord.setRowIndex(rowIndex);
+    }
+
+    @Override
     public boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
         final int frameIndex = timeFrame.getFrameIndex();
         final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
@@ -344,12 +350,6 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         frameMemoryRecord.init(frameMemory);
         frameMemoryRecord.setRowIndex(rowIndex);
         return true;
-    }
-
-    @Override
-    public void recordAtRowIndex(Record record, long rowIndex) {
-        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryRecord.setRowIndex(rowIndex);
     }
 
     @Override

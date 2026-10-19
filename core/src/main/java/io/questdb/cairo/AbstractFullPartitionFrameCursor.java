@@ -142,13 +142,13 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         }
 
         @Override
-        public long getPartitionFrameState() {
-            return partitionFrameState;
+        public byte getPartitionFormat() {
+            return format;
         }
 
         @Override
-        public byte getPartitionFormat() {
-            return format;
+        public long getPartitionFrameState() {
+            return partitionFrameState;
         }
 
         @Override

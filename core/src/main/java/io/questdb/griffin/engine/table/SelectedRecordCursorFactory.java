@@ -850,18 +850,18 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public void recordAtRowIndex(Record record, long rowIndex) {
+            record = ((SelectedRecord) record).getBaseRecord();
+            baseCursor.recordAtRowIndex(record, rowIndex);
+        }
+
+        @Override
         public boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
             return baseCursor.recordAtSourceRow(
                     ((SelectedRecord) record).getBaseRecord(),
                     sourceRowRef,
                     timestamp
             );
-        }
-
-        @Override
-        public void recordAtRowIndex(Record record, long rowIndex) {
-            record = ((SelectedRecord) record).getBaseRecord();
-            baseCursor.recordAtRowIndex(record, rowIndex);
         }
 
         @Override

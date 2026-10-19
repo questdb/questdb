@@ -45,7 +45,6 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     private long bitmapMem;
     private long entriesMem;
     private long maxMem;
-    private long seqTxnEntriesMem;
     // Record structure
     // 8 bytes - active reader count
     // 8 bytes - max txn
@@ -54,6 +53,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     // N * 8 bytes - slots for every TableReader table txn
     // N * 8 bytes - slots for every TableReader seqTxn
     private long mem;
+    private long seqTxnEntriesMem;
 
     private TableToken tableToken;
 

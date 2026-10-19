@@ -151,13 +151,6 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
     void recordAt(Record record, int frameIndex, long rowIndex);
 
     /**
-     * Positions a data record from the current index cursor's timestamp and SourceRowRef.
-     */
-    default boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
      * This sets the record to the given row index, without changing frame ID of the record. Given rowIndex
      * *must* be in the range of the current frame of the record.
      *
@@ -165,6 +158,13 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      * @param rowIndex row id of the desired record
      */
     void recordAtRowIndex(Record record, long rowIndex);
+
+    /**
+     * Positions a data record from the current index cursor's timestamp and SourceRowRef.
+     */
+    default boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Binary search for the last frame whose partition ceiling is at or before

@@ -197,13 +197,6 @@ public interface PageFrame {
     }
 
     /**
-     * Opaque Rust logical-frame state; zero when this frame is base-only.
-     */
-    default long getPartitionFrameState() {
-        return 0;
-    }
-
-    /**
      * Returns row group index corresponding to the Parquet page frame.
      * <p>
      * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
@@ -219,6 +212,13 @@ public interface PageFrame {
      * Returns low row index within the row group, inclusive.
      */
     int getParquetRowGroupLo();
+
+    /**
+     * Opaque Rust logical-frame state; zero when this frame is base-only.
+     */
+    default long getPartitionFrameState() {
+        return 0;
+    }
 
     /**
      * Return high row index within the frame's partition, exclusive.

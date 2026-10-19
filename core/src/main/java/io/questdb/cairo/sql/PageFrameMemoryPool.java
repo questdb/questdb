@@ -660,11 +660,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
-    public void releaseFrameMemory() {
-        unbind(FRAME_MEMORY_MASK);
-        frameMemory.clear();
-    }
-
     /**
      * Frees all decoded Parquet buffers and clears bookkeeping.
      * <p>
@@ -708,6 +703,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // covered NATIVE varchar/string stores a raw pointer into them for the
         // merge phase. They are freed only at a query boundary by
         // releaseCoveringBuffers() (of / clear / close).
+    }
+
+    public void releaseFrameMemory() {
+        unbind(FRAME_MEMORY_MASK);
+        frameMemory.clear();
     }
 
     /**
@@ -831,11 +831,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             recordAtRows.set(i, Rows.toLocalRowID(rowId));
         }
         recordAtSlices.put(runFrame, Numbers.encodeLowHighInts(runStart, (int) kept));
-    }
-
-    boolean isFrameStable(int frameIndex) {
-        return addressCache.getFrameFormat(frameIndex) == PartitionFormat.NATIVE
-                && !usesCustomDecode(frameIndex);
     }
 
     private void accountDecode(DecodedFrameBuffers parquetBuffers) {
@@ -1411,16 +1406,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         coveredCachedBytes = 0;
     }
 
-    private boolean usesCustomDecode(int frameIndex) {
-        // The address cache sets hasDecodedFrames for every frame that needs materialization.
-        // Native-only queries skip the state read, which the record path runs once per row.
-        if (!addressCache.hasDecodedFrames()) {
-            return false;
-        }
-        final long state = addressCache.getPartitionFrameState(frameIndex);
-        return state != 0 && PartitionFrameState.requiresMaterialization(state, addressCache.getParquetRowGroup(frameIndex));
-    }
-
     private void resolveCustomFrameColumn(int i, ColumnMapping columnMapping) {
         // Custom (cold-delta) frames use the original writer index as a stable column ID and decode to the
         // current column type: a delta-active partition freezes its physical type and rejects
@@ -1608,6 +1593,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             bound.usageFlags &= (byte) ~usageBit;
             setBound(usageBit, null);
         }
+    }
+
+    private boolean usesCustomDecode(int frameIndex) {
+        // The address cache sets hasDecodedFrames for every frame that needs materialization.
+        // Native-only queries skip the state read, which the record path runs once per row.
+        if (!addressCache.hasDecodedFrames()) {
+            return false;
+        }
+        final long state = addressCache.getPartitionFrameState(frameIndex);
+        return state != 0 && PartitionFrameState.requiresMaterialization(state, addressCache.getParquetRowGroup(frameIndex));
+    }
+
+    boolean isFrameStable(int frameIndex) {
+        return addressCache.getFrameFormat(frameIndex) == PartitionFormat.NATIVE
+                && !usesCustomDecode(frameIndex);
     }
 
     /**
@@ -2035,185 +2035,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         DirectLongList getPageSizes() {
             return pageSizes;
-        }
-    }
-
-    private class PageFrameMemoryImpl implements PageFrameMemory, Mutable {
-        private DirectLongList auxPageAddresses;
-        private DirectLongList auxPageSizes;
-        private int columnOffset;
-        private DirectLongList columnTops;
-        private DecodedFrameBuffers currentDecodedFrameBuffers;
-        private byte frameFormat = -1;
-        private int frameIndex = -1;
-        private DirectLongList pageAddresses;
-        private DirectLongList pageSizes;
-
-        @Override
-        public void clear() {
-            frameIndex = -1;
-            frameFormat = -1;
-            columnOffset = 0;
-            pageAddresses = null;
-            auxPageAddresses = null;
-            pageSizes = null;
-            auxPageSizes = null;
-            columnTops = null;
-            currentDecodedFrameBuffers = null;
-        }
-
-        @Override
-        public long getAuxPageAddress(int columnIndex) {
-            return auxPageAddresses.get(columnOffset + columnIndex);
-        }
-
-        @Override
-        public DirectLongList getAuxPageAddresses() {
-            return auxPageAddresses;
-        }
-
-        @Override
-        public DirectLongList getAuxPageSizes() {
-            return auxPageSizes;
-        }
-
-        @Override
-        public int getColumnCount() {
-            return addressCache.getColumnCount();
-        }
-
-        @Override
-        public int getColumnOffset() {
-            return columnOffset;
-        }
-
-        @Override
-        public DirectLongList getColumnTops() {
-            return columnTops;
-        }
-
-        @Override
-        public byte getFrameFormat() {
-            return frameFormat;
-        }
-
-        @Override
-        public int getFrameIndex() {
-            return frameIndex;
-        }
-
-        @Override
-        public long getPageAddress(int columnIndex) {
-            return pageAddresses.get(columnOffset + columnIndex);
-        }
-
-        @Override
-        public DirectLongList getPageAddresses() {
-            return pageAddresses;
-        }
-
-        @Override
-        public long getPageSize(int columnIndex) {
-            return pageSizes.get(columnOffset + columnIndex);
-        }
-
-        @Override
-        public DirectLongList getPageSizes() {
-            return pageSizes;
-        }
-
-        @Override
-        public PageFrameMemoryPool getPool() {
-            return PageFrameMemoryPool.this;
-        }
-
-        @Override
-        public long getRowIdOffset() {
-            return addressCache.getRowIdOffset(frameIndex);
-        }
-
-        @Override
-        public IndexReader.SourceRowResolver getSourceRowResolver() {
-            return currentDecodedFrameBuffers != null && currentDecodedFrameBuffers.hasSourceRows()
-                    ? currentDecodedFrameBuffers
-                    : IndexReader.SourceRowResolver.NONE;
-        }
-
-        @Override
-        public int getSourceColumnType(int columnIndex) {
-            if (frameFormat == PartitionFormat.PARQUET && hasTypeCasts) {
-                return sourceColumnTypes.getQuick(columnIndex);
-            }
-            return -1;
-        }
-
-        @Override
-        public boolean hasColumnTops() {
-            for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
-                // VARCHAR column that contains short strings will have zero data vector,
-                // so for such columns we also need to check that the aux (index) vector is zero.
-                if (pageAddresses.get(columnOffset + i) == 0 && auxPageAddresses.get(columnOffset + i) == 0) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        @Override
-        public boolean hasColumnTypeCasts() {
-            return frameFormat == PartitionFormat.PARQUET && hasTypeCasts;
-        }
-
-        @Override
-        public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
-            if (currentDecodedFrameBuffers == null) {
-                return false;
-            }
-            assert frameFormat == PartitionFormat.PARQUET || usesCustomDecode(frameIndex);
-            if (filterColumnIndexes.size() == addressCache.getColumnCount()) {
-                return false;
-            }
-
-            prepareDecode(frameIndex, filterColumnIndexes, false);
-            final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-            if (filteredRows.size() != 0) {
-                final long extra;
-                try {
-                    if (isPartitionFrameDecodeActive()) {
-                        partitionFrameWindowContext.prepareWindow(addressCache, frameIndex, currentDecodedFrameBuffers.rowGroupBuffers);
-                        extra = currentDecodedFrameBuffers.decodeRemainingColumns(
-                                partitionFrameWindowContext.decoder(),
-                                filterColumnIndexes,
-                                decodeColumns,
-                                rowGroupLo,
-                                rowGroupHi,
-                                filteredRows,
-                                fillWithNulls
-                        );
-                    } else {
-                        extra = currentDecodedFrameBuffers.decodeRemainingColumns(
-                                activeDecoder,
-                                filterColumnIndexes,
-                                decodeColumns,
-                                rowGroupIndex,
-                                rowGroupLo,
-                                rowGroupHi,
-                                filteredRows,
-                                fillWithNulls
-                        );
-                    }
-                } catch (Throwable th) {
-                    evictHalfInitialized(currentDecodedFrameBuffers);
-                    clear();
-                    throw th;
-                }
-                currentDecodedFrameBuffers.decodedBytes += extra;
-                accountDecode(currentDecodedFrameBuffers);
-                return true;
-            }
-            return false;
         }
     }
 
@@ -2723,6 +2544,185 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
                 resourceReleaser = releaser;
             }
+        }
+    }
+
+    private class PageFrameMemoryImpl implements PageFrameMemory, Mutable {
+        private DirectLongList auxPageAddresses;
+        private DirectLongList auxPageSizes;
+        private int columnOffset;
+        private DirectLongList columnTops;
+        private DecodedFrameBuffers currentDecodedFrameBuffers;
+        private byte frameFormat = -1;
+        private int frameIndex = -1;
+        private DirectLongList pageAddresses;
+        private DirectLongList pageSizes;
+
+        @Override
+        public void clear() {
+            frameIndex = -1;
+            frameFormat = -1;
+            columnOffset = 0;
+            pageAddresses = null;
+            auxPageAddresses = null;
+            pageSizes = null;
+            auxPageSizes = null;
+            columnTops = null;
+            currentDecodedFrameBuffers = null;
+        }
+
+        @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return auxPageAddresses.get(columnOffset + columnIndex);
+        }
+
+        @Override
+        public DirectLongList getAuxPageAddresses() {
+            return auxPageAddresses;
+        }
+
+        @Override
+        public DirectLongList getAuxPageSizes() {
+            return auxPageSizes;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return addressCache.getColumnCount();
+        }
+
+        @Override
+        public int getColumnOffset() {
+            return columnOffset;
+        }
+
+        @Override
+        public DirectLongList getColumnTops() {
+            return columnTops;
+        }
+
+        @Override
+        public byte getFrameFormat() {
+            return frameFormat;
+        }
+
+        @Override
+        public int getFrameIndex() {
+            return frameIndex;
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return pageAddresses.get(columnOffset + columnIndex);
+        }
+
+        @Override
+        public DirectLongList getPageAddresses() {
+            return pageAddresses;
+        }
+
+        @Override
+        public long getPageSize(int columnIndex) {
+            return pageSizes.get(columnOffset + columnIndex);
+        }
+
+        @Override
+        public DirectLongList getPageSizes() {
+            return pageSizes;
+        }
+
+        @Override
+        public PageFrameMemoryPool getPool() {
+            return PageFrameMemoryPool.this;
+        }
+
+        @Override
+        public long getRowIdOffset() {
+            return addressCache.getRowIdOffset(frameIndex);
+        }
+
+        @Override
+        public IndexReader.SourceRowResolver getSourceRowResolver() {
+            return currentDecodedFrameBuffers != null && currentDecodedFrameBuffers.hasSourceRows()
+                    ? currentDecodedFrameBuffers
+                    : IndexReader.SourceRowResolver.NONE;
+        }
+
+        @Override
+        public int getSourceColumnType(int columnIndex) {
+            if (frameFormat == PartitionFormat.PARQUET && hasTypeCasts) {
+                return sourceColumnTypes.getQuick(columnIndex);
+            }
+            return -1;
+        }
+
+        @Override
+        public boolean hasColumnTops() {
+            for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
+                // VARCHAR column that contains short strings will have zero data vector,
+                // so for such columns we also need to check that the aux (index) vector is zero.
+                if (pageAddresses.get(columnOffset + i) == 0 && auxPageAddresses.get(columnOffset + i) == 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public boolean hasColumnTypeCasts() {
+            return frameFormat == PartitionFormat.PARQUET && hasTypeCasts;
+        }
+
+        @Override
+        public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
+            if (currentDecodedFrameBuffers == null) {
+                return false;
+            }
+            assert frameFormat == PartitionFormat.PARQUET || usesCustomDecode(frameIndex);
+            if (filterColumnIndexes.size() == addressCache.getColumnCount()) {
+                return false;
+            }
+
+            prepareDecode(frameIndex, filterColumnIndexes, false);
+            final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+            if (filteredRows.size() != 0) {
+                final long extra;
+                try {
+                    if (isPartitionFrameDecodeActive()) {
+                        partitionFrameWindowContext.prepareWindow(addressCache, frameIndex, currentDecodedFrameBuffers.rowGroupBuffers);
+                        extra = currentDecodedFrameBuffers.decodeRemainingColumns(
+                                partitionFrameWindowContext.decoder(),
+                                filterColumnIndexes,
+                                decodeColumns,
+                                rowGroupLo,
+                                rowGroupHi,
+                                filteredRows,
+                                fillWithNulls
+                        );
+                    } else {
+                        extra = currentDecodedFrameBuffers.decodeRemainingColumns(
+                                activeDecoder,
+                                filterColumnIndexes,
+                                decodeColumns,
+                                rowGroupIndex,
+                                rowGroupLo,
+                                rowGroupHi,
+                                filteredRows,
+                                fillWithNulls
+                        );
+                    }
+                } catch (Throwable th) {
+                    evictHalfInitialized(currentDecodedFrameBuffers);
+                    clear();
+                    throw th;
+                }
+                currentDecodedFrameBuffers.decodedBytes += extra;
+                accountDecode(currentDecodedFrameBuffers);
+                return true;
+            }
+            return false;
         }
     }
 }

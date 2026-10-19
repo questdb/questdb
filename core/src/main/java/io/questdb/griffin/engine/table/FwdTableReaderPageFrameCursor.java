@@ -317,58 +317,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         reenterPartitionFrameState = 0;
     }
 
-    private void setFramePartitionFrameState(boolean requiresMaterialization) {
-        frame.partitionFrameState = requiresMaterialization ? reenterPartitionFrameState : 0;
-    }
-
-    private void setReenterPartitionFrameState(PartitionFrame partitionFrame) {
-        reenterPartitionFrameState = partitionFrame.getPartitionFrameState();
-    }
-
-    private void prepareNativePartitionFrameBaseColumns(int base, int window) {
-        for (int i = 0; i < columnCount; i++) {
-            prepareNativePartitionFrameBaseColumn(base, columnIndexes.getQuick(i), i, false);
-        }
-        final int timestampIndex = reader.getMetadata().getTimestampIndex();
-        if (timestampIndex >= 0) {
-            prepareNativePartitionFrameBaseColumn(base, timestampIndex, -1, true);
-        }
-        preparedNativeBaseWindow = window;
-    }
-
-    private void prepareNativePartitionFrameBaseColumn(int base, int columnIndex, int outputIndex, boolean timestamp) {
-        reader.openPageFrameColumn(reenterPartitionIndex, columnIndex);
-        final int primary = TableReader.getPrimaryColumnIndex(base, columnIndex);
-        final MemoryR data = reader.getColumn(primary);
-        final long top = reader.getColumnTop(base, columnIndex);
-        long auxAddress = 0;
-        long auxSize = 0;
-        long dataAddress = 0;
-        long dataSize = 0;
-        if (data != null && !(data instanceof NullMemoryCMR)) {
-            dataSize = data.size();
-            dataAddress = dataSize == 0 ? 0 : data.getPageAddress(0);
-            if (ColumnType.isVarSize(reader.getMetadata().getColumnType(columnIndex))) {
-                final MemoryR aux = reader.getColumn(primary + 1);
-                if (aux != null && !(aux instanceof NullMemoryCMR)) {
-                    auxSize = aux.size();
-                    auxAddress = auxSize == 0 ? 0 : aux.getPageAddress(0);
-                }
-            }
-        }
-        if (timestamp) {
-            timestampPageAddress = dataAddress;
-            timestampPageSize = dataSize;
-            timestampPageTop = top;
-        } else {
-            columnPageAddresses.setQuick(2 * outputIndex, dataAddress);
-            columnPageAddresses.setQuick(2 * outputIndex + 1, auxAddress);
-            columnPageTops.setQuick(outputIndex, top);
-            pageSizes.setQuick(2 * outputIndex, dataSize);
-            pageSizes.setQuick(2 * outputIndex + 1, auxSize);
-        }
-    }
-
     private @Nullable TableReaderPageFrame computeNativeDeltaFrame(long partitionLo, long partitionHi) {
         final int base = reader.getColumnBase(reenterPartitionIndex);
         final int windowCount = PartitionFrameState.getWindowCount(reenterPartitionFrameState);
@@ -475,56 +423,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         return frame;
     }
 
-    private void fillNativeAddresses(int base, long physicalLo, long physicalHi) {
-        for (int i = 0; i < columnCount; i++) {
-            final int columnIndex = columnIndexes.getQuick(i);
-            final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
-            final MemoryR colMem = reader.getColumn(readerColIndex);
-            // when the entire column is NULL we make it skip the whole of the partition frame
-            final long top = colMem instanceof NullMemoryCMR ? physicalHi : reader.getColumnTop(base, columnIndex);
-            final long partitionLoAdjusted = physicalLo - top;
-            final long partitionHiAdjusted = physicalHi - top;
-            final int sh = columnSizeShifts.getQuick(i);
-
-            if (partitionHiAdjusted > 0) {
-                if (sh > -1) {
-                    // this assumes reader uses single page to map the whole column
-                    // non-negative sh means fixed length column
-                    final long address = colMem.getPageAddress(0);
-                    final long addressSize = partitionHiAdjusted << sh;
-                    final long offset = partitionLoAdjusted << sh;
-                    columnPageAddresses.setQuick(2 * i, address + offset);
-                    pageSizes.setQuick(2 * i, addressSize - offset);
-                } else {
-                    final int columnType = reader.getMetadata().getColumnType(columnIndex);
-                    final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-                    final MemoryR auxCol = reader.getColumn(readerColIndex + 1);
-                    final long auxAddress = auxCol.getPageAddress(0);
-                    final long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
-                    final long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
-
-                    final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
-                    // some var-size columns may not have data memory (fully inlined)
-                    final long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
-
-                    columnPageAddresses.setQuick(2 * i, dataAddress);
-                    columnPageAddresses.setQuick(2 * i + 1, auxAddress + auxOffsetLo);
-                    pageSizes.setQuick(2 * i, dataSize);
-                    pageSizes.setQuick(2 * i + 1, auxOffsetHi - auxOffsetLo);
-                }
-            } else { // column top
-                columnPageAddresses.setQuick(2 * i, 0);
-                columnPageAddresses.setQuick(2 * i + 1, 0);
-                // data page size is used by VectorAggregateFunction as the size hint
-                // in the following way:
-                //   size = page_size >>> column_size_hint
-                // (for var-sized types column_size_hint is 0)
-                pageSizes.setQuick(2 * i, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 0));
-                pageSizes.setQuick(2 * i + 1, 0);
-            }
-        }
-    }
-
     private @Nullable TableReaderPageFrame computeParquetFrame(long partitionLo, long partitionHi) {
         final ParquetMetaFileReader metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = reenterPartitionFrameState == 0
@@ -620,6 +518,56 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         return null;
     }
 
+    private void fillNativeAddresses(int base, long physicalLo, long physicalHi) {
+        for (int i = 0; i < columnCount; i++) {
+            final int columnIndex = columnIndexes.getQuick(i);
+            final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
+            final MemoryR colMem = reader.getColumn(readerColIndex);
+            // when the entire column is NULL we make it skip the whole of the partition frame
+            final long top = colMem instanceof NullMemoryCMR ? physicalHi : reader.getColumnTop(base, columnIndex);
+            final long partitionLoAdjusted = physicalLo - top;
+            final long partitionHiAdjusted = physicalHi - top;
+            final int sh = columnSizeShifts.getQuick(i);
+
+            if (partitionHiAdjusted > 0) {
+                if (sh > -1) {
+                    // this assumes reader uses single page to map the whole column
+                    // non-negative sh means fixed length column
+                    final long address = colMem.getPageAddress(0);
+                    final long addressSize = partitionHiAdjusted << sh;
+                    final long offset = partitionLoAdjusted << sh;
+                    columnPageAddresses.setQuick(2 * i, address + offset);
+                    pageSizes.setQuick(2 * i, addressSize - offset);
+                } else {
+                    final int columnType = reader.getMetadata().getColumnType(columnIndex);
+                    final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                    final MemoryR auxCol = reader.getColumn(readerColIndex + 1);
+                    final long auxAddress = auxCol.getPageAddress(0);
+                    final long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
+                    final long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
+
+                    final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
+                    // some var-size columns may not have data memory (fully inlined)
+                    final long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
+
+                    columnPageAddresses.setQuick(2 * i, dataAddress);
+                    columnPageAddresses.setQuick(2 * i + 1, auxAddress + auxOffsetLo);
+                    pageSizes.setQuick(2 * i, dataSize);
+                    pageSizes.setQuick(2 * i + 1, auxOffsetHi - auxOffsetLo);
+                }
+            } else { // column top
+                columnPageAddresses.setQuick(2 * i, 0);
+                columnPageAddresses.setQuick(2 * i + 1, 0);
+                // data page size is used by VectorAggregateFunction as the size hint
+                // in the following way:
+                //   size = page_size >>> column_size_hint
+                // (for var-sized types column_size_hint is 0)
+                pageSizes.setQuick(2 * i, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 0));
+                pageSizes.setQuick(2 * i + 1, 0);
+            }
+        }
+    }
+
     private @Nullable TableReaderPageFrame nextSlow(PartitionFrame partitionFrame, long lo, long hi) {
         final byte format = partitionFrame.getPartitionFormat();
         if (format == PartitionFormat.PARQUET) {
@@ -662,6 +610,58 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
         clearReenterPartitionFrameState();
         return computeNativeFrame(lo, hi);
+    }
+
+    private void prepareNativePartitionFrameBaseColumn(int base, int columnIndex, int outputIndex, boolean timestamp) {
+        reader.openPageFrameColumn(reenterPartitionIndex, columnIndex);
+        final int primary = TableReader.getPrimaryColumnIndex(base, columnIndex);
+        final MemoryR data = reader.getColumn(primary);
+        final long top = reader.getColumnTop(base, columnIndex);
+        long auxAddress = 0;
+        long auxSize = 0;
+        long dataAddress = 0;
+        long dataSize = 0;
+        if (data != null && !(data instanceof NullMemoryCMR)) {
+            dataSize = data.size();
+            dataAddress = dataSize == 0 ? 0 : data.getPageAddress(0);
+            if (ColumnType.isVarSize(reader.getMetadata().getColumnType(columnIndex))) {
+                final MemoryR aux = reader.getColumn(primary + 1);
+                if (aux != null && !(aux instanceof NullMemoryCMR)) {
+                    auxSize = aux.size();
+                    auxAddress = auxSize == 0 ? 0 : aux.getPageAddress(0);
+                }
+            }
+        }
+        if (timestamp) {
+            timestampPageAddress = dataAddress;
+            timestampPageSize = dataSize;
+            timestampPageTop = top;
+        } else {
+            columnPageAddresses.setQuick(2 * outputIndex, dataAddress);
+            columnPageAddresses.setQuick(2 * outputIndex + 1, auxAddress);
+            columnPageTops.setQuick(outputIndex, top);
+            pageSizes.setQuick(2 * outputIndex, dataSize);
+            pageSizes.setQuick(2 * outputIndex + 1, auxSize);
+        }
+    }
+
+    private void prepareNativePartitionFrameBaseColumns(int base, int window) {
+        for (int i = 0; i < columnCount; i++) {
+            prepareNativePartitionFrameBaseColumn(base, columnIndexes.getQuick(i), i, false);
+        }
+        final int timestampIndex = reader.getMetadata().getTimestampIndex();
+        if (timestampIndex >= 0) {
+            prepareNativePartitionFrameBaseColumn(base, timestampIndex, -1, true);
+        }
+        preparedNativeBaseWindow = window;
+    }
+
+    private void setFramePartitionFrameState(boolean requiresMaterialization) {
+        frame.partitionFrameState = requiresMaterialization ? reenterPartitionFrameState : 0;
+    }
+
+    private void setReenterPartitionFrameState(PartitionFrame partitionFrame) {
+        reenterPartitionFrameState = partitionFrame.getPartitionFrameState();
     }
 
     public static long calculatePageFrameRowLimit(
@@ -802,11 +802,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getPartitionFrameState() {
-            return partitionFrameState;
-        }
-
-        @Override
         public int getParquetRowGroup() {
             return rowGroupIndex;
         }
@@ -819,6 +814,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public int getParquetRowGroupLo() {
             return rowGroupLo;
+        }
+
+        @Override
+        public long getPartitionFrameState() {
+            return partitionFrameState;
         }
 
         @Override
