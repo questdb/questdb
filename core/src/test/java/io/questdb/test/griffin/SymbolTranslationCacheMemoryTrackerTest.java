@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -182,10 +183,12 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         // it after the test. Queries without a latch run under the plain adaptive strategy.
         factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
         // The test configuration splits the master table into 4 page frames of 10,000 rows, one per
-        // worker. This minimum frame size keeps the table in the single frame that the class javadoc
-        // asks for. TestUtils.execute() creates the context, which reads the minimum frame size,
-        // after this call.
+        // worker. These minimum frame sizes keep the table in the single frame that the class javadoc
+        // asks for. TestUtils.execute() creates the context, which reads the first one, after this
+        // call. The HORIZON JOIN projections size the master frames themselves when the query
+        // compiles, from the second one.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -762,6 +765,53 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         ) {
             Assert.assertNotNull("no page frame in the master table", cursor.next());
             Assert.assertNull("the master table must fit a single page frame", cursor.next());
+        }
+        // The HORIZON JOIN projections size the master frames from the small frame budget and the
+        // slots per master row, so the scan above does not cover them.
+        assertSingleProjectionFrame(
+                compiler,
+                sqlExecutionContext,
+                """
+                        SELECT m.k1, s.price FROM m
+                        HORIZON JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)
+                        RANGE FROM 0s TO 0s STEP 1s AS h
+                        """
+        );
+        assertSingleProjectionFrame(
+                compiler,
+                sqlExecutionContext,
+                """
+                        SELECT m.k1, s.price, s2.price FROM m
+                        HORIZON JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)
+                        HORIZON JOIN s s2 ON (m.k1 = s2.k1 AND m.k2 = s2.k2)
+                        RANGE FROM 0s TO 0s STEP 1s AS h
+                        """
+        );
+    }
+
+    private static void assertSingleProjectionFrame(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String query
+    ) throws Exception {
+        // With caching disabled the drain fits the per-query limit, see assertCachesChargeTracker().
+        setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, 0);
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 0);
+        try (
+                RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            TestUtils.drainCursor(cursor);
+            // The cursor builds the frame list on its first hasNext() call, and close() clears it.
+            final Field field = AsyncHorizonJoinProjectionRecordCursorFactory.class.getDeclaredField("frameSequence");
+            field.setAccessible(true);
+            final PageFrameSequence<?> frameSequence = (PageFrameSequence<?>) field.get(
+                    findFactory(factory, AsyncHorizonJoinProjectionRecordCursorFactory.class, query)
+            );
+            Assert.assertEquals("the master table must fit a single page frame: " + query, 1, frameSequence.getFrameCount());
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, null);
+            setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, null);
         }
     }
 
