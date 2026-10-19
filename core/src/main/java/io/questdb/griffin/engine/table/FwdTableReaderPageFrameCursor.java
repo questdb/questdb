@@ -69,8 +69,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final LongList pageSizes = new LongList();
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private final int sharedQueryWorkerCount;
-    private int cachedRowGroupIndex;
     private long cachedBaseRowStart;
+    private int cachedRowGroupIndex;
     private long cachedRowGroupStartRow;
     private long filterBufEnd = -1;
     // Track the lowest partition index that has not been released yet
@@ -84,9 +84,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     // split into several bounded frames of at most this many rows. Zero means no cap.
     private long reenterPageFrameRowLimit;
     private ParquetPartitionDecoder reenterParquetDecoder;
-    private long reenterPartitionFrameState;
-    private boolean reenterPartitionFrame = false; // true when the current Partition Frame is not entirely exhausted
     private byte reenterPartitionFormat;
+    private boolean reenterPartitionFrame = false; // true when the current Partition Frame is not entirely exhausted
+    private long reenterPartitionFrameState;
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
     private long reenterPartitionLo;

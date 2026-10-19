@@ -194,6 +194,51 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         sizeSoFar = 0;
     }
 
+    private static int findRelevantIntervalsHi(LongList intervals, long calendarHi) {
+        final int intervalCount = Math.toIntExact(intervals.size() / 2);
+        if (calendarHi == Long.MAX_VALUE) {
+            return intervalCount;
+        }
+        int lo = 0;
+        int hi = intervalCount;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (intervals.getQuick(2 * mid) < calendarHi) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    private static int findRelevantIntervalsLo(LongList intervals, long calendarLo) {
+        int lo = 0;
+        int hi = Math.toIntExact(intervals.size() / 2);
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (intervals.getQuick(2 * mid + 1) < calendarLo) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    private static boolean isSortedAndDisjoint(LongList intervals) {
+        long prevHi = Long.MIN_VALUE;
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            final long lo = intervals.getQuick(i);
+            final long hi = intervals.getQuick(i + 1);
+            if (lo > hi || (i > 0 && lo <= prevHi)) {
+                return false;
+            }
+            prevHi = hi;
+        }
+        return true;
+    }
+
     private void calculateRanges(TableReader reader, LongList intervals) {
         isFrameCountUpperBoundComputed = false;
         if (intervals.size() > 0) {
@@ -290,51 +335,6 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
-    }
-
-    private static int findRelevantIntervalsHi(LongList intervals, long calendarHi) {
-        final int intervalCount = Math.toIntExact(intervals.size() / 2);
-        if (calendarHi == Long.MAX_VALUE) {
-            return intervalCount;
-        }
-        int lo = 0;
-        int hi = intervalCount;
-        while (lo < hi) {
-            final int mid = (lo + hi) >>> 1;
-            if (intervals.getQuick(2 * mid) < calendarHi) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        return lo;
-    }
-
-    private static int findRelevantIntervalsLo(LongList intervals, long calendarLo) {
-        int lo = 0;
-        int hi = Math.toIntExact(intervals.size() / 2);
-        while (lo < hi) {
-            final int mid = (lo + hi) >>> 1;
-            if (intervals.getQuick(2 * mid + 1) < calendarLo) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        return lo;
-    }
-
-    private static boolean isSortedAndDisjoint(LongList intervals) {
-        long prevHi = Long.MIN_VALUE;
-        for (int i = 0, n = intervals.size(); i < n; i += 2) {
-            final long lo = intervals.getQuick(i);
-            final long hi = intervals.getQuick(i + 1);
-            if (lo > hi || (i > 0 && lo <= prevHi)) {
-                return false;
-            }
-            prevHi = hi;
-        }
-        return true;
     }
 
     // Culling, frame searches and the delta finder need sorted, disjoint, non-empty intervals,

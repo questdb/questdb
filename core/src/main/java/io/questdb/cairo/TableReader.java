@@ -350,17 +350,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return decoder;
     }
 
-    /**
-     * Binds data windows on first use, before page-frame workers borrow the handle.
-     */
-    public long getOrOpenPartitionFrameState(int partitionIndex) {
-        final long state = getOrOpenPartitionState(partitionIndex);
-        if (state != 0 && !PartitionFrameState.isBound(state)) {
-            partitionFrameStateFactory.bind(state);
-        }
-        return state;
-    }
-
     public MemoryCR getColumn(int absoluteIndex) {
         return columns.getQuick(absoluteIndex);
     }
@@ -530,6 +519,17 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public int getOpenPartitionCount() {
         return openPartitionCount;
+    }
+
+    /**
+     * Binds data windows on first use, before page-frame workers borrow the handle.
+     */
+    public long getOrOpenPartitionFrameState(int partitionIndex) {
+        final long state = getOrOpenPartitionState(partitionIndex);
+        if (state != 0 && !PartitionFrameState.isBound(state)) {
+            partitionFrameStateFactory.bind(state);
+        }
+        return state;
     }
 
     /**
@@ -801,26 +801,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Opens given partition for reading. Native partitions become immediately readable
-     * after this call through mapped memory. For Parquet partitions, the file is open
-     * for read with fd available via {@link #getParquetAddr(int)}} call.
-     *
-     * @param partitionIndex partition index
-     * @return partition size in rows
-     */
-    public long openPartition(int partitionIndex) {
-        final long size = getPartitionRowCount(partitionIndex);
-        if (size != -1) {
-            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN) == 0) {
-                openMissingColumnsInPartition(partitionIndex, offset, size);
-            }
-            return size;
-        }
-        return openPartition0(partitionIndex);
-    }
-
-    /**
      * Opens one native column required by a decoder extension even when the
      * query's active-column set did not request it. This is used by the cold
      * delta merge for the designated timestamp comparator; ordinary page-frame
@@ -859,6 +839,26 @@ public class TableReader implements Closeable, SymbolTableSource {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    /**
+     * Opens given partition for reading. Native partitions become immediately readable
+     * after this call through mapped memory. For Parquet partitions, the file is open
+     * for read with fd available via {@link #getParquetAddr(int)}} call.
+     *
+     * @param partitionIndex partition index
+     * @return partition size in rows
+     */
+    public long openPartition(int partitionIndex) {
+        final long size = getPartitionRowCount(partitionIndex);
+        if (size != -1) {
+            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN) == 0) {
+                openMissingColumnsInPartition(partitionIndex, offset, size);
+            }
+            return size;
+        }
+        return openPartition0(partitionIndex);
     }
 
     public void readDeltaStats(int partitionIndex, PartitionDeltaStats target) {
@@ -1324,6 +1324,27 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.indexes = toIndexReaders;
     }
 
+    private void destroyPartitionFrameState(int partitionIndex) {
+        final long state = partitionFrameStates.getQuick(partitionIndex);
+        if (state != 0 && partitionFrameStateFactory != null) {
+            partitionFrameStateFactory.destroy(state);
+        }
+        partitionFrameStates.setQuick(partitionIndex, 0);
+    }
+
+    private void destroyPartitionFrameStates() {
+        if (partitionFrameStateFactory == null || partitionFrameStates == null) {
+            return;
+        }
+        for (int i = partitionFrameStatesLo, n = partitionCount; i < n; i++) {
+            // Stores only to the slots that hold a state, so the walk reads the other slots only.
+            if (partitionFrameStates.getQuick(i) != 0) {
+                destroyPartitionFrameState(i);
+            }
+        }
+        partitionFrameStatesLo = Integer.MAX_VALUE;
+    }
+
     private void formatErrorPartitionDirName(int partitionIndex, Utf16Sink sink) {
         TableUtils.setSinkForNativePartition(
                 sink,
@@ -1393,6 +1414,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    private ParquetPartitionDecoder getOrCreatePartitionDecoder(int partitionIndex) {
+        ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
+        if (decoder == null) {
+            decoder = configuration.newParquetPartitionDecoder();
+            parquetMetaDecoders.setQuick(partitionIndex, decoder);
+        }
+        return decoder;
+    }
+
     /**
      * Shares one pinned snapshot between index readers and lazy data-frame binding.
      */
@@ -1422,36 +1452,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private long getPartitionTimestamp(int partitionIndex) {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
-    }
-
-    private ParquetPartitionDecoder getOrCreatePartitionDecoder(int partitionIndex) {
-        ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
-        if (decoder == null) {
-            decoder = configuration.newParquetPartitionDecoder();
-            parquetMetaDecoders.setQuick(partitionIndex, decoder);
-        }
-        return decoder;
-    }
-
-    private void destroyPartitionFrameState(int partitionIndex) {
-        final long state = partitionFrameStates.getQuick(partitionIndex);
-        if (state != 0 && partitionFrameStateFactory != null) {
-            partitionFrameStateFactory.destroy(state);
-        }
-        partitionFrameStates.setQuick(partitionIndex, 0);
-    }
-
-    private void destroyPartitionFrameStates() {
-        if (partitionFrameStateFactory == null || partitionFrameStates == null) {
-            return;
-        }
-        for (int i = partitionFrameStatesLo, n = partitionCount; i < n; i++) {
-            // Stores only to the slots that hold a state, so the walk reads the other slots only.
-            if (partitionFrameStates.getQuick(i) != 0) {
-                destroyPartitionFrameState(i);
-            }
-        }
-        partitionFrameStatesLo = Integer.MAX_VALUE;
     }
 
     private void init() {

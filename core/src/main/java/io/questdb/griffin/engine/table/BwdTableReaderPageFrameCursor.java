@@ -81,9 +81,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private TableReader reader;
     private long reenterPageFrameRowLimit;
     private ParquetPartitionDecoder reenterParquetDecoder;
-    private long reenterPartitionFrameState;
-    private boolean reenterPartitionFrame = false;
     private byte reenterPartitionFormat;
+    private boolean reenterPartitionFrame = false;
+    private long reenterPartitionFrameState;
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
     private long reenterPartitionLo;

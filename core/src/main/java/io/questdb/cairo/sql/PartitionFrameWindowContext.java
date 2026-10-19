@@ -74,6 +74,21 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         this.projectionPlan = projectionPlan;
     }
 
+    @Override
+    public void close() {
+        releaseWindow();
+        Misc.free(baseViewLease);
+        Misc.free(decoder);
+        Misc.free(projectionPlan);
+        state = 0;
+    }
+
+    private void invalidatePreparedKey() {
+        preparedPlanRevision = -1;
+        preparedTrackerAddress = 0;
+        preparedWindow = -1;
+    }
+
     boolean bind(long state) {
         if (this.state == state) {
             return false;
@@ -82,15 +97,6 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         decoder.bind(state);
         this.state = state;
         return true;
-    }
-
-    @Override
-    public void close() {
-        releaseWindow();
-        Misc.free(baseViewLease);
-        Misc.free(decoder);
-        Misc.free(projectionPlan);
-        state = 0;
     }
 
     PartitionFrameDecoder decoder() {
@@ -164,12 +170,6 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             releaseWindow();
             projectionPlan.commitCandidate(columnMapping);
         }
-    }
-
-    private void invalidatePreparedKey() {
-        preparedPlanRevision = -1;
-        preparedTrackerAddress = 0;
-        preparedWindow = -1;
     }
 
     private static final class BaseViewLease implements QuietCloseable {
