@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -477,6 +478,55 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("alter materialized view mv drop expire");
             drainWalAndMatViewQueues();
             assertQuery("select k, v from mv order by k").sizeMayVary().noLeakCheck().returns("k\tv\nA\t1.0\nB\t2.0\nC\t3.0\n");
+        });
+    }
+
+    @Test
+    public void testCleanupAfterRestartKeepsWalPendingRowCount() throws Exception {
+        // After a restart, the first job to initialise a table's txn tracker must also set the pending-row
+        // floor, or applying the pre-restart backlog subtracts rows that were never counted. Here the
+        // cleanup job initialises the tracker before the startup scan does, so the count went to -2.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) partition by day expire rows when ts < '2024-01-01'");
+            execute("insert into base values ('A', 1.0, '2024-01-02T00:00:00.000000Z'), ('B', 2.0, '2024-01-03T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            // The refresh commits two more rows to the view's WAL, which nothing applies before the restart.
+            execute("insert into base values ('C', 3.0, '2024-01-04T00:00:00.000000Z'), ('D', 4.0, '2024-01-05T00:00:00.000000Z')");
+            drainWalQueue();
+            drainMatViewQueue(engine);
+            engine.releaseInactive();
+            engine.releaseAllWriters();
+
+            try (
+                    CairoEngine restarted = new CairoEngine(configuration);
+                    SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
+            ) {
+                restarted.load();
+                restarted.buildViewGraphs();
+                final TableToken token = restarted.verifyTableName("mv");
+                assertFalse(restarted.getTableSequencerAPI().isTxnTrackerInitialised(token));
+                final String predicate;
+                try (TableMetadata metadata = restarted.getTableMetadata(token)) {
+                    predicate = metadata.getExpiryPredicate();
+                }
+                try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(restarted)) {
+                    assertFalse(job.cleanupTable(token, predicate));
+                }
+                // The backlog defers the sweep, but only after the job has initialised the tracker.
+                assertTrue(restarted.getTableSequencerAPI().isTxnTrackerInitialised(token));
+
+                drainWalQueue(restarted);
+                assertQuery("select table_row_count, wal_pending_row_count from tables() where table_name = 'mv'")
+                        .withEngine(restarted)
+                        .withContext(restartedContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                table_row_count\twal_pending_row_count
+                                4\t0
+                                """);
+            }
         });
     }
 

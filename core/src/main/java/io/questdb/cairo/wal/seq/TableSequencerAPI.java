@@ -304,10 +304,23 @@ public class TableSequencerAPI implements QuietCloseable {
         return seqTxnTrackers.get(tableToken.getDirName());
     }
 
+    /**
+     * Initialises the table's txn tracker from its applied and sequenced txns. When WAL transactions are
+     * pending, it also sets the table's {@link io.questdb.cairo.pool.RecentWriteTracker} floor to the
+     * sequenced txn: those transactions were written before tracking started, so applying them must not
+     * subtract rows from the pending WAL row count that it never added. Every caller needs the floor, and
+     * the first caller to initialise the tracker is the only one that can set it.
+     *
+     * @return true when the table has pending WAL transactions
+     */
     public boolean initTxnTracker(TableToken tableToken, long writerTxn, long seqTxn) {
-        SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
+        final SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
         final boolean isSuspended = isSuspended(tableToken);
-        return seqTxnTracker.initTxns(writerTxn, seqTxn, isSuspended);
+        if (seqTxnTracker.initTxns(writerTxn, seqTxn, isSuspended)) {
+            engine.getRecentWriteTracker().setFloorSeqTxn(tableToken, seqTxnTracker.getSeqTxn());
+            return true;
+        }
+        return false;
     }
 
     public boolean isSuspended(final TableToken tableToken) {
