@@ -97,7 +97,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (frameIndex == -1) {
             fetchNextFrame(dispatchLimit, true);
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         }
 
         if (rowsRemaining < 1) {
@@ -137,10 +137,14 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             }
 
             if (!allFramesActive) {
-                throwTimeoutException();
+                throw buildInterruptionException();
             }
 
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        }
+
+        if (!allFramesActive) {
+            throw buildInterruptionException();
         }
     }
 
@@ -237,7 +241,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
+            throw buildInterruptionException();
         }
         return false;
     }
@@ -321,7 +325,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             collectCursor(false);
 
             if (!allFramesActive) {
-                throwTimeoutException();
+                throw buildInterruptionException();
             }
         }
     }
@@ -337,6 +341,10 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         frameRowIndex = -1;
         frameRowCount = -1;
         allFramesActive = true;
+    }
+
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
     }
 
     private boolean checkLimit() {
@@ -412,7 +420,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             if (th instanceof CairoException ce) {
                 if (ce.isInterruption() || ce.isCancellation()) {
                     LOG.error().$("filter error [ex=").$safe(ce.getFlyweightMessage()).I$();
-                    throwTimeoutException();
+                    throw buildInterruptionException();
                 } else {
                     LOG.error().$("filter error [ex=").$(th).I$();
                     throw ce;
@@ -430,14 +438,6 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
     private long rowIndex() {
         return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
-    }
-
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {

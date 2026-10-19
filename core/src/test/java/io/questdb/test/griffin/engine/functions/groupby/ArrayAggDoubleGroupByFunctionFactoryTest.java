@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.PropertyKey;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -236,7 +237,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
         // each group including NULL.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)", sqlExecutionContext);
                 // 2000 rows: every 3rd has a NULL key (positions 0, 3, 6, ...).
@@ -329,7 +330,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
         setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 9_999);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute("CREATE TABLE tab (val DOUBLE)", sqlExecutionContext);
                 StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
@@ -523,7 +524,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
         // frame split alone does not guarantee multi-worker dispatch.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)", sqlExecutionContext);
                 StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
@@ -562,7 +563,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
         // reliably exercised regardless of the test JVM's default worker count.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)", sqlExecutionContext);
                 // 10 groups x 1000 rows. Row i goes to group g(i%10) with value i.0.

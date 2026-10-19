@@ -85,6 +85,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int SET_OPERATION_UNION_ALL = 0;
     int SHOW_COLUMNS = 2;
     int SHOW_CREATE_DATABASE = 18;
+    int SHOW_CREATE_LIVE_VIEW = 19;
     int SHOW_CREATE_MAT_VIEW = 15;
     int SHOW_CREATE_TABLE = 14;
     int SHOW_CREATE_VIEW = 17;
@@ -198,6 +199,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void addJoinColumn(ExpressionNode node);
 
     void addJoinModel(IQueryModel joinModel);
+
+    void addLateralCountTemplate(QueryColumn template);
 
     void addLatestBy(ExpressionNode latestBy);
 
@@ -313,7 +316,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     int getJoinType();
 
-    ObjList<CharSequence> getLateralCountColumns();
+    ObjList<QueryColumn> getLateralCountTemplates();
 
     ObjList<ExpressionNode> getLatestBy();
 
@@ -363,6 +366,13 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ExpressionNode getOuterJoinExpressionClause();
 
+    /**
+     * Names of the DECLARE variables this model marked {@code AUDITED}, i.e. whose resolved value
+     * a read of an audited view records. Independent of {@link #getOverridableDecls()}: a variable
+     * that no caller can set still varies per execution when its default is not constant.
+     */
+    LowerCaseCharSequenceHashSet getAuditedDecls();
+
     LowerCaseCharSequenceHashSet getOverridableDecls();
 
     ObjList<ExpressionNode> getParsedWhere();
@@ -376,6 +386,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int getRefCount(CharSequence alias);
 
     ObjList<ViewDefinition> getReferencedViews();
+
+    ObjList<ViewAuditModel> getViewAudits();
 
     // getQueryModel() is inherited from ExecutionModel with return type QueryModel
 
@@ -404,6 +416,10 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int getShowCreateDatabaseInclude();
 
     int getShowKind();
+
+    ExpressionNode getSubsample();
+
+    int getSubsamplePosition();
 
     int getTableId();
 
@@ -481,11 +497,26 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isForceBackwardScan();
 
+    boolean isLateralCountCoalesceRequired();
+
+    /**
+     * Boolean guard deciding, at execution time, whether the lateral scalar-count
+     * compensation applies. Non-null only when the lateral body carried a LIMIT whose
+     * value is not known at compile time (a bind variable). The guard mirrors the
+     * row_number filter generated for that LIMIT evaluated at row 1, so the
+     * compensation can never disagree with whether the body kept its aggregate row.
+     * Kept as an expression rather than a folded decision because a bind variable is
+     * only runtime-constant: its value may differ between executions of a cached plan.
+     */
+    ExpressionNode getLateralCountCoalesceGuard();
+
     boolean isNestedModelIsSubQuery();
 
     boolean isOptimisable();
 
     boolean isOrderDescendingByDesignatedTimestampOnly();
+
+    boolean isOuterRefWildcardExcluded();
 
     boolean isOwnCorrelatedAtDepth(int depth, int flag);
 
@@ -521,6 +552,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void moveOrderByFrom(IQueryModel model);
 
+    void moveSubsampleFrom(IQueryModel baseModel);
+
     void moveSampleByFrom(IQueryModel model);
 
     IntList nextOrderedJoinModels();
@@ -528,6 +561,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     ObjList<ExpressionNode> parseWhereClause();
 
     void recordViews(LowerCaseCharSequenceObjHashMap<ViewDefinition> viewDefinitions);
+
+    void recordViewAudits(ObjList<ViewAuditModel> viewAudits);
 
     void recordViews(ObjList<ViewDefinition> viewDefinitions);
 
@@ -585,6 +620,10 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setJoinType(int joinType);
 
+    void setLateralCountCoalesceGuard(ExpressionNode guard);
+
+    void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired);
+
     void setLatestByType(int latestByType);
 
     void setLimit(ExpressionNode lo, ExpressionNode hi);
@@ -615,6 +654,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause);
 
+    void setOuterRefWildcardExcluded(boolean isOuterRefWildcardExcluded);
+
     void setPivotGroupByColumnHasNoAlias(boolean pivotGroupByColumnHasNoAlias);
 
     void setPostJoinWhereClause(ExpressionNode postJoinWhereClause);
@@ -640,6 +681,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setShowCreateDatabaseInclude(int includeMask);
 
     void setShowKind(int showKind);
+
+    void setSubsample(ExpressionNode subsample, int position);
 
     void setSkipped(boolean skipped);
 

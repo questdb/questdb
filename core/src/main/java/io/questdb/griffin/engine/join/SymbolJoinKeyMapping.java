@@ -28,10 +28,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 
-public interface SymbolJoinKeyMapping {
+public interface SymbolJoinKeyMapping extends SymbolShortCircuit {
 
     static StaticSymbolTable toStaticSymbolTable(SymbolTable symbolTable) {
         if (symbolTable instanceof StaticSymbolTable sst) {
@@ -53,8 +52,6 @@ public interface SymbolJoinKeyMapping {
      * symbol.
      */
     int getSlaveKey(Record masterRecord);
-
-    void of(TimeFrameCursor slaveCursor);
 
     void of(RecordCursor slaveCursor);
 }

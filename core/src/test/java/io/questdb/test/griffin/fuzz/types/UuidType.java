@@ -41,12 +41,16 @@ public final class UuidType implements FuzzColumnType {
 
     @Override
     public ColumnKind getKind() {
-        return ColumnKind.IDENTIFIER;
+        return ColumnKind.UUID;
     }
 
     @Override
     public String getRndCall() {
-        return "rnd_uuid4()";
+        // rnd_uuid4() never returns NULL, so a UUID column used to hold no
+        // null at all and every null-handling branch of a UUID predicate went
+        // unexercised. Three coin flips give a null roughly one row in eight.
+        return "CASE WHEN rnd_boolean() AND rnd_boolean() AND rnd_boolean()"
+                + " THEN null::UUID ELSE rnd_uuid4() END";
     }
 
     @Override

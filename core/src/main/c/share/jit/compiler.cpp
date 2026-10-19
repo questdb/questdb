@@ -79,6 +79,7 @@ struct Function
     {
         questdb::aarch64::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::aarch64::preload_constants(c, istream, size, const_cache);
+        questdb::aarch64::preload_vars(c, istream, size, vars_ptr, var_cache);
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options)
@@ -109,7 +110,7 @@ struct Function
         {
             value_cache.clear();
             questdb::aarch64::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
-                                        input_index, labels, addr_cache, const_cache, value_cache);
+                                        input_index, labels, addr_cache, const_cache, var_cache, value_cache);
 
             if (!values.is_empty())
             {
@@ -207,6 +208,7 @@ struct Function
     a64::Gp output_index;
     ColumnAddressCache addr_cache;
     ConstantCache const_cache;
+    ColumnValueCache var_cache;
     ColumnValueCache value_cache;
 };
 
@@ -220,6 +222,7 @@ struct CountOnlyFunction
     {
         questdb::aarch64::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::aarch64::preload_constants(c, istream, size, const_cache);
+        questdb::aarch64::preload_vars(c, istream, size, vars_ptr, var_cache);
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options)
@@ -249,7 +252,7 @@ struct CountOnlyFunction
         {
             value_cache.clear();
             questdb::aarch64::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
-                                        input_index, labels, addr_cache, const_cache, value_cache);
+                                        input_index, labels, addr_cache, const_cache, var_cache, value_cache);
 
             if (!values.is_empty())
             {
@@ -340,6 +343,7 @@ struct CountOnlyFunction
     a64::Gp output_index;
     ColumnAddressCache addr_cache;
     ConstantCache const_cache;
+    ColumnValueCache var_cache;
     ColumnValueCache value_cache;
 };
 
@@ -356,6 +360,7 @@ struct Function
     {
         questdb::x86::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::x86::preload_constants(c, istream, size, const_cache);
+        questdb::x86::preload_vars(c, istream, size, vars_ptr, var_cache);
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options)
@@ -365,18 +370,19 @@ struct Function
         {
             scalar = 0,
             single_size = 1,
-            mixed_size = 3,
+            mixed_size = 2,
+            wide_lane = 3,
         };
 
         uint32_t type_size = (options >> 1) & 7; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B
-        uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
+        uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size, 2 - mixed size, 3 - wide lane
         bool null_check = (options >> 6) & 1;    // 1 - with null check
         int unroll_factor = 1;
-        if (exec_hint == single_size && features.has_avx2())
+        if ((exec_hint == single_size || exec_hint == wide_lane) && features.has_avx2())
         {
-            auto step = 256 / ((1 << type_size) * 8);
+            auto step = exec_hint == wide_lane ? 4 : 256 / ((1 << type_size) * 8);
             c.func()->frame().set_avx_enabled();
-            avx2_loop(istream, size, step, null_check, unroll_factor);
+            avx2_loop(istream, size, step, null_check, exec_hint == wide_lane, unroll_factor);
         }
         else
         {
@@ -409,7 +415,7 @@ struct Function
             value_cache.clear();
             // Pass the label array and caches to emit_code
             questdb::x86::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
-                                    input_index, labels, addr_cache, const_cache, value_cache);
+                                    input_index, labels, addr_cache, const_cache, var_cache, value_cache);
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
             // No final test needed.
@@ -458,7 +464,7 @@ struct Function
         c.ret(output_index);
     }
 
-    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1)
+    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, bool wide_lane, int unroll_factor = 1)
     {
         using namespace asmjit::x86;
 
@@ -467,6 +473,7 @@ struct Function
 
         // Preload constants into YMM registers for the SIMD loop
         questdb::avx2::preload_constants_ymm(c, istream, size, const_cache_ymm);
+        questdb::avx2::preload_vars_ymm(c, istream, size, vars_ptr, var_cache_ymm);
 
         Label l_loop = c.new_label();
         Label l_exit = c.new_label();
@@ -502,8 +509,25 @@ struct Function
 
         for (int i = 0; i < unroll_factor; ++i)
         {
-            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
-                                     addr_cache, const_cache_ymm);
+            // Each unrolled body reads at its own input_index, so a value cached by the previous
+            // one names the wrong rows. The scalar loops clear ColumnValueCache per row for the
+            // same reason.
+            value_cache_ymm.clear();
+            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+                                     addr_cache, const_cache_ymm, var_cache_ymm, value_cache_ymm);
+
+            if (values.is_empty())
+            {
+                // Fail closed, the way scalar_tail() guards its own pop. emit_code() abandoned
+                // code generation mid-stream and left no mask to scatter row ids with.
+                // ArenaVector::pop() asserts only in a debug build; a release build underflows
+                // _size to UINT32_MAX and reads out of bounds inside the JVM. Declining instead
+                // stops compileFunction() before it finalizes the function, and SqlCodeGenerator
+                // falls back to the Java filter. Every site that abandons also reports its own
+                // reason; this backstop covers the ones a later change adds.
+                questdb::avx2::decline_filter(c, "AVX2 code generation abandoned mid-stream");
+                break;
+            }
 
             auto mask = values.pop();
 
@@ -601,7 +625,10 @@ struct Function
     ColumnAddressCache addr_cache;
     ConstantCache const_cache;
     ConstantCacheYmm const_cache_ymm;
+    ColumnValueCache var_cache;
+    ValueCacheYmm var_cache_ymm;
     ColumnValueCache value_cache;
+    ValueCacheYmm value_cache_ymm;
 };
 
 struct CountOnlyFunction
@@ -615,6 +642,7 @@ struct CountOnlyFunction
     {
         questdb::x86::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::x86::preload_constants(c, istream, size, const_cache);
+        questdb::x86::preload_vars(c, istream, size, vars_ptr, var_cache);
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options)
@@ -624,18 +652,19 @@ struct CountOnlyFunction
         {
             scalar = 0,
             single_size = 1,
-            mixed_size = 3,
+            mixed_size = 2,
+            wide_lane = 3,
         };
 
         uint32_t type_size = (options >> 1) & 7; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B
-        uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
+        uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size, 2 - mixed size, 3 - wide lane
         bool null_check = (options >> 6) & 1;    // 1 - with null check
         int unroll_factor = 1;
-        if (exec_hint == single_size && features.has_avx2())
+        if ((exec_hint == single_size || exec_hint == wide_lane) && features.has_avx2())
         {
-            auto step = 256 / ((1 << type_size) * 8);
+            auto step = exec_hint == wide_lane ? 4 : 256 / ((1 << type_size) * 8);
             c.func()->frame().set_avx_enabled();
-            avx2_loop(istream, size, step, null_check, unroll_factor);
+            avx2_loop(istream, size, step, null_check, exec_hint == wide_lane, unroll_factor);
         }
         else
         {
@@ -668,7 +697,7 @@ struct CountOnlyFunction
             value_cache.clear();
             // Pass the label array and caches to emit_code
             questdb::x86::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
-                                    input_index, labels, addr_cache, const_cache, value_cache);
+                                    input_index, labels, addr_cache, const_cache, var_cache, value_cache);
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
             // No final test needed.
@@ -716,7 +745,7 @@ struct CountOnlyFunction
         c.ret(output_index);
     }
 
-    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1)
+    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, bool wide_lane, int unroll_factor = 1)
     {
         using namespace asmjit::x86;
 
@@ -725,6 +754,7 @@ struct CountOnlyFunction
 
         // Preload constants into YMM registers for the SIMD loop
         questdb::avx2::preload_constants_ymm(c, istream, size, const_cache_ymm);
+        questdb::avx2::preload_vars_ymm(c, istream, size, vars_ptr, var_cache_ymm);
 
         Label l_loop = c.new_label();
         Label l_tail = c.new_label();
@@ -756,8 +786,22 @@ struct CountOnlyFunction
 
         for (int i = 0; i < unroll_factor; ++i)
         {
-            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
-                                     addr_cache, const_cache_ymm);
+            // Each unrolled body reads at its own input_index, so a value cached by the previous
+            // one names the wrong rows. The scalar loops clear ColumnValueCache per row for the
+            // same reason.
+            value_cache_ymm.clear();
+            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+                                     addr_cache, const_cache_ymm, var_cache_ymm, value_cache_ymm);
+
+            if (values.is_empty())
+            {
+                // Fail closed, exactly as Function::avx2_loop does. The count path compiles the
+                // same IR through its own emit_code() call, so it carries the same hazard and
+                // needs its own guard - a guard in the row loop alone leaves this one popping an
+                // empty ArenaVector.
+                questdb::avx2::decline_filter(c, "AVX2 count code generation abandoned mid-stream");
+                break;
+            }
 
             auto mask = values.pop();
 
@@ -871,7 +915,10 @@ struct CountOnlyFunction
     ColumnAddressCache addr_cache;
     ConstantCache const_cache;
     ConstantCacheYmm const_cache_ymm;
+    ColumnValueCache var_cache;
+    ValueCacheYmm var_cache_ymm;
     ColumnValueCache value_cache;
+    ValueCacheYmm value_cache_ymm;
 };
 
 #endif // __aarch64__

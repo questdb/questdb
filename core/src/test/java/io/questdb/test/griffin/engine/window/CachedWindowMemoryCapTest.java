@@ -25,7 +25,10 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class CachedWindowMemoryCapTest extends AbstractCairoTest {
@@ -95,6 +98,22 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                             s2\t1970-01-01T00:33:20.000000Z\t1970-01-01T02:46:40.000000Z
                             s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testDenseRankStreamingSinkCapNamesDenseRankOwner() throws Exception {
+        // DenseRankFunctionFactory reuses RankFunctionFactory.RankFunction, which owns the
+        // SingleRecordSink pair, so the budget message is produced by shared code that only sees
+        // the dense flag. It used to hard-code the RANK() owner, which told a DENSE_RANK() user to
+        // go look at a function their query never mentioned.
+        //
+        // Same shape as testRankStreamingSinkCapNamesRankOwner, which pins the rank() owner.
+        setUpStreamingSinkCap();
+
+        assertMemoryLeak(() -> {
+            createStreamingSinkCapTable();
+            assertSinkCapMessage("dense_rank", "DENSE_RANK() window function");
         });
     }
 
@@ -208,6 +227,38 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRankStreamingSinkCapNamesRankOwner() throws Exception {
+        // The streaming RANK() path serializes each window ORDER BY key into a SingleRecordSink,
+        // whose limit message names the owning feature. RankFunctionFactory threads that name in;
+        // the message used to be hard-coded to "ASOF join", so RANK reported an ASOF join error.
+        //
+        // Reaching the sink's budget needs a key wider than its 8-byte initial capacity. Following
+        // order-by advice on an indexed SYMBOL admits a two-column (SYMBOL, TIMESTAMP) window
+        // ORDER BY, which serializes to 12 bytes and therefore enters resize().
+        setUpStreamingSinkCap();
+
+        assertMemoryLeak(() -> {
+            createStreamingSinkCapTable();
+            assertSinkCapMessage("rank", "RANK() window function");
+
+            // Negative control: a single 8-byte key fits the initial capacity, so the same budget
+            // never reaches resize(). This pins that the assertion above is driven by key width.
+            assertQuery("SELECT ts, rank() OVER (ORDER BY ts) FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\trank
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T00:00:01.000000Z\t2
+                            2024-01-01T00:00:02.000000Z\t3
+                            2024-01-01T00:00:03.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
     public void testRepeatedCursorsStayUnderCap() throws Exception {
         // The cap is enforced per cursor execution. Running the same query twice in a row,
         // with each run staying under the cap, must succeed both times - the second run
@@ -289,5 +340,44 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     "memory exceeded in RedBlackTree (raise cairo.sql.window.tree.max.bytes)"
             );
         });
+    }
+
+    // Both sink-cap tests configure window.store.max.pages = 0, so the budget is the product 64 * 0
+    // floored at the sink's 8-byte allocation unit. Assert that number rather than just the tail of
+    // the message: without it, dropping the floor in SingleRecordSink's constructor still matches
+    // the substring and reports "limit of 0". RankFunctionFactory's / 2 stays unpinned here - the
+    // product is 0 with or without it - and no reachable configuration prints a halved budget,
+    // since at stock settings the limit works out to ~1 PB.
+    // Catches explicitly rather than going through assertExceptionNoLeakCheck(), so that the
+    // thrown type is asserted alongside the message.
+    private void assertSinkCapMessage(String function, String owner) throws Exception {
+        try {
+            printSql("SELECT sym, ts, " + function + "() OVER (ORDER BY sym, ts) FROM tab" +
+                    " WHERE ts IN '2024-01-01' ORDER BY sym, ts");
+            Assert.fail("expected LimitOverflowException");
+        } catch (LimitOverflowException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "limit of 8 memory exceeded in " + owner
+                            + " (raise cairo.sql.window.store.page.size or cairo.sql.window.store.max.pages)");
+        }
+    }
+
+    private void createStreamingSinkCapTable() throws Exception {
+        execute("""
+                CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)
+                  TIMESTAMP(ts) PARTITION BY DAY""");
+        execute("""
+                INSERT INTO tab VALUES
+                  ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                  ('b', 2, '2024-01-01T00:00:01.000000Z'),
+                  ('a', 3, '2024-01-01T00:00:02.000000Z'),
+                  ('b', 4, '2024-01-01T00:00:03.000000Z')""");
+    }
+
+    // A 64-byte page times zero pages floors the sink budget at its 8-byte initial capacity, so
+    // any window ORDER BY key wider than 8 bytes enters resize() and reports the cap.
+    private void setUpStreamingSinkCap() {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 64);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 0);
     }
 }

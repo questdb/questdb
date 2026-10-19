@@ -113,23 +113,39 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public void close() {
             if (isOpen()) {
-                cleanupBeforeClose();
-                final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
-                if (pool != null && entry != null) {
-                    if (!isDistressed()) {
-                        if (pool.returnToPool(this)) {
-                            return;
+                boolean isCleanedUp = false;
+                try {
+                    cleanupBeforeClose();
+                    isCleanedUp = true;
+                } finally {
+                    // Route to the pool only when cleanup fully completed and the
+                    // writer isn't distressed -- anything else (cleanup threw, or
+                    // rollback0() marked it distressed before rethrowing) lands in
+                    // the expel branch below: full close, entry released, exception
+                    // still propagates. cleanupBeforeClose() now latches distressed
+                    // on any throw, extending rollback0()'s own guarantee to the
+                    // columnar-write cancel path, so isDistressed() alone would
+                    // route correctly today. isCleanedUp still gates routing
+                    // directly on whether cleanup completed, independent of that
+                    // guarantee, so this stays correct if a future cleanup failure
+                    // mode is ever added without latching distressed.
+                    final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
+                    if (pool != null && entry != null) {
+                        if (isCleanedUp && !isDistressed()) {
+                            if (!pool.returnToPool(this)) {
+                                super.close();
+                            }
+                        } else {
+                            try {
+                                super.close();
+                            } finally {
+                                pool.expelFromPool(this);
+                            }
                         }
                     } else {
-                        try {
-                            super.close();
-                        } finally {
-                            pool.expelFromPool(this);
-                        }
-                        return;
+                        super.close();
                     }
                 }
-                super.close();
             }
         }
 

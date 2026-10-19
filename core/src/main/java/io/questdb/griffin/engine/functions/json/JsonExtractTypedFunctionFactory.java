@@ -81,12 +81,37 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
 
-        return new JsonExtractFunction(
-                parseTargetType(position, args.getQuick(2)),
-                json,
-                path,
-                configuration.getStrFunctionMaxBufferLength()
-        );
+        final int targetType = parseTargetType(position, args.getQuick(2));
+        final int maxSize = configuration.getStrFunctionMaxBufferLength();
+        // A json_extract expression carries exactly one value per row, so every read of it has to
+        // derive from its declared width rather than parse the JSON again at the width being read.
+        // BOOLEAN, SHORT, INT, LONG, FLOAT, DATE and TIMESTAMP each get a one-value variant for that.
+        // DOUBLE keeps the base because it promotes to nothing wider - every CastDoubleTo* reads
+        // getDouble(). IPv4 keeps it for a different reason: every CastIPv4To* reads getIPv4(), and
+        // although its overload row does carry STRING and VARCHAR, IPv4Function throws on getStrA
+        // and getVarcharA, so there is no reference behaviour at string width to disagree with.
+        // The unit question DATE and TIMESTAMP raise - DATE is milliseconds and TIMESTAMP is micros or
+        // nanos, so a read at another width has to agree on a unit and not just on a number - is
+        // answered the way DateFunction and TimestampFunction already answer it: the promoted read
+        // scales the declared type's own value, LONG carrying the declared unit unchanged.
+        switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.BOOLEAN:
+                return new JsonExtractBooleanFunction(targetType, json, path, maxSize);
+            case ColumnType.SHORT:
+                return new JsonExtractShortFunction(targetType, json, path, maxSize);
+            case ColumnType.INT:
+                return new JsonExtractIntFunction(targetType, json, path, maxSize);
+            case ColumnType.LONG:
+                return new JsonExtractLongFunction(targetType, json, path, maxSize);
+            case ColumnType.FLOAT:
+                return new JsonExtractFloatFunction(targetType, json, path, maxSize);
+            case ColumnType.DATE:
+                return new JsonExtractDateFunction(targetType, json, path, maxSize);
+            case ColumnType.TIMESTAMP:
+                return new JsonExtractTimestampFunction(targetType, json, path, maxSize);
+            default:
+                return new JsonExtractFunction(targetType, json, path, maxSize);
+        }
     }
 
     private static int parseTargetType(int position, Function targetTypeFn) throws SqlException {

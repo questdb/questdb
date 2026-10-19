@@ -76,12 +76,14 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         // short commonElemType = (short) type0;
         int commonElemType = ColumnType.DOUBLE;
         if (!ColumnType.isArray(type0)) {
+            validateElemType(type0, arg0Pos);
             for (int i = 1; i < outerDimLen; i++) {
                 Function argI = args.getQuick(i);
-                short typeI = (short) argI.getType();
+                int typeI = argI.getType();
                 if (ColumnType.isArray(typeI)) {
                     throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
                 }
+                validateElemType(typeI, argPositions.getQuick(i));
                 // once we support more than the DOUBLE array type, uncomment this:
                 // commonElemType = commonWideningType(commonElemType, typeI):
             }
@@ -171,6 +173,25 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     @Override
     public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) {
         return ColumnType.ARRAY;
+    }
+
+    /**
+     * Element functions are read via {@code getDouble()} without a cast wrapper, so a type that
+     * doesn't implicitly convert to DOUBLE would throw {@code UnsupportedOperationException} at run time.
+     * BOOLEAN is the exception: it carries no DOUBLE overload, yet {@code BooleanFunction.getDouble()}
+     * is implemented and yields 1 or 0.
+     */
+    private static void validateElemType(int elemType, int elemPos) throws SqlException {
+        short tag = ColumnType.tagOf(elemType);
+        if (tag != ColumnType.UNDEFINED
+                && tag != ColumnType.BOOLEAN
+                && ColumnType.overloadDistance(tag, ColumnType.DOUBLE) == ColumnType.OVERLOAD_NONE
+        ) {
+            throw SqlException.position(elemPos)
+                    .put("unsupported array element type [type=")
+                    .put(ColumnType.nameOf(elemType))
+                    .put(']');
+        }
     }
 
     private static class ArrayFunctionArrayFunction extends ArrayFunction implements MultiArgFunction {

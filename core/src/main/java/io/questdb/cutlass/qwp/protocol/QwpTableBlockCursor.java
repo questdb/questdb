@@ -386,6 +386,36 @@ public class QwpTableBlockCursor implements Mutable {
         }
     }
 
+    long getRetainedCacheBytes() {
+        long bytes = 0;
+        for (int i = 0, n = columnCursors.size(); i < n; i++) {
+            QwpColumnCursor cursor = columnCursors.getQuick(i);
+            if (cursor instanceof QwpArrayColumnCursor arrayCursor) {
+                bytes += arrayCursor.getRowCacheBytes();
+            } else if (cursor instanceof QwpSymbolColumnCursor symbolCursor) {
+                bytes += (long) symbolCursor.getDecodedIndexCacheCapacity() * Integer.BYTES;
+                bytes += (long) symbolCursor.getDictionaryCacheSize() * Long.BYTES;
+            } else if (cursor instanceof QwpTimestampColumnCursor timestampCursor) {
+                bytes += (long) timestampCursor.getGorillaCacheCapacity() * Long.BYTES;
+            }
+        }
+        return bytes;
+    }
+
+    void releaseCachedResources() {
+        clear();
+        for (int i = 0, n = columnCursors.size(); i < n; i++) {
+            QwpColumnCursor cursor = columnCursors.getQuick(i);
+            if (cursor instanceof QwpArrayColumnCursor arrayCursor) {
+                arrayCursor.releaseCachedResources();
+            } else if (cursor instanceof QwpSymbolColumnCursor symbolCursor) {
+                symbolCursor.releaseCachedResources();
+            } else if (cursor instanceof QwpTimestampColumnCursor timestampCursor) {
+                timestampCursor.releaseCachedResources();
+            }
+        }
+    }
+
     private void ensureColumnCursorCapacity(int capacity) {
         while (columnCursors.size() < capacity) {
             // Pre-allocate with null, will be replaced with correct type

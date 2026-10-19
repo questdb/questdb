@@ -42,7 +42,9 @@ import org.jetbrains.annotations.NotNull;
 import java.security.SecureRandom;
 
 public class EllipticCurveAuthenticator implements SocketAuthenticator {
-    private static final Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
 
     private static final CarrierLocal<SecureRandom> tlSrand = new CarrierLocal<>(SecureRandom::new);
     private final ChallengeResponseMatcher challengeResponseMatcher;
@@ -163,8 +165,14 @@ public class EllipticCurveAuthenticator implements SocketAuthenticator {
         int lineEnd = findLineEnd();
         if (lineEnd != -1) {
             userNameFlyweight.of(recvBufStart, recvBufStart + lineEnd);
+            if (Utf8s.validateUtf8(userNameFlyweight) < 0) {
+                // The client is not speaking our protocol, treat it as an authentication failure.
+                LOG.error().$('[').$(socket.getFd()).$("] authentication failed, key id is not valid UTF-8 [keyId=")
+                        .$safe(userNameFlyweight).I$();
+                throw AuthenticatorException.INSTANCE;
+            }
             principal = Utf8s.toString(userNameFlyweight);
-            LOG.info().$('[').$(socket.getFd()).$("] authentication read key id [keyId=").$(userNameFlyweight).I$();
+            LOG.info().$('[').$(socket.getFd()).$("] authentication read key id [keyId=").$safe(userNameFlyweight).I$();
             recvBufPos = recvBufStart;
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
             int n = 0;

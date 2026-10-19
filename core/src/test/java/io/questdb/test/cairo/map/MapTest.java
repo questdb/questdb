@@ -249,8 +249,9 @@ public class MapTest extends AbstractCairoTest {
 
     @Test
     public void testBatchAddressableRejectsOversizedHeap() throws Exception {
-        // OrderedMap's MAX_HEAP_SIZE already sits below BATCH_OFFSET_MASK, so it
-        // does not carry a construction-time guard.
+        // OrderedMap sizes its heap from the page-size argument rather than from
+        // entrySize * keyCapacity, so the keyCapacity below does not reach its heap at all. Its own
+        // guard is tighter than BATCH_OFFSET_MASK and OrderedMapTest covers it directly.
         Assume.assumeTrue(mapType != MapType.ORDERED_MAP);
         TestUtils.assertMemoryLeak(() -> {
             // 64 x LONG256 = 2048 bytes of value per entry. At the map's

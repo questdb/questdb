@@ -134,10 +134,10 @@ class SortedRecordCursor implements DelegatingRecordCursor {
 
     private void buildChain() {
         // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         final Record record = baseCursor.getRecord();
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             chain.put(record);
         }
         toTop();

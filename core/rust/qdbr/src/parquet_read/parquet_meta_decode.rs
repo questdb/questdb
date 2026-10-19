@@ -1111,7 +1111,7 @@ mod tests {
         let mut bufs = RowGroupBuffers::new(allocator);
 
         // Simulate buffers parked or staged by an in-flight decode.
-        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.park(vec![0u8; 4096]);
         ctx.varchar_slice_page_bufs_scratch.push(vec![0u8; 1024]);
         ctx.varchar_slice_dict_bufs_scratch.push(vec![0u8; 1024]);
 
@@ -1156,7 +1156,7 @@ mod tests {
         let mut bufs = RowGroupBuffers::new(allocator);
 
         // Simulate buffers parked or staged by an in-flight decode.
-        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.park(vec![0u8; 4096]);
         ctx.varchar_slice_page_bufs_scratch.push(vec![0u8; 1024]);
         ctx.varchar_slice_dict_bufs_scratch.push(vec![0u8; 1024]);
 

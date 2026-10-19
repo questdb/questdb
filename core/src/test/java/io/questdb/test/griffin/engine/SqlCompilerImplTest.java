@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
@@ -38,17 +39,29 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.BatchCallback;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
@@ -391,6 +404,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table x (a int)",
                 "Could not create table"
         );
+    }
+
+    @Test
+    public void testCastArrayFails() throws Exception {
+        assertMemoryLeak(() -> {
+            // an array shares its tag with every other array, so dimensionality has to be
+            // checked outside the cast-group table
+            String prefix = "create table y as (select ARRAY[1.0, 2.0] a from long_sequence(2)), cast(";
+            assertQuery(prefix + "a as double[][])")
+                    .noLeakCheck()
+                    .fails(prefix.length(), "unsupported cast [column=a, from=DOUBLE[], to=DOUBLE[][]]");
+            assertQuery(prefix + "a as uuid)")
+                    .noLeakCheck()
+                    .fails(prefix.length(), "unsupported cast [column=a, from=DOUBLE[], to=UUID]");
+            assertQuery(prefix + "a as long256)")
+                    .noLeakCheck()
+                    .fails(prefix.length(), "unsupported cast [column=a, from=DOUBLE[], to=LONG256]");
+        });
     }
 
     @Test
@@ -832,6 +863,40 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         """,
                 ColumnType.TIMESTAMP
         );
+    }
+
+    @Test
+    public void testCastDecimalToDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT 1.5::DECIMAL(10,2) a, 2.25::DECIMAL(30,4) b FROM long_sequence(1))");
+            execute("CREATE TABLE y AS (SELECT * FROM x), CAST(a AS DECIMAL(20,4)), CAST(b AS DECIMAL(9,4))");
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            1.5000\t2.2500
+                            """);
+            assertQuery("SELECT typeOf(a) ta, typeOf(b) tb FROM y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ta\ttb
+                            DECIMAL(20,4)\tDECIMAL(9,4)
+                            """);
+        });
+    }
+
+    @Test
+    public void testCastDecimalToNonDecimalFails() throws Exception {
+        assertCastDecimalFail(ColumnType.UUID);
+        assertCastDecimalFail(ColumnType.DOUBLE);
+        assertCastDecimalFail(ColumnType.LONG);
+        assertCastDecimalFail(ColumnType.STRING);
+        assertCastDecimalFail(ColumnType.VARCHAR);
+        assertCastDecimalFail(ColumnType.LONG256);
+        assertCastDecimalFail(ColumnType.BOOLEAN);
+        assertCastDecimalFail(ColumnType.IPv4);
     }
 
     @Test
@@ -1841,6 +1906,27 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastNonNumericToDecimalFails() throws Exception {
+        // the record copier has no arm for these sources, so the cast clause has to refuse them
+        assertCastToDecimalFail("rnd_double()", ColumnType.DOUBLE);
+        assertCastToDecimalFail("rnd_float()", ColumnType.FLOAT);
+        assertCastToDecimalFail("rnd_date(0, 1000, 0)", ColumnType.DATE);
+        assertCastToDecimalFail("rnd_boolean()", ColumnType.BOOLEAN);
+        assertCastToDecimalFail("rnd_uuid4()", ColumnType.UUID);
+    }
+
+    @Test
+    public void testCastNullSourceToFixed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y AS (SELECT NULL a FROM long_sequence(1)), CAST(a AS INT)");
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\nnull\n");
+        });
+    }
+
+    @Test
     public void testCastNumberFail() throws Exception {
         assertCastIntFail(ColumnType.BOOLEAN);
         assertCastLongFail(ColumnType.BOOLEAN);
@@ -1887,6 +1973,23 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastSymbolFail(ColumnType.DOUBLE);
         assertCastSymbolFail(ColumnType.DATE);
         assertCastSymbolFail(ColumnType.TIMESTAMP);
+    }
+
+    @Test
+    public void testCastNumericToDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT 42::BYTE b, 4200::SHORT s, 420000 i, 42000000000L l, '7'::CHAR c FROM long_sequence(1))");
+            execute("CREATE TABLE y AS (SELECT * FROM x)" +
+                    ", CAST(b AS DECIMAL(10,2)), CAST(s AS DECIMAL(10,2)), CAST(i AS DECIMAL(10,2))" +
+                    ", CAST(l AS DECIMAL(20,2)), CAST(c AS DECIMAL(10,2))");
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\ts\ti\tl\tc
+                            42.00\t4200.00\t420000.00\t42000000000.00\t7.00
+                            """);
+        });
     }
 
     @Test
@@ -2999,6 +3102,134 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                               functions: [rnd_varchar([d,cd,null])>=rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
                             """);
+        });
+    }
+
+    @Test
+    public void testCompileBatchGenerationRetryAfterDdl() throws Exception {
+        // The batch's first statement is DDL. A retry that re-parsed it on behalf of the SELECT
+        // would hand the SELECT's code generation a CREATE TABLE model.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (42)");
+            try (SchemaChangingCompiler compiler = new SchemaChangingCompiler(engine, 1, "ALTER TABLE t ADD COLUMN y INT")) {
+                final RecordingBatchCallback callback = new RecordingBatchCallback(sqlExecutionContext, -1, null);
+                compiler.compileBatch("""
+                        CREATE TABLE u (z INT);
+                        SELECT * FROM t;
+                        """, sqlExecutionContext, callback);
+                TestUtils.assertEquals("""
+                        [CREATE TABLE u (z INT);]
+                        [SELECT * FROM t;]
+                        x\ty
+                        42\tnull
+                        """, callback.log);
+                // the first generation lost the race, the second one is the retry
+                Assert.assertEquals(2, compiler.generationCount);
+            }
+            Assert.assertNotNull(engine.getTableTokenIfExists("u"));
+        });
+    }
+
+    @Test
+    public void testCompileBatchGenerationRetryInsertAsSelect() throws Exception {
+        // A retry that re-parsed the batch's first statement on behalf of the INSERT would give
+        // the INSERT that statement's SELECT, and write its rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (x INT)");
+            execute("INSERT INTO src VALUES (42)");
+            execute("CREATE TABLE dst (x INT)");
+            try (SchemaChangingCompiler compiler = new SchemaChangingCompiler(engine, 2, "ALTER TABLE src ADD COLUMN y INT")) {
+                final RecordingBatchCallback callback = new RecordingBatchCallback(sqlExecutionContext, -1, null);
+                compiler.compileBatch("""
+                        SELECT 7 x FROM long_sequence(1);
+                        INSERT INTO dst SELECT x FROM src;
+                        """, sqlExecutionContext, callback);
+                TestUtils.assertEquals("""
+                        [SELECT 7 x FROM long_sequence(1);]
+                        x
+                        7
+                        [INSERT INTO dst SELECT x FROM src;]
+                        """, callback.log);
+                Assert.assertEquals(3, compiler.generationCount);
+            }
+            assertQuery("SELECT * FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            42
+                            """);
+        });
+    }
+
+    @Test
+    public void testCompileBatchGenerationRetryReparsesSameStatement() throws Exception {
+        // The third statement's first code generation finds t out of date. Its retry must
+        // re-parse the third statement, so that the callback sees each statement's plan once,
+        // under its own text.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (42)");
+            try (SchemaChangingCompiler compiler = new SchemaChangingCompiler(engine, 3, "ALTER TABLE t ADD COLUMN y INT")) {
+                final RecordingBatchCallback callback = new RecordingBatchCallback(sqlExecutionContext, -1, null);
+                compiler.compileBatch("""
+                        SELECT 'first' a FROM long_sequence(1);
+                        SELECT 'second' b FROM long_sequence(1);
+                        SELECT * FROM t;
+                        """, sqlExecutionContext, callback);
+                TestUtils.assertEquals("""
+                        [SELECT 'first' a FROM long_sequence(1);]
+                        a
+                        first
+                        [SELECT 'second' b FROM long_sequence(1);]
+                        b
+                        second
+                        [SELECT * FROM t;]
+                        x\ty
+                        42\tnull
+                        """, callback.log);
+                Assert.assertEquals(4, compiler.generationCount);
+            }
+        });
+    }
+
+    @Test
+    public void testCompileBatchPostCompileRetryReparsesSameStatement() throws Exception {
+        // t changes after the third statement compiled and before it runs, so the callback's
+        // cursor open throws TableReferenceOutOfDateException. compileBatch() must recompile the
+        // third statement and pass its own text to both callbacks again.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (42)");
+            try (SchemaChangingCompiler compiler = new SchemaChangingCompiler(engine, -1, null)) {
+                final RecordingBatchCallback callback = new RecordingBatchCallback(sqlExecutionContext, 3, "ALTER TABLE t ADD COLUMN y INT");
+                compiler.compileBatch("""
+                        SELECT 'first' a FROM long_sequence(1);
+                        SELECT 'second' b FROM long_sequence(1);
+                        SELECT * FROM t;
+                        """, sqlExecutionContext, callback);
+                TestUtils.assertEquals("""
+                        [SELECT 'first' a FROM long_sequence(1);]
+                        a
+                        first
+                        [SELECT 'second' b FROM long_sequence(1);]
+                        b
+                        second
+                        [SELECT * FROM t;]
+                        out of date
+                        [SELECT * FROM t;]
+                        x\ty
+                        42\tnull
+                        """, callback.log);
+                TestUtils.assertEquals("""
+                        SELECT 'first' a FROM long_sequence(1);
+                        SELECT 'second' b FROM long_sequence(1);
+                        SELECT * FROM t;
+                        SELECT * FROM t;
+                        """, callback.preCompileLog);
+                Assert.assertEquals(4, compiler.generationCount);
+            }
         });
     }
 
@@ -8290,7 +8521,55 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createViewSuffixCalled);
                 }
+
+                try {
+                    execute(compiler, "create table lv_base (val int, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create live view lv_ext flush every 1s start from now as (" +
+                            "select ts, val, count(*) over (partition by val order by ts rows between 1 preceding and current row) rn from lv_base" +
+                            ") foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.createLiveViewSuffixCalled);
+                }
             }
+        });
+    }
+
+    @Test
+    public void testUseLiveViewExtensionGrammar() throws Exception {
+        // An edition compiler can consume its own trailing grammar after CREATE LIVE
+        // VIEW (enterprise consumes OWNED BY '<principal>' this way): the hook
+        // receives the first trailing token, reads what it understands off the
+        // lexer, and delegates the remainder to the default, which still rejects
+        // anything left over. The builder the hook returns produces a regular live
+        // view, and its SHOW CREATE output (which carries no extension clause in the
+        // OSS form) parses back through the default hook.
+        assertMemoryLeak(() -> {
+            execute("create table lvg_base (val int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (OwnedByLiveViewCompilerWrapper compiler = new OwnedByLiveViewCompilerWrapper(engine)) {
+                execute(compiler, "create live view lvg flush every 1s start from now as (" +
+                        "select ts, val, count(*) over (partition by val order by ts rows between 1 preceding and current row) rn from lvg_base" +
+                        ") owned by 'sarah'", sqlExecutionContext);
+                Assert.assertEquals("sarah", compiler.ownedBy);
+
+                try {
+                    execute(compiler, "create live view lvg2 flush every 1s start from now as (" +
+                            "select ts, val, count(*) over (partition by val order by ts rows between 1 preceding and current row) rn from lvg_base" +
+                            ") owned by 'sarah' foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [foobar]");
+                }
+            }
+
+            // The emitted DDL round-trips through the default (OSS) hook.
+            printSql("SHOW CREATE LIVE VIEW lvg;");
+            final String ddl = sink.toString().replace("ddl\n", "");
+            execute("DROP LIVE VIEW lvg");
+            execute(ddl);
+            printSql("SHOW CREATE LIVE VIEW lvg;");
+            TestUtils.assertEquals(ddl, sink.toString().replace("ddl\n", ""));
+            execute("DROP LIVE VIEW lvg");
         });
     }
 
@@ -8331,6 +8610,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
+    }
+
+    private void assertCastDecimalFail(int castTo) throws Exception {
+        String prefix = "create table y as (select 1.5::decimal(10,2) a from long_sequence(2)), cast(";
+        assertQuery(prefix + "a as " + ColumnType.nameOf(castTo) + ")")
+                .fails(prefix.length(), "unsupported cast");
     }
 
     private void assertCastDouble(String expectedData, int castTo) throws Exception {
@@ -8451,6 +8736,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
+    }
+
+    private void assertCastToDecimalFail(String sourceExpr, int sourceType) throws Exception {
+        String prefix = "create table y as (select " + sourceExpr + " a from long_sequence(2)), cast(";
+        assertQuery(prefix + "a as decimal(20,2))")
+                .fails(prefix.length(), "unsupported cast [column=a, from=" + ColumnType.nameOf(sourceType) + ", to=DECIMAL(20,2)]");
     }
 
     private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws Exception {
@@ -8611,9 +8902,132 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         void run(CairoEngine engine);
     }
 
+    // Records what compileBatch() passes to its callback: every statement's text, and the rows of
+    // each SELECT. Runs every other statement, so that the next one sees its effect. Before the
+    // given postCompile() call, the callback runs the given DDL, as a concurrent client would
+    // between the compile of a statement and its execution.
+    private static class RecordingBatchCallback implements BatchCallback {
+        private final SqlExecutionContext executionContext;
+        private final StringSink log = new StringSink();
+        private final StringSink preCompileLog = new StringSink();
+        private final int schemaChangePostCompile;
+        private final String schemaChangeSql;
+        private int postCompileCount;
+
+        private RecordingBatchCallback(SqlExecutionContext executionContext, int schemaChangePostCompile, @Nullable String schemaChangeSql) {
+            this.executionContext = executionContext;
+            this.schemaChangePostCompile = schemaChangePostCompile;
+            this.schemaChangeSql = schemaChangeSql;
+        }
+
+        @Override
+        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
+            log.put('[').put(queryText).put("]\n");
+            if (++postCompileCount == schemaChangePostCompile) {
+                engine.execute(schemaChangeSql, executionContext);
+            }
+            switch (cq.getType()) {
+                case SELECT -> {
+                    try (
+                            RecordCursorFactory factory = cq.getRecordCursorFactory();
+                            RecordCursor cursor = factory.getCursor(executionContext)
+                    ) {
+                        final RecordMetadata metadata = factory.getMetadata();
+                        CursorPrinter.println(metadata, log);
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            CursorPrinter.println(record, metadata, log);
+                        }
+                    } catch (TableReferenceOutOfDateException e) {
+                        log.put("out of date\n");
+                        throw e;
+                    }
+                }
+                case CREATE_TABLE -> {
+                    try (Operation op = cq.getOperation(); OperationFuture future = op.execute(executionContext, null)) {
+                        future.await();
+                    }
+                }
+                default -> {
+                    try (OperationFuture future = cq.execute(null)) {
+                        future.await();
+                    }
+                }
+            }
+        }
+
+        @Override
+        public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
+            preCompileLog.put(sqlText).put('\n');
+            return true;
+        }
+    }
+
+    // Runs the given DDL just before the given code generation of a SELECT plan, as a concurrent
+    // client would between the optimiser recording a table's metadata version and the generation
+    // opening a reader at that version.
+    private static class SchemaChangingCompiler extends SqlCompilerImpl {
+        private final int schemaChangeGeneration;
+        private final String schemaChangeSql;
+        private int generationCount;
+
+        private SchemaChangingCompiler(CairoEngine engine, int schemaChangeGeneration, @Nullable String schemaChangeSql) {
+            super(engine);
+            this.schemaChangeGeneration = schemaChangeGeneration;
+            this.schemaChangeSql = schemaChangeSql;
+        }
+
+        @Override
+        protected RecordCursorFactory generateSelectOneShot(
+                IQueryModel selectQueryModel,
+                SqlExecutionContext executionContext,
+                boolean generateProgressLogger
+        ) throws SqlException {
+            if (++generationCount == schemaChangeGeneration) {
+                engine.execute(schemaChangeSql, executionContext);
+            }
+            return super.generateSelectOneShot(selectQueryModel, executionContext, generateProgressLogger);
+        }
+    }
+
+    // Emulates an edition compiler that consumes OWNED BY '<principal>' after the
+    // CREATE LIVE VIEW statement body, the way enterprise does: read the clause off
+    // the lexer, record it, and hand whatever follows to the default hook, which
+    // rejects any leftover token.
+    static class OwnedByLiveViewCompilerWrapper extends SqlCompilerImpl {
+        String ownedBy;
+
+        OwnedByLiveViewCompilerWrapper(CairoEngine engine) {
+            super(engine);
+        }
+
+        @Override
+        public CreateLiveViewOperationBuilder parseCreateLiveViewExt(
+                GenericLexer lexer,
+                SqlExecutionContext executionContext,
+                CreateLiveViewOperationBuilderImpl builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            if (tok != null && Chars.equalsLowerCaseAscii(tok, "owned")) {
+                final CharSequence by = SqlUtil.fetchNext(lexer);
+                if (by == null || !SqlKeywords.isByKeyword(by)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "BY expected");
+                }
+                final CharSequence principal = SqlUtil.fetchNext(lexer);
+                if (principal == null) {
+                    throw SqlException.$(lexer.getPosition(), "principal expected");
+                }
+                ownedBy = Chars.toString(GenericLexer.unquote(principal));
+                return super.parseCreateLiveViewExt(lexer, executionContext, builder, SqlUtil.fetchNext(lexer));
+            }
+            return super.parseCreateLiveViewExt(lexer, executionContext, builder, tok);
+        }
+    }
+
     static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean addColumnSuffixCalled;
         boolean compileDropOtherCalled;
+        boolean createLiveViewSuffixCalled;
         boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
         boolean createViewSuffixCalled;
@@ -8623,6 +9037,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
+        }
+
+        @Override
+        public CreateLiveViewOperationBuilder parseCreateLiveViewExt(
+                GenericLexer lexer,
+                SqlExecutionContext executionContext,
+                CreateLiveViewOperationBuilderImpl builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            createLiveViewSuffixCalled = true;
+            return super.parseCreateLiveViewExt(lexer, executionContext, builder, tok);
         }
 
         @Override

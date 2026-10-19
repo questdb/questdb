@@ -44,9 +44,11 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -741,6 +743,41 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalToBinaryFloat() throws Exception {
+        // DECIMAL <-> DOUBLE and DECIMAL <-> FLOAT have no Rust decoder arm; ConvertOperatorImpl
+        // rewrites the parquet partition to native before converting, so both tables here take the
+        // same native path.
+        assertMemoryLeak(() -> {
+            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "DOUBLE");
+            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "FLOAT");
+            String values = """
+                    (12345.6789m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0000m, '2024-01-01T00:00:02.000000Z'),
+                    (-99.9999m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(18, 4)", "DOUBLE", values);
+            assertConversion("DECIMAL(38, 4)", "DOUBLE", values);
+            assertConversion("DECIMAL(76, 4)", "DOUBLE", values);
+
+            String narrow = """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0m, '2024-01-01T00:00:02.000000Z'),
+                    (-9.9m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(2, 1)", "DOUBLE", narrow);
+            assertConversion("DECIMAL(4, 1)", "DOUBLE", narrow);
+            assertConversion("DECIMAL(9, 1)", "DOUBLE", narrow);
+
+            assertConversion("DECIMAL(18, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(38, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(76, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(2, 1)", "FLOAT", narrow);
+            assertConversion("DECIMAL(4, 1)", "FLOAT", narrow);
+            assertConversion("DECIMAL(9, 1)", "FLOAT", narrow);
+        });
+    }
+
+    @Test
     public void testDecimalToDecimal() throws Exception {
         assertMemoryLeak(() -> {
             // Decimal64 -> Decimal128: cross-physical widening (Int64 -> FLBA(16)),
@@ -811,6 +848,45 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (NULL, '2024-01-01T00:00:04.000000Z')""";
             assertConversion("DECIMAL(76, 4)", "DECIMAL(76, 8)", d256Values);
             assertConversion("DECIMAL(76, 4)", "DECIMAL(76, 0)", d256Values);
+        });
+    }
+
+    @Test
+    public void testDecimalToDecimalLazyUnrepresentableProducesNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // Decimal->decimal conversions that stay lazy (same width, or widening) must read a value
+            // that does not fit the target as NULL on the lazy parquet path, matching the native
+            // converter (DecimalColumnTypeConverter). These all keep the same or a wider physical width,
+            // so the eager pre-pass does not materialise them - the Rust decoder must do the NULL clamp.
+            // Each case mixes an unrepresentable value (-> NULL) with one that fits (-> survives).
+
+            // Same width (Decimal128), precision reduced 38 -> 20, same scale. 18 integer digits exceed
+            // DECIMAL(20,4) (16 integer digits); 12.3400 fits.
+            assertConversion("DECIMAL(38, 4)", "DECIMAL(20, 4)", """
+                    (123456789012345678.9012m, '2024-01-01T00:00:01.000000Z'),
+                    (12.3400m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Widening width (Decimal32 -> Decimal128) with a lossy scale-down 3 -> 1: 1.234 drops the
+            // .034 (information loss) -> NULL; 5.600 is exact at scale 1 -> 5.6.
+            assertConversion("DECIMAL(9, 3)", "DECIMAL(38, 1)", """
+                    (1.234m, '2024-01-01T00:00:01.000000Z'),
+                    (5.600m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Same width (Decimal128), scale up 2 -> 30. 1234567890.12 * 10^28 overflows the target
+            // precision/width -> NULL; 0.00 stays representable.
+            assertConversion("DECIMAL(38, 2)", "DECIMAL(38, 30)", """
+                    (1234567890.12m, '2024-01-01T00:00:01.000000Z'),
+                    (0.00m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Same width (Decimal256), precision reduced 76 -> 40, same scale: a 50-digit value exceeds
+            // DECIMAL(40,0) but fits Decimal256 width -> must be NULL (exercises the i256 precision clamp).
+            assertConversion("DECIMAL(76, 0)", "DECIMAL(40, 0)", """
+                    (12345678901234567890123456789012345678901234567890m, '2024-01-01T00:00:01.000000Z'),
+                    (1234567890m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
         });
     }
 
@@ -1024,45 +1100,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDecimalToDecimalLazyUnrepresentableProducesNull() throws Exception {
-        assertMemoryLeak(() -> {
-            // Decimal->decimal conversions that stay lazy (same width, or widening) must read a value
-            // that does not fit the target as NULL on the lazy parquet path, matching the native
-            // converter (DecimalColumnTypeConverter). These all keep the same or a wider physical width,
-            // so the eager pre-pass does not materialise them - the Rust decoder must do the NULL clamp.
-            // Each case mixes an unrepresentable value (-> NULL) with one that fits (-> survives).
-
-            // Same width (Decimal128), precision reduced 38 -> 20, same scale. 18 integer digits exceed
-            // DECIMAL(20,4) (16 integer digits); 12.3400 fits.
-            assertConversion("DECIMAL(38, 4)", "DECIMAL(20, 4)", """
-                    (123456789012345678.9012m, '2024-01-01T00:00:01.000000Z'),
-                    (12.3400m, '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""");
-
-            // Widening width (Decimal32 -> Decimal128) with a lossy scale-down 3 -> 1: 1.234 drops the
-            // .034 (information loss) -> NULL; 5.600 is exact at scale 1 -> 5.6.
-            assertConversion("DECIMAL(9, 3)", "DECIMAL(38, 1)", """
-                    (1.234m, '2024-01-01T00:00:01.000000Z'),
-                    (5.600m, '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""");
-
-            // Same width (Decimal128), scale up 2 -> 30. 1234567890.12 * 10^28 overflows the target
-            // precision/width -> NULL; 0.00 stays representable.
-            assertConversion("DECIMAL(38, 2)", "DECIMAL(38, 30)", """
-                    (1234567890.12m, '2024-01-01T00:00:01.000000Z'),
-                    (0.00m, '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""");
-
-            // Same width (Decimal256), precision reduced 76 -> 40, same scale: a 50-digit value exceeds
-            // DECIMAL(40,0) but fits Decimal256 width -> must be NULL (exercises the i256 precision clamp).
-            assertConversion("DECIMAL(76, 0)", "DECIMAL(40, 0)", """
-                    (12345678901234567890123456789012345678901234567890m, '2024-01-01T00:00:01.000000Z'),
-                    (1234567890m, '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""");
-        });
-    }
-
-    @Test
     public void testDecimalToStringTypes() throws Exception {
         assertMemoryLeak(() -> {
             String values = """
@@ -1073,6 +1110,39 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             for (String target : new String[]{"STRING", "VARCHAR"}) {
                 assertConversion("DECIMAL(18, 4)", target, values);
             }
+        });
+    }
+
+    @Test
+    public void testBinaryFloatToDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPrePassMadePartitionNative("DOUBLE", "DECIMAL(18, 4)");
+            assertPrePassMadePartitionNative("FLOAT", "DECIMAL(18, 4)");
+            String values = """
+                    (1.5, '2024-01-01T00:00:01.000000Z'),
+                    (0.0, '2024-01-01T00:00:02.000000Z'),
+                    (-3.14159, '2024-01-01T00:00:03.000000Z'),
+                    (1e300, '2024-01-01T00:00:04.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""";
+            assertConversion("DOUBLE", "DECIMAL(18, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(38, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(76, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(9, 2)", values);
+            assertConversion("DOUBLE", "DECIMAL(4, 1)", values);
+            assertConversion("DOUBLE", "DECIMAL(2, 1)", values);
+
+            String floatValues = """
+                    (1.5, '2024-01-01T00:00:01.000000Z'),
+                    (0.0, '2024-01-01T00:00:02.000000Z'),
+                    (-3.14159, '2024-01-01T00:00:03.000000Z'),
+                    (1e30, '2024-01-01T00:00:04.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""";
+            assertConversion("FLOAT", "DECIMAL(18, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(38, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(76, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(9, 2)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(4, 1)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(2, 1)", floatValues);
         });
     }
 
@@ -1750,6 +1820,131 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testMalformedVarcharToFixedIsNullInLazyAndO3Conversions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (val VARCHAR, uid VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            try (TableWriter writer = getWriter("pt")) {
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:02.000000Z"));
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.putVarchar(1, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+
+                row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-02T00:00:00.000000Z"));
+                row.putVarchar(0, new Utf8String("3"));
+                row.putVarchar(1, new Utf8String("00000000-0000-0000-0000-000000000003"));
+                row.append();
+                writer.commit();
+            }
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+            // The UUID target guards the null that a malformed UTF-8 decode yields:
+            // Uuid.checkDashesAndLength() dereferences it and throws NPE, which the
+            // NumericException catch does not cover. The INT target alone does not
+            // exercise this - Numbers.parseInt() rejects null with NumericException.
+            execute("ALTER TABLE pt ALTER COLUMN uid TYPE UUID");
+
+            assertQuery("SELECT val, uid FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            val\tuid
+                            null\t
+                            """);
+
+            execute("INSERT INTO pt VALUES (2, '00000000-0000-0000-0000-000000000002', '2024-01-01T00:00:01.000000Z')");
+
+            assertQuery("SELECT val, uid FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            val\tuid
+                            2\t00000000-0000-0000-0000-000000000002
+                            null\t
+                            """);
+        });
+    }
+
+    /**
+     * After a VARCHAR -> STRING -> VARCHAR round trip leaves the parquet file untouched,
+     * an ADD COLUMN forces the next O3 merge to rewrite with a target schema. That rewrite
+     * raw-copies untouched row groups with a null column for {@code c}, while the writer
+     * column order differs from the file order. The bloom filter on {@code b} must stay
+     * attached to {@code b}. The following O3 merge updates the rewritten file in place.
+     */
+    @Test
+    public void testO3AfterStringVarcharRoundTripAndAddColumnWithBloomFilter() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> runO3AfterStringVarcharRoundTrip(
+                "a VARCHAR, b VARCHAR, ts TIMESTAMP",
+                "",
+                12,
+                " WITH (bloom_filter_columns = 'b')",
+                "ADD COLUMN c INT",
+                O3Batch.rewrite("(a, b, c, ts) VALUES ('aX', 'bX', 1, '2024-01-01T04:30:00.000000Z')"),
+                O3Batch.inPlace("(a, b, c, ts) VALUES ('aY', 'bY', 2, '2024-01-01T09:30:00.000000Z')")
+        ));
+    }
+
+    /**
+     * An O3 batch that lands in the gaps between and after the existing row groups goes
+     * through {@code insert_row_group} rather than {@code replace_row_group}, which must
+     * also match the permuted columns to the file by field id.
+     */
+    @Test
+    public void testO3AfterStringVarcharRoundTripInsertsNewRowGroups() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> runO3AfterStringVarcharRoundTrip(
+                "a VARCHAR, b VARCHAR, ts TIMESTAMP",
+                "",
+                12,
+                "",
+                null,
+                O3Batch.inPlace("""
+                        (a, b, ts) VALUES
+                        ('aG', 'bG', '2024-01-01T03:30:00.000000Z'),
+                        ('aT1', 'bT1', '2024-01-01T12:00:00.000000Z'), ('aT2', 'bT2', '2024-01-01T13:00:00.000000Z'),
+                        ('aT3', 'bT3', '2024-01-01T14:00:00.000000Z'), ('aT4', 'bT4', '2024-01-01T15:00:00.000000Z'),
+                        ('aT5', 'bT5', '2024-01-01T16:00:00.000000Z')""")
+        ));
+    }
+
+    /**
+     * A single-row-group parquet partition always rewrites on O3 merge. With no schema
+     * change, the rewrite runs without a target schema and keeps the file's column order,
+     * so the merged row group must still be aligned to the file by field id.
+     */
+    @Test
+    public void testO3AfterStringVarcharRoundTripRewritesSingleRowGroup() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> runO3AfterStringVarcharRoundTrip(
+                "ts TIMESTAMP, a VARCHAR, b VARCHAR",
+                "",
+                4,
+                "",
+                null,
+                O3Batch.rewrite("(a, b, ts) VALUES ('aX', 'bX', '2024-01-01T01:30:00.000000Z')")
+        ));
+    }
+
+    /**
+     * A deduplicating O3 merge after a VARCHAR -> STRING -> VARCHAR round trip must both
+     * replace the matching row and keep column values in the right columns.
+     */
+    @Test
+    public void testO3AfterStringVarcharRoundTripWithDedup() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> runO3AfterStringVarcharRoundTrip(
+                "a VARCHAR, b VARCHAR, ts TIMESTAMP",
+                " DEDUP UPSERT KEYS(ts)",
+                12,
+                "",
+                null,
+                O3Batch.inPlace("(a, b, ts) VALUES ('aD', 'bD', '2024-01-01T05:00:00.000000Z'), ('aX', 'bX', '2024-01-01T05:30:00.000000Z')"),
+                O3Batch.inPlace("(a, b, ts) VALUES ('aE', 'bE', '2024-01-01T09:00:00.000000Z')")
+        ));
+    }
+
     /**
      * C1 repro (fixed->var dedup key, ALTER before DEDUP): like
      * {@link #testO3DedupKeyConversionFixedToVar} but the column becomes a dedup key only AFTER the
@@ -2101,6 +2296,208 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * Column {@code a} is added after its partition holds all its rows, so it has a full
+     * column top there, and then goes through a VARCHAR -> STRING -> VARCHAR round trip.
+     * O3 merges update the parquet partition in place. The second identical insert must
+     * deduplicate against the first one on the {@code (ts, a)} key.
+     */
+    @Test
+    public void testO3InsertInPlaceDedupsColumnTopKeyAfterRoundTrip() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> {
+            final String[] tables = {"nt", "pt"};
+            for (String table : tables) {
+                execute("CREATE TABLE " + table + " (b VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + table + " (b, ts) SELECT 'b' || x, '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000_000L FROM long_sequence(12)");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " ADD COLUMN a VARCHAR");
+                drainWalQueue();
+                execute("INSERT INTO " + table + " (a, b, ts) VALUES ('a99', 'b99', '2024-01-02T00:00:00.000000Z')");
+                drainWalQueue();
+            }
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            for (String table : tables) {
+                execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE STRING");
+                execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE VARCHAR");
+                execute("ALTER TABLE " + table + " DEDUP ENABLE UPSERT KEYS(ts, a)");
+            }
+            drainWalQueue();
+
+            final long nameTxn = getPartitionNameTxn("pt");
+            for (int i = 0; i < 2; i++) {
+                for (String table : tables) {
+                    execute("INSERT INTO " + table + " (a, b, ts) VALUES ('aX', 'bX', '2024-01-01T04:30:00.000000Z')");
+                }
+                drainWalQueue();
+                Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+            }
+            assertSqlCursors("SELECT * FROM nt", "SELECT * FROM pt");
+            assertQuery("SELECT a, b, ts FROM pt WHERE ts = '2024-01-01T04:30:00.000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tb\tts
+                            aX\tbX\t2024-01-01T04:30:00.000000Z
+                            """);
+        });
+    }
+
+    /**
+     * Indexed SYMBOL column {@code s} is converted from VARCHAR after it was added to a
+     * partition that already held all its rows, so it has a full column top there. The
+     * O3 merge into the parquet partition runs in place and must index the merged value
+     * that lands below that old column top.
+     */
+    @Test
+    public void testO3InsertInPlaceIndexesColumnTopSymbolAfterConversion() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (b VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pt (b, ts) SELECT 'b' || x, '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000_000L FROM long_sequence(12)");
+            drainWalQueue();
+            execute("ALTER TABLE pt ADD COLUMN s VARCHAR");
+            drainWalQueue();
+            execute("INSERT INTO pt (s, b, ts) VALUES ('z', 'b99', '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN s TYPE SYMBOL");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final long nameTxn = getPartitionNameTxn("pt");
+            execute("INSERT INTO pt (s, b, ts) VALUES ('x', 'bX', '2024-01-01T04:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+            assertQuery("SELECT * FROM pt WHERE s = 'x' AND ts IN '2024-01-01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            b\tts\ts
+                            bX\t2024-01-01T04:30:00.000000Z\tx
+                            """);
+        });
+    }
+
+    /**
+     * Column {@code a} is added after its partition holds all its rows, so it has a full
+     * column top there. Its type changes while the partition is native, and only then
+     * does the partition become parquet. The parquet file stores the new type, so the
+     * O3 merge updates it in place. The inserted value must survive the merge and the
+     * later conversion back to native, which reads the partition's column tops.
+     */
+    @Test
+    public void testO3InsertInPlaceKeepsColumnTopValuesAfterNativeAlter() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> {
+            final String[] tables = {"nt", "pt"};
+            for (String table : tables) {
+                execute("CREATE TABLE " + table + " (b VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + table + " (b, ts) SELECT 'b' || x, '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000_000L FROM long_sequence(12)");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " ADD COLUMN a INT");
+                drainWalQueue();
+                execute("INSERT INTO " + table + " (a, b, ts) VALUES (99, 'b99', '2024-01-02T00:00:00.000000Z')");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE LONG");
+                drainWalQueue();
+            }
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final long nameTxn = getPartitionNameTxn("pt");
+            for (String table : tables) {
+                execute("INSERT INTO " + table + " (a, b, ts) VALUES (7, 'bX', '2024-01-01T04:30:00.000000Z')");
+            }
+            drainWalQueue();
+            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+            assertSqlCursors("SELECT * FROM nt", "SELECT * FROM pt");
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertSqlCursors("SELECT * FROM nt", "SELECT * FROM pt");
+            assertQuery("SELECT a, b, ts FROM pt WHERE ts = '2024-01-01T04:30:00.000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tb\tts
+                            7\tbX\t2024-01-01T04:30:00.000000Z
+                            """);
+        });
+    }
+
+    /**
+     * An indexed SYMBOL column that was converted from VARCHAR keeps its original
+     * writer index as the parquet column id. An O3 merge that updates such a parquet
+     * partition in place must rebuild the symbol index, otherwise indexed lookups
+     * return rows whose ids no longer match the merged data.
+     */
+    @Test
+    public void testO3InsertRebuildsIndexOfConvertedSymbolParquetColumn() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO pt VALUES
+                    ('a', '2024-01-01T00:00:00.000000Z'), ('b', '2024-01-01T01:00:00.000000Z'),
+                    ('c', '2024-01-01T02:00:00.000000Z'), ('a', '2024-01-01T03:00:00.000000Z'),
+                    ('b', '2024-01-01T04:00:00.000000Z'), ('c', '2024-01-01T05:00:00.000000Z'),
+                    ('a', '2024-01-01T06:00:00.000000Z'), ('b', '2024-01-01T07:00:00.000000Z'),
+                    ('c', '2024-01-01T08:00:00.000000Z'), ('a', '2024-01-01T09:00:00.000000Z'),
+                    ('b', '2024-01-01T10:00:00.000000Z'), ('c', '2024-01-01T11:00:00.000000Z'),
+                    ('a', '2024-01-02T00:00:00.000000Z')""");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN s TYPE SYMBOL");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final String query = "SELECT * FROM pt WHERE s = 'a' AND ts IN '2024-01-01'";
+            final long nameTxn = getPartitionNameTxn("pt");
+
+            execute("INSERT INTO pt VALUES ('a', '2024-01-01T04:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            s\tts
+                            a\t2024-01-01T00:00:00.000000Z
+                            a\t2024-01-01T03:00:00.000000Z
+                            a\t2024-01-01T04:30:00.000000Z
+                            a\t2024-01-01T06:00:00.000000Z
+                            a\t2024-01-01T09:00:00.000000Z
+                            """);
+
+            execute("INSERT INTO pt VALUES ('a', '2024-01-01T06:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            s\tts
+                            a\t2024-01-01T00:00:00.000000Z
+                            a\t2024-01-01T03:00:00.000000Z
+                            a\t2024-01-01T04:30:00.000000Z
+                            a\t2024-01-01T06:00:00.000000Z
+                            a\t2024-01-01T06:30:00.000000Z
+                            a\t2024-01-01T09:00:00.000000Z
+                            """);
+        });
+    }
+
+    /**
      * O3 insert into a parquet partition that has a pending column type cast must
      * rewrite the parquet with the new type, materializing the conversion. The
      * partition stays in parquet format but the on-disk parquet column type
@@ -2155,6 +2552,89 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                             null\t2024-01-01T00:00:05.000000Z
                             """);
         });
+    }
+
+    /**
+     * Once an O3 merge has rewritten a parquet partition with the post-ALTER column
+     * type, later O3 merges must update the file in place. The rewritten file still
+     * stores the column under its original writer index (the field id), so detecting
+     * a type conversion by comparing writer indexes alone keeps flagging a schema
+     * change and rewrites the whole partition on every commit.
+     */
+    @Test
+    public void testO3InsertUpdatesInPlaceAfterConvertedParquetRewrite() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"ctl", "pt"}) {
+                execute("CREATE TABLE " + table + " (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + table + """
+                         VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'),
+                        (3, '2024-01-01T02:00:00.000000Z'), (4, '2024-01-01T03:00:00.000000Z'),
+                        (5, '2024-01-01T04:00:00.000000Z'), (6, '2024-01-01T05:00:00.000000Z'),
+                        (7, '2024-01-01T06:00:00.000000Z'), (8, '2024-01-01T07:00:00.000000Z'),
+                        (9, '2024-01-01T08:00:00.000000Z'), (10, '2024-01-01T09:00:00.000000Z'),
+                        (11, '2024-01-01T10:00:00.000000Z'), (12, '2024-01-01T11:00:00.000000Z'),
+                        (99, '2024-01-02T00:00:00.000000Z')""");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+            }
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE LONG");
+            drainWalQueue();
+
+            // Control: without a type conversion, an O3 merge into a multi-row-group
+            // parquet partition updates the file in place (partition name txn unchanged).
+            final long ctlNameTxn = getPartitionNameTxn("ctl");
+            execute("INSERT INTO ctl VALUES (100, '2024-01-01T04:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals("control O3 merge must update in place", ctlNameTxn, getPartitionNameTxn("ctl"));
+
+            // First O3 merge after the ALTER legitimately rewrites the file to LONG.
+            final long nameTxnBeforeRewrite = getPartitionNameTxn("pt");
+            execute("INSERT INTO pt VALUES (100, '2024-01-01T04:30:00.000000Z')");
+            drainWalQueue();
+            final long nameTxnAfterRewrite = getPartitionNameTxn("pt");
+            Assert.assertNotEquals("first O3 merge must rewrite", nameTxnBeforeRewrite, nameTxnAfterRewrite);
+            try (TableWriter writer = getWriter("pt")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(0));
+                int colIdx = writer.getMetadata().getColumnIndex("val");
+                Assert.assertEquals(ColumnType.LONG, ColumnType.tagOf(writer.getParquetColumnType(0, colIdx)));
+            }
+
+            // The file now matches the table schema: the next O3 merge must not rewrite it again.
+            execute("INSERT INTO pt VALUES (101, '2024-01-01T06:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals(
+                    "O3 merge must update the already-converted parquet partition in place",
+                    nameTxnAfterRewrite,
+                    getPartitionNameTxn("pt")
+            );
+
+            assertQuery("SELECT val, ts FROM pt WHERE ts BETWEEN '2024-01-01T04:00:00.000000Z' AND '2024-01-01T06:30:00.000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            val\tts
+                            5\t2024-01-01T04:00:00.000000Z
+                            100\t2024-01-01T04:30:00.000000Z
+                            6\t2024-01-01T05:00:00.000000Z
+                            7\t2024-01-01T06:00:00.000000Z
+                            101\t2024-01-01T06:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testO3InsertUpdatesInPlaceAfterStringVarcharRoundTripColumnsBeforeTimestamp() throws Exception {
+        assertO3InPlaceAfterStringVarcharRoundTrip("a VARCHAR, b VARCHAR, ts TIMESTAMP");
+    }
+
+    @Test
+    public void testO3InsertUpdatesInPlaceAfterStringVarcharRoundTripTimestampFirst() throws Exception {
+        assertO3InPlaceAfterStringVarcharRoundTrip("ts TIMESTAMP, a VARCHAR, b VARCHAR");
     }
 
     /**
@@ -2656,59 +3136,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testStringToUuidHalfCorrupt() throws Exception {
-        assertMemoryLeak(() -> {
-            for (String source : new String[]{"STRING", "VARCHAR", "SYMBOL"}) {
-                assertConversion(source, "UUID", """
-                        ('a0eebc99-9c0b-4ef8-zzzz-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
-                        ('zzzzzzzz-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:02.000000Z'),
-                        ('a0eebc99-9c0b-4ef8-bb6d-zzzzzzzzzzzz', '2024-01-01T00:00:03.000000Z'),
-                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:04.000000Z')""");
-            }
-        });
-    }
-
-    @Test
-    public void testStringToUuidLazyScanAcrossParquetPartitions() throws Exception {
-        // Two parquet partitions form two frames whose in-frame row indexes both start at 0, so the
-        // lazy scan reuses the same (rowIndex, columnIndex) for different data across the frame
-        // switch. PageFrameMemoryRecord caches the per-row var->UUID parse keyed by (frameIndex,
-        // rowIndex, columnIndex) -- frameIndex is what keeps a partition-2 read from serving a
-        // partition-1 cached value. The half-corrupt value at partition 2 row 0 must read NULL
-        // (matching native), and the distinct valid UUIDs across partitions must each round-trip.
-        assertMemoryLeak(() -> {
-            try {
-                execute("CREATE TABLE nt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                execute("CREATE TABLE pt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                String rows = """
-                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
-                        ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
-                        ('a0eebc99-9c0b-4ef8-zzzz-6bb9bd380a11', '2024-01-02T00:00:01.000000Z'),
-                        ('22222222-2222-2222-2222-222222222222', '2024-01-02T00:00:02.000000Z')""";
-                execute("INSERT INTO nt VALUES " + rows);
-                execute("INSERT INTO pt VALUES " + rows);
-                drainWalQueue();
-                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
-                drainWalQueue();
-                execute("ALTER TABLE nt ALTER COLUMN val TYPE UUID");
-                execute("ALTER TABLE pt ALTER COLUMN val TYPE UUID");
-                drainWalQueue();
-                // Lazy read: both partitions are still parquet, scanned frame by frame.
-                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-                // Eager rewrite, then re-read against native files.
-                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
-                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-02'");
-                drainWalQueue();
-                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-            } finally {
-                tryDrop("nt");
-                tryDrop("pt");
-            }
-        });
-    }
-
     /**
      * Pins parity between the lazy per-row parquet read path
      * ({@code PageFrameMemoryRecord.convertVarToXxx}) and the eager native rewrite path
@@ -2820,6 +3247,59 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 } finally {
                     tryDrop("pt");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testStringToUuidHalfCorrupt() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{"STRING", "VARCHAR", "SYMBOL"}) {
+                assertConversion(source, "UUID", """
+                        ('a0eebc99-9c0b-4ef8-zzzz-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                        ('zzzzzzzz-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:02.000000Z'),
+                        ('a0eebc99-9c0b-4ef8-bb6d-zzzzzzzzzzzz', '2024-01-01T00:00:03.000000Z'),
+                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:04.000000Z')""");
+            }
+        });
+    }
+
+    @Test
+    public void testStringToUuidLazyScanAcrossParquetPartitions() throws Exception {
+        // Two parquet partitions form two frames whose in-frame row indexes both start at 0, so the
+        // lazy scan reuses the same (rowIndex, columnIndex) for different data across the frame
+        // switch. PageFrameMemoryRecord caches the per-row var->UUID parse keyed by (frameIndex,
+        // rowIndex, columnIndex) -- frameIndex is what keeps a partition-2 read from serving a
+        // partition-1 cached value. The half-corrupt value at partition 2 row 0 must read NULL
+        // (matching native), and the distinct valid UUIDs across partitions must each round-trip.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                String rows = """
+                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                        ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
+                        ('a0eebc99-9c0b-4ef8-zzzz-6bb9bd380a11', '2024-01-02T00:00:01.000000Z'),
+                        ('22222222-2222-2222-2222-222222222222', '2024-01-02T00:00:02.000000Z')""";
+                execute("INSERT INTO nt VALUES " + rows);
+                execute("INSERT INTO pt VALUES " + rows);
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
+                drainWalQueue();
+                execute("ALTER TABLE nt ALTER COLUMN val TYPE UUID");
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE UUID");
+                drainWalQueue();
+                // Lazy read: both partitions are still parquet, scanned frame by frame.
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+                // Eager rewrite, then re-read against native files.
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-02'");
+                drainWalQueue();
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
             }
         });
     }
@@ -3875,6 +4355,27 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         }
     }
 
+    private void assertPrePassMadePartitionNative(String sourceType, String targetType) throws Exception {
+        try {
+            execute("CREATE TABLE pp (ts TIMESTAMP, val " + sourceType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pp VALUES ('2024-01-01T00:00:01.000000Z', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE pp CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            try (TableReader reader = getReader("pp")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(0));
+            }
+
+            execute("ALTER TABLE pp ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            try (TableReader reader = getReader("pp")) {
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormat(0));
+            }
+        } finally {
+            tryDrop("pp");
+        }
+    }
+
     private void assertDirectParquetMaterializerConversion(
             String sourceType,
             String targetType,
@@ -4113,58 +4614,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs a two-step (chained) {@code ALTER COLUMN TYPE} over a parquet partition, asserting
-     * the parquet read (pt) matches the native conversion (nt) after each step and after a final
-     * CONVERT PARTITION TO NATIVE. The first step reads the parquet lazily; the second step finds
-     * a prior conversion, so the ConvertOperatorImpl pre-pass eagerly materialises the partition
-     * to native before applying it. Mirrors {@link #assertConversionWithEncoding}.
-     */
-    private void assertTwoStepConversion(String sourceType, String midType, String targetType, String values) throws Exception {
-        try {
-            execute("CREATE TABLE nt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE pt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            execute("INSERT INTO nt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO pt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE nt ADD COLUMN val " + sourceType);
-            execute("ALTER TABLE pt ADD COLUMN val " + sourceType);
-            drainWalQueue();
-
-            execute("INSERT INTO nt(val, ts) VALUES " + values);
-            execute("INSERT INTO pt(val, ts) VALUES " + values);
-            drainWalQueue();
-
-            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            drainWalQueue();
-
-            // Step 1: lazy parquet read path.
-            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + midType);
-            drainWalQueue();
-            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + midType);
-            drainWalQueue();
-            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-
-            // Step 2: chained conversion. pt now has a prior conversion, so the pre-pass
-            // eagerly converts the parquet partition to native before applying this step.
-            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
-            drainWalQueue();
-            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
-            drainWalQueue();
-            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-
-            // Final: any partition still parquet is materialised to native.
-            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
-            drainWalQueue();
-            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-        } finally {
-            tryDrop("nt");
-            tryDrop("pt");
-        }
-    }
-
-    /**
      * Shared body for the M1 filtered column-top tests. 'v' is ADDed after seed rows so it
      * carries a column top (NULL) for the first 20 rows; value rows get a larger 'sel' so the
      * WHERE filter excludes them. GROUP BY v with a selective filter on sel routes v through the
@@ -4206,6 +4655,33 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     "SELECT v, count() c FROM nt WHERE sel < 10 GROUP BY v ORDER BY v",
                     "SELECT v, count() c FROM pt WHERE sel < 10 GROUP BY v ORDER BY v"
             );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+        }
+    }
+
+    private void assertIntToDecimalOverflowNull(String targetType, String overflowValue) throws Exception {
+        try {
+            // nt stays native (eager ALTER); pt converts to parquet so its ALTER takes the lazy
+            // decode path. Both must read the overflowing row back as NULL.
+            execute("CREATE TABLE nt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO nt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
+            execute("INSERT INTO pt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            // CursorPrinter renders Decimal*_NULL as an empty cell. Neither ALTER suspends the WAL.
+            assertQuery("SELECT val FROM nt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
+            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
+            // Materialize the lazy conversion eagerly (parquet -> native rewrite) and re-assert.
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
         } finally {
             tryDrop("nt");
             tryDrop("pt");
@@ -4355,6 +4831,37 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * A VARCHAR -> STRING -> VARCHAR round trip leaves a parquet partition untouched
+     * (storage-compatible conversion), so its columns keep their original order while
+     * the table writer appends the converted column at the end. The file type matches
+     * the table type again, so an O3 merge updates the file in place and must match the
+     * merged columns to the file's columns by id, not by position.
+     */
+    private void assertO3InPlaceAfterStringVarcharRoundTrip(String columns) throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> {
+            runO3AfterStringVarcharRoundTrip(
+                    columns,
+                    "",
+                    12,
+                    "",
+                    null,
+                    O3Batch.inPlace("(a, b, ts) VALUES ('aX', 'bX', '2024-01-01T04:30:00.000000Z')"),
+                    O3Batch.inPlace("(a, b, ts) VALUES ('aY', 'bY', '2024-01-01T09:30:00.000000Z')")
+            );
+            assertQuery("SELECT a, b, ts FROM pt WHERE ts BETWEEN '2024-01-01T04:00:00.000000Z' AND '2024-01-01T05:00:00.000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tb\tts
+                            a5\tb5\t2024-01-01T04:00:00.000000Z
+                            aX\tbX\t2024-01-01T04:30:00.000000Z
+                            a6\tb6\t2024-01-01T05:00:00.000000Z
+                            """);
+        });
+    }
+
     private void assertParquetFloatOutOfRangeNull(String sourceType, String targetType, String floatExpr) throws Exception {
         // CursorPrinter renders INT/LONG null as the literal "null"
         // (Numbers.append special-cases the null sentinel), while DATE/TIMESTAMP
@@ -4376,33 +4883,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // Out-of-range floats must read back as the target type's NULL sentinel.
             assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n" + nullRendering + "\n");
         } finally {
-            tryDrop("pt");
-        }
-    }
-
-    private void assertIntToDecimalOverflowNull(String targetType, String overflowValue) throws Exception {
-        try {
-            // nt stays native (eager ALTER); pt converts to parquet so its ALTER takes the lazy
-            // decode path. Both must read the overflowing row back as NULL.
-            execute("CREATE TABLE nt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO nt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
-            execute("INSERT INTO pt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
-            drainWalQueue();
-            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            drainWalQueue();
-            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
-            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
-            drainWalQueue();
-            // CursorPrinter renders Decimal*_NULL as an empty cell. Neither ALTER suspends the WAL.
-            assertQuery("SELECT val FROM nt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
-            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
-            // Materialize the lazy conversion eagerly (parquet -> native rewrite) and re-assert.
-            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
-            drainWalQueue();
-            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
-        } finally {
-            tryDrop("nt");
             tryDrop("pt");
         }
     }
@@ -4443,10 +4923,146 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Runs a two-step (chained) {@code ALTER COLUMN TYPE} over a parquet partition, asserting
+     * the parquet read (pt) matches the native conversion (nt) after each step and after a final
+     * CONVERT PARTITION TO NATIVE. The first step reads the parquet lazily; the second step finds
+     * a prior conversion, so the ConvertOperatorImpl pre-pass eagerly materialises the partition
+     * to native before applying it. Mirrors {@link #assertConversionWithEncoding}.
+     */
+    private void assertTwoStepConversion(String sourceType, String midType, String targetType, String values) throws Exception {
+        try {
+            execute("CREATE TABLE nt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO nt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO pt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE nt ADD COLUMN val " + sourceType);
+            execute("ALTER TABLE pt ADD COLUMN val " + sourceType);
+            drainWalQueue();
+
+            execute("INSERT INTO nt(val, ts) VALUES " + values);
+            execute("INSERT INTO pt(val, ts) VALUES " + values);
+            drainWalQueue();
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // Step 1: lazy parquet read path.
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + midType);
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + midType);
+            drainWalQueue();
+            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+            // Step 2: chained conversion. pt now has a prior conversion, so the pre-pass
+            // eagerly converts the parquet partition to native before applying this step.
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+            // Final: any partition still parquet is materialised to native.
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+        }
+    }
+
+    private long getPartitionNameTxn(String tableName) {
+        try (TableReader reader = getReader(tableName)) {
+            Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+            return reader.getTxFile().getPartitionNameTxn(0);
+        }
+    }
+
+    /**
+     * Builds a native twin {@code nt} and a parquet table {@code pt} with columns
+     * {@code a}, {@code b} and {@code ts}, converts {@code pt}'s first partition to parquet
+     * and round-trips {@code a} through VARCHAR -> STRING -> VARCHAR on both. That
+     * conversion is storage-compatible, so the parquet file keeps its column order while
+     * the table writer moves {@code a} to the end. Each O3 batch must then update the file
+     * in place or rewrite it as declared, and {@code pt} must match {@code nt} both as
+     * parquet and after converting back to native.
+     */
+    private void runO3AfterStringVarcharRoundTrip(
+            String columns,
+            String tableOptions,
+            int rowCount,
+            String convertOptions,
+            String alterAfterRoundTrip,
+            O3Batch... batches
+    ) throws Exception {
+        final String[] tables = {"nt", "pt"};
+        for (String table : tables) {
+            execute("CREATE TABLE " + table + " (" + columns + ") TIMESTAMP(ts) PARTITION BY DAY WAL" + tableOptions);
+            execute("INSERT INTO " + table + " (a, b, ts) SELECT 'a' || x, 'b' || x, '2024-01-01'::timestamp + (x - 1) * 3_600_000_000L FROM long_sequence(" + rowCount + ")");
+            execute("INSERT INTO " + table + " (a, b, ts) VALUES ('a99', 'b99', '2024-01-02T00:00:00.000000Z')");
+        }
+        drainWalQueue();
+        execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'" + convertOptions);
+        drainWalQueue();
+        for (String table : tables) {
+            execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE STRING");
+            execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE VARCHAR");
+            if (alterAfterRoundTrip != null) {
+                execute("ALTER TABLE " + table + " " + alterAfterRoundTrip);
+            }
+        }
+        drainWalQueue();
+
+        for (O3Batch batch : batches) {
+            final long nameTxn = getPartitionNameTxn("pt");
+            for (String table : tables) {
+                execute("INSERT INTO " + table + " " + batch.insert());
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+            if (batch.isInPlace()) {
+                Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+            } else {
+                Assert.assertNotEquals("O3 merge must rewrite the parquet partition", nameTxn, getPartitionNameTxn("pt"));
+            }
+        }
+
+        for (int pass = 0; pass < 2; pass++) {
+            assertSqlCursors("SELECT * FROM nt", "SELECT * FROM pt");
+            assertSqlCursors("SELECT * FROM nt WHERE b = 'b5'", "SELECT * FROM pt WHERE b = 'b5'");
+            assertSqlCursors("SELECT * FROM nt WHERE b = 'bX'", "SELECT * FROM pt WHERE b = 'bX'");
+            assertSqlCursors("SELECT * FROM nt WHERE a = 'a5'", "SELECT * FROM pt WHERE a = 'a5'");
+            if (pass == 0) {
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+            }
+        }
+    }
+
+    private void setO3InPlaceProperties() {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+    }
+
     private void tryDrop(String tableName) {
         try {
             execute("DROP TABLE " + tableName);
         } catch (Exception ignored) {
+        }
+    }
+
+    private record O3Batch(String insert, boolean isInPlace) {
+        static O3Batch inPlace(String insert) {
+            return new O3Batch(insert, true);
+        }
+
+        static O3Batch rewrite(String insert) {
+            return new O3Batch(insert, false);
         }
     }
 }

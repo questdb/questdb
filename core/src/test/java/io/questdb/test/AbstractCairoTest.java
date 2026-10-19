@@ -74,6 +74,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -156,9 +157,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static long spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     protected static SqlExecutionContext sqlExecutionContext;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+    private static int classJitMode;
     private static long fdReuseCount;
     private static long memoryUsage = -1;
     private static long mmapReuseCount;
+    private SuspensionScope.Mode previousSuspensionMode;
     @Rule
     public final TestWatcher flushLogsOnFailure = new TestWatcher() {
         @Override
@@ -387,6 +390,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
+        // The context constructor reads the JIT mode off the configuration, and this is the only
+        // moment it reads the mode a @BeforeClass set: Cairo#tearDown() clears the overrides after
+        // every test method, and CairoTestConfiguration resolves them live, so from the second
+        // method onward the configuration reports the built-in default instead. setUp() hands the
+        // context back this value rather than re-reading the configuration.
+        classJitMode = sqlExecutionContext.getJitMode();
         ((MicrosTimestampDriver) MicrosTimestampDriver.INSTANCE).setTicker(testMicrosClock);
         ((NanosTimestampDriver) NanosTimestampDriver.INSTANCE).setTicker(testNanoClock);
         ColumnType.makeUtf8DefaultString();
@@ -424,6 +433,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @Before
     public void setUp() {
         super.setUp();
+        previousSuspensionMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
         SharedRandom.RANDOM.set(new Rnd());
         engine.getViewStateStore().clear();
         forEachNode(QuestDBTestNode::setUpCairo);
@@ -437,6 +447,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.reset();
+        // The execution context outlives a test method, and setJitMode() is not part of
+        // reset(). A test that switches the mode and then fails leaves it switched for every
+        // test that runs after it, which surfaces as "JIT was not enabled" on an unrelated
+        // test and hides the failure that actually caused it. Restore the mode captured in
+        // setUpStatic(), not configuration.getSqlJitMode() - see the note there.
+        sqlExecutionContext.setJitMode(classJitMode);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
         sqlExecutionContext.setParallelTopKEnabled(configuration.isSqlParallelTopKEnabled());
@@ -448,6 +464,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
+        engine.getLiveViewStateStore().clear();
     }
 
     public void tearDown(boolean removeDir) {
@@ -470,9 +487,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     @After
     public void tearDown() throws Exception {
-        tearDown(true);
-        super.tearDown();
-        spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
+        try {
+            tearDown(true);
+            super.tearDown();
+            spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
+        } finally {
+            SuspensionScope.restore(previousSuspensionMode);
+            previousSuspensionMode = null;
+        }
     }
 
     private static TestCairoConfigurationFactory getConfigurationFactory() {
@@ -745,6 +767,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    // Asserts that the parse budget refuses the statement at the position.
+    protected static void assertTooComplexToParse(CharSequence sql, int position, String spentPart, long max) throws Exception {
+        try {
+            assertExceptionNoLeakCheck(sql);
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            assertTooComplexToParseMessage(e.getFlyweightMessage(), spentPart, max);
+        }
+    }
+
+    // The error reports how much of the spent part the parse had taken, a count that moves with any
+    // change to how the parser allocates, so the assertion pins the spent part and its maximum,
+    // which follows from the length of the text, but not the count.
+    protected static void assertTooComplexToParseMessage(CharSequence message, String spentPart, long max) {
+        TestUtils.assertContains(message, "statement is too complex to parse [" + spentPart + '=');
+        TestUtils.assertContains(message, ", max=" + max + ']');
+    }
+
     protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
     }
@@ -757,6 +797,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void configOverrideWalMaxLagTxnCount() {
         Overrides overrides = node1.getConfigurationOverrides();
         overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
+    }
+
+    protected static boolean containsSymbolNullValue(CharSequence tableName, CharSequence columnName) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getSymbolMapReader(reader.getMetadata().getColumnIndex(columnName)).containsNullValue();
+        }
     }
 
     protected static MatViewRefreshJob createMatViewRefreshJob() {
@@ -1001,6 +1047,30 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    protected static void unsetSymbolNullFlag(CharSequence tableName, CharSequence columnName) {
+        try (TableWriter writer = getWriter(tableName)) {
+            writer.getSymbolMapWriter(writer.getMetadata().getColumnIndex(columnName)).updateNullFlag(false);
+        }
+        engine.releaseAllReaders();
+        Assert.assertFalse(containsSymbolNullValue(tableName, columnName));
+    }
+
+    /**
+     * Reports whether the WAL-level symbol dictionary of {@code columnName} still sits in
+     * {@code walName}'s directory. Every already-written segment of that WAL resolves its clean
+     * symbol band through {@code <wal>/<column>.o} and its siblings, so this is the artifact a
+     * symbol capacity rebuild or a DROP COLUMN strands. Unlike the {@code assert*Existence}
+     * helpers this returns the answer rather than asserting it, because callers both search for
+     * the WAL that holds the dictionary and assert its disappearance.
+     */
+    protected static boolean walSymbolOffsetFileExists(@NotNull TableToken tableToken, String walName, String columnName) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(tableToken.getDirName()).concat(walName);
+            TableUtils.offsetFileName(path, columnName, TableUtils.COLUMN_NAME_TXN_NONE);
+            return engine.getConfiguration().getFilesFacade().exists(path.$());
+        }
+    }
+
     protected final void allowFunctionMemoization() {
         SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
     }
@@ -1013,6 +1083,25 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
         assertCursor(expected, cursor, metadata, true);
+    }
+
+    /**
+     * Asserts a query whose ORDER BY references a hidden key, such as an expression over a column
+     * that the select list does not output, together with the wrappers over it: {@code SELECT *}
+     * returns the query's rows, and {@link #assertRowCountInWrappersNoLeakCheck} checks the wrappers
+     * that drop the ORDER BY. The row count comes from the lines of {@code expected}, less the header.
+     * Every assertion skips the leak check, so the caller wraps this in {@code assertMemoryLeak()}.
+     */
+    protected void assertOrderByHiddenKeyNoLeakCheck(String sql, String expected, boolean isSizeKnown) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .expectSize(isSizeKnown)
+                .returns(expected);
+        assertQuery("SELECT * FROM (" + sql + ")")
+                .noLeakCheck()
+                .expectSize(isSizeKnown)
+                .returns(expected);
+        assertRowCountInWrappersNoLeakCheck(sql, expected.chars().filter(c -> c == '\n').count() - 1);
     }
 
     /**
@@ -1034,6 +1123,25 @@ public abstract class AbstractCairoTest extends AbstractTest {
      */
     protected QueryAssertion assertQuery(CharSequence query) {
         return new QueryAssertion(engine, sqlExecutionContext, this::prepareForQueryAssertion, query);
+    }
+
+    /**
+     * Asserts that {@code count()} over the query returns {@code rowCount}, and {@code count()} over
+     * the UNION ALL of the query with itself returns twice that. Both wrappers drop the query's
+     * ORDER BY, so a hidden ORDER BY key that splits the query's groups must still split them there.
+     * Both assertions skip the leak check, so the caller wraps this in {@code assertMemoryLeak()}.
+     */
+    protected void assertRowCountInWrappersNoLeakCheck(String sql, long rowCount) throws Exception {
+        assertQuery("SELECT count() FROM (" + sql + ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + rowCount + "\n");
+        assertQuery("SELECT count() FROM ((" + sql + ") UNION ALL (" + sql + "))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + 2 * rowCount + "\n");
     }
 
     protected File assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {

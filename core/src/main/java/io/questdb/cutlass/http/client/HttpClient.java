@@ -83,29 +83,53 @@ public abstract class HttpClient implements QuietCloseable {
 
     public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         this.nf = configuration.getNetworkFacade();
-        this.socket = socketFactory.newInstance(nf, LOG);
-        this.defaultTimeout = configuration.getTimeout();
-        this.cookieHandler = configuration.getCookieHandlerFactory().getInstance();
-        this.bufferSize = configuration.getInitialRequestBufferSize();
-        this.maxBufferSize = configuration.getMaximumRequestBufferSize();
-        this.responseParserBufSize = configuration.getResponseBufferSize();
-        this.fixBrokenConnection = configuration.fixBrokenConnection();
-        this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        this.responseParserBufLo = Unsafe.malloc(responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
-        this.responseHeaders = new ResponseHeaders(responseParserBufLo, responseParserBufSize, defaultTimeout, 4096, csPool);
+        // Locals mirror the resources the constructor takes. A throw past the first of them - the
+        // ResponseHeaders parser allocates natively, and so do both mallocs - leaves a half-built
+        // client that no caller can reach, so close() will never run and the catch has to free
+        // what was taken. The catch cannot read a blank final the failing statement never
+        // assigned, hence the locals. Sizes are read up front for the same reason.
+        //
+        // The parser goes last on purpose. It is the one resource the catch below cannot free -
+        // ResponseHeaders overrides close() to keep parser memory alive for the client - so nothing
+        // fallible may follow it. The constructor either already holds everything the parser needs
+        // or hands it in, so this ordering costs nothing.
+        final int requestBufSize = configuration.getInitialRequestBufferSize();
+        final int responseBufSize = configuration.getResponseBufferSize();
+        Socket socket = null;
+        long requestBuf = 0;
+        long responseBuf = 0;
+        try {
+            this.socket = socket = socketFactory.newInstance(nf, LOG);
+            this.defaultTimeout = configuration.getTimeout();
+            this.cookieHandler = configuration.getCookieHandlerFactory().getInstance();
+            this.bufferSize = requestBufSize;
+            this.maxBufferSize = configuration.getMaximumRequestBufferSize();
+            this.responseParserBufSize = responseBufSize;
+            this.fixBrokenConnection = configuration.fixBrokenConnection();
+            this.bufLo = requestBuf = Unsafe.malloc(requestBufSize, MemoryTag.NATIVE_DEFAULT);
+            this.responseParserBufLo = responseBuf = Unsafe.malloc(responseBufSize, MemoryTag.NATIVE_DEFAULT);
+            this.responseHeaders = new ResponseHeaders(
+                    defaultTimeout,
+                    4096,
+                    csPool,
+                    new ResponseImpl(responseBuf, responseBuf + responseBufSize, defaultTimeout),
+                    new ChunkedResponseImpl(responseBuf, responseBuf + responseBufSize, defaultTimeout)
+            );
+        } catch (Throwable th) {
+            if (responseBuf != 0) {
+                this.responseParserBufLo = Unsafe.free(responseBuf, responseBufSize, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (requestBuf != 0) {
+                this.bufLo = Unsafe.free(requestBuf, requestBufSize, MemoryTag.NATIVE_DEFAULT);
+            }
+            Misc.free(socket, th);
+            throw th;
+        }
     }
 
     @Override
     public void close() {
-        disconnect();
-        if (bufLo != 0) {
-            Unsafe.free(bufLo, bufferSize, MemoryTag.NATIVE_DEFAULT);
-            bufLo = 0;
-            assert responseParserBufLo != 0;
-            Unsafe.free(responseParserBufLo, responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
-            responseParserBufLo = 0;
-        }
-        responseHeaders.free();
+        closeBase();
     }
 
     public void disconnect() {
@@ -136,6 +160,25 @@ public abstract class HttpClient implements QuietCloseable {
         final long requiredSize = usedBytes + capacity;
         if (requiredSize > bufferSize) {
             growBuffer(requiredSize);
+        }
+    }
+
+    private void closeBase() {
+        // Free the native blocks in a finally: disconnect() runs an extension socket's close(), and a
+        // socket that throws there used to strand both buffers and the parser for good - close() is
+        // the only thing that ever frees them and no caller calls it twice. The socket failure still
+        // propagates, so the caller keeps seeing it.
+        try {
+            disconnect();
+        } finally {
+            if (bufLo != 0) {
+                Unsafe.free(bufLo, bufferSize, MemoryTag.NATIVE_DEFAULT);
+                bufLo = 0;
+                assert responseParserBufLo != 0;
+                Unsafe.free(responseParserBufLo, responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
+                responseParserBufLo = 0;
+            }
+            responseHeaders.free();
         }
     }
 
@@ -211,6 +254,26 @@ public abstract class HttpClient implements QuietCloseable {
             dieIfNegative(socket.tlsIO(Socket.WRITE_FLAG));
         }
         return n;
+    }
+
+    /**
+     * Rolls the base class back from a platform subclass's failing constructor. The subclass catch
+     * cannot let this cleanup throw on top of the failure it is handling: the extension socket that
+     * {@link #disconnect()} closes can raise a runtime exception, which would replace the constructor
+     * failure the caller has to see and skip the poller the subclass releases next. Keep
+     * {@code primary} as the failure and carry the cleanup one as suppressed.
+     * <p>
+     * Releases the base class directly rather than through {@link #close()}, which dispatches into a
+     * subclass override running against fields its own constructor has not reached yet.
+     */
+    protected final void closeBaseQuietly(@NotNull Throwable primary) {
+        try {
+            closeBase();
+        } catch (Throwable th) {
+            if (th != primary) {
+                primary.addSuppressed(th);
+            }
+        }
     }
 
     protected void dieWaiting(int n) {
@@ -880,15 +943,29 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     public class ResponseHeaders extends HttpHeaderParser {
-        private final ChunkedResponseImpl chunkedResponse;
+        private final AbstractChunkedResponse chunkedResponse;
         private final int defaultTimeout;
-        private final ResponseImpl response;
+        private final AbstractResponse response;
 
-        public ResponseHeaders(long respParserBufLo, int respParserBufSize, int defaultTimeout, int headerBufSize, ObjectPool<DirectUtf8String> pool) {
+        public ResponseHeaders(
+                int defaultTimeout,
+                int headerBufSize,
+                ObjectPool<DirectUtf8String> pool,
+                AbstractResponse response,
+                AbstractChunkedResponse chunkedResponse
+        ) {
+            // The client builds both response views and hands them in, so everything that can throw
+            // runs while Java evaluates the arguments, before super() takes the parser's header
+            // buffer, boundary augmenter and sink. Only field assignments follow that call, which is
+            // what keeps this constructor out of the leak: HttpClient never receives the object when
+            // a constructor here throws, so its own catch would have no reference to reach the
+            // parser through, and Java does not run a superclass close() when a subclass constructor
+            // fails. HttpHeaderParser rolls its own allocations back, so a throw inside super()
+            // leaves nothing behind either.
             super(headerBufSize, pool);
             this.defaultTimeout = defaultTimeout;
-            this.response = new ResponseImpl(respParserBufLo, respParserBufLo + respParserBufSize, defaultTimeout);
-            this.chunkedResponse = new ChunkedResponseImpl(respParserBufLo, respParserBufLo + respParserBufSize, defaultTimeout);
+            this.response = response;
+            this.chunkedResponse = chunkedResponse;
         }
 
         public void await() {

@@ -221,11 +221,13 @@ public class ConvertOperatorImpl implements Closeable {
             asyncProcessingErrorCount.set(0);
             long start = timer.getTicks();
             long totalRows = 0;
+            boolean hasNullTopRows = false;
 
             // Pre-pass: convert parquet partitions to native when needed.
             // Case 1: chained conversion (e.g. INT -> STRING -> DATE) where parquet stores an
             //         older type - convert so the two-step path matches native behavior.
             // Case 2: target type is Symbol - symbol maps cannot be built from parquet.
+            // Case 3: DOUBLE or FLOAT <-> DECIMAL - the Rust decoder has no arm for the pair.
             //
             // A dedup-key conversion that crosses the fixed vs var/symbol boundary is NOT a
             // trigger. O3PartitionJob.mergeRowGroup materialises the parquet decode buffer into
@@ -242,6 +244,7 @@ public class ConvertOperatorImpl implements Closeable {
             boolean hasPriorConversion = tableWriter.getMetadata()
                     .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
             boolean isTargetSymbol = ColumnType.isSymbol(newType);
+            boolean isLazyDecodeSupported = isLazyDecodeSupported(existingType, newType);
             boolean hasAnyPartitionConverted = false;
             final int partitionCount = tableWriter.getPartitionCount();
             invalidatedByPrepass.setAll(partitionCount, false);
@@ -249,7 +252,7 @@ public class ConvertOperatorImpl implements Closeable {
                 if (tableWriter.getPartitionFormat(pi) != PartitionFormat.PARQUET) {
                     continue;
                 }
-                if (!hasPriorConversion && !isTargetSymbol) {
+                if (!hasPriorConversion && !isTargetSymbol && isLazyDecodeSupported) {
                     if (tableWriter.getTxWriter().isPartitionRemote(pi)) {
                         tableWriter.markParquetPartitionRemoteStale(pi);
                     }
@@ -258,6 +261,7 @@ public class ConvertOperatorImpl implements Closeable {
                 int parquetColType = tableWriter.getParquetColumnType(pi, existingColIndex);
                 if (!ColumnType.isUndefined(parquetColType)
                         && (isTargetSymbol
+                        || !isLazyDecodeSupported
                         || !isParquetStorageCompatible(parquetColType, existingType))) {
                     long pts = tableWriter.getPartitionTimestamp(pi);
                     LOG.info()
@@ -306,14 +310,13 @@ public class ConvertOperatorImpl implements Closeable {
                         // row offsets.
                         final long parquetPts = tableWriter.getPartitionTimestamp(partitionIndex);
                         final long parquetColTop = columnVersionWriter.getColumnTop(parquetPts, existingColIndex);
+                        final long parquetNewColTop = parquetColTop > -1 ? parquetColTop : tableWriter.getPartitionSize(partitionIndex);
+                        hasNullTopRows |= parquetNewColTop > 0;
                         if (parquetColTop != tableWriter.getColumnTop(parquetPts, columnIndex, -1)) {
                             long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE
                                     ? parquetPts
                                     : TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                            columnVersionWriter.upsertColumnTop(
-                                    partTs, columnIndex,
-                                    parquetColTop > -1 ? parquetColTop : tableWriter.getPartitionSize(partitionIndex)
-                            );
+                            columnVersionWriter.upsertColumnTop(partTs, columnIndex, parquetNewColTop);
                         }
                         continue;
                     }
@@ -322,6 +325,7 @@ public class ConvertOperatorImpl implements Closeable {
                         final long maxRow = tableWriter.getPartitionSize(partitionIndex);
 
                         final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, existingColIndex);
+                        hasNullTopRows |= (columnTop > -1 ? columnTop : maxRow) > 0;
                         if (columnTop > -1) {
                             long rowCount = maxRow - columnTop;
                             long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
@@ -404,6 +408,9 @@ public class ConvertOperatorImpl implements Closeable {
                 }
             }
             consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount, true);
+            if (hasNullTopRows && ColumnType.isSymbol(newType)) {
+                tableWriter.getSymbolMapWriter(columnIndex).updateNullFlag(true);
+            }
             long elapsed = timer.getTicks() - start;
             LOG.info().$("completed column conversion [at=").$(tableWriter.getTableToken())
                     .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
@@ -549,6 +556,19 @@ public class ConvertOperatorImpl implements Closeable {
             fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             varFd = -1;
         }
+    }
+
+    private static boolean isBinaryFloat(int columnType) {
+        return columnType == ColumnType.DOUBLE || columnType == ColumnType.FLOAT;
+    }
+
+    /**
+     * Returns false when the parquet decoder cannot produce {@code newType} from a partition
+     * holding {@code existingType}, so the partition has to become native before the conversion.
+     */
+    private static boolean isLazyDecodeSupported(int existingType, int newType) {
+        return !(isBinaryFloat(existingType) && ColumnType.isDecimal(newType))
+                && !(ColumnType.isDecimal(existingType) && isBinaryFloat(newType));
     }
 
     /**

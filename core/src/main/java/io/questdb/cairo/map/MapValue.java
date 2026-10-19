@@ -124,6 +124,10 @@ public interface MapValue extends Record {
 
     void putLong(int index, long value);
 
+    default void putLong128(int index, Record record, int colIndex) {
+        putLong128(index, record.getLong128Lo(colIndex), record.getLong128Hi(colIndex));
+    }
+
     void putLong128(int index, long lo, long hi);
 
     void putLong256(int index, Long256 value);

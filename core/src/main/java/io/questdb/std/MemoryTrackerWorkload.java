@@ -32,5 +32,6 @@ package io.questdb.std;
 public enum MemoryTrackerWorkload {
     QUERY,
     MAT_VIEW_REFRESH,
-    WAL_APPLY
+    WAL_APPLY,
+    LIVE_VIEW_REFRESH
 }

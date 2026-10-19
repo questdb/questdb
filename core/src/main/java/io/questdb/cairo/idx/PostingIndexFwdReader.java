@@ -799,11 +799,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
             if (coverCount > 0) {
-                int sidecarBase = 0;
-                for (int i = 0; i < start; i++) {
-                    sidecarBase += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                }
-                this.sidecarOrdinal = sidecarBase;
+                // O(1) via the reader-scoped memo instead of an O(start) scan of
+                // counts[] on every cursor open; version-guarded on the gen
+                // snapshot. See SparseGenSidecarPrefixSum.
+                this.sidecarOrdinal = sidecarPrefixSum.baseOrdinal(
+                        genLookup.getCacheVersion(), genCount, gen, start, countsBase, activeKeyCount, isFrozen());
             } else {
                 this.sidecarOrdinal = 0;
             }
@@ -845,11 +845,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
             if (coverCount > 0) {
-                int sidecarBase = 0;
-                for (int i = 0; i < idx; i++) {
-                    sidecarBase += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                }
-                this.sidecarOrdinal = sidecarBase;
+                // O(1) via the reader-scoped memo instead of an O(idx) scan of
+                // counts[] on every cursor open; version-guarded on the gen
+                // snapshot. See SparseGenSidecarPrefixSum.
+                this.sidecarOrdinal = sidecarPrefixSum.baseOrdinal(
+                        genLookup.getCacheVersion(), genCount, gen, idx, countsBase, activeKeyCount, isFrozen());
             } else {
                 this.sidecarOrdinal = 0;
             }
@@ -943,8 +943,16 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (startBlock > 0) {
                 packedDataStartOffset += Unsafe.getLong(baseAddr + srcPackedOffsetsOffset + (long) startBlock * Long.BYTES);
             }
+            // The skip lands in exactly one place per layout, and the covered accessors add it
+            // back once. On a dense gen the fixed-width accessors index the KEY's own sidecar
+            // block, so the skip belongs in sidecarStrideKeyStart, which hasNext() folds into
+            // cachedSidecarIdx; the var-length accessors then read
+            // denseVarKeyStartCount + cachedSidecarIdx out of the STRIDE-wide block, so
+            // denseVarKeyStartCount has to stay the key's base alone -- adding the skip here too
+            // counted it twice and handed out another row's string, varchar, binary or array.
+            // On a sparse gen the accessors index by sidecarOrdinal alone, so the skip goes
+            // there.
             this.sidecarStrideKeyStart += skippedValueCount;
-            this.denseVarKeyStartCount += skippedValueCount;
             if (!isCurrentGenDense && coverCount > 0) {
                 this.sidecarOrdinal += skippedValueCount;
             }

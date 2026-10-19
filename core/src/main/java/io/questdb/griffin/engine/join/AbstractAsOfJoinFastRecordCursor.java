@@ -115,8 +115,8 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
      * Scales a timestamp by the given scale factor.
      *
      * @param timestamp the timestamp to scale
-     * @param scale     the scale factor
-     * @return the scaled timestamp, or Long.MAX_VALUE on overflow
+     * @param scale     the scale factor, always positive
+     * @return the scaled timestamp, clamped to Long.MAX_VALUE or Long.MIN_VALUE on overflow
      */
     public static long scaleTimestamp(long timestamp, long scale) {
         if (scale == 1 || timestamp == Long.MIN_VALUE) {
@@ -125,8 +125,10 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         try {
             return Math.multiplyExact(timestamp, scale);
         } catch (ArithmeticException e) {
-            // May "overflow" when micros scales to nanos, which will return max timestamp.
-            return Long.MAX_VALUE;
+            // May "overflow" when micros scale to nanos. Saturate towards the limit the value
+            // overflowed towards - a window's lower bound reaches below the epoch once its frame
+            // saturates, and clamping that to the end of time would invert the window.
+            return timestamp > 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
         }
     }
 

@@ -44,6 +44,11 @@ public final class ArrayFunctionMemoizer extends ArrayFunction implements Memoiz
     }
 
     @Override
+    public void clearMemo() {
+        validValue = false;
+    }
+
+    @Override
     public void close() {
         MemoizerFunction.super.close();
         Misc.free(derivedArray);
@@ -100,11 +105,6 @@ public final class ArrayFunctionMemoizer extends ArrayFunction implements Memoiz
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validValue = false;
     }
 
     @Override

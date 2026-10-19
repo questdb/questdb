@@ -23,6 +23,12 @@
  ******************************************************************************/
 
 //! Foreign Function Interface: symbols bound directly from the JVM via the
-//! Foreign Function & Memory API (`Linker.Option.critical`), bypassing JNI.
+//! Foreign Function & Memory API, bypassing JNI.
+//!
+//! Each symbol picks its binding to match how long it runs. `carrier` uses
+//! `Linker.Option.critical` because a thread-local store is as short as an empty
+//! function; `sleep` must not, because a critical binding keeps the caller in
+//! `_thread_in_Java` and would stall every safepoint for the sleep duration.
 
 pub mod carrier;
+pub mod sleep;

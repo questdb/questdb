@@ -92,7 +92,7 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
         while (true) {
             // depth-first directory traversal issues find/stat syscalls per iteration, so observe
             // the breaker each loop -- a cold-open-only check would leave a deep tree uncancellable.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (!initialized) {
                 if (!ff.exists(rootPath.$())) {
                     return false;

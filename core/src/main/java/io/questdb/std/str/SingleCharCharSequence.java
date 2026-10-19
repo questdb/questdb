@@ -24,11 +24,11 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 
 public final class SingleCharCharSequence extends AbstractCharSequence {
 
-    private static final CarrierLocal<SingleCharCharSequence> TL_CHAR_SEQUENCE = new CarrierLocal<>(SingleCharCharSequence::new);
+    private static final FiberLocal<SingleCharCharSequence> TL_CHAR_SEQUENCE = new FiberLocal<>(SingleCharCharSequence::new);
     private char value;
 
     public static CharSequence get(char value) {

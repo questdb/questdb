@@ -47,6 +47,23 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiRowCursorFailsOnBetweenEndpoints() throws Exception {
+        // Parenthesized scalar sub-queries may provide either BETWEEN endpoint. The runtime
+        // interval model must reject multiple rows at the position of the offending endpoint.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            final String lowerEndpoint = "select * from x where ts between (select ts from x limit 2) and (select max(ts) from x)";
+            assertQuery(lowerEndpoint)
+                    .fails(lowerEndpoint.indexOf("(select") + 1, "scalar sub-query returned more than one row");
+            final String upperEndpoint = "select * from x where ts between (select min(ts) from x) and (select ts from x limit 2)";
+            assertQuery(upperEndpoint)
+                    .fails(upperEndpoint.lastIndexOf("(select") + 1, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
     public void testMultiRowCursorFailsOnDesignatedTimestamp() throws Exception {
         // On a designated-timestamp column, ts = (select ...) is extracted as an interval intrinsic and
         // evaluated by RuntimeIntervalModel instead of the cursor-comparison factory. A scalar sub-query
@@ -58,24 +75,6 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
             assertQuery("select * from x where ts = (select ts from x limit 2)")
                     .fails(28, "scalar sub-query returned more than one row");
-        });
-    }
-
-    @Test
-    public void testSubQueryBetweenEndpointsAreRejectedByParser() throws Exception {
-        // The expression parser forbids sub-queries inside BETWEEN (ExpressionParser rejects any
-        // SELECT lambda while betweenCount > 0), so a scalar sub-query can never reach the
-        // dynamic BETWEEN endpoint handoff in WhereClauseParser and no runtime multi-row check
-        // is reachable there. Pin the rejection for each endpoint independently so a future
-        // parser relaxation is forced to add the runtime position coverage.
-        assertMemoryLeak(() -> {
-            execute("create table x as (" +
-                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
-                    ") timestamp(ts) partition by day");
-            assertQuery("select * from x where ts between (select ts from x limit 2) and (select max(ts) from x)")
-                    .failsWith("constant expected");
-            assertQuery("select * from x where ts between (select min(ts) from x) and (select ts from x limit 2)")
-                    .failsWith("constant expected");
         });
     }
 

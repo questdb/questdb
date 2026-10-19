@@ -100,8 +100,6 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -133,8 +131,6 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     horizonJoinMetadata,
                     slaveStates,
                     perSlaveAsOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkClasses,
-                    slaveAsOfJoinMapSinkClasses,
                     masterTimestampColumnIndex,
                     offsets,
                     keyTypes,
@@ -164,7 +160,6 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                 slaveFactories.add(state.getFactory());
                 state.detachFactory();
             }
-            slaveStates.clear();
 
             this.cursor = new AsyncMultiHorizonJoinRecordCursor(
                     engine,
@@ -198,7 +193,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         } catch (Throwable th) {
             // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
             // so the cached factory stays reusable.
-            cursor.close();
+            Misc.free(cursor, th);
             throw th;
         }
     }
@@ -220,6 +215,10 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         sink.setMetadata(null);
         sink.child(masterFactory);
         for (int i = 0, n = slaveFactories.size(); i < n; i++) {
+            final Function slaveFilter = slaveStates.getQuick(i).getFilter();
+            if (slaveFilter != null) {
+                sink.attr("slave filter").val(slaveFilter, slaveFactories.getQuick(i));
+            }
             sink.child(slaveFactories.getQuick(i));
         }
     }
@@ -446,7 +445,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         }
 
         while (horizonIterator.next()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
             final int offsetIdx = horizonIterator.getOffsetIndex();
@@ -458,23 +457,23 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             for (int s = 0; s < slaveCount; s++) {
                 final HorizonJoinTimeFrameHelper helper = atom.getSlaveTimeFrameHelper(slotId, s);
                 final long scaledHorizonTs = scaleTimestamp(horizonTs, atom.getMasterTimestampScale(s));
-                long asOfRowId = helper.findAsOfRow(scaledHorizonTs);
+                long asOfRowId = helper.findAsOfRow(scaledHorizonTs, circuitBreaker);
 
                 long matchRowId;
                 final Map asOfJoinMap = atom.getAsOfJoinMap(slotId, s);
                 final RecordSink masterSink = atom.getMasterAsOfJoinSink(slotId, s);
                 final RecordSink slaveSink = atom.getSlaveAsOfJoinMapSink(slotId, s);
 
-                if (asOfJoinMap != null && masterSink != null && slaveSink != null) {
+                if (asOfJoinMap != null) {
                     final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, s, masterRecord);
                     final SymbolTranslatingRecord symbolTranslatingRecord =
                             masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
                     matchRowId = helper.findKeyedAsOfMatch(
                             asOfRowId, masterKeyRecord, masterSink, slaveSink,
-                            asOfJoinMap, symbolTranslatingRecord
+                            asOfJoinMap, symbolTranslatingRecord, circuitBreaker
                     );
                 } else {
-                    matchRowId = asOfRowId;
+                    matchRowId = helper.findNotKeyedAsOfMatch(asOfRowId, circuitBreaker);
                 }
 
                 if (matchRowId != Long.MIN_VALUE) {

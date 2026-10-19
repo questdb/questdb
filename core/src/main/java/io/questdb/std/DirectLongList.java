@@ -169,7 +169,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public void set(long p, long v) {
-        assert p >= 0 && p <= (limit - address) >> 3;
+        assert p >= 0 && p < (limit - address) >> 3;
         Unsafe.putLong(address + (p << 3), v);
     }
 

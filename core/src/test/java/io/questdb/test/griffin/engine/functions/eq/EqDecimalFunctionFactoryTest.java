@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.eq;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
@@ -40,7 +41,11 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.math.BigDecimal;
+
 public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
+    // widest precision of each decimal storage width
+    private static final int[] WIDTH_PRECISIONS = {2, 4, 9, 18, 38, 76};
     private final ObjList<Function> args = new ObjList<>();
     private final EqDecimalFunctionFactory factory = new EqDecimalFunctionFactory();
 
@@ -960,6 +965,119 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testEqScaleAlignmentAcrossJoinedTables() throws Exception {
+        // decimals can only key a join when both types match exactly, so mixed scales reach `=` as a
+        // cross join predicate instead
+        assertQuery("select l.id lid, r.id rid, l.a = r.b eq from eq_join_l l cross join eq_join_r r order by lid, rid")
+                .ddl(
+                        "create table eq_join_l (id int, a decimal(38,0))",
+                        "insert into eq_join_l values (1, " + nines(38) + "m), (2, 1m)",
+                        "create table eq_join_r (id int, b decimal(38,1))",
+                        "insert into eq_join_r values (1, " + nines(37) + ".9m), (2, 1.0m)"
+                )
+                .expectSize()
+                .returns("lid\trid\teq\n" +
+                        "1\t1\tfalse\n" +
+                        "1\t2\tfalse\n" +
+                        "2\t1\tfalse\n" +
+                        "2\t2\ttrue\n");
+    }
+
+    @Test
+    public void testEqScaleAlignmentAcrossWidths() throws Exception {
+        for (int leftPrecision : WIDTH_PRECISIONS) {
+            for (int rightPrecision : WIDTH_PRECISIONS) {
+                assertEqualityAtWidths(leftPrecision, rightPrecision);
+            }
+        }
+    }
+
+    @Test
+    public void testEqScaleAlignmentMaxPrecisionRescaleOverflow() throws Exception {
+        // scaling a 76-digit operand up by one leaves the Decimal256 range, so the ordering
+        // comes from compareTo's guard rather than from the aligned values
+        assertQuery("select a = b eq, a != b ne from eq_max order by id")
+                .ddl(
+                        "create table eq_max (id int, a decimal(76,0), b decimal(76,1))",
+                        "insert into eq_max values " +
+                                "(1, " + nines(76) + "m, " + nines(75) + ".9m)," +
+                                "(2, -" + nines(76) + "m, -" + nines(75) + ".9m)," +
+                                "(3, 1m, 1.0m)"
+                )
+                .expectSize()
+                .returns("eq\tne\n" +
+                        "false\ttrue\n" +
+                        "false\ttrue\n" +
+                        "true\tfalse\n");
+    }
+
+    @Test
+    public void testEqScaleAlignmentNulls() throws Exception {
+        assertQuery("select a = b eq, a != b ne from eq_nulls order by id")
+                .ddl(
+                        "create table eq_nulls (id int, a decimal(18,0), b decimal(18,1))",
+                        "insert into eq_nulls values " +
+                                "(1, null, " + nines(17) + ".9m)," +
+                                "(2, " + nines(18) + "m, null)," +
+                                "(3, null, null)"
+                )
+                .expectSize()
+                .returns("eq\tne\n" +
+                        "false\ttrue\n" +
+                        "false\ttrue\n" +
+                        "true\tfalse\n");
+    }
+
+    @Test
+    public void testEqSlowPathComparatorWidth() {
+        // the comparator width follows the wider operand; mixed scales never widen it
+        assertSelectedFunction(ColumnType.getDecimalType(18, 0), ColumnType.getDecimalType(18, 1), "Decimal64Func");
+        assertSelectedFunction(ColumnType.getDecimalType(38, 0), ColumnType.getDecimalType(38, 1), "Decimal128Func");
+        assertSelectedFunction(ColumnType.getDecimalType(76, 0), ColumnType.getDecimalType(76, 1), "Decimal256Func");
+    }
+
+    private static String nines(int count) {
+        final StringBuilder sb = new StringBuilder(count);
+        for (int i = 0; i < count; i++) {
+            sb.append('9');
+        }
+        return sb.toString();
+    }
+
+    private void assertEqualityAtWidths(int leftPrecision, int rightPrecision) throws Exception {
+        final String table = "eq_cmp_" + leftPrecision + "_" + rightPrecision;
+        // a holds max(leftPrecision) integer digits, b one fractional digit: aligning them needs
+        // leftPrecision + 1 digits, which no longer fits the operand width
+        final String maxA = nines(leftPrecision);
+        final String maxB = nines(rightPrecision - 1) + ".9";
+        final BigDecimal[][] rows = {
+                {new BigDecimal(maxA), new BigDecimal(maxB)},
+                {new BigDecimal(maxA).negate(), new BigDecimal(maxB).negate()},
+                {new BigDecimal(maxA), new BigDecimal(maxB).negate()},
+                {new BigDecimal(maxA).negate(), new BigDecimal(maxB)},
+                {BigDecimal.ONE, BigDecimal.ONE}
+        };
+        final StringBuilder expected = new StringBuilder("eq\tne\tqe\tqn\n");
+        for (BigDecimal[] row : rows) {
+            final boolean eq = row[0].compareTo(row[1]) == 0;
+            expected.append(eq).append('\t').append(!eq).append('\t')
+                    .append(eq).append('\t').append(!eq).append('\n');
+        }
+        assertQuery("select a = b eq, a != b ne, b = a qe, b != a qn from " + table + " order by id")
+                .ddl(
+                        "create table " + table + " (id int, a decimal(" + leftPrecision + ",0), b decimal(" + rightPrecision + ",1))",
+                        "insert into " + table + " values " +
+                                "(1, " + maxA + "m, " + maxB + "m)," +
+                                "(2, -" + maxA + "m, -" + maxB + "m)," +
+                                "(3, " + maxA + "m, -" + maxB + "m)," +
+                                "(4, -" + maxA + "m, " + maxB + "m)," +
+                                "(5, 1m, 1.0m)"
+                )
+                .expectSize()
+                .returns(expected);
+    }
+
     private void assertNegated(Function left, Function right, boolean expected) {
         args.clear();
         args.add(left);
@@ -967,6 +1085,20 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
         try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             ((NegatableBooleanFunction) func).setNegated();
             Assert.assertEquals(expected, func.getBool(null));
+        }
+    }
+
+    /**
+     * Pins the implementation the factory picks for a type pair, in both operand orders.
+     */
+    private void assertSelectedFunction(int leftType, int rightType, String expectedFunc) {
+        for (int swap = 0; swap < 2; swap++) {
+            args.clear();
+            args.add(DecimalColumn.newInstance(0, swap == 0 ? leftType : rightType));
+            args.add(DecimalColumn.newInstance(1, swap == 0 ? rightType : leftType));
+            try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
+                Assert.assertEquals(expectedFunc, func.getClass().getSimpleName());
+            }
         }
     }
 

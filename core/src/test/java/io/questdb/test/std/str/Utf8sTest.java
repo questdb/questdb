@@ -140,6 +140,7 @@ public class Utf8sTest {
             Utf8s.stringFromUtf8Bytes(mem, mem + len);
             Assert.fail();
         } catch (CairoException ex) {
+            Assert.assertTrue(ex.isMalformedUtf8());
             TestUtils.assertContains(ex.getFlyweightMessage(), "cannot convert invalid UTF-8 sequence " +
                     "to UTF-16 [seq=Opt.PvPnl start_time=1757568600000000t,duration_ms==\\x10\\x00\\x00\\x00\\x00@w+A," +
                     "pnl_id=\"investments-eva|caladan_tia_usdt_c_3.85_20250908\",leg_idx==\\x10\\x00\\x00\\x00\\x00\\x00\\x84\\x92@," +
@@ -175,6 +176,7 @@ public class Utf8sTest {
                 Utf8s.stringFromUtf8Bytes(sequence);
                 Assert.fail();
             } catch (CairoException ex1) {
+                Assert.assertTrue(ex1.isMalformedUtf8());
                 TestUtils.assertContains(ex1.getFlyweightMessage(), "cannot convert invalid UTF-8 sequence " +
                         "to UTF-16 [seq=Opt.PvPnl start_time=1757568600000000t,duration_ms==\\x10\\x00\\x00\\x00\\x00@w+A," +
                         "pnl_id=\"investments-eva|caladan_tia_usdt_c_3.85_20250908\",leg_idx==\\x10\\x00\\x00\\x00\\x00\\x00\\x84\\x92@," +
@@ -982,6 +984,24 @@ public class Utf8sTest {
 
     @Test
     public void testIsAscii() {
+        for (int size = 0; size < 32; size++) {
+            final byte[] bytes = new byte[size];
+            Arrays.fill(bytes, (byte) 'a');
+            Assert.assertTrue(Utf8s.isAscii(new Utf8String(bytes, false)));
+            for (int nonAsciiIndex = 0; nonAsciiIndex < size; nonAsciiIndex++) {
+                bytes[nonAsciiIndex] = (byte) 0x80;
+                Assert.assertFalse(Utf8s.isAscii(new Utf8String(bytes, false)));
+                bytes[nonAsciiIndex] = (byte) 'a';
+            }
+        }
+
+        Utf8String conservativeAscii = new Utf8String("123456789abcdefghi".getBytes(StandardCharsets.UTF_8), false);
+        Assert.assertFalse(conservativeAscii.isAscii());
+        Assert.assertTrue(Utf8s.isAscii(conservativeAscii));
+
+        Utf8String nonAsciiTail = new Utf8String("12345678é".getBytes(StandardCharsets.UTF_8), false);
+        Assert.assertFalse(Utf8s.isAscii(nonAsciiTail));
+
         try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
             sink.put("foobar");
             Assert.assertTrue(Utf8s.isAscii(sink));
@@ -1007,6 +1027,45 @@ public class Utf8sTest {
             Assert.assertTrue(Utf8s.isAscii(sink.longAt(10)));
             Assert.assertFalse(Utf8s.isAscii(sink));
             Assert.assertFalse(Utf8s.isAscii(sink.ptr(), sink.size()));
+        }
+    }
+
+    @Test
+    public void testIsAsciiDirectSequenceUsesPointerScan() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(24)) {
+            sink.put("123456781234567812345678");
+
+            class CountingDirectUtf8Sequence implements DirectUtf8Sequence {
+                private int longAtCallCount;
+                private int ptrCallCount;
+
+                @Override
+                public CharSequence asAsciiCharSequence() {
+                    return "";
+                }
+
+                @Override
+                public long longAt(int offset) {
+                    longAtCallCount++;
+                    return DirectUtf8Sequence.super.longAt(offset);
+                }
+
+                @Override
+                public long ptr() {
+                    ptrCallCount++;
+                    return sink.ptr();
+                }
+
+                @Override
+                public int size() {
+                    return sink.size();
+                }
+            }
+
+            CountingDirectUtf8Sequence sequence = new CountingDirectUtf8Sequence();
+            Assert.assertTrue(Utf8s.isAscii(sequence));
+            Assert.assertEquals(0, sequence.longAtCallCount);
+            Assert.assertEquals(1, sequence.ptrCallCount);
         }
     }
 
@@ -1866,6 +1925,7 @@ public class Utf8sTest {
             Utf8s.stringFromUtf8Bytes(invalid);
             Assert.fail("expected CairoException");
         } catch (CairoException e) {
+            Assert.assertTrue(e.isMalformedUtf8());
             TestUtils.assertContains(e.getFlyweightMessage(), "cannot convert invalid UTF-8 sequence to UTF-16");
         }
     }
@@ -2335,6 +2395,29 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testUtf8ToUtf16OrThrowRejectsMalformedInput() {
+        Utf8String malformed = new Utf8String(new byte[]{'1', (byte) 0xC3}, false);
+        try {
+            Utf8s.utf8ToUtf16OrThrow(malformed, new StringSink());
+            Assert.fail("expected the malformed value to be rejected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+        }
+
+        // well-formed input still returns the same views utf8ToUtf16OrView would
+        Utf8String ascii = new Utf8String("abc".getBytes(StandardCharsets.UTF_8), false);
+        TestUtils.assertEquals("abc", Utf8s.utf8ToUtf16OrThrow(ascii, new StringSink()));
+        Utf8String nonAscii = new Utf8String("héllo".getBytes(StandardCharsets.UTF_8), false);
+        TestUtils.assertEquals("héllo", Utf8s.utf8ToUtf16OrThrow(nonAscii, new StringSink()));
+    }
+
+    @Test
+    public void testUtf8ToUtf16OrViewRejectsMalformedInput() {
+        Utf8String malformed = new Utf8String(new byte[]{'1', (byte) 0xC3}, false);
+        Assert.assertNull(Utf8s.utf8ToUtf16OrView(malformed, new StringSink()));
+    }
+
+    @Test
     public void testUtf8ToUtf16UncheckedError() {
         // Invalid UTF-8 in DirectUtf8Sequence — exercises utf8ToUtf16Unchecked error path
         try (DirectUtf8Sink dirSink = new DirectUtf8Sink(8)) {
@@ -2345,6 +2428,7 @@ public class Utf8sTest {
                 Utf8s.utf8ToUtf16Unchecked(dirSink, tempSink);
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
+                Assert.assertTrue(e.isMalformedUtf8());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
             }
         }

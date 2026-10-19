@@ -95,6 +95,17 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
         return base;
     }
 
+    // Sorting re-orders the base rows without introducing value sources.
+    @Override
+    public boolean isNonDeterministic() {
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return base.isStableWithinExecution();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);

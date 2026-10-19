@@ -37,11 +37,13 @@ import org.jetbrains.annotations.NotNull;
  * to observe how often the throttled paths actually probed.
  */
 public class TestNetworkSqlExecutionCircuitBreaker extends NetworkSqlExecutionCircuitBreaker {
+    private final SqlExecutionCircuitBreakerConfiguration configuration;
     public boolean isConnectionBroken;
     public int probeCount;
 
     public TestNetworkSqlExecutionCircuitBreaker(CairoEngine engine, SqlExecutionCircuitBreakerConfiguration configuration) {
         super(engine, configuration);
+        this.configuration = configuration;
     }
 
     public static TestNetworkSqlExecutionCircuitBreaker create(
@@ -72,5 +74,9 @@ public class TestNetworkSqlExecutionCircuitBreaker extends NetworkSqlExecutionCi
     protected boolean testConnection(long fd) {
         probeCount++;
         return isConnectionBroken;
+    }
+
+    public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
+        return configuration;
     }
 }

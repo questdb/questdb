@@ -33,6 +33,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
+import java.util.function.IntConsumer;
+
 public class NetUtils {
 
     public static void playScript(
@@ -40,6 +42,16 @@ public class NetUtils {
             String script,
             CharSequence ipv4Address,
             int port
+    ) {
+        playScript(nf, script, ipv4Address, port, null);
+    }
+
+    public static void playScript(
+            NetworkFacade nf,
+            String script,
+            CharSequence ipv4Address,
+            int port,
+            IntConsumer afterReceive
     ) {
         long clientFd = nf.socketTcp(true);
         long sockAddress = nf.sockaddr(Net.parseIPv4(ipv4Address), port);
@@ -55,6 +67,7 @@ public class NetUtils {
 
             int line = 0;
             int mode = 0;
+            int receiveCount = 0;
             int n = script.length();
             int i = 0;
             while (i < n) {
@@ -88,6 +101,9 @@ public class NetUtils {
                                     i = n;
                                 } else {
                                     assertBuffers(line, sendBuf, expectedLen, recvBuf, actualLen);
+                                    if (afterReceive != null) {
+                                        afterReceive.accept(++receiveCount);
+                                    }
                                     // clear sendBuf
                                     sendPtr = sendBuf;
                                 }
@@ -140,6 +156,9 @@ public class NetUtils {
                     } else {
                         int actualLen = nf.recvRaw(clientFd, recvBuf, expectedLen);
                         assertBuffers(line, sendBuf, expectedLen, recvBuf, actualLen);
+                        if (afterReceive != null) {
+                            afterReceive.accept(++receiveCount);
+                        }
                     }
                 }
             }

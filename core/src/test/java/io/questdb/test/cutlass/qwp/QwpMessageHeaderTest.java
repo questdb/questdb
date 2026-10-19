@@ -251,6 +251,57 @@ public class QwpMessageHeaderTest {
     }
 
     @Test
+    public void testRecognizesExactDurableAckPollFrame() {
+        byte[] header = createValidHeader(VERSION, FLAG_DURABLE_ACK_POLL, 0, 0);
+        long addr = Unsafe.malloc(HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < header.length; i++) {
+                Unsafe.putByte(addr + i, header[i]);
+            }
+            Assert.assertTrue(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE - 1));
+            // The length term must stay an equality. A shorter frame is refused
+            // by >= too, so only a LONGER one separates == from >=, which is the
+            // relaxation isDurableAckPoll's contract names: a frame carrying
+            // trailing bytes would be acked as a poll without being processed.
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE + 1));
+
+            Unsafe.putByte(addr + HEADER_OFFSET_TABLE_COUNT, (byte) 1);
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+            Unsafe.putByte(addr + HEADER_OFFSET_TABLE_COUNT, (byte) 0);
+
+            Unsafe.putInt(addr + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE + 1);
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+            Unsafe.putInt(addr + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
+
+            Unsafe.putByte(addr + HEADER_OFFSET_VERSION, (byte) (VERSION + 1));
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+            Unsafe.putByte(addr + HEADER_OFFSET_VERSION, VERSION);
+
+            Unsafe.putInt(addr + HEADER_OFFSET_PAYLOAD_LENGTH, 1);
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+            Unsafe.putInt(addr + HEADER_OFFSET_PAYLOAD_LENGTH, 0);
+
+            // Every field restored: the frame must be recognised again, so a
+            // mutation above that silently failed to restore cannot mask a
+            // later assertion.
+            Assert.assertTrue(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+
+            Unsafe.putByte(addr + HEADER_OFFSET_FLAGS, FLAG_DEFER_COMMIT);
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+
+            // A different flag is refused by a bitmask test as well, so it does
+            // not pin the equality. A SUPERSET is the relaxation that matters:
+            // under (flags & FLAG_DURABLE_ACK_POLL) != 0 this frame would enter
+            // the poll arm and close the deferred-commit group it also asks for.
+            Unsafe.putByte(addr + HEADER_OFFSET_FLAGS, (byte) (FLAG_DURABLE_ACK_POLL | FLAG_DEFER_COMMIT));
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+        } finally {
+            Unsafe.free(addr, HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testReset() throws QwpParseException {
         byte[] header1 = createValidHeader(1, FLAG_GORILLA, 10, 5000);
         byte[] header2 = createValidHeader(1, FLAG_DELTA_SYMBOL_DICT, 3, 100);

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Unsafe;
@@ -38,16 +39,19 @@ import org.jetbrains.annotations.NotNull;
 
 public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
     private final int argColumnIndex;
+    private final boolean symbolTableStatic;
 
     public CountSymbolGroupByFunction(@NotNull Function arg) {
         super(arg);
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.SYMBOL);
+        // FunctionParser guarantees a SymbolFunction for count(K). Keep the fallback for
+        // synthetic test functions and preserve the integer fast path for static tables.
+        this.symbolTableStatic = !(arg instanceof SymbolFunction sf) || sf.isSymbolTableStatic();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        int value = arg.getInt(record);
-        if (value != SymbolTable.VALUE_IS_NULL) {
+        if (isNotNull(record)) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -84,8 +88,7 @@ public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
-                final int value = arg.getInt(record);
-                if (value != SymbolTable.VALUE_IS_NULL) {
+                if (isNotNull(record)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -95,8 +98,7 @@ public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        int value = arg.getInt(record);
-        if (value != SymbolTable.VALUE_IS_NULL) {
+        if (isNotNull(record)) {
             mapValue.addLong(valueIndex, 1);
         }
     }
@@ -104,5 +106,13 @@ public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public int getComputeBatchArgType() {
         return ColumnType.SYMBOL;
+    }
+
+    private boolean isNotNull(Record record) {
+        // Dynamic symbol functions may allocate keys lazily in getInt(). count() only
+        // needs nullness, so keep those functions on their string pass-through path.
+        return symbolTableStatic
+                ? arg.getInt(record) != SymbolTable.VALUE_IS_NULL
+                : arg.getSymbol(record) != null;
     }
 }

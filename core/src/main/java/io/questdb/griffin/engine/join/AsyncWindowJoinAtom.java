@@ -176,11 +176,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
             long slaveTsScale,
             int workerCount
     ) {
-        assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
-        assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
-        assert perWorkerWindowLoFuncs == null || perWorkerWindowLoFuncs.size() == workerCount;
-        assert perWorkerWindowHiFuncs == null || perWorkerWindowHiFuncs.size() == workerCount;
-
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
             this.ownerJoinFilter = ownerJoinFilter;
@@ -210,6 +205,15 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
             this.vectorized = vectorized && ownerWindowLoFunc == null && ownerWindowHiFunc == null;
+
+            // Checked here, not at the top of the constructor: the generator hands ownership of every
+            // filter and window function over before it calls this, so nothing else holds a reference
+            // by then. Failing an -ea assertion before the adopting assignments above would leak all
+            // of them, because the catch below frees the FIELDS, not the parameters.
+            assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
+            assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
+            assert perWorkerWindowLoFuncs == null || perWorkerWindowLoFuncs.size() == workerCount;
+            assert perWorkerWindowHiFuncs == null || perWorkerWindowHiFuncs.size() == workerCount;
 
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
             this.ownerSlaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
@@ -302,6 +306,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
                 this.groupByFunctionToColumnIndex = new IntList(groupByFunctionSize);
                 this.ownerGroupByFunctionArgs = new ObjList<>(groupByFunctionSize);
                 this.groupByFunctionTypes = new IntList(groupByFunctionSize);
+                // Args, types and column slots are all keyed by deduplicated column index. The
+                // per-worker args lists must stay column-indexed too: only grow on a new column
+                // (index < 0). Appending on a deduped function would make them function-indexed and
+                // longer than the owner list, overrunning the types/slots on the worker reduce path.
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
                     final var func = ownerGroupByFunctions.getQuick(i);
                     final var funcArg = func.getComputeBatchArg();
@@ -322,11 +330,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
                         }
                     } else {
                         groupByFunctionToColumnIndex.add(index);
-                        if (perWorkerGroupByFunctions != null) {
-                            for (int j = 0; j < slotCount; j++) {
-                                perWorkerGroupByFunctionArgs.getQuick(j).add(null);
-                            }
-                        }
                     }
                 }
 
@@ -352,24 +355,46 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
         }
     }
 
+    /**
+     * Releases everything the atom charged to the bound tracker, so the query that charged a block
+     * is also the one that frees it. Every leg runs best-effort and the accumulated failure is
+     * rethrown at the end: abandoning the sequence on the first failure would strand a reader on a
+     * later slot, and would leave a chunk allocated under a tracker the query registry is about to
+     * recycle. {@link #clearKeyedState()} runs last for the same reason - a subclass owns tracked
+     * state the base knows nothing about. Final, so the hook contract holds structurally: a
+     * subclass that overrode this and called super first would reintroduce the skip.
+     */
     @Override
-    public void clear() {
-        Misc.free(ownerSlaveTimeFrameCursor);
-        Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
-        Misc.clear(ownerFunctionAllocator);
-        Misc.clearObjList(perWorkerFunctionAllocators);
-        Misc.clear(ownerTemporaryAllocator);
-        Misc.clearObjList(perWorkerTemporaryAllocators);
-        Misc.clearObjList(ownerGroupByFunctions);
+    public final void clear() {
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveTimeFrameCursor);
+        cleanupFailure = Misc.freeObjListAndKeepObjectsBestEffort(cleanupFailure, perWorkerSlaveTimeFrameCursors);
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, ownerFunctionAllocator);
+        cleanupFailure = Misc.clearObjListBestEffort(cleanupFailure, perWorkerFunctionAllocators);
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, ownerTemporaryAllocator);
+        cleanupFailure = Misc.clearObjListBestEffort(cleanupFailure, perWorkerTemporaryAllocators);
+        cleanupFailure = Misc.clearObjListBestEffort(cleanupFailure, ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+                try {
+                    PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+                } catch (Throwable th) {
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                }
             }
         }
 
-        ownerSelectivityStats.clear();
-        Misc.clearObjList(perWorkerSelectivityStats);
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, ownerSelectivityStats);
+        cleanupFailure = Misc.clearObjListBestEffort(cleanupFailure, perWorkerSelectivityStats);
+
+        // Let the subclass release its keyed state.
+        try {
+            clearKeyedState();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
         memoryTracker = null;
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public void clearTemporaryData(int slotId) {
@@ -380,8 +405,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
         }
     }
 
+    /**
+     * Final for the reason {@link #clear()} is: {@link #closeKeyedState()} is the only place a
+     * subclass gets to release its own resources, so no override can order itself ahead of the
+     * aggregated rethrow.
+     */
     @Override
-    public void close() {
+    public final void close() {
         Throwable cleanupFailure = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerJoinFilter);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerJoinFilters);
@@ -433,13 +463,17 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
                 try {
                     PerWorkerFunctionList.close(functions);
                 } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
                 }
             }
+        }
+
+        // Let the subclass close its keyed state. This runs inside the chain, not after the
+        // rethrow, so a base-resource failure cannot skip it.
+        try {
+            closeKeyedState();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
@@ -644,6 +678,20 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
         }
     }
 
+    // Binds the owner group-by functions' args to the slave symbol tables at getCursor() time, so a
+    // parent projection over a SYMBOL aggregate can resolve the output column's static symbol table
+    // before the slave time-frame cache is built. This is the only place they are bound: the bind
+    // has to happen here because the time-frame cache is built lazily on the first read, and
+    // initTimeFrameCursors() must not repeat it, since init() is stateful for a cursor comparison.
+    public void initOwnerGroupByFunctions(
+            SqlExecutionContext executionContext,
+            SymbolTableSource masterSymbolTableSource,
+            SymbolTableSource slaveSymbolTableSource
+    ) throws SqlException {
+        joinSymbolTableSource.of(masterSymbolTableSource, slaveSymbolTableSource);
+        Function.init(ownerGroupByFunctions, joinSymbolTableSource, executionContext, null);
+    }
+
     public void initTimeFrameCursors(
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
@@ -664,11 +712,19 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
 
-        // now we can init groupBy functions and join filters
+        // now we can init the per-worker groupBy function clones and the join filters
         final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
         joinSymbolTableSource.of(masterSymbolTableSource, slaveSymbolTableSource);
 
-        Function.init(ownerGroupByFunctions, joinSymbolTableSource, executionContext, null);
+        // The owner group-by functions are already bound, by initOwnerGroupByFunctions() at
+        // getCursor() time. Re-initializing them here would re-run stateful initialization - a
+        // cursor comparison in an aggregate argument would execute its scalar sub-query a second
+        // time per cursor. Re-binding buys nothing either: this source and the page-frame cursor
+        // the owner is bound to resolve the same symbol tables, because every time-frame cursor
+        // wrapper delegates to that very page-frame cursor (SelectedTimeFrameCursor does not remap
+        // because SelectedPageFrameCursor beneath it already does; the extra-null wrapper applies
+        // the same columnSplit rule on both sides). The per-worker clones below still bind here:
+        // they need the cloned symbol tables and are not initialized anywhere else.
 
         if (perWorkerGroupByFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
@@ -833,6 +889,22 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+    }
+
+    /**
+     * Releases the keyed join state a subclass owns. Called by {@link #clear()} as its last step,
+     * inside the best-effort failure chain, so no base-resource failure can skip it. The base atom
+     * owns no keyed state, hence the empty body.
+     */
+    protected void clearKeyedState() {
+    }
+
+    /**
+     * Closes the keyed join state a subclass owns. Called by {@link #close()} as its last step,
+     * inside the best-effort failure chain, so no base-resource failure can skip it. The base atom
+     * owns no keyed state, hence the empty body.
+     */
+    protected void closeKeyedState() {
     }
 
     static int findFunctionWithSameArg(ObjList<Function> functions, IntList functionTypes, Function target, int targetType) {

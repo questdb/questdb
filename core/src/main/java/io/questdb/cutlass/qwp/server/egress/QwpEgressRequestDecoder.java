@@ -179,7 +179,10 @@ public class QwpEgressRequestDecoder {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: sql_len out of range: ").put(sqlLen);
         }
         sql.clear();
-        Utf8s.utf8ToUtf16(p, p + sqlLen, sql);
+        if (!Utf8s.utf8ToUtf16(p, p + sqlLen, sql)) {
+            throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
+                    .put("QUERY_REQUEST: SQL contains invalid UTF-8");
+        }
         p += sqlLen;
 
         QwpVarint.decode(p, limit, varintScratch);
@@ -373,7 +376,10 @@ public class QwpEgressRequestDecoder {
                     // Reuse stringBindScratch -- StrBindVariable.setValue copies the CharSequence
                     // into its own utf16Sink, so the scratch can be freely reused for the next bind.
                     stringBindScratch.clear();
-                    Utf8s.utf8ToUtf16(p, p + strLen, stringBindScratch);
+                    if (!Utf8s.utf8ToUtf16(p, p + strLen, stringBindScratch)) {
+                        throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
+                                .put("bind ").put(index).put(": SYMBOL contains invalid UTF-8");
+                    }
                     bindVars.setStr(index, stringBindScratch);
                     p += strLen;
                 }

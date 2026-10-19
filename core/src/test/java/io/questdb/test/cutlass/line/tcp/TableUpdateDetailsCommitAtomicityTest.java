@@ -63,55 +63,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
 
     /**
-     * commit() must throw CairoException.authorization("replica access is read-only") when
-     * the engine is read-only, and must NOT call writerAPI.commit().
-     * <p>
-     * This exercises the early-out path (engine already read-only before lock acquire) AND
-     * the in-lock re-check via the AlwaysReadOnlyEngine: both paths must refuse.
-     */
-    @Test
-    public void testCommitRefusesOnReadOnlyReplica() throws Exception {
-        assertMemoryLeak(() -> {
-            AtomicInteger commitCalled = new AtomicInteger(0);
-            try (CairoEngine readOnlyEngine = buildReadOnlyEngine()) {
-                WalTableUpdateDetails tud = buildTud(readOnlyEngine, 1L, commitCalled);
-                try {
-                    tud.commit(false);
-                    Assert.fail("commit() must throw CairoException.authorization on read-only engine");
-                } catch (CairoException e) {
-                    Assert.assertTrue("exception must be an authorization error", e.isAuthorizationError());
-                    Assert.assertTrue(
-                            "message must be 'replica access is read-only'",
-                            e.getMessage().contains("replica access is read-only")
-                    );
-                } finally {
-                    Misc.free(tud);
-                }
-            }
-            Assert.assertEquals("writerAPI.commit() must not be called on read-only engine", 0, commitCalled.get());
-        });
-    }
-
-    /**
-     * commit() must call writerAPI.commit() exactly once when the engine stays PRIMARY.
-     */
-    @Test
-    public void testCommitHappyPathCallsWriterCommit() throws Exception {
-        assertMemoryLeak(() -> {
-            AtomicInteger commitCalled = new AtomicInteger(0);
-            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
-                WalTableUpdateDetails tud = buildTud(primaryEngine, 1L, commitCalled);
-                try {
-                    tud.commit(false);
-                } finally {
-                    Misc.free(tud);
-                }
-            }
-            Assert.assertEquals("writerAPI.commit() must be called once on primary engine", 1, commitCalled.get());
-        });
-    }
-
-    /**
      * closeNoLock() with commitOnClose=true must NOT call writerAPI.commit() when the engine
      * is read-only.
      * <p>
@@ -135,28 +86,21 @@ public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
     }
 
     /**
-     * releaseWriter(true) must NOT call writerAPI.commit() when the engine is read-only.
-     * <p>
-     * RED state (before fix): no read-only check in releaseWriter -> commit is called anyway.
-     * GREEN state (after fix): in-lock check sees read-only -> commit is skipped.
+     * commit() must call writerAPI.commit() exactly once when the engine stays PRIMARY.
      */
     @Test
-    public void testReleaseWriterSkipsCommitOnReadOnlyReplica() throws Exception {
+    public void testCommitHappyPathCallsWriterCommit() throws Exception {
         assertMemoryLeak(() -> {
             AtomicInteger commitCalled = new AtomicInteger(0);
-            try (CairoEngine readOnlyEngine = buildReadOnlyEngine()) {
-                WalTableUpdateDetails tud = buildTud(readOnlyEngine, 0L, commitCalled);
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                WalTableUpdateDetails tud = buildTud(primaryEngine, 1L, commitCalled);
                 try {
-                    callReleaseWriter(tud, true);
+                    tud.commit(false);
                 } finally {
-                    // writerAPI is already null after releaseWriter; set engine to non-null before free
                     Misc.free(tud);
                 }
             }
-            Assert.assertEquals(
-                    "releaseWriter(true) must not call writerAPI.commit() on read-only engine",
-                    0, commitCalled.get()
-            );
+            Assert.assertEquals("writerAPI.commit() must be called once on primary engine", 1, commitCalled.get());
         });
     }
 
@@ -199,7 +143,116 @@ public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * commit() must throw CairoException.authorization("replica access is read-only") when
+     * the engine is read-only, and must NOT call writerAPI.commit().
+     * <p>
+     * This exercises the early-out path (engine already read-only before lock acquire) AND
+     * the in-lock re-check via the AlwaysReadOnlyEngine: both paths must refuse.
+     */
+    @Test
+    public void testCommitRefusesOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger commitCalled = new AtomicInteger(0);
+            try (CairoEngine readOnlyEngine = buildReadOnlyEngine()) {
+                WalTableUpdateDetails tud = buildTud(readOnlyEngine, 1L, commitCalled);
+                try {
+                    tud.commit(false);
+                    Assert.fail("commit() must throw CairoException.authorization on read-only engine");
+                } catch (CairoException e) {
+                    Assert.assertTrue("exception must be an authorization error", e.isAuthorizationError());
+                    Assert.assertTrue(
+                            "message must be 'replica access is read-only'",
+                            e.getMessage().contains("replica access is read-only")
+                    );
+                } finally {
+                    Misc.free(tud);
+                }
+            }
+            Assert.assertEquals("writerAPI.commit() must not be called on read-only engine", 0, commitCalled.get());
+        });
+    }
+
+    /**
+     * releaseWriter(true) must NOT call writerAPI.commit() when the engine is read-only.
+     * <p>
+     * RED state (before fix): no read-only check in releaseWriter -> commit is called anyway.
+     * GREEN state (after fix): in-lock check sees read-only -> commit is skipped.
+     */
+    @Test
+    public void testReleaseWriterSkipsCommitOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger commitCalled = new AtomicInteger(0);
+            try (CairoEngine readOnlyEngine = buildReadOnlyEngine()) {
+                WalTableUpdateDetails tud = buildTud(readOnlyEngine, 0L, commitCalled);
+                try {
+                    callReleaseWriter(tud, true);
+                } finally {
+                    // writerAPI is already null after releaseWriter; set engine to non-null before free
+                    Misc.free(tud);
+                }
+            }
+            Assert.assertEquals(
+                    "releaseWriter(true) must not call writerAPI.commit() on read-only engine",
+                    0, commitCalled.get()
+            );
+        });
+    }
+
     // --- helpers ---
+
+    /**
+     * Calls the package-private releaseWriter(boolean) via reflection.
+     */
+    private static void callReleaseWriter(WalTableUpdateDetails tud, boolean commit) throws Exception {
+        Method m = io.questdb.cutlass.line.tcp.TableUpdateDetails.class.getDeclaredMethod("releaseWriter", boolean.class);
+        m.setAccessible(true);
+        m.invoke(tud, commit);
+    }
+
+    /**
+     * Builds a minimal CairoEngine whose isReadOnlyMode() returns false on the first call
+     * (early-out passes) and true on all subsequent calls (flip happened inside the lock window).
+     */
+    private CairoEngine buildFlipAfterFirstCallEngine(AtomicInteger callCount) throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public boolean isReadOnlyMode() {
+                int n = callCount.incrementAndGet();
+                return n >= 2;  // false on first call; true from second call onward
+            }
+        };
+    }
+
+    /**
+     * Builds a minimal CairoEngine that always returns primary (read-write) mode.
+     */
+    private CairoEngine buildPrimaryEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public boolean isReadOnlyMode() {
+                return false;
+            }
+        };
+    }
+
+    /**
+     * Builds a minimal CairoEngine that always returns read-only mode.
+     */
+    private CairoEngine buildReadOnlyEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public boolean isReadOnlyMode() {
+                return true;
+            }
+        };
+    }
 
     /**
      * Builds a minimal WalTableUpdateDetails backed by a proxy writer that reports
@@ -267,58 +320,5 @@ public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
                 commitOnClose,
                 Long.MAX_VALUE  // maxUncommittedRows
         );
-    }
-
-    /**
-     * Builds a minimal CairoEngine that always returns read-only mode.
-     */
-    private CairoEngine buildReadOnlyEngine() throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public boolean isReadOnlyMode() {
-                return true;
-            }
-        };
-    }
-
-    /**
-     * Builds a minimal CairoEngine that always returns primary (read-write) mode.
-     */
-    private CairoEngine buildPrimaryEngine() throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public boolean isReadOnlyMode() {
-                return false;
-            }
-        };
-    }
-
-    /**
-     * Builds a minimal CairoEngine whose isReadOnlyMode() returns false on the first call
-     * (early-out passes) and true on all subsequent calls (flip happened inside the lock window).
-     */
-    private CairoEngine buildFlipAfterFirstCallEngine(AtomicInteger callCount) throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public boolean isReadOnlyMode() {
-                int n = callCount.incrementAndGet();
-                return n >= 2;  // false on first call; true from second call onward
-            }
-        };
-    }
-
-    /**
-     * Calls the package-private releaseWriter(boolean) via reflection.
-     */
-    private static void callReleaseWriter(WalTableUpdateDetails tud, boolean commit) throws Exception {
-        Method m = io.questdb.cutlass.line.tcp.TableUpdateDetails.class.getDeclaredMethod("releaseWriter", boolean.class);
-        m.setAccessible(true);
-        m.invoke(tud, commit);
     }
 }

@@ -26,6 +26,8 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -254,6 +256,70 @@ public class CopyExportTest extends AbstractCairoTest {
                 }
             };
             testCopyExport(stmt, test, false, 1);
+        });
+    }
+
+    @Test
+    public void testCopyFilteredQuerySurvivesPartitionFormatChangeAfterQueue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1, '2024-01-01'), (-1, '2024-01-01T01:00:00'), (2, '2024-01-02')");
+
+            CopyExportRunnable statement = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT * FROM x WHERE val > 0) TO 'format_change' WITH FORMAT PARQUET",
+                    sqlExecutionContext
+            );
+            Callable<Exception> callback = () -> {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                return null;
+            };
+            CopyExportRunnable test = () -> assertEventually(() -> {
+                assertQuery("SELECT num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("num_exported_files\tstatus\n1\tfinished\n");
+                assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "format_change.parquet') ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                val\tts
+                                1\t2024-01-01T00:00:00.000000Z
+                                2\t2024-01-02T00:00:00.000000Z
+                                """);
+            });
+
+            testCopyExport(statement, test, callback);
+
+            execute("CREATE TABLE y (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO y VALUES (1, '2024-01-01'), (-1, '2024-01-01T01:00:00'), (2, '2024-01-02')");
+            execute("ALTER TABLE y CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            statement = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT * FROM y WHERE val > 0) TO 'format_change_reverse' WITH FORMAT PARQUET",
+                    sqlExecutionContext
+            );
+            callback = () -> {
+                execute("ALTER TABLE y CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                return null;
+            };
+            test = () -> assertEventually(() -> {
+                assertQuery("SELECT num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("num_exported_files\tstatus\n1\tfinished\n");
+                assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "format_change_reverse.parquet') ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                val\tts
+                                1\t2024-01-01T00:00:00.000000Z
+                                2\t2024-01-02T00:00:00.000000Z
+                                """);
+            });
+
+            testCopyExport(statement, test, callback);
         });
     }
 
@@ -569,12 +635,10 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetExportVarToFixedConvertedColumn() throws Exception {
+    public void testCopyParquetExportVarToFixedConvertedColumnSurvivesEmptyMetadataCacheWindow() throws Exception {
         // var->fixed lazy conversion (STRING->LONG) over a parquet partition, exported via the
-        // DIRECT_PAGE_FRAME path (COPY (SELECT *) -> determineExportMode -> DIRECT_PAGE_FRAME,
-        // which has no hasParquetConvertedColumns gate). The parquet decode buffer holds the
-        // source STRING layout; shipping it to the Rust encoder configured for LONG yields
-        // wrong values / silent data loss.
+        // TEMP_TABLE path. The empty cache forces determineExportMode() to hydrate the table
+        // metadata before it can detect the pending conversion.
         assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("STRING", "(x * 3)::STRING", "LONG", """
                 s\tts
                 3\t2024-01-01T00:00:00.000000Z
@@ -583,7 +647,7 @@ public class CopyExportTest extends AbstractCairoTest {
                 12\t2024-01-01T00:30:00.000000Z
                 15\t2024-01-01T00:40:00.000000Z
                 18\t2024-01-01T00:50:00.000000Z
-                """));
+                """, true));
     }
 
     @Test
@@ -4101,11 +4165,21 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     private void assertParquetExportOfConvertedColumn(String srcType, String srcValueExpr, String dstType, String expectedReadback) throws Exception {
+        assertParquetExportOfConvertedColumn(srcType, srcValueExpr, dstType, expectedReadback, false);
+    }
+
+    private void assertParquetExportOfConvertedColumn(
+            String srcType,
+            String srcValueExpr,
+            String dstType,
+            String expectedReadback,
+            boolean isMetadataCacheClearedBeforeCompile
+    ) throws Exception {
         // Seed a WAL table, convert its single partition to parquet, then ALTER the column
         // type so the parquet partition carries a lazily-converted column. COPY (SELECT *)
-        // forces the DIRECT_PAGE_FRAME export path; read the exported file back via
-        // read_parquet (which reads the file as-is, with no lazy conversion) and compare to
-        // the converted values the normal query path produces.
+        // detects the pending conversion and materializes it before export. Read the exported
+        // file back via read_parquet (which reads the file as-is, with no lazy conversion) and
+        // compare to the converted values the normal query path produces.
         execute("CREATE TABLE pt (s " + srcType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("INSERT INTO pt SELECT " + srcValueExpr + " AS s, " +
                 "timestamp_sequence('2024-01-01T00:00:00.000000Z', 600_000_000) AS ts FROM long_sequence(6)");
@@ -4115,8 +4189,18 @@ public class CopyExportTest extends AbstractCairoTest {
         execute("ALTER TABLE pt ALTER COLUMN s TYPE " + dstType);
         drainWalQueue();
 
-        CopyExportRunnable stmt = () ->
-                runAndFetchCopyExportID("COPY (SELECT * FROM pt) TO 'converted_col_export' WITH FORMAT parquet", sqlExecutionContext);
+        final TableToken tableToken = engine.getTableTokenIfExists("pt");
+        CopyExportRunnable stmt = () -> {
+            if (isMetadataCacheClearedBeforeCompile) {
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.clearCache();
+                }
+                try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                    Assert.assertNull(metadataRO.getTable(tableToken));
+                }
+            }
+            runAndFetchCopyExportID("COPY (SELECT * FROM pt) TO 'converted_col_export' WITH FORMAT parquet", sqlExecutionContext);
+        };
 
         CopyExportRunnable test = () ->
                 assertEventually(() -> {

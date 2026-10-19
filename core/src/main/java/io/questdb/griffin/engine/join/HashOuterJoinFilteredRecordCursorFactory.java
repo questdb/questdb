@@ -105,7 +105,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             this.filter = filter;
             this.filterSymbolTableSource = new JoinSymbolTableSource(columnSplit);
             this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                    ? new SymbolTranslatingRecord(slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices)
+                    ? new SymbolTranslatingRecord(configuration, slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices)
                     : null;
         } catch (Throwable th) {
             close();
@@ -235,7 +235,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 Map matchIdsMap,
                 RecordChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
             this.matchIdsMap = matchIdsMap;
         }
@@ -265,7 +265,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
 
             if (useSlaveCursor && slaveChain.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 do {
                     if (record.hasMaster()) {
                         if (filter.getBool(record)) {
@@ -286,7 +286,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
 
             if (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
@@ -312,7 +312,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             record.hasMaster(false);
             record.hasSlave(true);
             while (mapCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
                 slaveChain.of(value.getLong(0));
                 while (slaveChain.hasNext()) {
@@ -372,7 +372,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 Map joinKeyMap,
                 RecordChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new OuterJoinRecord(columnSplit, nullRecord);
         }
 
@@ -390,7 +390,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
 
             if (useSlaveCursor) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 while (slaveChain.hasNext()) {
                     if (filter.getBool(record)) {
                         return true;
@@ -399,7 +399,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
 
             if (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
@@ -453,7 +453,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 Map matchIdsMap,
                 RecordChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new RightOuterJoinRecord(columnSplit, nullRecord);
             this.matchIdsMap = matchIdsMap;
         }
@@ -483,7 +483,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
 
             if (useSlaveCursor) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 while (slaveChain.hasNext()) {
                     if (record.hasMaster()) {
                         if (filter.getBool(record)) {
@@ -503,7 +503,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
 
             while (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
@@ -523,7 +523,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
             record.hasMaster(false);
             while (mapCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
                 slaveChain.of(value.getLong(0));
                 while (slaveChain.hasNext()) {

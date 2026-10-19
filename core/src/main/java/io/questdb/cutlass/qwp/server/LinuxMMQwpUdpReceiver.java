@@ -56,10 +56,17 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
 
     @Override
     public void close() {
-        super.close();
-        if (msgVec != 0) {
-            nf.freeMsgHeaders(msgVec);
-            msgVec = 0;
+        try {
+            super.close();
+        } finally {
+            // Free the recvmmsg header vector even when the parent close
+            // chain throws; without this a parent failure leaked
+            // bufLen x msgCount native bytes and left msgVec non-zero for a
+            // double-free on a close retry.
+            if (msgVec != 0) {
+                nf.freeMsgHeaders(msgVec);
+                msgVec = 0;
+            }
         }
     }
 

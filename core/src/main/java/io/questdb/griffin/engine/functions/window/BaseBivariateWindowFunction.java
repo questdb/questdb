@@ -56,6 +56,14 @@ public abstract class BaseBivariateWindowFunction extends BaseWindowFunction {
         argX.init(symbolTableSource, executionContext);
     }
 
+    // argX carries the same cursor-scoped bindings as arg, so the incremental refresh
+    // path has to rebind it every cycle for the reason BaseWindowFunction spells out.
+    @Override
+    public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        super.initPartitionBy(symbolTableSource, executionContext);
+        argX.init(symbolTableSource, executionContext);
+    }
+
     @Override
     public void toTop() {
         super.toTop();

@@ -38,7 +38,6 @@ import io.questdb.griffin.engine.functions.lt.CompareDecimal64Function;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
-import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -100,10 +99,7 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
             };
         }
 
-        final int leftPrecision = ColumnType.getDecimalPrecision(leftType);
-        final int rightPrecision = ColumnType.getDecimalPrecision(rightType);
-        final int maxPrecision = Math.max(leftPrecision, rightPrecision);
-        return switch (Decimals.getStorageSizePow2(maxPrecision)) {
+        return switch (DecimalUtil.getComparisonStorageSizePow2(leftType, rightType)) {
             case 0, 1, 2, 3 -> new Decimal64Func(left, right);
             case 4 -> new Decimal128Func(left, right);
             default -> new Decimal256Func(left, right);

@@ -51,6 +51,7 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
 import io.questdb.std.Chars;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
@@ -64,17 +65,19 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayDeque;
 
 import static io.questdb.std.GenericLexer.unquote;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -85,7 +88,90 @@ public class SqlUtil {
     static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
     private static final DateFormat[] IMPLICIT_CAST_FORMATS;
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
-    private static final CarrierLocal<Long256ConstantFactory> LONG256_FACTORY = new CarrierLocal<>(Long256ConstantFactory::new);
+    private static final FiberLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<Long256ConstantFactory> LONG256_FACTORY = new FiberLocal<>(Long256ConstantFactory::new);
+
+    public static boolean containsWithin(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        stack.clear();
+        if (node != null) {
+            stack.push(node);
+        }
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode next = stack.pop();
+                if (next.token != null && SqlKeywords.isWithinKeyword(next.token)) {
+                    return true;
+                }
+                if (next.lhs != null) {
+                    stack.push(next.lhs);
+                }
+                if (next.rhs != null) {
+                    stack.push(next.rhs);
+                }
+                for (int i = 0, n = next.args.size(); i < n; i++) {
+                    stack.push(next.args.getQuick(i));
+                }
+            }
+            return false;
+        } finally {
+            stack.clear();
+        }
+    }
+
+    public static ExpressionNode getEqualsOrColumn(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        if (node == null || node.paramCount != 2 || node.token == null || !SqlKeywords.isOrKeyword(node.token)) {
+            return null;
+        }
+        ExpressionNode column = null;
+        stack.clear();
+        stack.push(node);
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode leaf = stack.pop();
+                if (leaf.paramCount == 2 && SqlKeywords.isOrKeyword(leaf.token)) {
+                    stack.push(leaf.lhs);
+                    stack.push(leaf.rhs);
+                    continue;
+                }
+                ExpressionNode key = getEqualsKey(leaf);
+                if (key == null || (column != null && !Chars.equalsIgnoreCase(column.token, key.token))) {
+                    return null;
+                }
+                column = key;
+            }
+            return column;
+        } finally {
+            stack.clear();
+        }
+    }
+
+    public static void rewriteEqualsOrToIn(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        assert node.args.size() == 0;
+        ExpressionNode column = null;
+        stack.clear();
+        stack.push(node);
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode leaf = stack.pop();
+                if (leaf.paramCount == 2 && SqlKeywords.isOrKeyword(leaf.token)) {
+                    stack.push(leaf.lhs);
+                    stack.push(leaf.rhs);
+                    continue;
+                }
+                column = getEqualsKey(leaf);
+                assert column != null;
+                node.args.add(column == leaf.lhs ? leaf.rhs : leaf.lhs);
+            }
+        } finally {
+            stack.clear();
+        }
+        node.args.add(column);
+        node.paramCount = node.args.size();
+        node.type = ExpressionNode.FUNCTION;
+        node.token = "in";
+        node.lhs = null;
+        node.rhs = null;
+    }
 
     public static void addSelectStar(
             IQueryModel model,
@@ -97,11 +183,29 @@ public class SqlUtil {
     }
 
     public static long castPGDates(CharSequence value, int fromColumnType, TimestampDriver driver) {
-        final int hi = value.length();
-        for (int i = 0; i < IMPLICIT_CAST_FORMATS_SIZE; i++) {
-            try {
-                return driver.fromDate(IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE));
-            } catch (NumericException ignore) {
+        try {
+            return driver.fromDate(parsePGDate(value));
+        } catch (NumericException ignore) {
+            throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
+        }
+    }
+
+    public static long castPGDates(Utf8Sequence value, int fromColumnType, TimestampDriver driver) {
+        try {
+            // The common case needs neither an ASCII scan nor UTF-16 decoding.
+            return driver.fromDate(parsePGDate(value.asAsciiCharSequence()));
+        } catch (NumericException ignore) {
+        }
+        // A failed parse may still be a valid localized time-zone name.
+        // Avoid decoding when the false ASCII hint was merely conservative.
+        if (!Utf8s.isAscii(value)) {
+            final StringSink utf16Sink = IMPLICIT_CAST_VARCHAR_SINK.get();
+            utf16Sink.clear();
+            if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
+                try {
+                    return driver.fromDate(parsePGDate(utf16Sink));
+                } catch (NumericException ignore) {
+                }
             }
         }
         throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
@@ -220,12 +324,17 @@ public class SqlUtil {
                 }
             }
 
-            // Process tables directly referenced
+            // Process tables directly referenced, a SHOW statement's object included, and the tables that
+            // table-name functions in the FROM clause name
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
-            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                String tableName = unquote(tableNameExpr.token).toString();
-                if (!depMap.contains(tableName)) {
-                    depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+            if (tableNameExpr != null) {
+                if (tableNameExpr.type == ExpressionNode.LITERAL) {
+                    String tableName = unquote(tableNameExpr.token).toString();
+                    if (!depMap.contains(tableName)) {
+                        depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+                    }
+                } else {
+                    collectTableNameFunctionReference(engine, tableNameExpr, depMap);
                 }
             }
 
@@ -1954,6 +2063,9 @@ public class SqlUtil {
             collectTableAndColumnReferences(engine, expr.queryModel, depMap);
         }
 
+        // a table-name function in an expression, e.g. SELECT table_partitions('t')
+        collectTableNameFunctionReference(engine, expr, depMap);
+
         // Handle column literals (e.g., table.column or column)
         if (expr.type == ExpressionNode.LITERAL) {
             CharSequence token = expr.token;
@@ -2004,6 +2116,41 @@ public class SqlUtil {
         }
     }
 
+    // A table-name function, such as table_columns('t'), reads the metadata of the object its constant
+    // argument names. The object is recorded as a dependency of the view with no columns: a reader of the
+    // view may read its metadata through the view, see SqlExecutionContext.TableFunctionView.isDependency(),
+    // but none of its data. The argument is recorded as the view's definition writes it, so a caller that
+    // later overrides an OVERRIDABLE variable of the view does not change it.
+    private static void collectTableNameFunctionReference(
+            @NotNull CairoEngine engine,
+            @NotNull ExpressionNode node,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        if (node.type == ExpressionNode.FUNCTION
+                && node.paramCount == 1
+                && node.rhs != null
+                && node.rhs.type == ExpressionNode.CONSTANT
+                && engine.getFunctionFactoryCache().isTableNameFunction(node.token)) {
+            final String tableName = unquote(node.rhs.token).toString();
+            if (!depMap.contains(tableName)) {
+                depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+            }
+        }
+    }
+
+    private static ExpressionNode getEqualsKey(ExpressionNode node) {
+        if (node.paramCount != 2 || !Chars.equals(node.token, "=") || node.lhs == null || node.rhs == null) {
+            return null;
+        }
+        ExpressionNode key = node.lhs.type == ExpressionNode.LITERAL ? node.lhs : node.rhs;
+        ExpressionNode value = key == node.lhs ? node.rhs : node.lhs;
+        if (key.type != ExpressionNode.LITERAL || value.type != ExpressionNode.CONSTANT
+                || !(SqlKeywords.isNullKeyword(value.token) || Chars.isQuoted(value.token))) {
+            return null;
+        }
+        return key;
+    }
+
     private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {
         int k = -1;
         // look for end of digits
@@ -2049,6 +2196,24 @@ public class SqlUtil {
             return takenAliases.excludes(alias, 1, alias.length() - 1);
         }
         return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
+    }
+
+    /**
+     * Parses the value against every implicit-cast format, in order. Signals a failed
+     * parse with the flyweight {@link NumericException} rather than an
+     * {@link ImplicitCastException}: callers retry a failed parse against a decoded
+     * value, and a discarded {@code ImplicitCastException} would cost a stack fill and
+     * a message allocation on every row.
+     */
+    private static long parsePGDate(CharSequence value) throws NumericException {
+        final int hi = value.length();
+        for (int i = 0; i < IMPLICIT_CAST_FORMATS_SIZE; i++) {
+            try {
+                return IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE);
+            } catch (NumericException ignore) {
+            }
+        }
+        throw NumericException.instance();
     }
 
     static QueryColumn nextColumn(

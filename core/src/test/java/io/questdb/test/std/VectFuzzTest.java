@@ -110,12 +110,18 @@ public class VectFuzzTest {
                                 Assert.assertEquals("int min, count: 0", Numbers.INT_NULL, Vect.minInt(ptr, 0));
                                 Assert.assertEquals("int max, count: 0", Numbers.INT_NULL, Vect.maxInt(ptr, 0));
                                 Assert.assertEquals("int count, count: 0", 0, Vect.countInt(ptr, 0));
+                                Assert.assertEquals("int min max count, count: 0", 0, Vect.minMaxCountInt(ptr, 0, countPtr));
+                                Assert.assertEquals("int min max count min, count: 0", Numbers.INT_NULL, Unsafe.getInt(countPtr));
+                                Assert.assertEquals("int min max count max, count: 0", Numbers.INT_NULL, Unsafe.getInt(countPtr + Integer.BYTES));
                             } else {
                                 Assert.assertEquals("int sum, count: " + count, 0, Vect.sumInt(ptr, count));
                                 Assert.assertEquals("int sum acc, count: " + count, 0, Vect.sumIntAcc(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("int min, count: " + count, 0, Vect.minInt(ptr, count));
                                 Assert.assertEquals("int max, count: " + count, 0, Vect.maxInt(ptr, count));
                                 Assert.assertEquals("int count, count: " + count, count, Vect.countInt(ptr, count));
+                                Assert.assertEquals("int min max count, count: " + count, count, Vect.minMaxCountInt(ptr, count, countPtr));
+                                Assert.assertEquals("int min max count min, count: " + count, 0, Unsafe.getInt(countPtr));
+                                Assert.assertEquals("int min max count max, count: " + count, 0, Unsafe.getInt(countPtr + Integer.BYTES));
                             }
                         }
                     },
@@ -258,139 +264,17 @@ public class VectFuzzTest {
     public void testDedupWithKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(null);
-            int indexLen = rnd.nextInt(100_000);
+            assertDedupWithKey(rnd, rnd.nextInt(100_000));
+        });
+    }
 
-            int keyCount = 1 + rnd.nextInt(3);
-            assert keyCount > 0 && keyCount < 5;
-
-            ObjList<DirectLongList> keys = new ObjList<>();
-            int keyMax = 1 + rnd.nextInt(4);
-
-            try (DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-                for (int i = 0; i < keyCount; i++) {
-                    keys.add(new DirectLongList(indexLen, MemoryTag.NATIVE_DEFAULT));
-                }
-
-                LongHashSet distinctKeys = new LongHashSet();
-                LongList tsAndKey = new LongList();
-
-                // Generate data
-                int tsVal = 1000;
-                for (int i = 0; i < indexLen; i++) {
-                    if (rnd.nextDouble() < 0.1) {
-                        tsVal += rnd.nextInt(50);
-                    }
-                    index.add(tsVal);
-                    index.add(i);
-
-                    // Encode keys in 4 byte integer
-                    int combinedKey = 0;
-                    for (int k = 0; k < keyCount; k++) {
-                        int keyVal = rnd.nextInt(keyMax);
-                        keys.get(k).add(keyVal);
-                        combinedKey = combinedKey << 8;
-                        combinedKey += keyVal;
-                    }
-                    distinctKeys.add(Numbers.encodeLowHighInts(tsVal, combinedKey));
-                    tsAndKey.add(Numbers.encodeLowHighInts(combinedKey, tsVal));
-                }
-
-                // Squash keys from longs to ints
-                for (int k = 0; k < keyCount; k++) {
-                    DirectLongList keyList = keys.get(k);
-                    for (int i = 0; i < indexLen / 2 + 1; i++) {
-                        int high = 2 * i + 1 < indexLen ? (int) getIndexChecked(keyList, 2L * i + 1) : 0;
-                        int low = 2 * i < indexLen ? (int) getIndexChecked(keyList, 2L * i) : 0;
-                        keyList.set(i, Numbers.encodeLowHighInts(low, high));
-                    }
-                }
-
-                try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
-                    try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-                        colBuffs.setDedupColumnCount(keyCount);
-                        long dedupColBuffPtr = colBuffs.allocateBlock();
-                        for (int k = 0; k < keyCount; k++) {
-                            long addr = DedupColumnCommitAddresses.setColValues(
-                                    dedupColBuffPtr,
-                                    k,
-                                    ColumnType.SYMBOL,
-                                    4,
-                                    0
-                            );
-
-                            DedupColumnCommitAddresses.setColAddressValues(
-                                    addr,
-                                    keys.get(k).getAddress(),
-                                    0L,
-                                    0L
-                            );
-
-                            DedupColumnCommitAddresses.setO3DataAddressValues(
-                                    addr,
-                                    0L,
-                                    0L,
-                                    0L
-                            );
-
-                            DedupColumnCommitAddresses.setReservedValuesSet2(
-                                    addr,
-                                    0L,
-                                    0L
-                            );
-                        }
-                        copy.setPos(indexLen * 2L);
-
-                        long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
-                                index.getAddress(),
-                                indexLen,
-                                index.getAddress(),
-                                copy.getAddress(),
-                                keyCount,
-                                DedupColumnCommitAddresses.getAddress(dedupColBuffPtr)
-                        );
-                        if (distinctKeys.size() == indexLen && dedupCount == -2) {
-                            // No duplicates detected and that's correct. Assert that index is not messed up.
-                            dedupCount = indexLen;
-                        } else {
-                            Assert.assertEquals(distinctKeys.size(), dedupCount);
-                        }
-
-                        // assert indexes of the rows are distinct and in correct range
-                        boolean[] indexFound = new boolean[(int) indexLen];
-                        tsAndKey.sort();
-                        int expectedValueIndex = -1;
-                        long expectedValue = -1;
-
-                        for (int i = 0; i < dedupCount; i++) {
-                            expectedValueIndex = getNextDistinctIndex(tsAndKey, expectedValueIndex, expectedValue);
-                            expectedValue = tsAndKey.get(expectedValueIndex);
-
-                            long rowIndex = getIndexChecked(index, i * 2L + 1L);
-                            Assert.assertTrue("row index not in expected range", rowIndex >= 0 && rowIndex < indexLen);
-                            Assert.assertFalse("row index is not distinct", indexFound[(int) rowIndex]);
-                            indexFound[(int) rowIndex] = true;
-
-                            Assert.assertEquals(Numbers.decodeHighInt(expectedValue), getIndexChecked(index, i * 2L));
-                            int expectedCombinedKey = Numbers.decodeLowInt(expectedValue);
-
-                            int combinedKey = 0;
-                            for (int k = 0; k < keyCount; k++) {
-                                DirectLongList keyList = keys.get(k);
-                                Assert.assertTrue("key index not in expected range", rowIndex / 2L < keyList.size());
-                                long keyLong = getIndexChecked(keyList, rowIndex / 2L);
-                                int key = rowIndex % 2 == 0 ? Numbers.decodeLowInt(keyLong) : Numbers.decodeHighInt(keyLong);
-                                Assert.assertTrue(key < 256);
-                                combinedKey = combinedKey << 8;
-                                combinedKey += key;
-                            }
-
-                            Assert.assertEquals(expectedCombinedKey, combinedKey);
-                        }
-                    }
-                }
-            } finally {
-                Misc.freeObjList(keys);
-            }
+    @Test
+    public void testDedupWithKeyBoundaries() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd(1, 2);
+            assertDedupWithKey(rnd, 0);
+            assertDedupWithKey(rnd, 1);
+            assertDedupWithKey(rnd, 2);
         });
     }
 
@@ -963,6 +847,48 @@ public class VectFuzzTest {
                 Assert.fail();
             } catch (IllegalArgumentException e) {
                 TestUtils.assertContains(e.getMessage(), "Count of indexes to merge should at least be 2.");
+            }
+        });
+    }
+
+    @Test
+    public void testMinMaxCountInt() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long minMax = Unsafe.malloc(2L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final int[] counts = new int[302];
+                for (int i = 0; i < 300; i++) {
+                    counts[i] = i + 1;
+                }
+                counts[300] = 10_007;
+                counts[301] = 1_048_577;
+                for (int count : counts) {
+                    for (int nullPeriod : new int[]{0, 1, 7}) {
+                        final long size = (long) count * Integer.BYTES;
+                        final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            int expectedMin = Numbers.INT_NULL;
+                            int expectedMax = Numbers.INT_NULL;
+                            long expectedCount = 0;
+                            for (int i = 0; i < count; i++) {
+                                final int v = nullPeriod != 0 && i % nullPeriod == 0 ? Numbers.INT_NULL : rnd.nextInt();
+                                Unsafe.putInt(ptr + (long) i * Integer.BYTES, v);
+                                if (v != Numbers.INT_NULL) {
+                                    expectedMin = expectedCount++ == 0 ? v : Math.min(expectedMin, v);
+                                }
+                                expectedMax = Math.max(expectedMax, v);
+                            }
+                            final String name = "count: " + count + ", nullPeriod: " + nullPeriod;
+                            Assert.assertEquals(name, expectedCount, Vect.minMaxCountInt(ptr, count, minMax));
+                            Assert.assertEquals(name, expectedMin, Unsafe.getInt(minMax));
+                            Assert.assertEquals(name, expectedMax, Unsafe.getInt(minMax + Integer.BYTES));
+                        } finally {
+                            Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(minMax, 2L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -1779,6 +1705,140 @@ public class VectFuzzTest {
             sink.put(getIndexChecked(dest, i)).put(' ').put(index).put(':').put(bit);
         }
         return sink.toString();
+    }
+
+    private void assertDedupWithKey(Rnd rnd, int indexLen) {
+        int keyCount = 1 + rnd.nextInt(3);
+        assert keyCount > 0 && keyCount < 5;
+
+        ObjList<DirectLongList> keys = new ObjList<>();
+        int keyMax = 1 + rnd.nextInt(4);
+
+        try (DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < keyCount; i++) {
+                keys.add(new DirectLongList(indexLen, MemoryTag.NATIVE_DEFAULT));
+            }
+
+            LongHashSet distinctKeys = new LongHashSet();
+            LongList tsAndKey = new LongList();
+
+            // Generate data
+            int tsVal = 1000;
+            for (int i = 0; i < indexLen; i++) {
+                if (rnd.nextDouble() < 0.1) {
+                    tsVal += rnd.nextInt(50);
+                }
+                index.add(tsVal);
+                index.add(i);
+
+                // Encode keys in 4 byte integer
+                int combinedKey = 0;
+                for (int k = 0; k < keyCount; k++) {
+                    int keyVal = rnd.nextInt(keyMax);
+                    keys.get(k).add(keyVal);
+                    combinedKey = combinedKey << 8;
+                    combinedKey += keyVal;
+                }
+                distinctKeys.add(Numbers.encodeLowHighInts(tsVal, combinedKey));
+                tsAndKey.add(Numbers.encodeLowHighInts(combinedKey, tsVal));
+            }
+
+            // Squash keys from longs to ints
+            for (int k = 0; k < keyCount; k++) {
+                DirectLongList keyList = keys.get(k);
+                for (int i = 0; i < (indexLen + 1) / 2; i++) {
+                    int high = 2 * i + 1 < indexLen ? (int) getIndexChecked(keyList, 2L * i + 1) : 0;
+                    int low = 2 * i < indexLen ? (int) getIndexChecked(keyList, 2L * i) : 0;
+                    keyList.set(i, Numbers.encodeLowHighInts(low, high));
+                }
+            }
+
+            try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
+                try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+                    colBuffs.setDedupColumnCount(keyCount);
+                    long dedupColBuffPtr = colBuffs.allocateBlock();
+                    for (int k = 0; k < keyCount; k++) {
+                        long addr = DedupColumnCommitAddresses.setColValues(
+                                dedupColBuffPtr,
+                                k,
+                                ColumnType.SYMBOL,
+                                4,
+                                0
+                        );
+
+                        DedupColumnCommitAddresses.setColAddressValues(
+                                addr,
+                                keys.get(k).getAddress(),
+                                0L,
+                                0L
+                        );
+
+                        DedupColumnCommitAddresses.setO3DataAddressValues(
+                                addr,
+                                0L,
+                                0L,
+                                0L
+                        );
+
+                        DedupColumnCommitAddresses.setReservedValuesSet2(
+                                addr,
+                                0L,
+                                0L
+                        );
+                    }
+                    copy.setPos(indexLen * 2L);
+
+                    long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
+                            index.getAddress(),
+                            indexLen,
+                            index.getAddress(),
+                            copy.getAddress(),
+                            keyCount,
+                            DedupColumnCommitAddresses.getAddress(dedupColBuffPtr)
+                    );
+                    if (distinctKeys.size() == indexLen && dedupCount == -2) {
+                        // No duplicates detected and that's correct. Assert that index is not messed up.
+                        dedupCount = indexLen;
+                    } else {
+                        Assert.assertEquals(distinctKeys.size(), dedupCount);
+                    }
+
+                    // assert indexes of the rows are distinct and in correct range
+                    boolean[] indexFound = new boolean[(int) indexLen];
+                    tsAndKey.sort();
+                    int expectedValueIndex = -1;
+                    long expectedValue = -1;
+
+                    for (int i = 0; i < dedupCount; i++) {
+                        expectedValueIndex = getNextDistinctIndex(tsAndKey, expectedValueIndex, expectedValue);
+                        expectedValue = tsAndKey.get(expectedValueIndex);
+
+                        long rowIndex = getIndexChecked(index, i * 2L + 1L);
+                        Assert.assertTrue("row index not in expected range", rowIndex >= 0 && rowIndex < indexLen);
+                        Assert.assertFalse("row index is not distinct", indexFound[(int) rowIndex]);
+                        indexFound[(int) rowIndex] = true;
+
+                        Assert.assertEquals(Numbers.decodeHighInt(expectedValue), getIndexChecked(index, i * 2L));
+                        int expectedCombinedKey = Numbers.decodeLowInt(expectedValue);
+
+                        int combinedKey = 0;
+                        for (int k = 0; k < keyCount; k++) {
+                            DirectLongList keyList = keys.get(k);
+                            Assert.assertTrue("key index not in expected range", rowIndex / 2L < keyList.size());
+                            long keyLong = getIndexChecked(keyList, rowIndex / 2L);
+                            int key = rowIndex % 2 == 0 ? Numbers.decodeLowInt(keyLong) : Numbers.decodeHighInt(keyLong);
+                            Assert.assertTrue(key < 256);
+                            combinedKey = combinedKey << 8;
+                            combinedKey += key;
+                        }
+
+                        Assert.assertEquals(expectedCombinedKey, combinedKey);
+                    }
+                }
+            }
+        } finally {
+            Misc.freeObjList(keys);
+        }
     }
 
     private void assertEqualLongs(long expected, long actual, int longCount) {

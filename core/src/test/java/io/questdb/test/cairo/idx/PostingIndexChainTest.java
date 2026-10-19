@@ -157,7 +157,7 @@ public class PostingIndexChainTest {
                     nextOffset += PostingIndexChainEntry.entrySize(1);
                     entryCount++;
                     activePage = PostingIndexChainHeader.publish(
-                            mem, activePage, thisOffset, entryCount,
+                            mem, activePage, PostingIndexUtils.V2_FORMAT_VERSION, thisOffset, entryCount,
                             PostingIndexUtils.V2_ENTRY_REGION_BASE, nextOffset, sealTxn
                     );
                     prevOffset = thisOffset;
@@ -569,7 +569,7 @@ public class PostingIndexChainTest {
             long entryLen = PostingIndexChainEntry.entrySize(1);
             entryCount++;
             activePage = PostingIndexChainHeader.publish(
-                    mem, activePage, offset, entryCount,
+                    mem, activePage, PostingIndexUtils.V2_FORMAT_VERSION, offset, entryCount,
                     PostingIndexUtils.V2_ENTRY_REGION_BASE, offset + entryLen, i
             );
 
@@ -645,6 +645,7 @@ public class PostingIndexChainTest {
         PostingIndexChainHeader.publish(
                 mem,
                 snap.pageOffset,
+                PostingIndexUtils.V2_FORMAT_VERSION,
                 headOffset,
                 entryCount,
                 PostingIndexUtils.V2_ENTRY_REGION_BASE,

@@ -41,6 +41,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -55,6 +56,12 @@ import java.util.Objects;
 public class QueryActivityFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "query_activity()";
+
+    @Override
+    public int getExecutionRequirements() {
+        // authorizes the caller, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
 
     @Override
     public String getSignature() {
@@ -99,7 +106,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         @Override
         public boolean hasNext() {
             // Consult the breaker at the top, so even an empty/fully-filtered registry scan stays cancellable.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             while (++entryIndex < entryIds.size()) {
                 final long queryId = entryIds.get(entryIndex);
                 final QueryRegistry.Entry entry = queryRegistry.getEntry(queryId);
@@ -145,6 +152,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             private final StringSink poolName = new StringSink();
             private final StringSink principal = new StringSink();
             private final StringSink query = new StringSink();
+            private final StringSink resourceGroup = new StringSink();
             private long changedAtNs;
             private boolean isWAL;
             private long memoryLimit;
@@ -153,6 +161,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             private boolean principalIsNull;
             private long queryId;
             private long registeredAtNs;
+            private boolean resourceGroupIsNull;
             private byte state;
             private long workerId;
 
@@ -194,6 +203,8 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return QueryRegistry.Entry.State.getText(state);
                 } else if (col == 8) {
                     return query;
+                } else if (col == 11) {
+                    return resourceGroupIsNull ? null : resourceGroup;
                 }
 
                 return Record.super.getStrA(col);
@@ -241,8 +252,10 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 poolName.clear();
                 principal.clear();
                 query.clear();
+                resourceGroup.clear();
                 poolNameIsNull = true;
                 principalIsNull = true;
+                resourceGroupIsNull = true;
                 queryId = -1;
                 workerId = -1;
                 registeredAtNs = 0;
@@ -297,6 +310,12 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 // the memoryTracker field note in QueryRegistry.Entry.
                 this.memoryUsed = entry.getMemoryUsed();
                 this.memoryLimit = entry.getMemoryLimit();
+
+                final CharSequence entryResourceGroup = entry.getResourceGroupName();
+                if (!copy(entryResourceGroup, resourceGroup)) {
+                    return false;
+                }
+                resourceGroupIsNull = entryResourceGroup == null;
 
                 final CharSequence entryPoolName = entry.getPoolName();
                 if (!copy(entryPoolName, poolName)) {
@@ -353,6 +372,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("query", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("memory_used", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("memory_limit", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("resource_group", ColumnType.STRING));
         METADATA = metadata;
     }
 }

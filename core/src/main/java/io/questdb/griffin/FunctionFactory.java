@@ -33,6 +33,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public interface FunctionFactory {
+    default int getExecutionRequirements() {
+        return SqlExecutionRequirements.NONE;
+    }
+
     /**
      * Function signature in a form of "name(type...)". Name is a literal that does not
      * start with number and contains no control characters, which can be confused with
@@ -111,6 +115,19 @@ public interface FunctionFactory {
      * a query such that its result does not depend on any {@link Record} in the result set, i.e. now().
      */
     default boolean isRuntimeConstant() {
+        return false;
+    }
+
+    /**
+     * Returns true if the first argument of the function names a table, view, materialized view or
+     * live view, whose metadata the function reads, e.g. table_columns(). In a view, such a function
+     * reads the object through the view only when the view's definition names it, which is why
+     * CREATE VIEW and ALTER VIEW record a constant argument among the dependencies of the view, see
+     * {@link SqlExecutionContext.TableFunctionView#isDependency(io.questdb.cairo.TableToken)}.
+     *
+     * @return true if the first argument of the function names a table
+     */
+    default boolean isTableNameFunction() {
         return false;
     }
 

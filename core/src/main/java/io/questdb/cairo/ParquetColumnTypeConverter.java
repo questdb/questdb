@@ -37,6 +37,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -95,6 +96,10 @@ final class ParquetColumnTypeConverter {
             Decimal128 decimal128,
             Decimal256 decimal256
     ) {
+        if (value == null) {
+            writeFixedNull(targetType, targetAddress, rowIndex);
+            return;
+        }
         try {
             switch (ColumnType.tagOf(targetType)) {
                 case ColumnType.BOOLEAN ->
@@ -314,7 +319,7 @@ final class ParquetColumnTypeConverter {
             long auxAddress,
             int rowCount,
             long targetAddress,
-            Utf8StringSink utf8Sink,
+            DirectUtf8String utf8View,
             StringSink utf16Sink,
             Decimal64 decimal64,
             Decimal128 decimal128,
@@ -332,11 +337,7 @@ final class ParquetColumnTypeConverter {
                 }
                 final int size = header >>> 4;
                 final long valueAddress = Unsafe.getLong(auxEntryAddress + 8);
-                utf8Sink.clear();
-                for (int j = 0; j < size; j++) {
-                    utf8Sink.putAny(Unsafe.getByte(valueAddress + j));
-                }
-                value = Utf8s.utf8ToUtf16OrView(utf8Sink, utf16Sink);
+                value = Utf8s.utf8ToUtf16OrView(utf8View.of(valueAddress, valueAddress + size), utf16Sink);
             } else {
                 final long offset = Unsafe.getLong(auxAddress + (long) i * Long.BYTES);
                 final int length = Unsafe.getInt(dataAddress + offset);
@@ -516,7 +517,7 @@ final class ParquetColumnTypeConverter {
                         columnAuxAddress,
                         rowGroupSize,
                         fixedBuffer,
-                        context.getUtf8Sink(),
+                        context.getDirectUtf8String(),
                         context.getUtf16Sink(),
                         context.getDecimal64Buf(),
                         context.getDecimal128Buf(),

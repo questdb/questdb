@@ -41,6 +41,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboardPoolV2;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -76,6 +77,8 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.QueryTrace;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -155,6 +158,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
@@ -1153,7 +1157,7 @@ public class IODispatcherTest extends AbstractTest {
         getSimpleTester().run((_, _) -> {
             // select 1 as "select"
             // with select being the column name to check double quote parsing
-            testHttpClient.assertGet("{\"query\":\"select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)\",\"columns\":[{\"name\":\"cast\",\"type\":\"IPv4\"},{\"name\":\"ip2\",\"type\":\"IPv4\"},{\"name\":\"timestamp_sequence\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[\"0.0.0.3\",null,\"1970-01-01T00:00:00.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:01:40.000000Z\"],[\"0.0.0.3\",null,\"1970-01-01T00:03:20.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:05:00.000000Z\"],[\"0.0.0.2\",null,\"1970-01-01T00:06:40.000000Z\"],[\"0.0.0.1\",null,\"1970-01-01T00:08:20.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:10:00.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:11:40.000000Z\"],[\"0.0.0.1\",null,\"1970-01-01T00:13:20.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:15:00.000000Z\"]],\"count\":10}", "select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)");
+            testHttpClient.assertGet("{\"query\":\"select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)\",\"columns\":[{\"name\":\"cast\",\"type\":\"IPv4\"},{\"name\":\"ip2\",\"type\":\"IPv4\"},{\"name\":\"timestamp_sequence\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[\"0.0.0.5\",null,\"1970-01-01T00:00:00.000000Z\"],[\"0.0.0.3\",null,\"1970-01-01T00:01:40.000000Z\"],[\"0.0.0.2\",null,\"1970-01-01T00:03:20.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:05:00.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:06:40.000000Z\"],[\"0.0.0.3\",null,\"1970-01-01T00:08:20.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:10:00.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:11:40.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:13:20.000000Z\"],[\"0.0.0.2\",null,\"1970-01-01T00:15:00.000000Z\"]],\"count\":10}", "select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)");
         });
     }
 
@@ -4882,7 +4886,7 @@ public class IODispatcherTest extends AbstractTest {
             };
             DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder().withNetwork(nf).withBaseDir(baseDir).withSendBufferSize(256).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withServerKeepAlive(true).withHttpProtocolVersion("HTTP/1.1 ").build(cairoConfiguration);
 
-            WorkerPool workerPool = new TestWorkerPool(1);
+            WorkerPool workerPool = new TestWorkerPool(1, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
 
             try (CairoEngine engine = new CairoEngine(cairoConfiguration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
                 httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
@@ -5524,6 +5528,64 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testProcessIOQueuePropagatesContextInitFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch closeLatch = new SOCountDownLatch(1);
+            final AssertionError failure = new AssertionError("context init failure");
+            final IODispatcherConfiguration dispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+                @Override
+                public int getBindPort() {
+                    return 0;
+                }
+            };
+
+            try (IODispatcher<HelloContext> dispatcher = IODispatchers.create(
+                    dispatcherConfiguration,
+                    fd -> new HelloContext(fd, closeLatch) {
+                        @Override
+                        protected void doInit() {
+                            throw failure;
+                        }
+                    }
+            )) {
+                Assert.assertFalse(dispatcher.hasPendingIOEvents());
+                long clientFd = Net.socketTcp(true);
+                final long buffer = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+                final long sockAddr = Net.sockaddr("127.0.0.1", dispatcher.getPort());
+                try {
+                    TestUtils.assertConnect(clientFd, sockAddr);
+                    Unsafe.putByte(buffer, (byte) '.');
+                    Assert.assertEquals(1, Net.send(clientFd, buffer, 1));
+                    assertEventually(() -> {
+                        dispatcher.run();
+                        Assert.assertTrue(dispatcher.hasPendingIOEvents());
+                    });
+
+                    Throwable propagated = null;
+                    try {
+                        dispatcher.processIOQueue((_, _, _) -> true);
+                    } catch (Throwable th) {
+                        propagated = th;
+                    }
+                    Assert.assertSame(failure, propagated);
+                    Assert.assertFalse(dispatcher.hasPendingIOEvents());
+
+                    assertEventually(() -> {
+                        dispatcher.run();
+                        Assert.assertEquals(0, dispatcher.getConnectionCount());
+                        Assert.assertEquals(0, closeLatch.getCount());
+                    });
+                } finally {
+                    Net.freeSockAddr(sockAddr);
+                    Unsafe.free(buffer, 1, MemoryTag.NATIVE_DEFAULT);
+                    Net.close(clientFd);
+                }
+            }
+            Assert.assertEquals(0, closeLatch.getCount());
+        });
+    }
+
+    @Test
     public void testQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
         getSimpleTester().run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
@@ -5782,6 +5844,345 @@ public class IODispatcherTest extends AbstractTest {
                         TestUtils.remove(path.$());
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSCPRangeNotSatisfiableSlowReader() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean hasStalled = new AtomicBoolean();
+            final String statusPrefix = "HTTP/1.1 416 ";
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public int sendRaw(long fd, long buffer, int bufferLen) {
+                    if (bufferLen >= statusPrefix.length()
+                            && Utf8s.equalsAscii(statusPrefix, buffer, buffer + statusPrefix.length())
+                            && hasStalled.compareAndSet(false, true)) {
+                        return 0;
+                    }
+                    return super.sendRaw(fd, buffer, bufferLen);
+                }
+            };
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, root, 1024, false, false);
+            final WorkerPool workerPool = new TestWorkerPool(1);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
+                    Path path = new Path().of(root).concat("questdb-range.txt")
+            ) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
+                writeAsciiFile(path, "0123456789".repeat(10), 122_299_092L);
+                try {
+                    workerPool.start(LOG);
+                    new SendAndReceiveRequestBuilder().executeMany(client -> {
+                        final String partialResponse = """
+                                HTTP/1.1 206 Partial content\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Content-Length: 1\r
+                                Content-Type: text/plain\r
+                                Accept-Ranges: bytes\r
+                                Content-Range: bytes 0-0/100\r
+                                ETag: "122299092"\r
+                                \r
+                                0""";
+                        // Reuse the connection so the first response clears the static file state.
+                        client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                        client.execute(rangeRequest("bytes=100-", null), """
+                                HTTP/1.1 416 Request range not satisfiable\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Transfer-Encoding: chunked\r
+                                Content-Type: text/plain; charset=utf-8\r
+                                Content-Range: bytes */100\r
+                                \r
+                                1f\r
+                                Request range not satisfiable\r
+                                \r
+                                00\r
+                                \r
+                                """);
+                        Assert.assertTrue("the 416 header send must stall", hasStalled.get());
+                        client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                    });
+                } finally {
+                    workerPool.halt();
+                    TestUtils.remove(path.$());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSCPRangeRequests() throws Exception {
+        assertMemoryLeak(() -> {
+            final String baseDir = root;
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
+            WorkerPool workerPool = new TestWorkerPool(2);
+            try (CairoEngine engine = new CairoEngine(configuration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
+                workerPool.start(LOG);
+
+                final String content = "0123456789".repeat(10);
+                try (Path path = new Path().of(baseDir).concat("questdb-range.txt")) {
+                    try {
+                        writeAsciiFile(path, content, 122299092L);
+
+                        final String partialHeader = """
+                                HTTP/1.1 206 Partial content\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                """;
+                        final String fullHeader = """
+                                HTTP/1.1 200 OK\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Content-Length: 100\r
+                                Content-Type: text/plain\r
+                                ETag: "122299092"\r
+                                \r
+                                """;
+
+                        // a single byte range is inclusive on both ends
+                        sendAndReceive(
+                                rangeRequest("bytes=0-0", null),
+                                partialHeader + """
+                                        Content-Length: 1\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-0/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0"""
+                        );
+
+                        // a range ending at the last byte returns the full file
+                        sendAndReceive(
+                                rangeRequest("bytes=0-99", null),
+                                partialHeader + """
+                                        Content-Length: 100\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        """ + content
+                        );
+
+                        // the processor clamps an end equal to the file length
+                        sendAndReceive(
+                                rangeRequest("bytes=0-100", null),
+                                partialHeader + """
+                                        Content-Length: 100\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        """ + content
+                        );
+
+                        // open range ends at the last byte of the file
+                        sendAndReceive(
+                                rangeRequest("bytes=95-", null),
+                                partialHeader + """
+                                        Content-Length: 5\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 95-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        56789"""
+                        );
+
+                        // end past the file is clamped
+                        sendAndReceive(
+                                rangeRequest("bytes=90-9999", null),
+                                partialHeader + """
+                                        Content-Length: 10\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 90-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0123456789"""
+                        );
+
+                        // start past the file is unsatisfiable
+                        sendAndReceive(
+                                rangeRequest("bytes=100-", null),
+                                """
+                                        HTTP/1.1 416 Request range not satisfiable\r
+                                        Server: questDB/1.0\r
+                                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                        Transfer-Encoding: chunked\r
+                                        Content-Type: text/plain; charset=utf-8\r
+                                        Content-Range: bytes */100\r
+                                        \r
+                                        1f\r
+                                        Request range not satisfiable\r
+                                        \r
+                                        00\r
+                                        \r
+                                        """
+                        );
+
+                        // the processor rejects descending bounds
+                        sendAndReceive(
+                                rangeRequest("bytes=5-3", null),
+                                """
+                                        HTTP/1.1 416 Request range not satisfiable\r
+                                        Server: questDB/1.0\r
+                                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                        Transfer-Encoding: chunked\r
+                                        Content-Type: text/plain; charset=utf-8\r
+                                        Content-Range: bytes */100\r
+                                        \r
+                                        1f\r
+                                        Request range not satisfiable\r
+                                        \r
+                                        00\r
+                                        \r
+                                        """
+                        );
+
+                        // matching If-Range keeps the range
+                        sendAndReceive(
+                                rangeRequest("bytes=0-0", "\"122299092\""),
+                                partialHeader + """
+                                        Content-Length: 1\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-0/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0"""
+                        );
+
+                        // stale If-Range falls back to the full file
+                        sendAndReceive(rangeRequest("bytes=0-0", "\"1\""), fullHeader + content);
+
+                        // Given different ETags with the same numeric value
+                        for (String ifRange : new String[]{"\"0122299092\"", "\"122299092L\""}) {
+                            // When the client requests a range with a different ETag
+                            final String request = rangeRequest("bytes=0-0", ifRange);
+
+                            // Then the server returns the full file
+                            sendAndReceive(request, fullHeader + content);
+                        }
+                    } finally {
+                        workerPool.halt();
+                        TestUtils.remove(path.$());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSCPResponsesResumeAfterPartialSends() throws Exception {
+        getSimpleTester().withForceSendFragmentationChunkSize(1).run(configuration, (_, _) -> {
+            try (Path path = new Path().of(root).concat("questdb-range.txt")) {
+                final String content = "0123456789".repeat(10);
+                writeAsciiFile(path, content, 122_299_092L);
+                // Read one byte at a time so the client cannot discard unexpected trailing bytes.
+                final NetworkFacade clientNetwork = new NetworkFacadeImpl() {
+                    @Override
+                    public int recvRaw(long fd, long buffer, int bufferLen) {
+                        return super.recvRaw(fd, buffer, Math.min(bufferLen, 1));
+                    }
+                };
+                new SendAndReceiveRequestBuilder().withNetworkFacade(clientNetwork).executeMany(client -> {
+                    final String responseHeaders = """
+                            Server: questDB/1.0\r
+                            Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                            """;
+                    final String textHeaders = """
+                            Transfer-Encoding: chunked\r
+                            Content-Type: text/plain; charset=utf-8\r
+                            """;
+                    final String rangeErrorBody = """
+                            \r
+                            1f\r
+                            Request range not satisfiable\r
+                            \r
+                            00\r
+                            \r
+                            """;
+
+                    // Header-only responses must resume even before the connection has file state.
+                    client.execute("""
+                            GET /?test=1 HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 301 Moved Permanently\r\n" + responseHeaders + """
+                            Location: /index.html?test=1\r
+                            \r
+                            \r
+                            """);
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            If-None-Match: "122299092"\r
+                            \r
+                            """, "HTTP/1.1 304 Not Modified\r\n" + responseHeaders + "\r\n");
+                    client.execute(
+                            rangeRequest("bytes=invalid", null),
+                            "HTTP/1.1 416 Request range not satisfiable\r\n" + responseHeaders + textHeaders + rangeErrorBody
+                    );
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            If-None-Match: "invalid"\r
+                            \r
+                            """, "HTTP/1.1 400 Bad request\r\n" + responseHeaders + textHeaders + """
+                            \r
+                            0d\r
+                            Bad request\r
+                            \r
+                            00\r
+                            \r
+                            """);
+                    client.execute("""
+                            GET /missing.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 404 Not Found\r\n" + responseHeaders + textHeaders + """
+                            \r
+                            0b\r
+                            Not Found\r
+                            \r
+                            00\r
+                            \r
+                            """);
+                    final String partialResponse = "HTTP/1.1 206 Partial content\r\n" + responseHeaders + """
+                            Content-Length: 1\r
+                            Content-Type: text/plain\r
+                            Accept-Ranges: bytes\r
+                            Content-Range: bytes 0-0/100\r
+                            ETag: "122299092"\r
+                            \r
+                            0""";
+                    client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                    client.execute(
+                            rangeRequest("bytes=100-", null),
+                            "HTTP/1.1 416 Request range not satisfiable\r\n" + responseHeaders + textHeaders
+                                    + "Content-Range: bytes */100\r\n" + rangeErrorBody
+                    );
+                    // File responses must still resume, and an error must not survive request reset.
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 200 OK\r\n" + responseHeaders + """
+                            Content-Length: 100\r
+                            Content-Type: text/plain\r
+                            ETag: "122299092"\r
+                            \r
+                            """ + content);
+                    client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                });
             }
         });
     }
@@ -6781,18 +7182,18 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Disposition: attachment; filename="questdb-query-0.csv"\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                0c22\r
+                0be6\r
                 "a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t"\r
                 80,24814,-727724771,8920866532787660373,"-169665660-01-09T01:58:28.119Z","-51129-02-11T06:38:29.397464Z",,,"EHNRX","ZSX",false,,c2593f82-b430-328d-84a0-9f29df637e38,"}龘и\uDA89\uDFA4~","7","3052","530317703","179044593759294347","98399337010491937706565460457433196947","6405843072573126210386902420367591046213403285949680201448978767689938183093"\r
-                -71,-3567,-66297136,2968650253814730084,"-231836758-02-14T08:10:07.514Z",,,0.18769708157331322,"MYICC","ZOU",false,,ba37e200-ad5b-17cd-ada0-0dc8b85c1bc8,"V1Ѓَᯤ","44","-4377","852921272","626590012581323602",null,"5529561289279261760767987457144935562697534666056683925016328180559980534226"\r
-                -123,27519,1060917944,2235053888582262602,"55828815-02-25T03:11:11.430Z",,0.031670213,0.8940917126581895,"ZXIOV",,false,,bb56ab77-cffe-0a89-4aed-11c72256a80c,,null,"1447","454820511","437331957970287246","12688325603499971133061441136240591465","4956831448100563804018397292451668549587120831177703368353630421437101174985"\r
-                115,-12397,-593242882,8009040003356908243,,"-55010-06-04T03:22:23.429515Z",0.021189213,0.10527282622013212,"BEZGH",,true,,2accfc7a-b9ae-2e0b-5825-a545d3d3e2bd,"맄 Ԡ阷l",null,null,null,null,"43963866222630195039321520511182845016","5780744389761475945393525205748813959675032514762631049695154769015567784032"\r
-                106,24860,-147343840,-6716055087713781882,"281415397-11-08T13:24:17.591Z","193881-08-09T09:56:32.106540Z",,,"USZMZ",,false,,c23d0fe1-08be-331a-e7d3-56cb104e507a,"&J""G~","-1","6471","689798930",null,"30828858387888281526408967246092184105","7367833097437692202048830806440017684702038867044549697852893200307372011800"\r
-                -50,-17313,1440049547,,,,0.7419701,,"RGOON",,true,,,,"-5","3378","634938379","463832009795858033",null,"4840867788353140028978169722381705843263236416228513732245497440068709281969"\r
-                50,-21417,-1728988006,5804262091839668360,"-134025637-08-22T00:30:40.459Z","225267-03-12T12:24:10.327247Z",0.82339567,0.7665029914376952,"GPUHH","UGG",false,,b21ebf27-d20c-0c5b-a58b-9151b05d3357,"·ă堝ᢣ΄",null,"5342","141028884","261700233985485037","37310256374757273797964154860871749141","7764385218277204932930872140044853313057627215982097880965270785503904519068"\r
-                -108,20409,705091880,6785355388782691241,"-37575265-08-17T21:43:57.164Z","218384-07-07T23:32:59.752449Z",,0.34224858614452547,"TEQOD","ZEI",true,,b5b1fff1-9077-ef62-b86e-5919a6655475,,"9",null,null,null,null,"188257581751534344546546622513252262638572764711847625372665632176852949217"\r
-                114,-23493,1706748911,,"266635509-11-09T23:44:23.497Z","-269518-11-13T21:46:30.461179Z",0.87669086,0.3058008320091107,"UPDHH",,false,,86b95adc-451c-c000-2f87-2563b25ea913,,"1","-5174","34870849",null,"50229839182839142494448192703840143160","665201130115915069731057209247604050053711832589914458633412948426309297439"\r
-                -61,9007,1175408560,-5681974977924344056,,,0.37303334,0.734728770956117,"LUHLI","YBT",true,,6a10f5a3-5fa4-76fd-c125-0f6e6e2992d6,,"-60","-231","116429939","413493756873094929",null,"1233358033134573228130657383547649754189467735668594675015689657749495929165"\r
+                -71,-3567,-66297136,2968650253814730084,"-231836758-02-14T08:10:07.514Z",,,0.18769708157331322,"MYICC","ZOU",false,,ba37e200-ad5b-17cd-ada0-0dc8b85c1bc8,"V1Ѓَᯤ","44","-4377","852921272","626590012581323602",,"5529561289279261760767987457144935562697534666056683925016328180559980534226"\r
+                -123,27519,1060917944,2235053888582262602,"55828815-02-25T03:11:11.430Z",,0.031670213,0.8940917126581895,"ZXIOV",,false,,bb56ab77-cffe-0a89-4aed-11c72256a80c,,,"1447","454820511","437331957970287246","12688325603499971133061441136240591465","4956831448100563804018397292451668549587120831177703368353630421437101174985"\r
+                115,-12397,-593242882,8009040003356908243,,"-55010-06-04T03:22:23.429515Z",0.021189213,0.10527282622013212,"BEZGH",,true,,2accfc7a-b9ae-2e0b-5825-a545d3d3e2bd,"맄 Ԡ阷l",,,,,"43963866222630195039321520511182845016","5780744389761475945393525205748813959675032514762631049695154769015567784032"\r
+                106,24860,-147343840,-6716055087713781882,"281415397-11-08T13:24:17.591Z","193881-08-09T09:56:32.106540Z",,,"USZMZ",,false,,c23d0fe1-08be-331a-e7d3-56cb104e507a,"&J""G~","-1","6471","689798930",,"30828858387888281526408967246092184105","7367833097437692202048830806440017684702038867044549697852893200307372011800"\r
+                -50,-17313,1440049547,,,,0.7419701,,"RGOON",,true,,,,"-5","3378","634938379","463832009795858033",,"4840867788353140028978169722381705843263236416228513732245497440068709281969"\r
+                50,-21417,-1728988006,5804262091839668360,"-134025637-08-22T00:30:40.459Z","225267-03-12T12:24:10.327247Z",0.82339567,0.7665029914376952,"GPUHH","UGG",false,,b21ebf27-d20c-0c5b-a58b-9151b05d3357,"·ă堝ᢣ΄",,"5342","141028884","261700233985485037","37310256374757273797964154860871749141","7764385218277204932930872140044853313057627215982097880965270785503904519068"\r
+                -108,20409,705091880,6785355388782691241,"-37575265-08-17T21:43:57.164Z","218384-07-07T23:32:59.752449Z",,0.34224858614452547,"TEQOD","ZEI",true,,b5b1fff1-9077-ef62-b86e-5919a6655475,,"9",,,,,"188257581751534344546546622513252262638572764711847625372665632176852949217"\r
+                114,-23493,1706748911,,"266635509-11-09T23:44:23.497Z","-269518-11-13T21:46:30.461179Z",0.87669086,0.3058008320091107,"UPDHH",,false,,86b95adc-451c-c000-2f87-2563b25ea913,,"1","-5174","34870849",,"50229839182839142494448192703840143160","665201130115915069731057209247604050053711832589914458633412948426309297439"\r
+                -61,9007,1175408560,-5681974977924344056,,,0.37303334,0.734728770956117,"LUHLI","YBT",true,,6a10f5a3-5fa4-76fd-c125-0f6e6e2992d6,,"-60","-231","116429939","413493756873094929",,"1233358033134573228130657383547649754189467735668594675015689657749495929165"\r
                 \r
                 00\r
                 \r
@@ -6845,6 +7246,26 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testBlockedPendingExportResponseFlushResumesActiveTimings() throws Exception {
+        assertBlockedPendingResponseFlushResumesActiveTimings(
+                "/exp",
+                "(?s)\"x\"\\r\\n1\\r\\n.*1000\\r\\n",
+                null
+        );
+    }
+
+    @Test
+    public void testBlockedPendingResponseFlushStaysInWaitTimings() throws Exception {
+        final CharSequenceObjHashMap<String> queryParams = new CharSequenceObjHashMap<>();
+        queryParams.put("timings", "true");
+        assertBlockedPendingResponseFlushResumesActiveTimings(
+                "/exec",
+                ".*\\\"clientWait\\\":" + 1_000_000L + "}}",
+                queryParams
+        );
+    }
+
+    @Test
     public void testTimingsContainsAuthentication() throws Exception {
         nanosecondClock = StationaryNanosClock.INSTANCE;
         testJsonQuery(10, """
@@ -6866,8 +7287,8 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Type: application/json; charset=utf-8\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                02f2\r
-                {"query":"x where i = 'A'","columns":[{"name":"a","type":"BYTE"},{"name":"b","type":"SHORT"},{"name":"c","type":"INT"},{"name":"d","type":"LONG"},{"name":"e","type":"DATE"},{"name":"f","type":"TIMESTAMP"},{"name":"g","type":"FLOAT"},{"name":"h","type":"DOUBLE"},{"name":"i","type":"STRING"},{"name":"j","type":"SYMBOL"},{"name":"k","type":"BOOLEAN"},{"name":"l","type":"BINARY"},{"name":"m","type":"UUID"},{"name":"n","type":"VARCHAR"},{"name":"o","type":"DECIMAL(2,0)"},{"name":"p","type":"DECIMAL(4,0)"},{"name":"q","type":"DECIMAL(9,0)"},{"name":"r","type":"DECIMAL(18,0)"},{"name":"s","type":"DECIMAL(38,0)"},{"name":"t","type":"DECIMAL(76,0)"}],"timestamp":-1,"dataset":[],"count":0,"timings":{"authentication":0,"compiler":0,"execute":0,"count":0}}\r
+                0301\r
+                {"query":"x where i = 'A'","columns":[{"name":"a","type":"BYTE"},{"name":"b","type":"SHORT"},{"name":"c","type":"INT"},{"name":"d","type":"LONG"},{"name":"e","type":"DATE"},{"name":"f","type":"TIMESTAMP"},{"name":"g","type":"FLOAT"},{"name":"h","type":"DOUBLE"},{"name":"i","type":"STRING"},{"name":"j","type":"SYMBOL"},{"name":"k","type":"BOOLEAN"},{"name":"l","type":"BINARY"},{"name":"m","type":"UUID"},{"name":"n","type":"VARCHAR"},{"name":"o","type":"DECIMAL(2,0)"},{"name":"p","type":"DECIMAL(4,0)"},{"name":"q","type":"DECIMAL(9,0)"},{"name":"r","type":"DECIMAL(18,0)"},{"name":"s","type":"DECIMAL(38,0)"},{"name":"t","type":"DECIMAL(76,0)"}],"timestamp":-1,"dataset":[],"count":0,"timings":{"authentication":0,"compiler":0,"execute":0,"count":0,"clientWait":0}}\r
                 00\r
                 \r
                 """);
@@ -7329,6 +7750,17 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testUpdateFromViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // /exec compiles the UPDATE against the old view body. The view changes before the plan
+        // opens its cursor, so /exec compiles the statement again. It has to close the first plan,
+        // and the rows have to come from the new body.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = vw.v FROM vw WHERE upd.k = vw.k",
+                "[[1,110],[2,120],[3,130]]"
+        );
+    }
+
+    @Test
     public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
         importWithO3MaxLagAndMaxUncommittedRowsTableExists(true, false, PartitionBy.NONE, 180_000_000, 1, 300000000, 1000);
     }
@@ -7336,6 +7768,18 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
         importWithO3MaxLagAndMaxUncommittedRowsTableExists(true, true, PartitionBy.DAY, -1, -1, 300000000, 1000);
+    }
+
+    @Test
+    public void testUpdateWhereSubQueryOnViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // As testUpdateFromViewRedefinedDuringStatementClosesStalePlan, with the view read by a
+        // sub-query of the WHERE clause. The sub-query joins, so its plan holds native memory from
+        // the moment the compiler builds it, with or without JIT. The old view body yields no
+        // value above 100, which updates no row, and the new body updates all three.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = 1 WHERE w < (SELECT count() FROM vw JOIN src ON vw.k = src.k WHERE vw.v > 100)",
+                "[[1,1],[2,1],[3,1]]"
+        );
     }
 
     private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, String expectedResponseHeader) {
@@ -7397,6 +7841,14 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
+    private static String rangeRequest(String range, String ifRange) {
+        return "GET /questdb-range.txt HTTP/1.1\r\n"
+                + "Host: localhost:9000\r\n"
+                + "Range: " + range + "\r\n"
+                + (ifRange == null ? "" : "If-Range: " + ifRange + "\r\n")
+                + "\r\n";
+    }
+
     private static void sendAndReceive(String request, CharSequence response) {
         sendAndReceive(NetworkFacadeImpl.INSTANCE, request, response, 1, 0, false);
     }
@@ -7427,6 +7879,119 @@ public class IODispatcherTest extends AbstractTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
+    private void assertBlockedPendingResponseFlushResumesActiveTimings(
+            String path,
+            String expectedResponseRegexp,
+            CharSequenceObjHashMap<String> queryParams
+    ) throws Exception {
+        final long activeNanos = 2_000_000L;
+        final long clientWaitNanos = 1_000_000L;
+        final AtomicBoolean hasAddedActiveRowProcessingTime = new AtomicBoolean();
+        final AtomicInteger blockedResponseSendCount = new AtomicInteger();
+        final AtomicBoolean hasFlushedPendingResponse = new AtomicBoolean();
+        final AtomicInteger responseSendCount = new AtomicInteger();
+        final AtomicLong serverFd = new AtomicLong(-1);
+        final AtomicLong ticks = new AtomicLong();
+        final NanosecondClock clock = ticks::get;
+        final NetworkFacade nf = new NetworkFacadeImpl() {
+            @Override
+            public long accept(long listenerFd) {
+                final long connectionFd = super.accept(listenerFd);
+                if (connectionFd >= 0) {
+                    serverFd.set(connectionFd);
+                }
+                return connectionFd;
+            }
+
+            @Override
+            public int sendRaw(long fd, long buffer, int bufferLen) {
+                if (fd == serverFd.get()) {
+                    switch (responseSendCount.incrementAndGet()) {
+                        case 2 -> {
+                            blockedResponseSendCount.incrementAndGet();
+                            return 0;
+                        }
+                        case 3 -> {
+                            blockedResponseSendCount.incrementAndGet();
+                            ticks.addAndGet(clientWaitNanos);
+                            return 0;
+                        }
+                        default -> {
+                            final int bytesSent = super.sendRaw(fd, buffer, bufferLen);
+                            if (blockedResponseSendCount.get() == 2
+                                    && bytesSent == bufferLen
+                                    && hasFlushedPendingResponse.compareAndSet(false, true)) {
+                                // The pending response has flushed; the next SQL row evaluation must be active.
+                            } else if (hasFlushedPendingResponse.get()) {
+                                Assert.assertTrue(hasAddedActiveRowProcessingTime.get());
+                            }
+                            return bytesSent;
+                        }
+                    }
+                }
+                return super.sendRaw(fd, buffer, bufferLen);
+            }
+        };
+
+        final CairoConfiguration tracingConfiguration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public NanosecondClock getNanosecondClock() {
+                return clock;
+            }
+
+            @Override
+            public boolean isQueryTracingEnabled() {
+                return true;
+            }
+        };
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(Record rec, int count) {
+                if (hasFlushedPendingResponse.get() && hasAddedActiveRowProcessingTime.compareAndSet(false, true)) {
+                    ticks.addAndGet(activeNanos);
+                }
+                return true;
+            }
+        });
+        try {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withWorkerCount(2)
+                    .withNanosClock(clock)
+                    .withHttpServerConfigBuilder(
+                            new HttpServerConfigurationBuilder()
+                                    .withNetwork(nf)
+                                    .withSendBufferSize(1024)
+                    )
+                    .run(tracingConfiguration, (engine, _) -> {
+                        final ConcurrentQueue<QueryTrace> traces = engine.getMessageBus().getQueryTraceQueue();
+                        final QueryTrace trace = new QueryTrace();
+                        while (traces.tryDequeue(trace)) {
+                        }
+
+                        testHttpClient.assertGetRegexp(
+                                path,
+                                expectedResponseRegexp,
+                                "SELECT x FROM long_sequence(1_000) WHERE test_latched_counter()",
+                                null,
+                                null,
+                                null,
+                                queryParams,
+                                "200"
+                        );
+
+                        Assert.assertTrue(hasFlushedPendingResponse.get());
+                        Assert.assertTrue(hasAddedActiveRowProcessingTime.get());
+                        Assert.assertEquals(2, blockedResponseSendCount.get());
+                        Assert.assertTrue(traces.tryDequeue(trace));
+                        Assert.assertEquals(clientWaitNanos, trace.clientWaitNanos);
+                        Assert.assertEquals(activeNanos, trace.executionNanos - trace.clientWaitNanos);
+                    });
+        } finally {
+            TestLatchedCounterFunctionFactory.reset(null);
+        }
+    }
+
     private void assertMetadataAndData(String tableName, long expectedO3MaxLag, int expectedMaxUncommittedRows, int expectedImportedRows, String expectedData, boolean mangleTableDirNames) {
         final String baseDir = root;
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
@@ -7449,7 +8014,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, null, 0, false, false, false, false, false, true);
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, null, 0, TableToken.Type.TABLE, false, false, false, true);
         try (
                 TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, new TxnScoreboardPoolV2(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
@@ -7464,6 +8029,83 @@ public class IODispatcherTest extends AbstractTest {
             printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
             TestUtils.assertEquals("100\t1\n1\t2\n101\t1\n", sink);
         }
+    }
+
+    /**
+     * Sends {@code updateSql} to /exec while another session redefines the view it reads, between
+     * the statement's compile and its execution. /exec takes the writer of the statement's target
+     * only to execute a compiled plan, so the hook redefines the view the first time the request
+     * takes that writer. Nothing here waits on time: the hook returns once the concurrent
+     * {@code ALTER VIEW} has committed.
+     */
+    private void assertUpdateClosesStalePlanAfterViewRedefined(String updateSql, String expectedDataset) throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            // A WAL table refuses to read another table in an UPDATE when the statement compiles.
+            engine.execute("CREATE TABLE src (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            engine.execute("CREATE TABLE upd (ts TIMESTAMP, k INT, w INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            engine.execute(
+                    """
+                            INSERT INTO src VALUES
+                            ('2024-01-01T00:00:00', 1, 10),
+                            ('2024-01-02T00:00:00', 2, 20),
+                            ('2024-01-03T00:00:00', 3, 30)
+                            """,
+                    sqlExecutionContext
+            );
+            engine.execute(
+                    """
+                            INSERT INTO upd VALUES
+                            ('2024-01-01T00:00:00', 1, 0),
+                            ('2024-01-02T00:00:00', 2, 0),
+                            ('2024-01-03T00:00:00', 3, 0)
+                            """,
+                    sqlExecutionContext
+            );
+            engine.execute("CREATE VIEW vw AS (SELECT k, v FROM src)", sqlExecutionContext);
+
+            final AtomicInteger writerGetCount = new AtomicInteger();
+            final AtomicReference<Throwable> alterViewFailure = new AtomicReference<>();
+            engine.setPoolListener((factoryType, _, tableToken, event, _, _) -> {
+                if (factoryType == PoolListener.SRC_WRITER
+                        && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
+                        && tableToken != null
+                        && "upd".equals(tableToken.getTableName())
+                        && writerGetCount.incrementAndGet() == 1) {
+                    final Thread alterViewThread = new Thread(() -> {
+                        try (SqlExecutionContext alterViewContext = TestUtils.createSqlExecutionCtx(engine)) {
+                            engine.execute("ALTER VIEW vw AS (SELECT k, v + 100 AS v FROM src)", alterViewContext);
+                        } catch (Throwable th) {
+                            alterViewFailure.set(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    alterViewThread.start();
+                    try {
+                        alterViewThread.join();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        alterViewFailure.compareAndSet(null, e);
+                    }
+                }
+            });
+            try {
+                testHttpClient.assertGet("/exec", "{\"dml\":\"OK\",\"updated\":3}", updateSql);
+            } finally {
+                engine.setPoolListener(null);
+            }
+            if (alterViewFailure.get() != null) {
+                throw new AssertionError("concurrent ALTER VIEW failed", alterViewFailure.get());
+            }
+            // The stale plan took the writer once and the recompiled plan took it once more.
+            Assert.assertEquals(2, writerGetCount.get());
+            testHttpClient.assertGet(
+                    "/exec",
+                    "{\"query\":\"SELECT k, w FROM upd\",\"columns\":[{\"name\":\"k\",\"type\":\"INT\"},{\"name\":\"w\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":"
+                            + expectedDataset + ",\"count\":3}",
+                    "SELECT k, w FROM upd"
+            );
+        });
     }
 
     @NotNull
@@ -7960,8 +8602,7 @@ public class IODispatcherTest extends AbstractTest {
                             do {
                                 dispatcher.run();
                                 dispatcher.processIOQueue(requestProcessor);
-                                // We can't use Os.pause() here since we rely on thread interrupts.
-                                LockSupport.parkNanos(1);
+                                Os.pause();
                             } while (!isInterrupted());
                         } finally {
                             Unsafe.free(smem, 1, MemoryTag.NATIVE_DEFAULT);
@@ -8056,6 +8697,20 @@ public class IODispatcherTest extends AbstractTest {
                 Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    private void writeAsciiFile(Path path, String content, long lastModified) {
+        final int len = content.length();
+        final long fd = Files.openAppend(path.$());
+        final long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Utf8s.strCpyAscii(content, len, buf);
+            Assert.assertEquals(len, Files.append(fd, buf, len));
+        } finally {
+            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+            TestFilesFacadeImpl.INSTANCE.close(fd);
+        }
+        Files.setLastModified(path.$(), lastModified);
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {

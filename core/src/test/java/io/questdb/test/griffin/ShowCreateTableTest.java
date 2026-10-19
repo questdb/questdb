@@ -196,6 +196,36 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewRejected() throws Exception {
+        // SHOW CREATE TABLE over a live view reached ShowCreateTableRecordCursorFactory and printed
+        // a plausible-looking CREATE TABLE DDL for it: the parser gate only rejected regular and
+        // materialized views, and the factory's own backstop is an assert, which production disables.
+        // A user who copy-pasted that output would get a plain table instead of a live view.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s start from now as select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
+            drainWalAndViewQueues();
+            assertExceptionNoLeakCheck(
+                    "show create table lv",
+                    18,
+                    "table name expected, got live view name"
+            );
+        });
+    }
+
+    @Test
+    public void testLiveViewStillAccessibleViaShowCreateLiveView() throws Exception {
+        // a live view rejected by SHOW CREATE TABLE must remain reachable via the dedicated statement
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s start from now as select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
+            drainWalAndViewQueues();
+            printSql("show create live view lv");
+            TestUtils.assertContains(sink.toString(), "CREATE LIVE VIEW 'lv'");
+        });
+    }
+
+    @Test
     public void testMatViewRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
@@ -601,6 +631,29 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY YEAR BYPASS WAL;
+                            """);
+        });
+    }
+
+    @Test
+    public void testShowCreateTableInParallelFilterSubQuery() throws Exception {
+        // The compiler's SqlParserCallback creates the cursor of SHOW CREATE TABLE. A filter that is not
+        // thread-safe compiles again for each worker of the shared query pool, and so does the SHOW
+        // statement in its sub-query, through the same callback. The query does not return the DDL,
+        // so that a compiler whose DDL differs, such as Enterprise's, runs the test unchanged. Like
+        // the other tests here, it skips the leak check of the query: after that check clears the
+        // engine, the first Enterprise SHOW CREATE TABLE compiles the engine's storage policy queries
+        // again, and the engine keeps them.
+        assertMemoryLeak(() -> {
+            execute("create table foo ( ts timestamp, s symbol ) timestamp(ts)");
+            execute("create table ddls (id int, ddl symbol)");
+            execute("insert into ddls select 1, ddl from (show create table foo)");
+            execute("insert into ddls values (2, 'CREATE TABLE bar')");
+            assertQuery("select id from ddls where ddl in (select ddl from (show create table foo))")
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            1
                             """);
         });
     }

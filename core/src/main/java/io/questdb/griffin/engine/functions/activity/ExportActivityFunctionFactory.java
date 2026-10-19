@@ -41,6 +41,7 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -54,6 +55,12 @@ import java.util.Objects;
 public class ExportActivityFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "export_activity()";
+
+    @Override
+    public int getExecutionRequirements() {
+        // authorizes the caller, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
 
     @Override
     public String getSignature() {
@@ -97,7 +104,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         @Override
         public boolean hasNext() {
             while (++entryIndex < size) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (copyExportContext.getAndCopyEntry(entryIds.get(entryIndex), entry)) {
                     if (isAdmin || Objects.equals(entry.getPrincipal(), principal)) {
                         return true;
@@ -232,7 +239,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.of(executionContext);
             return cursor;
         }

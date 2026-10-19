@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby.regression;
 import io.questdb.PropertyKey;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -76,7 +77,7 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     @Test
     public void testParallelAllNull() throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
@@ -108,7 +109,7 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     @Test
     public void testParallelKeyedSparseNulls() throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
@@ -140,7 +141,7 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     @Test
     public void testParallelPerfectLine() throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
@@ -177,7 +178,7 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     @Test
     public void testParallelSparseNulls() throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,

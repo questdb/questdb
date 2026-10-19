@@ -38,6 +38,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.TestOnly;
@@ -58,6 +59,7 @@ public class ParquetConversionContext implements Closeable {
     private Decimal128 decimal128Buf;
     private Decimal256 decimal256Buf;
     private Decimal64 decimal64Buf;
+    private DirectUtf8String directUtf8String;
     private int lastDecodedColumnCount;
     private final int memoryTag;
     private IntIntHashMap parquetColIdToIdx;
@@ -80,6 +82,7 @@ public class ParquetConversionContext implements Closeable {
         decimal128Buf = new Decimal128();
         decimal256Buf = new Decimal256();
         decimal64Buf = new Decimal64();
+        directUtf8String = new DirectUtf8String();
         parquetColIdToIdx = new IntIntHashMap();
         parquetColumns = new DirectIntList(64, memoryTag);
         parquetMetaReader = new ParquetMetaFileReader();
@@ -96,6 +99,7 @@ public class ParquetConversionContext implements Closeable {
         activeToDecodeIdx.clear();
         chunkDescriptor.clear();
         convertedPtrs.clear();
+        directUtf8String.clear();
         lastDecodedColumnCount = 0;
         parquetColIdToIdx.clear();
         parquetColumns.clear();
@@ -114,6 +118,7 @@ public class ParquetConversionContext implements Closeable {
         decimal128Buf = null;
         decimal256Buf = null;
         decimal64Buf = null;
+        directUtf8String = null;
         parquetColIdToIdx = null;
         parquetColumns = Misc.free(parquetColumns);
         partitionDecoder = Misc.free(partitionDecoder);
@@ -164,6 +169,10 @@ public class ParquetConversionContext implements Closeable {
 
     public Decimal64 getDecimal64Buf() {
         return decimal64Buf;
+    }
+
+    public DirectUtf8String getDirectUtf8String() {
+        return directUtf8String;
     }
 
     @TestOnly

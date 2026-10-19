@@ -87,6 +87,13 @@ public class NowNanoFunctionFactory implements FunctionFactory {
             return true;
         }
 
+        // init() reads the timestamp snapshot frozen by SqlExecutionContext.initNow() at
+        // statement entry, so every init() within one execution observes the same value.
+        @Override
+        public boolean isStableWithinExecution() {
+            return true;
+        }
+
         @Override
         public boolean isThreadSafe() {
             return true;

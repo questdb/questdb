@@ -92,7 +92,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
             isChainBuilt = true;
         }
         if (chainCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }
@@ -149,10 +149,10 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
 
     private void buildChain() {
         // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         final Record placeHolderRecord = baseCursor.getRecordB();
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             // Tree chain is liable to re-position record to
             // other rows to do record comparison. We must use our
             // own record instance in case base cursor keeps

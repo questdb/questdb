@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.std.MemoryTag;
@@ -107,6 +108,81 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testDictionaryGapFrameReceivesDictionaryGapStatus() throws Exception {
+        // Drives the SERVER-side emit of STATUS_DICTIONARY_GAP end to end. A conformant
+        // client never sends a gap (it only deltas within the coverage it has
+        // registered), so the only way to exercise the emit is a hand-built frame: a
+        // delta symbol dictionary whose start id runs past the (empty) connection
+        // dictionary. QwpIngressProcessorState routes that to Status.DICTIONARY_GAP and
+        // QwpIngressUpgradeProcessor encodes it as the 0x0D wire byte. The decoder-level
+        // tests only pin the Status/byte mapping in isolation; nothing else stands a
+        // server up and asserts the byte a gapped frame actually puts on the wire, so a
+        // regression that dropped the emit arm to the default STATUS_WRITE_ERROR would
+        // go unnoticed.
+        runInContext((port) -> {
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(5000);
+                performWebSocketHandshake(socket, port);
+
+                OutputStream out = socket.getOutputStream();
+                InputStream in = socket.getInputStream();
+
+                byte[] frame = createMaskedFrame(WebSocketOpcode.BINARY, buildGappedDeltaDictMessage(), true);
+                out.write(frame);
+                out.flush();
+
+                byte[] payload = readBinaryFramePayload(in);
+                Assert.assertEquals(
+                        "A gapped delta symbol dictionary must be NACKed with STATUS_DICTIONARY_GAP (0x0D)",
+                        QwpConstants.STATUS_DICTIONARY_GAP, payload[0]);
+
+                // Only the gap maps to 0x0D, but assert the carried message too so the
+                // test stays anchored to the gap path rather than any future error that
+                // might be misrouted to the same byte. Layout: status(1) + seq(8) +
+                // msgLen(2, little-endian) + msg(msgLen), see sendErrorResponse().
+                Assert.assertTrue("Gap NACK payload is too short: " + payload.length, payload.length >= 11);
+                int msgLen = (payload[9] & 0xFF) | ((payload[10] & 0xFF) << 8);
+                Assert.assertEquals("Gap NACK payload must be status(1)+seq(8)+len(2)+msg(msgLen)",
+                        11 + msgLen, payload.length);
+                String msg = new String(payload, 11, msgLen, StandardCharsets.UTF_8);
+                Assert.assertTrue("Expected the gap rejection message, got: " + msg,
+                        msg.contains("delta symbol dictionary gap"));
+            }
+        });
+    }
+
+    @Test
+    public void testRowCountWithSignBitSetIsRejectedWithoutCrashingServer() throws Exception {
+        runInContext((port) -> {
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(5000);
+                performWebSocketHandshake(socket, port);
+
+                OutputStream out = socket.getOutputStream();
+                out.write(createMaskedFrame(WebSocketOpcode.BINARY, buildSignBitRowCountMessage(), true));
+                out.flush();
+
+                byte[] payload = readBinaryFramePayload(socket.getInputStream());
+                Assert.assertEquals(QwpConstants.STATUS_PARSE_ERROR, payload[0]);
+                Assert.assertTrue("Parse-error payload is too short: " + payload.length, payload.length >= 11);
+                int msgLen = (payload[9] & 0xFF) | ((payload[10] & 0xFF) << 8);
+                Assert.assertEquals("Parse-error payload must be status(1)+seq(8)+len(2)+msg(msgLen)",
+                        11 + msgLen, payload.length);
+                String msg = new String(payload, 11, msgLen, StandardCharsets.UTF_8);
+                Assert.assertTrue("Expected row-count rejection, got: " + msg,
+                        msg.contains("row count exceeds maximum: 9223372039002259456"));
+            }
+
+            // The malformed frame used to crash the JVM in an unsafe column cursor.
+            // A fresh upgrade verifies that the server remains available after rejecting it.
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(5000);
+                performWebSocketHandshake(socket, port);
+            }
+        });
+    }
+
+    @Test
     public void testFragmentedBinaryFrameRejected() throws Exception {
         // A binary frame with FIN=0 is what a proxy sends when it splits a large
         // binary message.
@@ -127,6 +203,7 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
         assertClientDecodesStatus(QwpConstants.STATUS_WRITE_ERROR, "WRITE_ERROR");
         assertClientDecodesStatus(QwpConstants.STATUS_SECURITY_ERROR, "SECURITY_ERROR");
         assertClientDecodesStatus(QwpConstants.STATUS_INTERNAL_ERROR, "INTERNAL_ERROR");
+        assertClientDecodesStatus(QwpConstants.STATUS_DICTIONARY_GAP, "DICTIONARY_GAP");
     }
 
     @Test
@@ -487,6 +564,60 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
         }
     }
 
+    /**
+     * Builds a QWP v1 delta-symbol-dictionary message (no table blocks) whose delta
+     * starts at id 3. Sent as the FIRST frame on a connection -- where the connection
+     * dictionary is still empty (size 0) -- ids [0, 3) are undefined, so the server
+     * rejects it as a dictionary gap. Encoded through the same header/varint primitives
+     * the production decoder consumes, then copied into a heap array for masking.
+     */
+    private static byte[] buildGappedDeltaDictMessage() {
+        final int deltaStartId = 3; // > connectionSymbolDict.size() (0 on a fresh connection) => a gap
+        final int deltaCount = 1;
+        byte[] symbolBytes = "sym_gap".getBytes(StandardCharsets.UTF_8);
+
+        int payloadSize = QwpVarint.encodedLength(deltaStartId)
+                + QwpVarint.encodedLength(deltaCount)
+                + QwpVarint.encodedLength(symbolBytes.length)
+                + symbolBytes.length;
+        int totalSize = QwpConstants.HEADER_SIZE + payloadSize;
+
+        long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putInt(address + QwpConstants.HEADER_OFFSET_MAGIC, QwpConstants.MAGIC_MESSAGE);
+            Unsafe.putByte(address + QwpConstants.HEADER_OFFSET_VERSION, QwpConstants.VERSION);
+            Unsafe.putByte(address + QwpConstants.HEADER_OFFSET_FLAGS, QwpConstants.FLAG_DELTA_SYMBOL_DICT);
+            Unsafe.putShort(address + QwpConstants.HEADER_OFFSET_TABLE_COUNT, (short) 0);
+            Unsafe.putInt(address + QwpConstants.HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
+
+            long pos = address + QwpConstants.HEADER_SIZE;
+            pos = QwpVarint.encode(pos, deltaStartId);
+            pos = QwpVarint.encode(pos, deltaCount);
+            pos = QwpVarint.encode(pos, symbolBytes.length);
+            for (byte b : symbolBytes) {
+                Unsafe.putByte(pos++, b);
+            }
+
+            byte[] message = new byte[totalSize];
+            for (int i = 0; i < totalSize; i++) {
+                message[i] = Unsafe.getByte(address + i);
+            }
+            return message;
+        } finally {
+            Unsafe.free(address, totalSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static byte[] buildSignBitRowCountMessage() {
+        return new byte[]{
+                'Q', 'W', 'P', '1', 1, 0, 1, 0, 21, 0, 0, 0,
+                5, 'c', 'r', 'a', 's', 'h',
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x88,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x01,
+                1, 1, 's', QwpConstants.TYPE_VARCHAR, 0
+        };
+    }
+
     private static String computeAcceptKey(String key) throws Exception {
         String combined = key + WEBSOCKET_GUID;
         MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
@@ -584,6 +715,43 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
                 "Expected 101 Switching Protocols, got: " + responseStr.split("\r\n")[0],
                 responseStr.startsWith("HTTP/1.1 101")
         );
+    }
+
+    /**
+     * Reads a single unmasked BINARY response frame from the server and returns its
+     * payload. The server sends its per-frame ack/nack as one binary frame (see
+     * {@code QwpIngressUpgradeProcessor#sendErrorResponse}). Reads byte-by-byte so it
+     * tolerates the send-side fragmentation the test harness forces on the response.
+     */
+    private static byte[] readBinaryFramePayload(InputStream in) throws Exception {
+        int byte0 = in.read();
+        Assert.assertNotEquals("Server should send a response frame, not close the connection", -1, byte0);
+        Assert.assertEquals("Expected a BINARY response frame", WebSocketOpcode.BINARY, byte0 & 0x0F);
+        Assert.assertTrue("Response frame must have FIN=1", (byte0 & 0x80) != 0);
+
+        int byte1 = in.read();
+        Assert.assertNotEquals(-1, byte1);
+        Assert.assertFalse("Server frames must not be masked", (byte1 & 0x80) != 0);
+
+        int payloadLen = byte1 & 0x7F;
+        if (payloadLen == 126) {
+            int hi = in.read();
+            int lo = in.read();
+            Assert.assertNotEquals(-1, hi);
+            Assert.assertNotEquals(-1, lo);
+            payloadLen = ((hi & 0xFF) << 8) | (lo & 0xFF);
+        } else {
+            Assert.assertTrue("Response payload does not fit a single-byte length", payloadLen <= 125);
+        }
+
+        byte[] payload = new byte[payloadLen];
+        int totalRead = 0;
+        while (totalRead < payloadLen) {
+            int n = in.read(payload, totalRead, payloadLen - totalRead);
+            Assert.assertNotEquals("Unexpected end of stream while reading response payload", -1, n);
+            totalRead += n;
+        }
+        return payload;
     }
 
     private static String readHttpResponse(Socket socket) throws Exception {

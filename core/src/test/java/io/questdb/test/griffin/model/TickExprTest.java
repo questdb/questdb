@@ -2155,6 +2155,38 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateListWithNestedTimeExpansion() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:00:00.999999Z},{lo=2024-01-15T09:00:30.000000Z, hi=2024-01-15T09:00:30.999999Z},{lo=2024-01-15T14:30:00.000000Z, hi=2024-01-15T14:30:00.999999Z},{lo=2024-01-15T14:30:30.000000Z, hi=2024-01-15T14:30:30.999999Z},{lo=2024-01-16T09:00:00.000000Z, hi=2024-01-16T09:00:00.999999Z},{lo=2024-01-16T09:00:30.000000Z, hi=2024-01-16T09:00:30.999999Z},{lo=2024-01-16T14:30:00.000000Z, hi=2024-01-16T14:30:00.999999Z},{lo=2024-01-16T14:30:30.000000Z, hi=2024-01-16T14:30:30.999999Z}]",
+                "[2024-01-15,2024-01-16]T[09:00,14:30]:[00,30]"
+        );
+    }
+
+    @Test
+    public void testDateListWithNestedTimeExpansionAfterError() throws SqlException {
+        for (int i = 0; i < 3; i++) {
+            assertBracketIntervalError("[2024-01-15,2024-01-16]T[09:00,14:30]:[00,99]", "Invalid date");
+            testDateListWithNestedTimeExpansion();
+        }
+    }
+
+    @Test
+    public void testDateListWithNestedTimeExpansionAndDayFilterAndTimezone() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2024-01-15T07:00:00.000000Z, hi=2024-01-15T07:00:00.999999Z},{lo=2024-01-15T07:00:30.000000Z, hi=2024-01-15T07:00:30.999999Z},{lo=2024-01-15T12:30:00.000000Z, hi=2024-01-15T12:30:00.999999Z},{lo=2024-01-15T12:30:30.000000Z, hi=2024-01-15T12:30:30.999999Z}]",
+                "[2024-01-15,2024-01-16]T[09:00,14:30]:[00,30]@+02:00#Mon"
+        );
+    }
+
+    @Test
+    public void testDateListWithNestedTimeExpansionEncoded() throws SqlException {
+        assertEncodedInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:00:00.999999Z},{lo=2024-01-15T09:00:30.000000Z, hi=2024-01-15T09:00:30.999999Z},{lo=2024-01-15T14:30:00.000000Z, hi=2024-01-15T14:30:00.999999Z},{lo=2024-01-15T14:30:30.000000Z, hi=2024-01-15T14:30:30.999999Z},{lo=2024-01-16T09:00:00.000000Z, hi=2024-01-16T09:00:00.999999Z},{lo=2024-01-16T09:00:30.000000Z, hi=2024-01-16T09:00:30.999999Z},{lo=2024-01-16T14:30:00.000000Z, hi=2024-01-16T14:30:00.999999Z},{lo=2024-01-16T14:30:30.000000Z, hi=2024-01-16T14:30:30.999999Z}]",
+                "[2024-01-15,2024-01-16]T[09:00,14:30]:[00,30]"
+        );
+    }
+
+    @Test
     public void testDateListWithTimeExpansion() throws SqlException {
         // '[2025-01-15,2025-01-20]T[09,14]:30;1h' produces 4 intervals (date × time expansion)
         assertBracketInterval(
@@ -3264,6 +3296,15 @@ public class TickExprTest {
                 "[{lo=2026-04-10T07:45:00.000000Z, hi=2026-04-10T09:45:00.000000Z}]",
                 "[$now - 2h..$now]@Asia/Tokyo",
                 "2026-04-10T18:45:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNestedTimeExpansion() throws SqlException {
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:00:00.999999Z},{lo=2024-01-15T09:00:30.000000Z, hi=2024-01-15T09:00:30.999999Z},{lo=2024-01-15T14:30:00.000000Z, hi=2024-01-15T14:30:00.999999Z},{lo=2024-01-15T14:30:30.000000Z, hi=2024-01-15T14:30:30.999999Z},{lo=2024-01-16T09:00:00.000000Z, hi=2024-01-16T09:00:00.999999Z},{lo=2024-01-16T09:00:30.000000Z, hi=2024-01-16T09:00:30.999999Z},{lo=2024-01-16T14:30:00.000000Z, hi=2024-01-16T14:30:00.999999Z},{lo=2024-01-16T14:30:30.000000Z, hi=2024-01-16T14:30:30.999999Z}]",
+                "[$today..$today+1d]T[09:00,14:30]:[00,30]",
+                "2024-01-15T10:30:00.000000Z"
         );
     }
 
@@ -5135,6 +5176,36 @@ public class TickExprTest {
                 "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:30:04.999999Z},{lo=2018-01-10T10:30:10.000000Z, hi=2018-01-10T10:30:14.999999Z},{lo=2018-01-10T10:30:20.000000Z, hi=2018-01-10T10:30:24.999999Z}]",
                 "2018-01-10T10:30:00;5s;10s;3"
         );
+    }
+
+    @Test
+    public void testSteadyStateNestedExpansionAllocatesNoJavaHeap() throws Exception {
+        try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            final String interval = "[2024-01-15,2024-01-16]T[09:00,14:30]:[00,30]";
+            final StringSink scratch = new StringSink();
+            for (int i = 0; i < 20_000; i++) {
+                out.clear();
+                IntervalUtils.parseTickExpr(timestampDriver, configuration, interval, 0, interval.length(),
+                        0, out, IntervalOperation.INTERSECT, scratch, true);
+            }
+            long minAllocatedBytes = Long.MAX_VALUE;
+            long intervalCount = 0;
+            for (int round = 0; round < 5; round++) {
+                final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                for (int i = 0; i < 10_000; i++) {
+                    out.clear();
+                    IntervalUtils.parseTickExpr(timestampDriver, configuration, interval, 0, interval.length(),
+                            0, out, IntervalOperation.INTERSECT, scratch, true);
+                    intervalCount += out.size() / 2;
+                }
+                minAllocatedBytes = Math.min(minAllocatedBytes,
+                        threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore);
+            }
+            Assert.assertEquals(400_000, intervalCount);
+            Assert.assertEquals(0, minAllocatedBytes);
+        }
     }
 
     @Test

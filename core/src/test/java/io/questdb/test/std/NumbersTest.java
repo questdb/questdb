@@ -2376,6 +2376,41 @@ public class NumbersTest {
 
 
     @Test
+    public void testSaturatedAbsDiff() {
+        // Ordinary distances, both argument orders.
+        assertEquals(0, Numbers.saturatedAbsDiff(0, 0));
+        assertEquals(0, Numbers.saturatedAbsDiff(Long.MAX_VALUE, Long.MAX_VALUE));
+        assertEquals(7, Numbers.saturatedAbsDiff(10, 3));
+        assertEquals(7, Numbers.saturatedAbsDiff(3, 10));
+        assertEquals(13, Numbers.saturatedAbsDiff(6, -7));
+        assertEquals(13, Numbers.saturatedAbsDiff(-7, 6));
+
+        // The widest distance that still fits, either side of zero.
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAbsDiff(Long.MAX_VALUE, 0));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAbsDiff(0, Long.MAX_VALUE));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAbsDiff(-1, Long.MAX_VALUE - 1));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAbsDiff(Long.MIN_VALUE + 1, 0));
+
+        // Distances that need the 64th bit. Math.abs(a - b) returns a negative number for every
+        // one of these, which is what let an out-of-frame row survive a bounded RANGE frame.
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAbsDiff(Long.MAX_VALUE, -1));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAbsDiff(-1, Long.MAX_VALUE));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAbsDiff(1L << 62, -(1L << 62)));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAbsDiff(-(1L << 62), 1L << 62));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAbsDiff(Long.MAX_VALUE, Long.MIN_VALUE));
+        assertEquals(Long.MAX_VALUE, Numbers.saturatedAbsDiff(Long.MIN_VALUE, Long.MAX_VALUE));
+
+        // The result is never negative, which is the property every caller relies on.
+        Rnd rnd = new Rnd();
+        for (int i = 0; i < 10_000; i++) {
+            long a = rnd.nextLong();
+            long b = rnd.nextLong();
+            assertTrue(Numbers.saturatedAbsDiff(a, b) >= 0);
+            assertEquals(Numbers.saturatedAbsDiff(a, b), Numbers.saturatedAbsDiff(b, a));
+        }
+    }
+
+    @Test
     public void testShortBswap() {
         short v = Numbers.bswap((short) -7976);
         assertEquals(-7976, Numbers.bswap(v));

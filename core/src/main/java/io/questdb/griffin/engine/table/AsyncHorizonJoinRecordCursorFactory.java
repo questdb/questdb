@@ -34,6 +34,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -109,8 +110,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
-            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate,
+            @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -151,8 +152,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     keyTypes,
                     valueTypes,
                     asOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkClass,
-                    slaveAsOfJoinMapSinkClass,
+                    masterAsOfJoinMapSinkTemplate,
+                    slaveAsOfJoinMapSinkTemplate,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
@@ -208,7 +209,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         } catch (Throwable th) {
             // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
             // so the cached factory stays reusable.
-            cursor.close();
+            Misc.free(cursor, th);
             throw th;
         }
     }
@@ -233,6 +234,10 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
         sink.child(masterFactory);
+        final Function slaveFilter = frameSequence.getAtom().getSlaveFilter();
+        if (slaveFilter != null) {
+            sink.attr("slave filter").val(slaveFilter, slaveFactory);
+        }
         sink.child(slaveFactory);
     }
 
@@ -463,7 +468,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         final boolean sharded = !groupByMapFragment.isNotSharded();
-        final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
+        final boolean keyedAsOfJoin = asOfJoinMap != null;
         final SymbolTranslatingRecord symbolTranslatingRecord =
                 masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
 
@@ -475,7 +480,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         final long masterTsScale = atom.getMasterTimestampScale();
 
         while (horizonIterator.next()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
             final int offsetIdx = horizonIterator.getOffsetIndex();
@@ -485,7 +490,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final long masterRowId = baseRowId + masterRowIdx;
 
             final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
-            long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
+            long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs, circuitBreaker);
 
             long matchRowId;
             if (keyedAsOfJoin) {
@@ -495,10 +500,11 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         masterAsOfJoinMapSink,
                         slaveAsOfJoinMapSink,
                         asOfJoinMap,
-                        symbolTranslatingRecord
+                        symbolTranslatingRecord,
+                        circuitBreaker
                 );
             } else {
-                matchRowId = asOfRowId;
+                matchRowId = slaveTimeFrameHelper.findNotKeyedAsOfMatch(asOfRowId, circuitBreaker);
             }
 
             Record matchedSlaveRecord = null;

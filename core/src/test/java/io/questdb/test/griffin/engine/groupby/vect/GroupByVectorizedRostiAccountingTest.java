@@ -38,6 +38,8 @@ import io.questdb.std.Rosti;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -115,7 +117,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
         configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             final int workerCount = 4;
-            final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+            final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
                 @Override
                 public String getPoolName() {
                     return "rostiAcct";

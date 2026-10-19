@@ -32,6 +32,23 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class MapFactory {
+    /**
+     * {@link OrderedMap} - what {@link #createUnorderedMap} falls back to for a multi-column key,
+     * an unsupported key type, or an entry the configured limit does not admit.
+     */
+    private static final int MAP_IMPL_ORDERED = 0;
+    /**
+     * {@link Unordered4Map}, for a single 4-byte key.
+     */
+    private static final int MAP_IMPL_UNORDERED_4 = 1;
+    /**
+     * {@link Unordered8Map}, for a single 8-byte key.
+     */
+    private static final int MAP_IMPL_UNORDERED_8 = 2;
+    /**
+     * {@link UnorderedVarcharMap}, for a single VARCHAR key.
+     */
+    private static final int MAP_IMPL_UNORDERED_VARCHAR = 3;
 
     /**
      * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
@@ -194,29 +211,27 @@ public class MapFactory {
             boolean openOnInit
     ) {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
-
         final int valueSize = ColumnTypes.sizeInBytes(valueTypes);
-        if (keyTypes.getColumnCount() == 1) {
-            final int keyType = keyTypes.getColumnType(0);
-            if (Unordered4Map.isSupportedKeyType(keyType) && Integer.BYTES + valueSize <= maxEntrySize) {
+        switch (selectUnorderedMapImplementation(keyTypes, valueSize, maxEntrySize)) {
+            case MAP_IMPL_UNORDERED_4:
                 return new Unordered4Map(
-                        keyType,
+                        keyTypes.getColumnType(0),
                         valueTypes,
                         keyCapacity,
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes(),
                         openOnInit
                 );
-            } else if (Unordered8Map.isSupportedKeyType(keyType) && Long.BYTES + valueSize <= maxEntrySize) {
+            case MAP_IMPL_UNORDERED_8:
                 return new Unordered8Map(
-                        keyType,
+                        keyTypes.getColumnType(0),
                         valueTypes,
                         keyCapacity,
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes(),
                         openOnInit
                 );
-            } else if (keyType == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+            case MAP_IMPL_UNORDERED_VARCHAR:
                 return new UnorderedVarcharMap(
                         valueTypes,
                         keyCapacity,
@@ -227,17 +242,45 @@ public class MapFactory {
                         isDeferredKeyCopy,
                         openOnInit
                 );
+            default:
+                return new OrderedMap(
+                        pageSize,
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes(),
+                        openOnInit
+                );
+        }
+    }
+
+    /**
+     * Returns the {@code MAP_IMPL_*} implementation {@link #createUnorderedMap} builds for this
+     * key shape and value width: a single-column key of a supported type stays on an unordered
+     * map only while the key's own width plus {@code valueSize} fits
+     * {@code cairo.sql.unordered.map.max.entry.size}, and anything else - every multi-column key
+     * included - falls back to {@link OrderedMap}.
+     *
+     * @param keyTypes     the map's key columns
+     * @param valueSize    the value width in bytes, as {@link ColumnTypes#sizeInBytes} reports it
+     * @param maxEntrySize the configured {@code cairo.sql.unordered.map.max.entry.size}
+     */
+    private static int selectUnorderedMapImplementation(
+            @Transient @NotNull ColumnTypes keyTypes,
+            int valueSize,
+            int maxEntrySize
+    ) {
+        if (keyTypes.getColumnCount() == 1) {
+            final int keyType = keyTypes.getColumnType(0);
+            if (Unordered4Map.isSupportedKeyType(keyType) && Integer.BYTES + valueSize <= maxEntrySize) {
+                return MAP_IMPL_UNORDERED_4;
+            } else if (Unordered8Map.isSupportedKeyType(keyType) && Long.BYTES + valueSize <= maxEntrySize) {
+                return MAP_IMPL_UNORDERED_8;
+            } else if (keyType == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+                return MAP_IMPL_UNORDERED_VARCHAR;
             }
         }
-
-        return new OrderedMap(
-                pageSize,
-                keyTypes,
-                valueTypes,
-                keyCapacity,
-                configuration.getSqlFastMapLoadFactor(),
-                configuration.getSqlMapMaxResizes(),
-                openOnInit
-        );
+        return MAP_IMPL_ORDERED;
     }
 }

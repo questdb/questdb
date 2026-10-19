@@ -95,6 +95,28 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         return base;
     }
 
+    // Stable iff every aggregate (which may evaluate arbitrary argument expressions, for example
+    // max(rnd_timestamp(...))) and the base are stable.
+    @Override
+    public boolean isNonDeterministic() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (groupByFunctions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return base.isStableWithinExecution();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         // The base cursor is shared with getSharedCursor and opened by whichever runs first, so
@@ -443,13 +465,13 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             if (!isValueBuilt) {
                 // Consult the breaker before aggregating, so an empty base scan (which only calls
                 // updateEmpty below, never the row loop) still observes cancellation.
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                 final Record baseRecord = baseCursor.getRecord();
                 if (baseCursor.hasNext()) {
                     long rowId = 0;
                     groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
                     while (baseCursor.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                         if (earlyExit()) {
                             break;

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Numbers;
 
 /**
@@ -140,5 +141,43 @@ public final class ScalarSubQueryUtils {
             case ColumnType.LONG -> record.getLong(0);
             default -> Numbers.LONG_NULL;
         };
+    }
+
+    /**
+     * Opens the scalar sub-query cursor and reads its single timestamp value. The cursor is opened
+     * with a try-with-resources block, so it is guaranteed closed on every path: normal return,
+     * zero-row return, the multi-row throw, and any exception raised while reading.
+     * <p>
+     * Contract by row count:
+     * <ul>
+     *   <li>zero rows: returns {@link Numbers#LONG_NULL} as the null sentinel;</li>
+     *   <li>one row: returns {@code getTimestamp(0)} of that row, which is itself
+     *       {@link Numbers#LONG_NULL} when the scalar is null;</li>
+     *   <li>more than one row: throws {@link SqlException} at {@code position} with the message
+     *       {@code "scalar sub-query returned more than one row"} (via
+     *       {@link #assertNoMoreRows(RecordCursor, int)}).</li>
+     * </ul>
+     * The value is read directly from column 0 as a timestamp; no type or precision conversion is
+     * performed.
+     *
+     * @param factory          the scalar sub-query cursor factory (column 0 must be a timestamp)
+     * @param executionContext the execution context used to open the cursor
+     * @param position         the parse position of the sub-query, used for the error marker
+     * @return the single timestamp value, or {@link Numbers#LONG_NULL} for a zero-row or null result
+     * @throws SqlException if the sub-query yields more than one row
+     */
+    public static long readTimestamp(
+            RecordCursorFactory factory,
+            SqlExecutionContext executionContext,
+            int position
+    ) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+            if (!cursor.hasNext()) {
+                return Numbers.LONG_NULL;
+            }
+            final long timestamp = cursor.getRecord().getTimestamp(0);
+            assertNoMoreRows(cursor, position);
+            return timestamp;
+        }
     }
 }

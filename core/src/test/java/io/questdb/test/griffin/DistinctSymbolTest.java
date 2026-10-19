@@ -30,6 +30,34 @@ import org.junit.Test;
 public class DistinctSymbolTest extends AbstractCairoTest {
 
     @Test
+    public void testDistinctOverPostingIndexRejectPathDoesNotLeakIntervalBound() throws Exception {
+        // The DISTINCT-over-posting-index optimisation re-parses the WHERE clause into its own
+        // IntrinsicModel, then abandons it when the clause leaves a residual filter. Abandoning it
+        // without clearIntervalFilters() orphans whatever the parse compiled into the runtime
+        // interval builder -- IntrinsicModel.clear() calls runtimeIntervalBuilder.clear(), which
+        // drops the references without closing them. The two sibling bail-outs in the LATEST ON
+        // path already call it. alloc_ts() makes the orphan observable: it is a runtime-constant
+        // timestamp bound holding a tracked 1 KiB native buffer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (sym SYMBOL INDEX TYPE POSTING, value INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', 1, '2020-01-01T00:00:00.000000Z'),
+                    ('b', 9, '2020-01-02T00:00:00.000000Z')
+                    """);
+            // "value > 5" is the residual that makes the optimisation decline; the timestamp bound
+            // is what the declined model still holds.
+            assertQuery("SELECT DISTINCT sym FROM tab WHERE ts > alloc_ts('2020-01-01T00:00:00.000000Z'::timestamp) AND value > 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym
+                            b
+                            """);
+        });
+    }
+
+    @Test
     public void testDistinctSymbolIndexed() throws Exception {
         assertQuery("select DISTINCT(sym) from tab order by 1 LIMIT 10")
                 .ddl("create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +

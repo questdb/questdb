@@ -42,6 +42,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.async.AsyncQueryErrorState;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
+import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
 import io.questdb.griffin.PlanSink;
@@ -75,7 +79,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
@@ -83,12 +86,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
     private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
 
+    private final AsyncQueryErrorState aggregateError = new AsyncQueryErrorState();
     private final RostiRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
-    // First failure from a queued worker. doRun() logs and discards it, so without this the
-    // coordinator merges the shards that did succeed into a silently partial result.
-    private final AtomicReference<Throwable> firstWorkerError = new AtomicReference<>();
     private final PageFrameAddressCache frameAddressCache;
     // any worker that sees a page frame whose key column is a column top raises this flag;
     // insertNullKeyConditionally() consumes it once, after the drain, and materializes the null
@@ -96,7 +97,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final AtomicBoolean hasNullKeyRows = new AtomicBoolean();
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
+    private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
     private final PerWorkerLocks perWorkerLocks; // used to protect pRosti and VAF's internal slots
+    private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final RostiAllocFacade raf;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker; // used to signal cancellation to workers
     private final AtomicInteger startedCounter = new AtomicInteger();
@@ -221,8 +224,21 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // Vector aggregates are column-bound builtins (sum/min/max/avg/count/...) with no argument
+    // expressions, hence deterministic by construction; stability is the base's.
+    @Override
+    public boolean isNonDeterministic() {
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return base.isStableWithinExecution();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        aggregateError.clear();
         oomCounter.set(0);
         // clear maps
         for (int i = 0, n = pRosti.length; i < n; i++) {
@@ -308,6 +324,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static int runWhatsLeft(
             MCSequence subSeq,
             RingQueue<VectorAggregateTask> queue,
+            @Nullable QueryParallelFiberDispatcher dispatcher,
+            QueryParallelOwnerLoop ownerLoop,
+            AsyncQueryErrorState aggregateError,
             int queuedCount,
             int reclaimed,
             int mergedCount,
@@ -317,42 +336,43 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             AtomicBooleanCircuitBreaker sharedCB,
             WorkStealingStrategy workStealingStrategy
     ) {
-        Throwable firstError = null;
-        while (!doneLatch.done(queuedCount)) {
-            if (circuitBreaker.checkIfTripped()) {
+        while (true) {
+            ownerLoop.observeProgress();
+            if (doneLatch.done(queuedCount)) {
+                break;
+            }
+            final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
+            if (isOwnerTripped) {
                 sharedCB.cancel();
             }
 
-            if (workStealingStrategy.shouldSteal(mergedCount)) {
+            if (!ownerLoop.isOwnerParkable() && workStealingStrategy.shouldSteal(mergedCount)) {
                 long cursor = subSeq.next();
                 if (cursor > -1) {
                     VectorAggregateTask task = queue.get(cursor);
+                    // run() releases the slot
                     // Keep draining even if an entry throws (e.g. OOM in a parquet decode): a
                     // survivor left in the shared queue references frame memory pools buildRosti
                     // frees on exit, so a later query would steal it and hit the freed pool.
                     // Surface the first error only once the queue is fully drained.
                     try {
-                        task.entry.run(workerId, subSeq, cursor);
-                    } catch (Throwable th) {
-                        if (firstError == null) {
-                            firstError = th;
+                        if (dispatcher != null) {
+                            task.entry.run(workerId, subSeq, cursor, dispatcher);
+                        } else {
+                            task.entry.run(workerId, subSeq, cursor);
                         }
+                    } catch (Throwable th) {
+                        aggregateError.setError(th);
+                        sharedCB.cancel();
                     }
                     reclaimed++;
                 } else {
                     Os.pause();
                 }
+            } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
+                Os.pause();
             }
             mergedCount = doneLatch.getCount();
-        }
-        if (firstError != null) {
-            if (firstError instanceof RuntimeException re) {
-                throw re;
-            }
-            if (firstError instanceof Error err) {
-                throw err;
-            }
-            throw CairoException.nonCritical().put("vectorized aggregation failed [error=").put(firstError.getMessage()).put(']');
         }
         return reclaimed;
     }
@@ -561,10 +581,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
             // Time-throttled so it checks cancellation/timeout unconditionally while bounding the
             // connection probe to once per window.
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             final int vafCount = vafList.size();
             final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
             final MPSequence pubSeq = bus.getVectorAggregatePubSeq();
+            final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
+            ownerLoop.of(dispatcher, circuitBreaker, progressState);
+            ownerLoop.tryAcquirePublication();
 
             sharedCircuitBreaker.reset();
             startedCounter.set(0);
@@ -574,7 +597,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // and the next entry through hasNext()/calculateSize()/a shared cursor would otherwise
             // read a stale flag and insert a null group no page frame justified.
             hasNullKeyRows.set(false);
-            firstWorkerError.set(null);
 
             int queuedCount = 0;
             int ownCount = 0;
@@ -582,15 +604,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             int total = 0;
             int mergedCount = 0; // used for work stealing decisions
 
-            final Thread thread = Thread.currentThread();
-            final int workerId;
-            if (thread instanceof Worker) {
-                // it's a worker thread, potentially from the shared pool
-                workerId = ((Worker) thread).getWorkerId() % workerCount;
-            } else {
-                // it's an embedder's thread, so use a random slot
-                workerId = -1;
-            }
+            final Worker worker = Worker.current();
+            final int workerId = worker != null ? worker.getWorkerId() % workerCount : -1;
 
             try {
                 PageFrame frame;
@@ -610,6 +625,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 // Carries a claimed entry the work stealing branch left unused into the next
                 // dispatch, so the eager claim below costs no extra pool entries.
                 VectorAggregateEntry entry = null;
+                dispatch:
                 for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
                     final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
                     if (frameRowCount == 0) {
@@ -631,6 +647,28 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         // argument, and it can only derive count via memory size
                         final int valueColumnIndex = vaf.getColumnIndex();
 
+                        if (!ownerLoop.hasPublication()) {
+                            ownerLoop.checkBeforeHelping();
+                            VectorAggregateEntry.aggregateUnsafe(
+                                    workerId,
+                                    oomCounter,
+                                    hasNullKeyRows,
+                                    frameIndex,
+                                    frameRowCount,
+                                    keyColumnIndex,
+                                    valueColumnIndex,
+                                    pRosti,
+                                    frameMemoryPools,
+                                    raf,
+                                    vaf,
+                                    perWorkerLocks,
+                                    circuitBreaker
+                            );
+                            ownCount++;
+                            total++;
+                            continue;
+                        }
+
                         // Claim and populate the entry before pubSeq.next() claims a ring slot:
                         // entryPool.next() expands and allocates, and a throw between the claim and
                         // pubSeq.done() would leave the slot forever unpublished, blocking every
@@ -650,18 +688,22 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                 doneLatch,
                                 oomCounter,
                                 hasNullKeyRows,
+                                aggregateError,
                                 raf,
                                 perWorkerLocks,
                                 sharedCircuitBreaker,
-                                firstWorkerError
+                                progressState
                         );
 
                         while (true) {
+                            if (aggregateError.hasError()) {
+                                break dispatch;
+                            }
+                            ownerLoop.observeProgress();
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
-                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-
                                 if (workStealingStrategy.shouldSteal(mergedCount)) {
+                                    ownerLoop.checkBeforeHelping();
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
                                             oomCounter,
@@ -682,9 +724,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     mergedCount = doneLatch.getCount();
                                     break;
                                 }
+                                if (!ownerLoop.awaitProgress()) {
+                                    Os.pause();
+                                }
                                 mergedCount = doneLatch.getCount();
                             } else {
-                                queue.get(cursor).entry = entry;
+                                queue.get(cursor).of(entry);
                                 entry = null;
                                 pubSeq.done(cursor);
                                 queuedCount++;
@@ -698,52 +743,30 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 sharedCircuitBreaker.cancel();
                 throw th;
             } finally {
-                // all done? great start consuming the queue we just published
-                // how do we get to the end? If we consume our own queue there is chance we will be consuming
-                // aggregation tasks not related to this execution (we work in concurrent environment)
-                // To deal with that we need to have our own checklist.
-
-                // Make sure we're consuming jobs even when we failed. We cannot close "rosti" when there are
-                // tasks in flight.
-
-                reclaimed = runWhatsLeft(
-                        bus.getVectorAggregateSubSeq(),
-                        queue,
-                        queuedCount,
-                        reclaimed,
-                        mergedCount,
-                        workerId,
-                        doneLatch,
-                        circuitBreaker,
-                        sharedCircuitBreaker,
-                        workStealingStrategy
-                );
-                // We can't reallocate rosti until tasks are complete because some other thread could be using it.
-                if (sharedCircuitBreaker.checkIfTripped()) {
-                    resetRostiMemorySize();
+                try {
+                    ownerLoop.releasePublication();
+                } finally {
+                    reclaimed = runWhatsLeft(
+                            bus.getVectorAggregateSubSeq(),
+                            queue,
+                            dispatcher,
+                            ownerLoop,
+                            aggregateError,
+                            queuedCount,
+                            reclaimed,
+                            mergedCount,
+                            workerId,
+                            doneLatch,
+                            circuitBreaker,
+                            sharedCircuitBreaker,
+                            workStealingStrategy
+                    );
+                    if (sharedCircuitBreaker.checkIfTrippedOrYield()) {
+                        resetRostiMemorySize();
+                    }
+                    frameAddressCache.unfreezeCoveredReaders();
+                    Misc.freeObjListAndKeepObjects(frameMemoryPools);
                 }
-                // runWhatsLeft has drained the done-latch, so every vector-aggregate
-                // worker has finished iterating its detached covered cursors. Unfreeze
-                // the covered posting readers (no-op when none) so later queries can
-                // reload them, and release page frame memory -- both safe now that no
-                // worker is using it.
-                frameAddressCache.unfreezeCoveredReaders();
-                Misc.freeObjListAndKeepObjects(frameMemoryPools);
-            }
-
-            // Ahead of the OOM tally: a worker's throw names the concrete cause, the tally only
-            // reports that some rosti could not grow.
-            final Throwable workerError = firstWorkerError.get();
-            if (workerError != null) {
-                resetRostiMemorySize();
-                if (workerError instanceof RuntimeException re) {
-                    throw re;
-                }
-                if (workerError instanceof Error err) {
-                    throw err;
-                }
-                throw CairoException.nonCritical()
-                        .put("vectorized aggregation failed [error=").put(workerError.getMessage()).put(']');
             }
 
             if (oomCounter.get() > 0) {
@@ -753,11 +776,23 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         .setOutOfMemory(true);
             }
 
+            if (aggregateError.hasError()) {
+                aggregateError.throwError();
+            }
+
+            if (sharedCircuitBreaker.checkIfTrippedOrYield()) {
+                // A tripped shared breaker with no recorded error means the dispatcher aborted
+                // queued entries (quiesce); the rostis were reset above, so the query must fail
+                // rather than return a partial aggregate.
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                throw CairoException.queryCancelled();
+            }
+
             try {
                 // A tripped breaker has already minimized every rosti above, so consult it before
                 // the null key insert: an insert into a 16-slot map that cannot grow would report
                 // memory pressure where the user is owed the cancellation or timeout error.
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
 
                 // merge maps only when cursor was fetched successfully
                 // otherwise assume error and save CPU cycles
@@ -783,7 +818,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             if (pRostiBig == pRosti[i] || raf.getSize(pRosti[i]) < 1) {
                                 continue;
                             }
-                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                             long oldSize = Rosti.getAllocMemory(pRostiBig);
                             // A merge calls find() once per source slot, so it can resize the
                             // destination successfully and fail on a later resize. Account for the
@@ -800,7 +835,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             }
                         }
 
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
 
                         // some wrapUp() methods can increase rosti size
                         long oldSize = Rosti.getAllocMemory(pRostiBig);
@@ -813,7 +848,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     .setOutOfMemory(true);
                         }
                     }
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                     for (int i = 0, n = pRosti.length; i < n; i++) {
                         if (pRostiBig == pRosti[i]) {
                             continue;
@@ -824,7 +859,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         }
                     }
                 } else {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                     for (int j = 0; j < vafCount; j++) {
                         // some wrapUp() methods can increase rosti size (e.g. inserting the null key)
                         long oldSize = Rosti.getAllocMemory(pRostiBig);

@@ -24,9 +24,40 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
-import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
+/**
+ * A function that computes its argument once per row and answers every later getter of that
+ * row from the cached result. The cache is a value, not a position: nothing in it identifies
+ * the row it came from, so a reader that never clears it cannot tell a stale value from a
+ * fresh one.
+ * <p>
+ * Clearing is therefore the owning cursor's job on every row, and this interface's job on
+ * every event that moves the cursor without producing a row - {@link #init} on a rebind and
+ * {@link #toTop} on a rewind. Both are defaults here rather than a convention each cursor
+ * has to keep, because the failure they prevent is silent: a projection read after a rebind
+ * that skipped the clear serves the previous traversal's last value, with no fault and no
+ * type error to notice.
+ */
 public interface MemoizerFunction extends UnaryFunction {
-    void memoize(Record record);
+
+    /**
+     * Drops the cached value, so the next getter recomputes it from the record it is handed.
+     */
+    void clearMemo();
+
+    @Override
+    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        clearMemo();
+        UnaryFunction.super.init(symbolTableSource, executionContext);
+    }
+
+    @Override
+    default void toTop() {
+        clearMemo();
+        UnaryFunction.super.toTop();
+    }
 }

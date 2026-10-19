@@ -33,6 +33,12 @@ public final class ReadOnlySecurityContextFactory implements SecurityContextFact
 
     @Override
     public SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId) {
-        return ReadOnlySecurityContext.INSTANCE;
+        // ILP's principal is a JWK key id -- a transport credential, not an ACL identity -- so it is not
+        // routed through the per-principal cache; hand back the bare singleton instead. See
+        // ReadOnlyUsersAwareSecurityContextFactory (and the enterprise mirror) for the full reasoning.
+        if (interfaceId == SecurityContextFactory.ILP) {
+            return ReadOnlySecurityContext.INSTANCE;
+        }
+        return ReadOnlySecurityContext.INSTANCE.forPrincipal(principalContext.getPrincipal());
     }
 }

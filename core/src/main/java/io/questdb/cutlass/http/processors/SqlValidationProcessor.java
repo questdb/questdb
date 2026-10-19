@@ -337,6 +337,8 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                     case CompiledQuery.EMPTY -> sendConfirmation(state, configuration.getKeepAliveHeader(), "EMPTY");
                     case CompiledQuery.CREATE_MAT_VIEW ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE MAT VIEW");
+                    case CompiledQuery.CREATE_LIVE_VIEW ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE LIVE VIEW");
                     case CompiledQuery.REFRESH_MAT_VIEW ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "REFRESH MAT VIEW");
                     case CompiledQuery.CREATE_VIEW ->

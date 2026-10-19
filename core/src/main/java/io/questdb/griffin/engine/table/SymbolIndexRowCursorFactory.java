@@ -72,6 +72,14 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
         return false;
     }
 
+    // Stable within the execution iff the looked-up symbol key is: a null key function means the
+    // key was resolved to a compile-time constant (fully stable); otherwise a bind variable re-reads
+    // the same frozen snapshot (stable) while an rnd_* key is not.
+    @Override
+    public boolean isStableWithinExecution() {
+        return symbolFunction == null || symbolFunction.isStableWithinExecution();
+    }
+
     @Override
     public boolean isUsingIndex() {
         return true;

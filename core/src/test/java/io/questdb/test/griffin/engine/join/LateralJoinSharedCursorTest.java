@@ -587,6 +587,56 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotKeyedGroupByOuterLeftJoinCountArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.total, sub.arithmetic
+                    FROM (SELECT sum(amount) AS total FROM orders) o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM rates
+                        WHERE min_amount = o.total
+                    ) sub
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            total\tarithmetic
+                            1.0\t2
+                            """);
+
+            execute("""
+                    INSERT INTO rates VALUES
+                    (1.0, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.total, sub.arithmetic
+                    FROM (SELECT sum(amount) AS total FROM orders) o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM rates
+                        WHERE min_amount = o.total
+                    ) sub
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            total\tarithmetic
+                            1.0\t4
+                            """);
+        });
+    }
+
+    @Test
     public void testNotKeyedStringAggGroupByOuter() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {

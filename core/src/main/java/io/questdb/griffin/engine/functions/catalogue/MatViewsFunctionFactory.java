@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -47,6 +48,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -70,6 +72,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             case 'M' -> "MONTH";
             default -> null;
         };
+    }
+
+    @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
     }
 
     @Override
@@ -120,6 +128,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS = COLUMN_REFRESH_AVG_COMMIT_NANOS + 1;
         private static final int COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS + 1;
         private static final int COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS + 1;
+        private static final int COLUMN_TIMERS_REGISTERED = COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor;
 
@@ -134,8 +143,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
+            cursor.securityContext = executionContext.getSecurityContext();
             cursor.toTop();
             return cursor;
         }
@@ -163,6 +173,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
             private SqlExecutionCircuitBreaker circuitBreaker;
+            private SecurityContext securityContext;
             private int viewIndex = 0;
 
             public ViewsListCursor(CairoEngine engine) {
@@ -191,10 +202,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 final int n = viewTokens.size();
                 for (; viewIndex < n; viewIndex++) {
                     // reads a view state file per row, so observe the breaker each iteration
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final TableToken viewToken = viewTokens.get(viewIndex);
-                    if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
-                        final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+                    if (securityContext.isTableVisible(viewToken) && engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
+                        final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(viewToken);
                         if (viewDefinition == null) {
                             continue; // mat view was dropped concurrently
                         }
@@ -251,6 +262,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         // A pending retry deadline (in-memory only) means an incremental refresh was
                         // deferred after a transient "table busy" or out-of-memory error.
                         final boolean retrying = state != null && state.getRefreshRetryAfterMicros() != Numbers.LONG_NULL;
+                        // Timers live only in MatViewTimerJob's in-memory heap, which is where this
+                        // count comes from. Zero is expected for an immediate, non-period view, which
+                        // base table commits drive on their own. Zero on any other refresh type means
+                        // nothing schedules the view: the timer job never registered it, or lost it.
+                        // No other column shows that -- view_status keeps reporting 'valid'.
+                        final int timersRegistered = state != null ? state.getRegisteredTimerCount() : 0;
 
                         record.of(
                                 viewDefinition,
@@ -273,7 +290,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 avgScanSampleNanos,
                                 avgScanRangeTsUnits,
                                 commitGapThresholdTsUnits,
-                                retrying
+                                retrying,
+                                timersRegistered
                         );
                         viewIndex++;
                         return true;
@@ -295,7 +313,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             @Override
             public void toTop() {
                 viewTokens.clear();
-                engine.getMatViewGraph().getViews(viewTokens);
+                engine.getDependentViewGraph().getViews(viewTokens);
                 viewIndex = 0;
             }
 
@@ -320,6 +338,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private int timerInterval;
                 private char timerIntervalUnit;
                 private long timerStart;
+                private int timersRegistered;
                 private MatViewDefinition viewDefinition;
 
                 @Override
@@ -329,6 +348,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_TIMER_INTERVAL -> timerInterval;
                         case COLUMN_PERIOD_LENGTH -> periodLength;
                         case COLUMN_PERIOD_DELAY -> periodDelay;
+                        case COLUMN_TIMERS_REGISTERED -> timersRegistered;
                         default -> 0;
                     };
                 }
@@ -410,7 +430,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long avgScanSampleNanos,
                         long avgScanRangeTsUnits,
                         long commitGapThresholdTsUnits,
-                        boolean retrying
+                        boolean retrying,
+                        int timersRegistered
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -434,6 +455,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
                     this.retrying = retrying;
+                    this.timersRegistered = timersRegistered;
                 }
 
                 private CharSequence getViewStatus() {
@@ -478,6 +500,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("refresh_avg_scan_sample_nanos", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_avg_scan_range_ts_units", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_gap_threshold_ts_units", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("timers_registered", ColumnType.INT));
             METADATA = metadata;
         }
     }

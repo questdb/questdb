@@ -301,8 +301,7 @@ namespace questdb::aarch64 {
         c.mov(r, LONG_NULL);
         // Clear bit 63 and test remaining bits
         Gp tmp = c.new_gp64();
-        c.mov(tmp, rhs);
-        c.and_(tmp, tmp, imm(int64_t(0x7FFFFFFFFFFFFFFFLL)));
+        c.and_(tmp, rhs, imm(int64_t(0x7FFFFFFFFFFFFFFFLL)));
         c.cbz(tmp, l_null);
         // Check if lhs is LONG_NULL
         c.mov(t, LONG_NULL);
@@ -347,9 +346,30 @@ namespace questdb::aarch64 {
         return r;
     }
 
+    // QuestDB reads any non-finite floating point value as NULL - Numbers#isNull is an
+    // exponent-bits test, so it covers +/-Infinity as well as NaN - and
+    // DivFloatFunctionFactory / DivDoubleFunctionFactory fold a non-finite quotient to NaN
+    // ("Numbers.isFinite(f) ? f : Float.NaN") so the comparison treats it as NULL rather than
+    // as a very large number. The division has to fold the same way here, or a zero divisor
+    // makes the two filters select different rows: the Java filter reads NaN > 0 as false and
+    // drops the row while a propagated +Infinity > 0 keeps it. Same fold as impl/x86.h and
+    // impl/avx2.h, using the exponent test float_cmp_epsilon below already relies on.
+    //
+    // Only division folds. Mul/Add/Sub deliberately do NOT fold in the Java factories either,
+    // so overflowing to an infinity there already agrees on both paths and must stay that way.
     inline Vec float_div(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Vec r = c.new_vec_s();
         c.fdiv(r, lhs, rhs);
+        Label l_exit = c.new_label();
+        Gp int_r = c.new_gp32();
+        c.fmov(int_r, r);
+        c.and_(int_r, int_r, imm(0x7F800000));
+        cmp_imm32(c, int_r, 0x7F800000);
+        c.b_ne(l_exit);
+        Gp nan_bits = c.new_gp32();
+        c.mov(nan_bits, 0x7fc00000); // float NaN
+        c.fmov(r, nan_bits);
+        c.bind(l_exit);
         return r;
     }
 
@@ -371,9 +391,23 @@ namespace questdb::aarch64 {
         return r;
     }
 
+    // See float_div: a non-finite quotient folds to NaN so it orders as NULL, matching
+    // DivDoubleFunctionFactory.
     inline Vec double_div(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Vec r = c.new_vec_d();
         c.fdiv(r, lhs, rhs);
+        Label l_exit = c.new_label();
+        Gp int_r = c.new_gp64();
+        c.fmov(int_r, r);
+        Gp inf_bits = c.new_gp64();
+        c.mov(inf_bits, int64_t(0x7FF0000000000000LL));
+        c.and_(int_r, int_r, inf_bits);
+        c.cmp(int_r, inf_bits);
+        c.b_ne(l_exit);
+        Gp nan_bits = c.new_gp64();
+        c.mov(nan_bits, int64_t(0x7ff8000000000000LL)); // double NaN
+        c.fmov(r, nan_bits);
+        c.bind(l_exit);
         return r;
     }
 
@@ -653,17 +687,26 @@ namespace questdb::aarch64 {
         }
     }
 
-    // fabs(l - r) < epsilon, with special handling for infinities
+    // fabs(l - r) <= epsilon, with special handling for infinities.
+    // The tolerance test is INCLUSIVE, matching Numbers.equals() ("Math.abs(l - r) <= DOUBLE_TOLERANCE").
     inline Gp double_cmp_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, double epsilon, bool eq) {
         Label l_nan = c.new_label();
         Label l_exit = c.new_label();
         Gp r = c.new_gp32();
 
-        // Work on copies — use fcvt if element sizes differ (e.g. when f32 const is reused for f64)
+        // Read normalized DOUBLE operands without changing cached registers.
         Vec lhs = c.new_vec_d();
         Vec rhs = c.new_vec_d();
-        vec_copy(c, lhs, xmm0);
-        vec_copy(c, rhs, xmm1);
+        if (lhs.reg_type() == xmm0.reg_type()) {
+            lhs = xmm0;
+        } else {
+            vec_copy(c, lhs, xmm0);
+        }
+        if (rhs.reg_type() == xmm1.reg_type()) {
+            rhs = xmm1;
+        } else {
+            vec_copy(c, rhs, xmm1);
+        }
 
         // Check if lhs is infinity
         Gp int_r = c.new_gp64();
@@ -686,16 +729,21 @@ namespace questdb::aarch64 {
         c.b(l_exit);
 
         c.bind(l_nan);
-        // fabs(lhs - rhs) < epsilon
-        c.fsub(lhs, lhs, rhs);
-        c.fabs(lhs, lhs);
+        Vec diff = c.new_vec_d();
+        c.fsub(diff, lhs, rhs);
+        c.fabs(diff, diff);
         Mem eps_mem = c.new_double_const(ConstPoolScope::kLocal, epsilon);
-        c.ldr(rhs, eps_mem);
-        c.fcmp(rhs, lhs);
+        Vec bound = c.new_vec_d();
+        c.ldr(bound, eps_mem);
+        c.fcmp(bound, diff);
+        // fcmp writes NZCV = 0110 when bound == diff, 0010 when bound > diff, 1000 when bound < diff and
+        // 0011 when either operand is NaN. kGE is N==V, so it holds for "equal" and "greater" and
+        // fails for NaN (N=0, V=1): that is "epsilon >= |diff|", inclusive, NaN-safe. kLT is N!=V,
+        // its exact complement, and still answers true for NaN as double_ne_epsilon needs.
         if (eq) {
-            c.cset(r, CondCode::kGT);   // epsilon > |diff| => GT (ordered greater, false for NaN)
+            c.cset(r, CondCode::kGE);   // epsilon >= |diff| => GE (ordered, false for NaN)
         } else {
-            c.cset(r, CondCode::kLE);   // !(epsilon > |diff|) => LE (ordered less or equal, true for NaN)
+            c.cset(r, CondCode::kLT);   // !(epsilon >= |diff|) => LT (true for NaN)
         }
         c.bind(l_exit);
         return r;
@@ -714,11 +762,19 @@ namespace questdb::aarch64 {
         Label l_exit = c.new_label();
         Gp r = c.new_gp32();
 
-        // Work on copies — use fcvt if element sizes differ
+        // Read normalized FLOAT operands without changing cached registers.
         Vec lhs = c.new_vec_s();
         Vec rhs = c.new_vec_s();
-        vec_copy(c, lhs, xmm0);
-        vec_copy(c, rhs, xmm1);
+        if (lhs.reg_type() == xmm0.reg_type()) {
+            lhs = xmm0;
+        } else {
+            vec_copy(c, lhs, xmm0);
+        }
+        if (rhs.reg_type() == xmm1.reg_type()) {
+            rhs = xmm1;
+        } else {
+            vec_copy(c, rhs, xmm1);
+        }
 
         // Check if lhs is infinity
         Gp int_r = c.new_gp32();
@@ -739,15 +795,19 @@ namespace questdb::aarch64 {
         c.b(l_exit);
 
         c.bind(l_nan);
-        c.fsub(lhs, lhs, rhs);
-        c.fabs(lhs, lhs);
+        Vec diff = c.new_vec_s();
+        c.fsub(diff, lhs, rhs);
+        c.fabs(diff, diff);
         Mem eps_mem = c.new_float_const(ConstPoolScope::kLocal, epsilon);
-        c.ldr(rhs, eps_mem);
-        c.fcmp(rhs, lhs);
+        Vec bound = c.new_vec_s();
+        c.ldr(bound, eps_mem);
+        c.fcmp(bound, diff);
+        // As in double_cmp_epsilon: kGE (N==V) is the inclusive "epsilon >= |diff|" and kLT
+        // (N!=V) its exact complement; both keep the unordered (NaN) answers unchanged.
         if (eq) {
-            c.cset(r, CondCode::kGT);   // ordered greater (false for NaN)
+            c.cset(r, CondCode::kGE);   // epsilon >= |diff| (false for NaN)
         } else {
-            c.cset(r, CondCode::kLE);   // ordered less or equal (true for NaN)
+            c.cset(r, CondCode::kLT);   // !(epsilon >= |diff|) (true for NaN)
         }
         c.bind(l_exit);
         return r;

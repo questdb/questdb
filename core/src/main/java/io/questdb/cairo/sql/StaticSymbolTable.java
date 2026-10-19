@@ -26,7 +26,32 @@ package io.questdb.cairo.sql;
 
 public interface StaticSymbolTable extends SymbolTable, SymbolLookup {
 
+    long NO_SYMBOL_TABLE_GENERATION = -1;
+
     boolean containsNullValue();
 
+    /**
+     * Returns a stable generation for the key-to-value mapping. Implementations increment the
+     * generation whenever an existing key may resolve to a different value. Implementations that
+     * cannot provide this guarantee return {@link #NO_SYMBOL_TABLE_GENERATION}.
+     */
+    default long getSymbolTableGeneration() {
+        return NO_SYMBOL_TABLE_GENERATION;
+    }
+
     int getSymbolCount();
+
+    /**
+     * Resolves {@code value} like {@link #keyOf(CharSequence)}. {@code cachedKey} is the key an
+     * earlier call returned for the same value; an implementation that can confirm it without a
+     * dictionary lookup, and without retaining anything on the heap, may answer it directly.
+     */
+    default int keyOf(CharSequence value, int cachedKey) {
+        return keyOf(value);
+    }
+
+    @Override
+    default boolean supportsKeyValueAccess() {
+        return true;
+    }
 }

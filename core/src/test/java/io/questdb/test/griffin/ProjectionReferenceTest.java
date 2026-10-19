@@ -34,8 +34,13 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     private Rnd rnd;
 
     @Before
+    @Override
     public void setUp() {
         super.setUp();
+        // A projection suite compiles what production compiles: memoization is on by default in a
+        // server and off by default in the corpus, and a memoizer changes the plan shape a
+        // projection reference resolves against, not just its speed.
+        allowFunctionMemoization();
         rnd = new Rnd();
     }
 
@@ -465,20 +470,24 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     @Test
     public void testProjectionSymbolAccess() throws Exception {
+        // `a` is referenced twice, so the production plan wraps it in a memoizer and the
+        // concatenation reads the value the row already produced. That is what makes the two
+        // columns agree per row: without memoization - the corpus default this suite overrides
+        // in setUp() - rnd_symbol() is called a second time and the two disagree on most rows.
         assertQuery("select rnd_symbol('abc', 'fgk') a, a || '--', x p, p + 2.0 b from long_sequence(10);")
                 .noLeakCheck()
                 .returnsOnce("""
                         a\tconcat\tp\tb
                         abc\tabc--\t1\t3.0
-                        fgk\tfgk--\t2\t4.0
+                        abc\tabc--\t2\t4.0
                         fgk\tfgk--\t3\t5.0
-                        abc\tfgk--\t4\t6.0
-                        abc\tabc--\t5\t7.0
-                        abc\tabc--\t6\t8.0
-                        abc\tfgk--\t7\t9.0
-                        fgk\tabc--\t8\t10.0
-                        abc\tfgk--\t9\t11.0
-                        fgk\tabc--\t10\t12.0
+                        fgk\tfgk--\t4\t6.0
+                        fgk\tfgk--\t5\t7.0
+                        fgk\tfgk--\t6\t8.0
+                        abc\tabc--\t7\t9.0
+                        fgk\tfgk--\t8\t10.0
+                        abc\tabc--\t9\t11.0
+                        abc\tabc--\t10\t12.0
                         """);
     }
 
@@ -536,6 +545,77 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         85\tB\tPASS
                         75\tC\tPASS
                         65\tD\tFAIL
+                        """);
+    }
+
+    @Test
+    public void testProjectionWithDecimalColumns() throws Exception {
+        execute("""
+                CREATE TABLE items (
+                    d8 DECIMAL(2, 1),
+                    d16 DECIMAL(4, 2),
+                    d32 DECIMAL(9, 4),
+                    d64 DECIMAL(18, 4),
+                    d128 DECIMAL(38, 18),
+                    d256 DECIMAL(76, 38)
+                )""");
+        execute("""
+                INSERT INTO items VALUES
+                    ('1.5'::DECIMAL(2, 1), '1.5'::DECIMAL(4, 2), '1.5'::DECIMAL(9, 4),
+                     '1.5'::DECIMAL(18, 4), '1.5'::DECIMAL(38, 18), '1.5'::DECIMAL(76, 38)),
+                    ('-9.9'::DECIMAL(2, 1), '-99.99'::DECIMAL(4, 2), '-99999.9999'::DECIMAL(9, 4),
+                     '-99999999999999.9999'::DECIMAL(18, 4), '-9.5'::DECIMAL(38, 18), '-9.5'::DECIMAL(76, 38)),
+                    ('0'::DECIMAL(2, 1), '0'::DECIMAL(4, 2), '0'::DECIMAL(9, 4),
+                     '0'::DECIMAL(18, 4), '0'::DECIMAL(38, 18), '0'::DECIMAL(76, 38)),
+                    (NULL, NULL, NULL, NULL, NULL, NULL)""");
+
+        allowFunctionMemoization();
+
+        // each alias is read twice, so the projection wraps every width in a DecimalFunctionMemoizer;
+        // a memoizer that never invalidates would repeat row 1 on every row
+        assertQuery("""
+                SELECT d8 a, a IS NULL a_null, a a2,
+                       d16 b, b IS NULL b_null, b b2,
+                       d32 c, c IS NULL c_null, c c2,
+                       d64 e, e IS NULL e_null, e e2,
+                       d128 f, f IS NULL f_null, f f2,
+                       d256 g, g IS NULL g_null, g g2
+                FROM items""")
+                .expectSize()
+                .returns("""
+                        a\ta_null\ta2\tb\tb_null\tb2\tc\tc_null\tc2\te\te_null\te2\tf\tf_null\tf2\tg\tg_null\tg2
+                        1.5\tfalse\t1.5\t1.50\tfalse\t1.50\t1.5000\tfalse\t1.5000\t1.5000\tfalse\t1.5000\t1.500000000000000000\tfalse\t1.500000000000000000\t1.50000000000000000000000000000000000000\tfalse\t1.50000000000000000000000000000000000000
+                        -9.9\tfalse\t-9.9\t-99.99\tfalse\t-99.99\t-99999.9999\tfalse\t-99999.9999\t-99999999999999.9999\tfalse\t-99999999999999.9999\t-9.500000000000000000\tfalse\t-9.500000000000000000\t-9.50000000000000000000000000000000000000\tfalse\t-9.50000000000000000000000000000000000000
+                        0.0\tfalse\t0.0\t0.00\tfalse\t0.00\t0.0000\tfalse\t0.0000\t0.0000\tfalse\t0.0000\t0.000000000000000000\tfalse\t0.000000000000000000\t0.00000000000000000000000000000000000000\tfalse\t0.00000000000000000000000000000000000000
+                        \ttrue\t\t\ttrue\t\t\ttrue\t\t\ttrue\t\t\ttrue\t\t\ttrue\t
+                        """);
+    }
+
+    @Test
+    public void testProjectionWithRandomDecimals() throws Exception {
+        allowFunctionMemoization();
+
+        // rnd_decimal is non-deterministic, so without memoization the second read of each alias
+        // draws a different value. The count is stable across cursor passes, the draws are not.
+        assertQuery("""
+                SELECT count() FROM (
+                    SELECT rnd_decimal(2, 1, 2) a, a a2,
+                           rnd_decimal(4, 2, 2) b, b b2,
+                           rnd_decimal(9, 4, 2) c, c c2,
+                           rnd_decimal(18, 4, 2) e, e e2,
+                           rnd_decimal(38, 18, 2) f, f f2,
+                           rnd_decimal(76, 38, 2) g, g g2
+                    FROM long_sequence(1_000)
+                )
+                WHERE a <> a2 OR b <> b2 OR c <> c2 OR e <> e2 OR f <> f2 OR g <> g2
+                   OR (a IS NULL) <> (a2 IS NULL) OR (b IS NULL) <> (b2 IS NULL)
+                   OR (c IS NULL) <> (c2 IS NULL) OR (e IS NULL) <> (e2 IS NULL)
+                   OR (f IS NULL) <> (f2 IS NULL) OR (g IS NULL) <> (g2 IS NULL)""")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        0
                         """);
     }
 
@@ -760,20 +840,25 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     @Test
     public void testVirtualFunctionAsColumnReference() throws Exception {
+        // The reference resolves to the projected column rather than to a second evaluation:
+        // `k` is referenced twice, so the production plan memoizes it and both columns carry the
+        // one value the row produced. Without memoization rnd_int() runs twice per row and the
+        // two columns disagree, which is the shape this test recorded before the suite compiled
+        // what a server compiles.
         assertQuery("select rnd_int() + 1 k, k from long_sequence(10)")
                 .noLeakCheck()
                 .returnsOnce("""
                         k\tk1
-                        -1148479919\t315515119
-                        1548800834\t-727724770
-                        73575702\t-948263338
-                        1326447243\t592859672
-                        1868723707\t-847531047
-                        -1191262515\t-2041844971
-                        -1436881713\t-1575378702
-                        806715482\t1545253513
-                        1569490117\t1573662098
-                        -409854404\t339631475
+                        -1148479919\t-1148479919
+                        315515119\t315515119
+                        1548800834\t1548800834
+                        -727724770\t-727724770
+                        73575702\t73575702
+                        -948263338\t-948263338
+                        1326447243\t1326447243
+                        592859672\t592859672
+                        1868723707\t1868723707
+                        -847531047\t-847531047
                         """);
     }
 

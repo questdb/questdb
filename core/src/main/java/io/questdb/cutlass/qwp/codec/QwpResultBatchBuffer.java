@@ -31,11 +31,13 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -321,9 +323,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * scratch, and populates the per-column hot-path caches read by {@link #appendRow}.
      * {@code connDict} is the connection-scoped SYMBOL dictionary: SYMBOL columns
      * append new UTF-8 bytes to it on first sight per native key and emit the
-     * returned conn-id straight into the wire. When {@code symbolTables} is null or
-     * doesn't expose a table for a given column, {@code appendRow} falls back to
-     * {@code record.getSymA} without per-column dedup.
+     * returned conn-id straight into the wire. When {@code symbolTables} is null,
+     * doesn't expose a table for a given column, or exposes one that does not answer
+     * {@link SymbolTable#supportsKeyValueAccess()}, {@code appendRow} falls back to
+     * {@code record.getSymA} and the connection dictionary's bytes-keyed dedup.
      */
     public void beginBatch(
             ObjList<QwpEgressColumnDef> columns,
@@ -360,6 +363,19 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             if (symbolTables != null && wireTypesArr[i] == QwpConstants.TYPE_SYMBOL) {
                 try {
                     st = symbolTables.getSymbolTable(i);
+                    // Projections commonly wrap a static table in SymbolColumn. Recover the
+                    // underlying static table before deciding whether the native-key path is
+                    // safe. Efficient translating tables (such as an all-SYMBOL UNION) also
+                    // opt into this path without claiming that their dictionary is static.
+                    if (st instanceof SymbolFunction symbolFunction) {
+                        final StaticSymbolTable staticSymbolTable = symbolFunction.getStaticSymbolTable();
+                        if (staticSymbolTable != null) {
+                            st = staticSymbolTable;
+                        }
+                    }
+                    if (st == null || !st.supportsKeyValueAccess()) {
+                        st = null;
+                    }
                 } catch (UnsupportedOperationException ignored) {
                     // Cursor doesn't expose symbol tables (rare) - fall back to getSymA.
                 }
@@ -881,10 +897,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         scratch.appendSymbolConnId(connId);
                     }
                 } else {
-                    // No SymbolTable exposed by the cursor -- rare path (synthetic records).
-                    // Fall back to getSymA + bytes-keyed dedup via the connection dict. This
-                    // ships each value once per occurrence (no dedup) to keep the common path
-                    // above branch-free.
+                    // No efficient key/value SymbolTable is exposed by the cursor. Read text
+                    // directly so dynamic symbols do not build a redundant key dictionary;
+                    // addEntry() performs bytes-keyed dedup in the connection dictionary.
                     CharSequence cs = record.getSymA(ci);
                     if (cs == null) {
                         scratch.appendNull();

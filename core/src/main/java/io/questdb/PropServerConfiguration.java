@@ -54,10 +54,15 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -67,6 +72,7 @@ import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.KqueueFacade;
@@ -82,6 +88,7 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.GenericLexer;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -130,6 +137,8 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
@@ -142,9 +151,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
+    // public so a downstream configuration can detect the secret-file channel a sensitive key may arrive
+    // through without re-deriving the suffixes from string literals
+    public static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
+    public static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
     public static final String TMP_DIRECTORY = "tmp";
-    static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
-    static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2,3]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
@@ -154,6 +165,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     // feeds AbstractRedBlackTree (BLOCK_SIZE 24); sort.light.value/window.rowid feed value chains
     // (CHAIN_VALUE_SIZE 12); window.store sizes buffers via store/RECORD_SIZE (widest 40) and the
     // RecordArray index page (store >> 4), so it needs >= 64.
+    // small.map and join.metadata size OrderedMap heaps, whose constructor rejects any page that
+    // cannot fit one key plus its values, naming the property as it does so. That minimum is
+    // query-dependent, and a page above it but below a query's entry still works - the map grows on
+    // demand - so this floor stays at the map's own structural bound (it asserts heapSize > 3) and
+    // leaves the query-dependent part to the per-query check. A wider floor would reject page sizes
+    // that run every query they are configured for. Both properties take the one number, since it
+    // comes from the one structure.
+    private static final int MIN_MAP_PAGE_SIZE = 4;
     private static final int MIN_SORT_KEY_PAGE_SIZE = 64;
     private static final int MIN_VALUE_HEAP_PAGE_SIZE = 12;
     private static final int MIN_WINDOW_STORE_PAGE_SIZE = 64;
@@ -237,7 +256,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean devModeEnabled;
     private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
-    private final WorkerPoolConfiguration exportPoolConfiguration = new PropExportPoolConfiguration();
+    private final PropExportPoolConfiguration exportPoolConfiguration = new PropExportPoolConfiguration();
     private final int[] exportWorkerAffinity;
     private final int exportWorkerCount;
     private final boolean exportWorkerHaltOnError;
@@ -261,6 +280,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final ObjHashSet<String> httpContextPathWarnings = new ObjHashSet<>();
     private final String httpContextWebConsole;
     private final long httpExportTimeout;
+    private final boolean httpFiberEnabled;
     private final boolean httpFrozenClock;
     private final PropHttpConcurrentCacheConfiguration httpMinConcurrentCacheConfiguration = new PropHttpConcurrentCacheConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
@@ -310,6 +330,31 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
+    private final long liveViewCheckpointCompactionInterval;
+    private final long liveViewCheckpointMaxDurationMicros;
+    private final long liveViewCheckpointPurgeInterval;
+    private final long liveViewCheckpointRepairReplayMaxRows;
+    private final long liveViewCheckpointRepairScanMaxKeys;
+    private final long liveViewCheckpointRepairScanMaxRows;
+    private final long liveViewCheckpointRows;
+    private final boolean liveViewEnabled;
+    private final int liveViewFlushRetryMax;
+    private final long liveViewFlushRetryMaxDurationMicros;
+    private final long liveViewInMemoryBufferGrowthBytes;
+    private final long liveViewInMemoryBufferInitialBytes;
+    private final long liveViewInMemoryMaxMicros;
+    private final int liveViewPartitionCompactThreshold;
+    private final long liveViewRefreshMemoryLimitBytes;
+    private final WorkerPoolConfiguration liveViewRefreshPoolConfiguration = new PropLiveViewRefreshPoolConfiguration();
+    private final long liveViewRefreshSleepTimeout;
+    private final int liveViewRefreshTurnMaxCommits;
+    private final long liveViewRefreshTurnMaxDurationMicros;
+    private final int[] liveViewRefreshWorkerAffinity;
+    private final int liveViewRefreshWorkerCount;
+    private final boolean liveViewRefreshWorkerHaltOnError;
+    private final long liveViewRefreshWorkerNapThreshold;
+    private final long liveViewRefreshWorkerSleepThreshold;
+    private final long liveViewRefreshWorkerYieldThreshold;
     private final boolean lineHttpEnabled;
     private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
@@ -346,18 +391,19 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
     private final LowerCaseCharSequenceHashSet matViewRefreshBlockList = new LowerCaseCharSequenceHashSet();
+    private final int matViewRefreshBusyRetryLimit;
     private final long matViewRefreshBusyRetryTimeout;
     private final long matViewRefreshIntervalsUpdatePeriod;
-    private final int matViewRefreshBusyRetryLimit;
     private final int matViewRefreshMaxClusters;
     private final long matViewRefreshMemoryLimitBytes;
     private final boolean matViewRefreshMissingWalFilesFatal;
-    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
+    private final PropMatViewsRefreshPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
     private final int[] matViewRefreshWorkerAffinity;
     private final int matViewRefreshWorkerCount;
     private final boolean matViewRefreshWorkerHaltOnError;
     private final long matViewRefreshWorkerNapThreshold;
+    private final WorkerPoolMode matViewRefreshWorkerPoolMode;
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
     private final long matViewRowsPerQueryEstimate;
@@ -373,6 +419,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
+    private final String metricsPersistExclude;
+    private final boolean metricsPersistEnabled;
+    private final long metricsPersistIntervalMicros;
+    private final boolean metricsPersistParquetEnabled;
+    private final long metricsPersistSyncIntervalMicros;
+    private final String metricsPersistTtl;
+    private final long metricsPersistVirtualIntervalMicros;
     private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
     private final int o3CallbackQueueCapacity;
@@ -414,7 +467,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetRowGroupSize;
     private final boolean partitionEncoderParquetStatisticsEnabled;
     private final int partitionEncoderParquetVersion;
-    private final PGConfiguration pgConfiguration = new PropPGConfiguration();
+    private final PropPGConfiguration pgConfiguration = new PropPGConfiguration();
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
     private final int poolSegmentSize;
@@ -433,6 +486,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
+    private final QwpBrowserAllowedOrigins qwpBrowserAllowedOrigins;
+    private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
@@ -466,6 +521,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropWorkerPoolConfiguration sharedWorkerPoolWriteConfiguration = new PropWorkerPoolConfiguration("shared-write");
     private final String snapshotInstanceId;
     private final long spinLockTimeout;
+    private final boolean sqlAllPartitionOperationsAllowed;
     private final int sqlAsOfJoinEvacuationThreshold;
     private final int sqlAsOfJoinLookahead;
     private final int sqlAsOfJoinShortCircuitCacheCapacity;
@@ -513,6 +569,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinContextPoolCapacity;
     private final int sqlJoinMetadataMaxResizes;
     private final int sqlJoinMetadataPageSize;
+    private final int sqlJoinSymbolTranslationCacheCapacity;
+    private final boolean sqlLatestByJitEnabled;
     private final long sqlLatestByRowCount;
     private final int sqlLexerPoolCapacity;
     private final int sqlMapMaxPages;
@@ -557,6 +615,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlSortValueMaxBytes;
     private final int sqlSortValuePageSize;
     private final int sqlStrFunctionBufferMaxSize;
+    private final boolean sqlSymbolPatternIndexEnabled;
+    private final int sqlSymbolPatternIndexThreshold;
+    private final long subsampleMaxRows;
     private final int sqlTimerShardCount;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
@@ -567,6 +628,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlWindowCachedLightEnabled;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
+    private final boolean sqlWindowMapFusionEnabled;
     private final int sqlWindowMaxRecursion;
     private final long sqlWindowRowIdMaxBytes;
     private final int sqlWindowRowIdPageSize;
@@ -596,7 +658,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int utf8SinkSize;
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
-    private final WorkerPoolConfiguration viewCompilerPoolConfiguration = new PropViewCompilerPoolConfiguration();
+    private final PropViewCompilerPoolConfiguration viewCompilerPoolConfiguration = new PropViewCompilerPoolConfiguration();
     private final long viewCompilerSleepTimeout;
     private final int[] viewCompilerWorkerAffinity;
     private final int viewCompilerWorkerCount;
@@ -609,7 +671,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
     private final long walApplyMemoryLimitBytes;
-    private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
+    private final PropWalApplyPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
     private final long walApplySleepTimeout;
     private final ObjHashSet<String> walApplySuspendedTables = new ObjHashSet<>();
     private final boolean walApplySuspendedWriteDenied;
@@ -732,6 +794,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgConnectionPoolInitialCapacity;
     private boolean pgDaemonPool;
     private DateLocale pgDefaultLocale;
+    private boolean pgFiberEnabled;
     private int pgForceRecvFragmentationChunkSize;
     private int pgForceSendFragmentationChunkSize;
     private boolean pgHaltOnError;
@@ -859,7 +922,76 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
-        this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
+        this.metricsPersistEnabled = getBoolean(properties, env, PropertyKey.METRICS_PERSIST_ENABLED, true);
+        this.metricsPersistExclude = getString(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_EXCLUDE,
+                MetricsConfiguration.DEFAULT_PERSIST_EXCLUDE
+        );
+        this.metricsPersistIntervalMicros = getMillis(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_INTERVAL,
+                1_000
+        ) * 1_000;
+        this.metricsPersistParquetEnabled = getBoolean(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_PARQUET_ENABLED,
+                true
+        );
+        final long metricsPersistSyncIntervalMillis = getMillis(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_SYNC_INTERVAL,
+                -1
+        );
+        this.metricsPersistSyncIntervalMicros = metricsPersistSyncIntervalMillis < 0 ? -1 : metricsPersistSyncIntervalMillis * 1_000;
+        this.metricsPersistTtl = getString(properties, env, PropertyKey.METRICS_PERSIST_TTL, "1 WEEK");
+        this.metricsPersistVirtualIntervalMicros = getMillis(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_VIRTUAL_INTERVAL,
+                60_000
+        ) * 1_000;
+        if (metricsPersistIntervalMicros <= 0) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_INTERVAL.getPropertyPath(),
+                    Long.toString(metricsPersistIntervalMicros / 1_000)
+            );
+        }
+        if (metricsPersistVirtualIntervalMicros <= 0) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_VIRTUAL_INTERVAL.getPropertyPath(),
+                    Long.toString(metricsPersistVirtualIntervalMicros / 1_000)
+            );
+        }
+        final GenericLexer metricsPersistTtlLexer = new GenericLexer(4);
+        metricsPersistTtlLexer.of(metricsPersistTtl);
+        try {
+            final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(metricsPersistTtlLexer);
+            PartitionBy.validateTtlGranularity(PartitionBy.DAY, ttlHoursOrMonths, 0);
+            if (SqlUtil.fetchNext(metricsPersistTtlLexer) != null) {
+                throw SqlException.$(metricsPersistTtlLexer.lastTokenPosition(), "unexpected token");
+            }
+        } catch (SqlException e) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(),
+                    metricsPersistTtl
+            );
+        }
+        try {
+            Pattern.compile(metricsPersistExclude);
+        } catch (PatternSyntaxException e) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(),
+                    metricsPersistExclude
+            );
+        }
+        this.metrics = metricsEnabled || metricsPersistEnabled
+                ? new Metrics(true, metricsEnabled, new MetricsRegistryImpl())
+                : Metrics.DISABLED;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
         this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "Z");
@@ -1505,6 +1637,43 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
+            // live-view config
+            this.liveViewCheckpointCompactionInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL, 0L);
+            this.liveViewCheckpointMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5L * Micros.MINUTE_MICROS);
+            this.liveViewCheckpointPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 1L);
+            this.liveViewCheckpointRepairReplayMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000L);
+            this.liveViewCheckpointRepairScanMaxKeys = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 100_000L);
+            this.liveViewCheckpointRepairScanMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 1_000_000L);
+            this.liveViewCheckpointRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000L);
+            this.liveViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
+            this.liveViewFlushRetryMax = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 5);
+            this.liveViewFlushRetryMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 60L * Micros.SECOND_MICROS);
+            // The growth budget accepts zero (and negative): LiveViewRefreshJob.isCompactionWorthwhile
+            // treats growthBudget <= 0 as a supported "compact on every publish" sentinel, so it must
+            // NOT be rejected here.
+            this.liveViewInMemoryBufferGrowthBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 16L * 1024L * 1024L);
+            // The initial size must be strictly positive. A non-positive value reaches
+            // MemoryCARWImpl.setPageSize as Numbers.msb(ceilPow2(size)) -- msb(0) is -1 and negatives
+            // yield 63 -- producing a bogus page-size shift that corrupts the first refresh instead of
+            // failing the start. The minValue overload rejects zero and negatives at parse time.
+            this.liveViewInMemoryBufferInitialBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, 64L * 1024L, 1);
+            this.liveViewInMemoryMaxMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, 60L * Micros.MINUTE_MICROS);
+            this.liveViewPartitionCompactThreshold = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 100_000);
+            this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
+            this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
+            // Live views own their pool rather than borrowing the mat-view one: the count is the
+            // signal CairoEngine.buildViewGraphs and WalPurgeJob read to decide whether a refresh
+            // job will ever run, and a knob named for mat views cannot answer that question. Same
+            // wal-apply-derived default as mat views - the workload shape that justified sharing
+            // one pool justifies sizing them alike.
+            this.liveViewRefreshWorkerCount = getInt(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
+            this.liveViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_AFFINITY, liveViewRefreshWorkerCount);
+            this.liveViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
+            this.liveViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
+            this.liveViewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.liveViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
+            this.liveViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
+
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
@@ -1516,6 +1685,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
             this.matViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
+            this.matViewRefreshWorkerPoolMode = readWorkerPoolMode(
+                    properties,
+                    env,
+                    PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_ENABLED,
+                    true
+            );
             this.matViewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
             this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
@@ -1584,6 +1759,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 32);
             this.sqlSmallMapPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
+            validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, this.sqlSmallMapPageSize, MIN_MAP_PAGE_SIZE);
+            validatePageSizeAtMost(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, this.sqlSmallMapPageSize, CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE);
             this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
@@ -1597,6 +1774,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // is instead clamped at 1 below.
             this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 128 * 1024);
             validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, this.sqlSortKeyPageSize, MIN_SORT_KEY_PAGE_SIZE);
+            validatePageSizeAtMost(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, this.sqlSortKeyPageSize, CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE);
             this.sqlSortKeyMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES,
                     deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, this.sqlSortKeyPageSize));
             warnIfMaxBytesBelowPageSize(properties, env,
@@ -1606,6 +1784,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlSortEncodedParallelThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, 1_024_000);
             this.sqlSortLightValuePageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize, MIN_VALUE_HEAP_PAGE_SIZE);
+            validatePageSizeAtMost(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize, CompressedOffsets.MAX_ALIGNED4_HEAP_SIZE);
             this.sqlSortLightValueMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES,
                     deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES, this.sqlSortLightValuePageSize));
             warnIfMaxBytesBelowPageSize(properties, env,
@@ -1613,12 +1792,15 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize);
             this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
+            this.sqlLatestByJitEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, true);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
+            validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, this.sqlHashJoinLightValuePageSize, MIN_VALUE_HEAP_PAGE_SIZE);
             this.sqlHashJoinLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 64);
             this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
             this.sqlAsOfJoinEvacuationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, 10_000_000);
+            this.sqlJoinSymbolTranslationCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, 1_000_000);
             // divisor-only RecordChain page: clamp at 1 (no fixed block to enforce; 1 byte is safe).
             this.sqlSortValuePageSize = Math.max(1, getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216));
             this.sqlSortValueMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES,
@@ -1639,6 +1821,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.postingSealGenThreshold = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 16);
             this.postingSealPurgeOutboxMax = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_PURGE_OUTBOX_MAX, 8192);
             this.sqlJoinMetadataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 16384);
+            // join.metadata sizes the second OrderedMap built off a configured page, so it takes the
+            // same floor as small.map. Below four bytes the map's own assertion fires while SQL
+            // compilation builds join metadata, which turns a configuration mistake into an
+            // AssertionError from the compiler instead of a startup error naming the property.
+            validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, this.sqlJoinMetadataPageSize, MIN_MAP_PAGE_SIZE);
             this.sqlJoinMetadataMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, Integer.MAX_VALUE);
             int sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY, 64);
             this.sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, sqlWindowColumnPoolCapacity);
@@ -1657,6 +1844,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
             this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
+            this.liveViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -1703,8 +1891,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
+            this.sqlSymbolPatternIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED, true);
+            this.sqlSymbolPatternIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, 100);
+            this.sqlAllPartitionOperationsAllowed = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ALL_PARTITION_OPERATIONS_ALLOWED, false);
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
-            this.sqlQueryRegistryPoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE, 32);
+            this.sqlQueryRegistryPoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE, 256);
             this.sqlCountDistinctCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_CAPACITY, 3);
             this.sqlCountDistinctLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR, "0.7");
             final String sqlCopyFormatsFile = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_FORMATS_FILE, "/text_loader.json");
@@ -1803,7 +1994,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 8192));
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
             this.sqlStrFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
+            this.subsampleMaxRows = getLong(properties, env, PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS, 100_000_000L);
+            if (this.subsampleMaxRows < 1 || this.subsampleMaxRows > Integer.MAX_VALUE) {
+                throw new ServerConfigurationException(
+                        PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath()
+                                + " must be between 1 and " + Integer.MAX_VALUE
+                );
+            }
             this.sqlWindowCachedLightEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+            this.sqlWindowMapFusionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, true);
             this.sqlWindowMaxRecursion = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 128);
             int sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE, Numbers.SIZE_1MB));
             this.sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, sqlWindowStorePageSize));
@@ -1918,6 +2117,19 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.qwpUdpPort = p;
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
+            try {
+                this.qwpBrowserAllowedOrigins = QwpBrowserAllowedOrigins.parse(
+                        getString(properties, env, PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS, "")
+                );
+            } catch (IllegalArgumentException e) {
+                throw new ServerConfigurationException(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
+            }
+            this.qwpBrowserTlsTerminationEnabled = getBoolean(
+                    properties,
+                    env,
+                    PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED,
+                    false
+            );
             this.qwpEgressForcedZstdLevel = getInt(
                     properties,
                     env,
@@ -2065,6 +2277,28 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD, 10);
                 this.lineTcpIOWorkerNapThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_NAP_THRESHOLD, 7_000);
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_SLEEP_THRESHOLD, 10_000);
+                if (lineTcpWriterWorkerCount < 1) {
+                    warnIgnoredLineTcpPoolProperties(
+                            properties,
+                            env,
+                            PropertyKey.LINE_TCP_WRITER_WORKER_COUNT,
+                            PropertyKey.LINE_TCP_WRITER_HALT_ON_ERROR,
+                            PropertyKey.LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD,
+                            PropertyKey.LINE_TCP_WRITER_WORKER_NAP_THRESHOLD,
+                            PropertyKey.LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD
+                    );
+                }
+                if (lineTcpIOWorkerCount < 1) {
+                    warnIgnoredLineTcpPoolProperties(
+                            properties,
+                            env,
+                            PropertyKey.LINE_TCP_IO_WORKER_COUNT,
+                            PropertyKey.LINE_TCP_IO_HALT_ON_ERROR,
+                            PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD,
+                            PropertyKey.LINE_TCP_IO_WORKER_NAP_THRESHOLD,
+                            PropertyKey.LINE_TCP_IO_WORKER_SLEEP_THRESHOLD
+                    );
+                }
                 this.lineTcpMaintenanceInterval = getMillis(properties, env, PropertyKey.LINE_TCP_MAINTENANCE_JOB_INTERVAL, 1000);
                 this.lineTcpCommitIntervalFraction = getDouble(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION, "0.5");
                 this.lineTcpCommitIntervalDefault = getMillis(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_DEFAULT, COMMIT_INTERVAL_DEFAULT);
@@ -2180,17 +2414,52 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepTimeout
             );
 
+            if (!isReadOnlyInstance && lineTcpEnabled && lineTcpIOWorkerCount < 1 && networkPoolWorkerCount < 1) {
+                throw ServerConfigurationException.forInvalidKey(
+                        PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(),
+                        "line TCP requires at least one network worker; raise it, set "
+                                + PropertyKey.LINE_TCP_IO_WORKER_COUNT.getPropertyPath()
+                                + ", or disable " + PropertyKey.LINE_TCP_ENABLED.getPropertyPath()
+                );
+            }
+            if (!isReadOnlyInstance && lineTcpEnabled && lineTcpWriterWorkerCount < 1 && writeWorkers < 1) {
+                throw ServerConfigurationException.forInvalidKey(
+                        PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(),
+                        "line TCP requires at least one writer worker; raise it, set "
+                                + PropertyKey.LINE_TCP_WRITER_WORKER_COUNT.getPropertyPath()
+                                + ", or disable " + PropertyKey.LINE_TCP_ENABLED.getPropertyPath()
+                );
+            }
+
             // Now all worker counts are known, so we can set select cache capacity props.
             if (pgEnabled) {
+                this.pgFiberEnabled = getBoolean(properties, env, PropertyKey.PG_WORKER_FIBER_ENABLED, true);
                 this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
                 final int effectivePGWorkerCount = pgWorkerCount > 0 ? pgWorkerCount : networkPoolWorkerCount;
                 this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 32);
                 this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, Math.max(effectivePGWorkerCount, 4));
             }
             final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : networkPoolWorkerCount;
+            this.httpFiberEnabled = getBoolean(properties, env, PropertyKey.HTTP_WORKER_FIBER_ENABLED, true);
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
             this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, Math.max(effectiveHttpWorkerCount, 4));
+            final boolean isSharedNetworkFiberHost =
+                    (pgEnabled && pgWorkerCount < 1 && pgFiberEnabled)
+                            || (httpServerEnabled && httpWorkerCount < 1 && httpFiberEnabled);
+            sharedWorkerPoolNetworkConfiguration.workerPoolMode = readWorkerPoolMode(
+                    properties,
+                    env,
+                    PropertyKey.SHARED_NETWORK_WORKER_FIBER_ENABLED,
+                    isSharedNetworkFiberHost
+            );
+            sharedWorkerPoolQueryConfiguration.workerPoolMode = readWorkerPoolMode(
+                    properties,
+                    env,
+                    PropertyKey.SHARED_QUERY_WORKER_FIBER_ENABLED,
+                    true
+            );
+            configureFiberPools(properties, env);
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
             this.queryContinuationWakeIntervalMillis = Math.max(1, getMillis(properties, env, PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL, 1_000));
 
@@ -2364,6 +2633,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration() {
+        return liveViewRefreshPoolConfiguration;
+    }
+
+    @Override
     public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
         return matViewRefreshPoolConfiguration;
     }
@@ -2441,6 +2715,58 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.factoryProvider = factoryProvider;
     }
 
+    private void configureFiberPool(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            PropFiberWorkerPoolConfiguration configuration,
+            PropertyKey maxLiveKey,
+            PropertyKey retainedKey,
+            PropertyKey mountBudgetKey
+    ) throws ServerConfigurationException {
+        final int maxLiveCount = getInt(properties, env, maxLiveKey, 0);
+        if (maxLiveCount < 0 || maxLiveCount > 1 << 30) {
+            throw new ServerConfigurationException(
+                    maxLiveKey.getPropertyPath() + " must be 0 or between 1 and " + (1 << 30)
+            );
+        }
+        final int retainedCount = getInt(properties, env, retainedKey, 0);
+        if (retainedCount < 0 || retainedCount > 1 << 30) {
+            throw new ServerConfigurationException(
+                    retainedKey.getPropertyPath() + " must be 0 or between 1 and " + (1 << 30)
+            );
+        }
+        final int mountBudget = getInt(properties, env, mountBudgetKey, 64);
+        if (mountBudget < 1 || mountBudget > 1 << 30) {
+            throw new ServerConfigurationException(
+                    mountBudgetKey.getPropertyPath() + " must be between 1 and " + (1 << 30)
+            );
+        }
+        configuration.configureFiber(maxLiveCount, mountBudget, retainedCount);
+        if (configuration.getFiberRetainedCount() > configuration.getFiberMaxLiveCount()) {
+            configuration.configureFiber(
+                    maxLiveCount,
+                    mountBudget,
+                    configuration.getFiberMaxLiveCount()
+            );
+            log.info().$(retainedKey.getPropertyPath())
+                    .$(" exceeds ").$(maxLiveKey.getPropertyPath())
+                    .$(", clamping [pool=").$(configuration.getPoolName())
+                    .$(", retained=").$(retainedCount)
+                    .$(", maxLive=").$(configuration.getFiberMaxLiveCount()).I$();
+        }
+    }
+
+    private static long pagesToBytesSaturating(long pageSize, int maxPages) {
+        final long bytes = pageSize * (long) maxPages;
+        // An absurdly large explicit page size combined with a high deprecated
+        // *_MAX_PAGES value can overflow a signed long; saturate so the derived
+        // byte cap never wraps negative.
+        if (pageSize != 0 && bytes / pageSize != maxPages) {
+            return Long.MAX_VALUE;
+        }
+        return bytes;
+    }
+
     private static @NotNull String stripTrailingSlash(@NotNull String httpContextWebConsole) {
         int n = 0;
         for (int j = httpContextWebConsole.length() - 1; j > -1; j--) {
@@ -2486,6 +2812,67 @@ public class PropServerConfiguration implements ServerConfiguration {
                     "page size " + pageSize + " is below the minimum of " + minPageSize + " bytes"
             );
         }
+    }
+
+    // A heap addressed by compressed offsets cannot exceed what 32 bits reach, and its initial page
+    // is allocated before any growth guard runs, so a page above that ceiling truncates the offset of
+    // everything in the top of the heap and silently aliases entries. Reject it at startup naming the
+    // key; the owning constructors carry the same guard for embedded callers that read no property
+    // file. Only the three properties parsed with getLongSize() need this - every other page size
+    // here goes through getIntSize() and so cannot exceed 2GB, well under either ceiling.
+    private static void validatePageSizeAtMost(ConfigPropertyKey key, long pageSize, long maxPageSize) throws ServerConfigurationException {
+        if (pageSize > maxPageSize) {
+            throw ServerConfigurationException.forInvalidKey(
+                    key.getPropertyPath(),
+                    "page size " + pageSize + " is above the maximum of " + maxPageSize + " bytes"
+            );
+        }
+    }
+
+    private void configureFiberPools(
+            Properties properties,
+            @Nullable Map<String, String> env
+    ) throws ServerConfigurationException {
+        configureFiberPool(
+                properties,
+                env,
+                (PropFiberWorkerPoolConfiguration) httpServerConfiguration,
+                PropertyKey.HTTP_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.HTTP_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.HTTP_WORKER_FIBER_MOUNT_BUDGET
+        );
+        configureFiberPool(
+                properties,
+                env,
+                matViewRefreshPoolConfiguration,
+                PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MOUNT_BUDGET
+        );
+        configureFiberPool(
+                properties,
+                env,
+                pgConfiguration,
+                PropertyKey.PG_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.PG_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.PG_WORKER_FIBER_MOUNT_BUDGET
+        );
+        configureFiberPool(
+                properties,
+                env,
+                sharedWorkerPoolNetworkConfiguration,
+                PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET
+        );
+        configureFiberPool(
+                properties,
+                env,
+                sharedWorkerPoolQueryConfiguration,
+                PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.SHARED_QUERY_WORKER_FIBER_MOUNT_BUDGET
+        );
     }
 
     private int configureSharedThreadPool(
@@ -2551,17 +2938,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return pagesToBytesSaturating(pageSize, aliasMaxPages);
         }
         return Long.MAX_VALUE;
-    }
-
-    private static long pagesToBytesSaturating(long pageSize, int maxPages) {
-        final long bytes = pageSize * (long) maxPages;
-        // An absurdly large explicit page size combined with a high deprecated
-        // *_MAX_PAGES value can overflow a signed long; saturate so the derived
-        // byte cap never wraps negative.
-        if (pageSize != 0 && bytes / pageSize != maxPages) {
-            return Long.MAX_VALUE;
-        }
-        return bytes;
     }
 
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
@@ -2707,6 +3083,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         return properties.getProperty(key.getPropertyPath()) != null;
     }
 
+    private void parseMatViewRefreshBlockList(String value) {
+        matViewRefreshBlockList.clear();
+        if (value == null) {
+            return;
+        }
+        for (String name : value.split(",")) {
+            final String trimmed = name.trim();
+            if (!trimmed.isEmpty()) {
+                matViewRefreshBlockList.add(trimmed);
+            }
+        }
+        if (matViewRefreshBlockList.size() > 0) {
+            log.advisory().$("materialized view refresh block list configured [count=").$(matViewRefreshBlockList.size())
+                    .I$();
+        }
+    }
+
     private boolean pathEquals(String p1, String p2) {
         try {
             if (p1 == null || p2 == null) {
@@ -2720,6 +3113,17 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .$(", value=").$(p2).I$();
             return false;
         }
+    }
+
+    private WorkerPoolMode readWorkerPoolMode(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey key,
+            boolean isFiberHostByDefault
+    ) {
+        return getBoolean(properties, env, key, isFiberHostByDefault)
+                ? WorkerPoolMode.FIBER_HOST
+                : WorkerPoolMode.LEGACY;
     }
 
     private void validateHttpConnectionLimits(
@@ -2791,6 +3195,22 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .$(" is below ").$(pageSizeKey.getPropertyPath()).$('=').$(pageSize)
                     .$("; effective cap will be floored at ").$(pageSize).$(" bytes (one page)")
                     .$();
+        }
+    }
+
+    private void warnIgnoredLineTcpPoolProperties(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            PropertyKey workerCountKey,
+            PropertyKey... poolKeys
+    ) {
+        for (PropertyKey key : poolKeys) {
+            if (isPropertyExplicitlySet(properties, env, key)) {
+                log.advisory().$("config: ").$(key.getPropertyPath())
+                        .$(" is ignored because ").$(workerCountKey.getPropertyPath())
+                        .$(" is 0 and ILP jobs run on a shared pool")
+                        .$();
+            }
         }
     }
 
@@ -3015,23 +3435,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, dynamic));
         }
         return result;
-    }
-
-    private void parseMatViewRefreshBlockList(String value) {
-        matViewRefreshBlockList.clear();
-        if (value == null) {
-            return;
-        }
-        for (String name : value.split(",")) {
-            final String trimmed = name.trim();
-            if (!trimmed.isEmpty()) {
-                matViewRefreshBlockList.add(trimmed);
-            }
-        }
-        if (matViewRefreshBlockList.size() > 0) {
-            log.advisory().$("materialized view refresh block list configured [count=").$(matViewRefreshBlockList.size())
-                    .I$();
-        }
     }
 
     protected void getUrls(
@@ -3271,7 +3674,49 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private static class PropWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    private abstract static class PropFiberWorkerPoolConfiguration implements WorkerPoolConfiguration {
+        private int fiberMaxLiveCount;
+        private int fiberMountBudget = WorkerPoolConfiguration.super.getFiberMountBudget();
+        private int fiberRetainedCount;
+
+        protected PropFiberWorkerPoolConfiguration() {
+        }
+
+        protected PropFiberWorkerPoolConfiguration(WorkerPoolConfiguration configuration) {
+            configureFiber(
+                    configuration.getFiberMaxLiveCount(),
+                    configuration.getFiberMountBudget(),
+                    configuration.getFiberRetainedCount()
+            );
+        }
+
+        @Override
+        public int getFiberMaxLiveCount() {
+            return fiberMaxLiveCount > 0
+                    ? fiberMaxLiveCount
+                    : WorkerPoolConfiguration.super.getFiberMaxLiveCount();
+        }
+
+        @Override
+        public int getFiberMountBudget() {
+            return fiberMountBudget;
+        }
+
+        @Override
+        public int getFiberRetainedCount() {
+            return fiberRetainedCount > 0
+                    ? fiberRetainedCount
+                    : WorkerPoolConfiguration.super.getFiberRetainedCount();
+        }
+
+        private void configureFiber(int maxLiveCount, int mountBudget, int retainedCount) {
+            this.fiberMaxLiveCount = maxLiveCount;
+            this.fiberMountBudget = mountBudget;
+            this.fiberRetainedCount = retainedCount;
+        }
+    }
+
+    private static class PropWorkerPoolConfiguration extends PropFiberWorkerPoolConfiguration {
         private final String name;
         public Metrics metrics;
         public int[] sharedWorkerAffinity;
@@ -3281,6 +3726,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long sharedWorkerSleepThreshold;
         public long sharedWorkerSleepTimeout;
         public long sharedWorkerYieldThreshold;
+        public WorkerPoolMode workerPoolMode = WorkerPoolMode.LEGACY;
         public int workerPoolPriority = Thread.NORM_PRIORITY;
 
         private PropWorkerPoolConfiguration(String name) {
@@ -3320,6 +3766,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return sharedWorkerCount;
+        }
+
+        @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return workerPoolMode;
         }
 
         @Override
@@ -4124,6 +4575,91 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getLiveViewCheckpointCompactionInterval() {
+            return liveViewCheckpointCompactionInterval;
+        }
+
+        @Override
+        public long getLiveViewCheckpointMaxDurationMicros() {
+            return liveViewCheckpointMaxDurationMicros;
+        }
+
+        @Override
+        public long getLiveViewCheckpointPurgeInterval() {
+            return liveViewCheckpointPurgeInterval;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairReplayMaxRows() {
+            return liveViewCheckpointRepairReplayMaxRows;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairScanMaxKeys() {
+            return liveViewCheckpointRepairScanMaxKeys;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairScanMaxRows() {
+            return liveViewCheckpointRepairScanMaxRows;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRows() {
+            return liveViewCheckpointRows;
+        }
+
+        @Override
+        public int getLiveViewFlushRetryMax() {
+            return liveViewFlushRetryMax;
+        }
+
+        @Override
+        public long getLiveViewFlushRetryMaxDurationMicros() {
+            return liveViewFlushRetryMaxDurationMicros;
+        }
+
+        @Override
+        public long getLiveViewInMemoryBufferGrowthBytes() {
+            return liveViewInMemoryBufferGrowthBytes;
+        }
+
+        @Override
+        public long getLiveViewInMemoryBufferInitialBytes() {
+            return liveViewInMemoryBufferInitialBytes;
+        }
+
+        @Override
+        public long getLiveViewInMemoryMaxMicros() {
+            return liveViewInMemoryMaxMicros;
+        }
+
+        @Override
+        public int getLiveViewPartitionCompactThreshold() {
+            return liveViewPartitionCompactThreshold;
+        }
+
+        @Override
+        public long getLiveViewRefreshMemoryLimitBytes() {
+            return liveViewRefreshMemoryLimitBytes;
+        }
+
+        @Override
+        public int getLiveViewRefreshTurnMaxCommits() {
+            return liveViewRefreshTurnMaxCommits;
+        }
+
+        @Override
+        public long getLiveViewRefreshTurnMaxDurationMicros() {
+            return liveViewRefreshTurnMaxDurationMicros;
+        }
+
+        @Override
+        public int getLiveViewRefreshWorkerCount() {
+            return liveViewRefreshWorkerCount;
+        }
+
+        @Override
         public boolean getLogLevelVerbose() {
             return logLevelVerbose;
         }
@@ -4769,6 +5305,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlJoinSymbolTranslationCacheCapacity() {
+            return sqlJoinSymbolTranslationCacheCapacity;
+        }
+
+        @Override
         public long getSqlLatestByRowCount() {
             return sqlLatestByRowCount;
         }
@@ -4964,6 +5505,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSubsampleMaxRows() {
+            return subsampleMaxRows;
+        }
+
+        @Override
+        public int getSymbolPatternIndexThreshold() {
+            return sqlSymbolPatternIndexThreshold;
+        }
+
+        @Override
         public long getSymbolTableMaxAllocationPageSize() {
             return symbolTableMaxAllocationPageSize;
         }
@@ -5071,11 +5622,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public ObjHashSet<String> getWalApplySuspendedTables() {
             return walApplySuspendedTables;
-        }
-
-        @Override
-        public boolean isWalApplySuspendedWriteDenied() {
-            return walApplySuspendedWriteDenied;
         }
 
         @Override
@@ -5209,6 +5755,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isAllPartitionOperationsAllowed() {
+            return sqlAllPartitionOperationsAllowed;
+        }
+
+        @Override
         public boolean isCairoMetadataCacheSnapshotOrdered() {
             return cairoMetadataCacheSnapshotOrdered;
         }
@@ -5246,6 +5797,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewEnabled() {
+            return liveViewEnabled;
         }
 
         @Override
@@ -5342,6 +5898,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlLatestByJitEnabled() {
+            return sqlLatestByJitEnabled;
+        }
+
+        @Override
         public boolean isSqlOrderBySortEnabled() {
             return sqlOrderBySortEnabled;
         }
@@ -5387,6 +5948,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlWindowMapFusionEnabled() {
+            return sqlWindowMapFusionEnabled;
+        }
+
+        @Override
+        public boolean isSymbolPatternIndexEnabled() {
+            return sqlSymbolPatternIndexEnabled;
+        }
+
+        @Override
         public boolean isTableTypeConversionEnabled() {
             return tableTypeConversionEnabled;
         }
@@ -5409,6 +5980,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isWalApplyParallelSqlEnabled() {
             return walParallelExecutionEnabled;
+        }
+
+        @Override
+        public boolean isWalApplySuspendedWriteDenied() {
+            return walApplySuspendedWriteDenied;
         }
 
         @Override
@@ -5517,6 +6093,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpMinServerConfiguration implements HttpServerConfiguration {
+
+        public PropHttpMinServerConfiguration() {
+        }
 
         @Override
         public long getAcceptLoopTimeout() {
@@ -5704,7 +6283,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public class PropHttpServerConfiguration implements HttpFullFatServerConfiguration {
+    public class PropHttpServerConfiguration extends PropFiberWorkerPoolConfiguration implements HttpFullFatServerConfiguration {
+
+        public PropHttpServerConfiguration() {
+        }
+
+        public PropHttpServerConfiguration(WorkerPoolConfiguration configuration) {
+            super(configuration);
+        }
 
         @Override
         public long getAcceptLoopTimeout() {
@@ -5877,6 +6463,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+            return qwpBrowserAllowedOrigins;
+        }
+
+        @Override
         public int getRecvBufferSize() {
             return httpRecvBufferSize;
         }
@@ -5960,6 +6551,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isFiberEnabled() {
+            return httpFiberEnabled;
+        }
+
+        @Override
         public boolean isPessimisticHealthCheckEnabled() {
             return httpPessimisticHealthCheckEnabled;
         }
@@ -5967,6 +6563,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isQueryCacheEnabled() {
             return httpSqlCacheEnabled;
+        }
+
+        @Override
+        public boolean isQwpBrowserTlsTerminationEnabled() {
+            return qwpBrowserTlsTerminationEnabled;
         }
 
         @Override
@@ -6585,7 +7186,59 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropMatViewsRefreshPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropLiveViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return liveViewRefreshWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "live-view-refresh";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return liveViewRefreshWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return liveViewRefreshSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return liveViewRefreshWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return liveViewRefreshWorkerCount;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return liveViewRefreshWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return liveViewRefreshWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return liveViewRefreshWorkerCount > 0;
+        }
+    }
+
+    private class PropMatViewsRefreshPoolConfiguration extends PropFiberWorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -6622,6 +7275,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public WorkerPoolMode getWorkerPoolMode() {
+            return matViewRefreshWorkerPoolMode;
+        }
+
+        @Override
         public long getYieldThreshold() {
             return matViewRefreshWorkerYieldThreshold;
         }
@@ -6640,12 +7298,47 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropMetricsConfiguration implements MetricsConfiguration {
 
         @Override
+        public CharSequence getPersistExclude() {
+            return metricsPersistExclude;
+        }
+
+        @Override
+        public long getPersistIntervalMicros() {
+            return metricsPersistIntervalMicros;
+        }
+
+        @Override
+        public long getPersistSyncIntervalMicros() {
+            return metricsPersistSyncIntervalMicros;
+        }
+
+        @Override
+        public CharSequence getPersistTtl() {
+            return metricsPersistTtl;
+        }
+
+        @Override
+        public long getPersistVirtualIntervalMicros() {
+            return metricsPersistVirtualIntervalMicros;
+        }
+
+        @Override
         public boolean isEnabled() {
             return metricsEnabled;
         }
+
+        @Override
+        public boolean isPersistEnabled() {
+            return metricsPersistEnabled;
+        }
+
+        @Override
+        public boolean isPersistParquetEnabled() {
+            return metricsPersistParquetEnabled;
+        }
     }
 
-    private class PropPGConfiguration implements PGConfiguration {
+    private class PropPGConfiguration extends PropFiberWorkerPoolConfiguration implements PGConfiguration {
 
         @Override
         public long getAcceptLoopTimeout() {
@@ -6905,6 +7598,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return pgEnabled;
+        }
+
+        @Override
+        public boolean isFiberEnabled() {
+            return pgFiberEnabled;
         }
 
         @Override

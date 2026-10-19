@@ -5288,6 +5288,38 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOrderByAdvicePrunedAcrossMixedUnionChain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE union_mixed_a (x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE union_mixed_b (x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE union_mixed_c (x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO union_mixed_a VALUES (1, 1), (4, 4)");
+            execute("INSERT INTO union_mixed_b VALUES (2, 2), (5, 5)");
+            execute("INSERT INTO union_mixed_c VALUES (3, 3), (6, 6)");
+
+            assertQuery("""
+                    SELECT x FROM (
+                        (SELECT x, ts FROM union_mixed_a)
+                        UNION ALL
+                        (SELECT x, ts FROM union_mixed_b)
+                        UNION
+                        (SELECT x + 0 AS x, ts FROM union_mixed_c)
+                    ) ORDER BY ts DESC
+                    """)
+                    .withPlanNotContaining("Frame backward scan on: union_mixed_c")
+                    .returns("""
+                            x
+                            6
+                            5
+                            4
+                            3
+                            2
+                            1
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByFromToParallelSampleByRewriteWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
@@ -5306,45 +5338,46 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(unionAllQuery)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort
-                              keys: [ts]
-                                Union All
-                                    Sample By Fill
-                                      range: ('2017-12-20','2018-01-31')
-                                      stride: '5d'
-                                      fill: null
-                                        Encode sort light
+                            Union All Merge
+                              order: [ts asc]
+                              branches: 2
+                                Sample By Fill
+                                  range: ('2017-12-20','2018-01-31')
+                                  stride: '5d'
+                                  fill: null
+                                    Encode sort light
+                                      keys: [ts]
+                                        Async Group By workers: 1
                                           keys: [ts]
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                              values: [avg(x),sum(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
-                                    Sample By Fill
-                                      range: ('2017-12-20','2018-01-31')
-                                      stride: '5d'
-                                      fill: null
-                                        Encode sort light
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                          values: [avg(x),sum(x)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                Sample By Fill
+                                  range: ('2017-12-20','2018-01-31')
+                                  stride: '5d'
+                                  fill: null
+                                    Encode sort light
+                                      keys: [ts]
+                                        Async Group By workers: 1
                                           keys: [ts]
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                              values: [avg(x),sum(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto2
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                          values: [avg(x),sum(x)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto2
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """
                     );
 
             assertQuery(unionAllQuery)
                     .noLeakCheck()
                     .timestamp("ts")
+                    .noRandomAccess()
                     .returns("""
                             ts\tavg\tsum
                             2017-12-20T00:00:00.000000Z\tnull\tnull

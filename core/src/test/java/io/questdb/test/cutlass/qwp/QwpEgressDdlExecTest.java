@@ -24,15 +24,30 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Round-trip tests for non-SELECT statements over QWP egress. The server
@@ -43,7 +58,10 @@ import org.junit.Test;
  * <ul>
  *   <li>pure DDL: CREATE TABLE, DROP, RENAME, TRUNCATE, ALTER COLUMN ADD;</li>
  *   <li>data-modifying: INSERT (with row count), UPDATE (with row count);</li>
- *   <li>parse-time-executed: SET, BEGIN / COMMIT / ROLLBACK;</li>
+ *   <li>parse-time-executed: SET, BEGIN / COMMIT / ROLLBACK, CHECKPOINT,
+ *       REFRESH MATERIALIZED VIEW, WAL SUSPEND / RESUME, VACUUM;</li>
+ *   <li>statements without a row count (pure DDL, parse-time-executed) report
+ *       0 rows affected, never a negative sentinel;</li>
  *   <li>error paths: a malformed DDL bubbles up as QUERY_ERROR, a SELECT
  *       handler that only implements onBatch / onEnd still works for
  *       backwards compatibility;</li>
@@ -108,9 +126,10 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
                                     + "TIMESTAMP(ts) PARTITION BY DAY WAL")
                     );
                     // Insert so we know the table is usable.
-                    short opType = executeDdl(client,
+                    ExecResult insert = executeExec(client,
                             "INSERT INTO newt VALUES (1, 'a', 1::TIMESTAMP), (2, 'b', 2::TIMESTAMP)");
-                    Assert.assertEquals(CompiledQuery.INSERT, opType);
+                    Assert.assertEquals(CompiledQuery.INSERT, insert.opType);
+                    Assert.assertEquals(2L, insert.rowsAffected);
                     // Drop it.
                     Assert.assertEquals(
                             CompiledQuery.DROP,
@@ -132,7 +151,10 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
                     c1.connect();
                     executeDdl(c1, "CREATE TABLE cross_conn(x LONG, ts TIMESTAMP) "
                             + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-                    executeDdl(c1, "INSERT INTO cross_conn VALUES (100, 1::TIMESTAMP), (200, 2::TIMESTAMP)");
+                    Assert.assertEquals(
+                            2L,
+                            executeExec(c1, "INSERT INTO cross_conn VALUES (100, 1::TIMESTAMP), (200, 2::TIMESTAMP)").rowsAffected
+                    );
                 }
                 serverMain.awaitTable("cross_conn");
 
@@ -164,6 +186,14 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testInsertAsSelectRetriesAfterSchemaChange() throws Exception {
+        assertInsertRetriesAfterSchemaChange(
+                "INSERT INTO retry_insert(x) SELECT x FROM long_sequence(3)",
+                CompiledQuery.INSERT_AS_SELECT
+        );
+    }
+
+    @Test
     public void testInsertReportsRowsAffected() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented()) {
@@ -188,6 +218,14 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testInsertValuesRetriesAfterSchemaChange() throws Exception {
+        assertInsertRetriesAfterSchemaChange(
+                "INSERT INTO retry_insert(x) VALUES (1), (2), (3)",
+                CompiledQuery.INSERT
+        );
     }
 
     @Test
@@ -233,25 +271,44 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
 
     @Test
     public void testParseTimeExecutedStatements() throws Exception {
-        // Statements that the compiler executes at parse time (SET / BEGIN /
-        // COMMIT / ROLLBACK / TRUNCATE / VACUUM) still come back as
-        // EXEC_DONE with op_type set and rowsAffected usually 0.
+        // Statements that the compiler executes at parse time, and the PG
+        // compatibility no-ops, still come back as EXEC_DONE with their op_type.
+        // They carry no row count, so they must report 0 rows affected:
+        // rows_affected is an unsigned varint, and a negative count reaches
+        // clients that decode it as u64 as 2^64 - 1 (the Go client rejects
+        // the frame outright).
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE pt(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO pt VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
+                serverMain.execute("CREATE MATERIALIZED VIEW pt_mv AS (SELECT ts, count() cnt FROM pt SAMPLE BY 1d)");
                 serverMain.awaitTable("pt");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
-                    // TRUNCATE is parse-time executed; the server ships
-                    // EXEC_DONE with CompiledQuery.TRUNCATE and 0 rows affected
-                    // (rowsAffected from getAffectedRowsCount, which is 0).
+                    // executeDdl asserts 0 rows affected for each statement.
+                    Assert.assertEquals(CompiledQuery.SET, executeDdl(client, "SET application_name = 'qwp'"));
+                    Assert.assertEquals(CompiledQuery.SET, executeDdl(client, "RESET ALL"));
+                    Assert.assertEquals(CompiledQuery.BEGIN, executeDdl(client, "BEGIN"));
+                    Assert.assertEquals(CompiledQuery.COMMIT, executeDdl(client, "COMMIT"));
+                    Assert.assertEquals(CompiledQuery.ROLLBACK, executeDdl(client, "ROLLBACK"));
+                    Assert.assertEquals(CompiledQuery.DEALLOCATE, executeDdl(client, "DEALLOCATE qwp_stmt"));
+                    // The server rejects CHECKPOINT CREATE on Windows, which lacks the sync()
+                    // system call it relies on. CHECKPOINT RELEASE needs no prior CREATE, so it
+                    // runs on every platform.
+                    if (!Os.isWindows()) {
+                        Assert.assertEquals(CompiledQuery.CHECKPOINT_CREATE, executeDdl(client, "CHECKPOINT CREATE"));
+                    }
+                    Assert.assertEquals(CompiledQuery.CHECKPOINT_RELEASE, executeDdl(client, "CHECKPOINT RELEASE"));
                     Assert.assertEquals(
-                            CompiledQuery.TRUNCATE,
-                            executeDdl(client, "TRUNCATE TABLE pt")
+                            CompiledQuery.REFRESH_MAT_VIEW,
+                            executeDdl(client, "REFRESH MATERIALIZED VIEW pt_mv FULL")
                     );
+                    Assert.assertEquals(CompiledQuery.TABLE_SUSPEND, executeDdl(client, "ALTER TABLE pt SUSPEND WAL"));
+                    Assert.assertEquals(CompiledQuery.TABLE_RESUME, executeDdl(client, "ALTER TABLE pt RESUME WAL"));
+                    Assert.assertEquals(CompiledQuery.VACUUM, executeDdl(client, "VACUUM TABLE pt"));
+                    Assert.assertEquals(CompiledQuery.TRUNCATE, executeDdl(client, "TRUNCATE TABLE pt"));
                     serverMain.awaitTable("pt");
                     // Verify the rows are actually gone.
                     final int[] count = {0};
@@ -317,6 +374,22 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testUpdateFromViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // Egress compiles the UPDATE against the old view body. The view changes before the plan
+        // opens its cursor, so egress compiles the statement again. It has to close the first
+        // plan, and the rows have to come from the new body.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = vw.v FROM vw WHERE upd.k = vw.k",
+                """
+                        k\tw
+                        1\t110
+                        2\t120
+                        3\t130
+                        """
+        );
+    }
+
+    @Test
     public void testUpdateReportsRowsAffected() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented()) {
@@ -362,12 +435,32 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
         });
     }
 
+    @Test
+    public void testUpdateWhereSubQueryOnViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // As testUpdateFromViewRedefinedDuringStatementClosesStalePlan, with the view read by a
+        // sub-query of the WHERE clause. The sub-query joins, so its plan holds native memory from
+        // the moment the compiler builds it, with or without JIT. The old view body yields no
+        // value above 100, which updates no row, and the new body updates all three.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = 1 WHERE w < (SELECT count() FROM vw JOIN src ON vw.k = src.k WHERE vw.v > 100)",
+                """
+                        k\tw
+                        1\t1
+                        2\t1
+                        3\t1
+                        """
+        );
+    }
+
     /**
-     * Helper: runs a DDL that we don't care about rowsAffected for. Returns
-     * the op type so the test can assert against a CompiledQuery constant.
+     * Helper: runs a statement that carries no row count (DDL, or a statement
+     * the compiler executes at parse time) and asserts the server reports 0
+     * rows affected for it. Returns the op type so the test can assert against
+     * a CompiledQuery constant.
      */
     private static short executeDdl(QwpQueryClient client, String sql) {
         ExecResult r = executeExec(client, sql);
+        Assert.assertEquals("rows affected by [" + sql + ']', 0L, r.rowsAffected);
         return r.opType;
     }
 
@@ -395,6 +488,7 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
 
             @Override
             public void onExecDone(short opType, long rowsAffected) {
+                result.completedCount++;
                 result.opType = opType;
                 result.rowsAffected = rowsAffected;
             }
@@ -402,7 +496,168 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
         return result;
     }
 
+    private void assertInsertRetriesAfterSchemaChange(String insertSql, short expectedOpType) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain serverMain = startFragmented(PropertyKey.HTTP_WORKER_COUNT.getEnvVarName(), "2");
+                    QwpQueryClient insertClient = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";");
+                    QwpQueryClient alterClient = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";");
+                    ExecutorService executor = Executors.newSingleThreadExecutor()
+            ) {
+                insertClient.connect();
+                alterClient.connect();
+                executeDdl(alterClient, "CREATE TABLE retry_insert(x LONG)");
+                final CountDownLatch compiled = new CountDownLatch(1);
+                final CountDownLatch altered = new CountDownLatch(1);
+                final AtomicBoolean isFirstMetadataReturn = new AtomicBoolean(true);
+                final PoolListener previousListener = serverMain.getEngine().getPoolListener();
+                serverMain.getEngine().setPoolListener((source, thread, token, event, segment, position) -> {
+                    if (previousListener != null) {
+                        previousListener.onEvent(source, thread, token, event, segment, position);
+                    }
+                    if (source == PoolListener.SRC_TABLE_METADATA
+                            && event == PoolListener.EV_RETURN
+                            && token != null
+                            && "retry_insert".equals(token.getTableName())
+                            && isFirstMetadataReturn.compareAndSet(true, false)) {
+                        // The insert has captured this metadata version; change the schema before it gets a writer.
+                        compiled.countDown();
+                        try {
+                            Assert.assertTrue("concurrent ALTER did not finish", altered.await(30, TimeUnit.SECONDS));
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                    }
+                });
+                try {
+                    final Future<ExecResult> insert = executor.submit(() -> executeExec(insertClient, insertSql));
+                    try {
+                        Assert.assertTrue("insert compilation did not finish", compiled.await(30, TimeUnit.SECONDS));
+                        Assert.assertEquals(
+                                CompiledQuery.ALTER,
+                                executeDdl(alterClient, "ALTER TABLE retry_insert ADD COLUMN added LONG")
+                        );
+                    } finally {
+                        altered.countDown();
+                    }
+                    final ExecResult result = insert.get(30, TimeUnit.SECONDS);
+                    Assert.assertEquals(1, result.completedCount);
+                    Assert.assertEquals(expectedOpType, result.opType);
+                    Assert.assertEquals(3, result.rowsAffected);
+                    serverMain.assertSql(
+                            "SELECT x, added FROM retry_insert ORDER BY x",
+                            """
+                                    x\tadded
+                                    1\tnull
+                                    2\tnull
+                                    3\tnull
+                                    """
+                    );
+
+                    final ExecResult next = executeExec(insertClient, insertSql);
+                    Assert.assertEquals(1, next.completedCount);
+                    Assert.assertEquals(expectedOpType, next.opType);
+                    Assert.assertEquals(3, next.rowsAffected);
+                    serverMain.assertSql(
+                            "SELECT x, count() FROM retry_insert GROUP BY x ORDER BY x",
+                            """
+                                    x\tcount
+                                    1\t2
+                                    2\t2
+                                    3\t2
+                                    """
+                    );
+                } finally {
+                    altered.countDown();
+                    serverMain.getEngine().setPoolListener(previousListener);
+                }
+            }
+        });
+    }
+
+    /**
+     * Sends {@code updateSql} over egress while another session redefines the view it reads,
+     * between the statement's compile and its execution. Egress takes the writer of the
+     * statement's target only to execute a compiled plan, so the hook redefines the view the
+     * first time the request takes that writer. Nothing here waits on time: the hook returns once
+     * the concurrent {@code ALTER VIEW} has committed.
+     */
+    private void assertUpdateClosesStalePlanAfterViewRedefined(String updateSql, String expected) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain serverMain = startFragmented();
+                    QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+            ) {
+                // A WAL table refuses to read another table in an UPDATE when the statement compiles.
+                serverMain.execute("CREATE TABLE src (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                serverMain.execute("CREATE TABLE upd (ts TIMESTAMP, k INT, w INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                serverMain.execute("""
+                        INSERT INTO src VALUES
+                        ('2024-01-01T00:00:00', 1, 10),
+                        ('2024-01-02T00:00:00', 2, 20),
+                        ('2024-01-03T00:00:00', 3, 30)
+                        """);
+                serverMain.execute("""
+                        INSERT INTO upd VALUES
+                        ('2024-01-01T00:00:00', 1, 0),
+                        ('2024-01-02T00:00:00', 2, 0),
+                        ('2024-01-03T00:00:00', 3, 0)
+                        """);
+                serverMain.execute("CREATE VIEW vw AS (SELECT k, v FROM src)");
+                client.connect();
+
+                final CairoEngine engine = serverMain.getEngine();
+                final AtomicInteger writerGetCount = new AtomicInteger();
+                final AtomicReference<Throwable> alterViewFailure = new AtomicReference<>();
+                final PoolListener previousListener = engine.getPoolListener();
+                engine.setPoolListener((source, thread, token, event, segment, position) -> {
+                    if (previousListener != null) {
+                        previousListener.onEvent(source, thread, token, event, segment, position);
+                    }
+                    if (source == PoolListener.SRC_WRITER
+                            && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
+                            && token != null
+                            && "upd".equals(token.getTableName())
+                            && writerGetCount.incrementAndGet() == 1) {
+                        final Thread alterViewThread = new Thread(() -> {
+                            try (SqlExecutionContext alterViewContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.execute("ALTER VIEW vw AS (SELECT k, v + 100 AS v FROM src)", alterViewContext);
+                            } catch (Throwable th) {
+                                alterViewFailure.set(th);
+                            } finally {
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        alterViewThread.start();
+                        try {
+                            alterViewThread.join();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            alterViewFailure.compareAndSet(null, e);
+                        }
+                    }
+                });
+                try {
+                    final ExecResult result = executeExec(client, updateSql);
+                    Assert.assertEquals(1, result.completedCount);
+                    Assert.assertEquals(CompiledQuery.UPDATE, result.opType);
+                    Assert.assertEquals(3, result.rowsAffected);
+                } finally {
+                    engine.setPoolListener(previousListener);
+                }
+                if (alterViewFailure.get() != null) {
+                    throw new AssertionError("concurrent ALTER VIEW failed", alterViewFailure.get());
+                }
+                // The stale plan took the writer once and the recompiled plan took it once more.
+                Assert.assertEquals(2, writerGetCount.get());
+                serverMain.assertSql("SELECT k, w FROM upd", expected);
+            }
+        });
+    }
+
     private static final class ExecResult {
+        int completedCount;
         short opType = -1;
         long rowsAffected = Long.MIN_VALUE;
     }

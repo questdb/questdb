@@ -46,9 +46,9 @@ public class LifecycleTransitionTableTest {
                 {State.STARTING, State.READY, State.READY},
                 {State.STARTING, State.DEGRADED, State.DEGRADED},
                 {State.STARTING, State.FAILED, State.FAILED},
-                // CR-03: STARTING -> STOPPING is valid so close() can cancel an in-flight start
-                // (e.g. SIGTERM during a long-running PITR restore). The component's stop()
-                // path is the only place that runs signalRestoreCancel + awaitRestoreCancel.
+                // STARTING -> STOPPING is valid so close() can cancel an in-flight start (e.g. SIGTERM
+                // during a long-running PITR restore). The pre-join cancel hook is the primary restore-
+                // cancel signaller; the component's stop() path re-signals as a backstop.
                 {State.STARTING, State.STOPPING, State.STOPPING},
                 {State.DEGRADED, State.READY, State.READY},
                 {State.DEGRADED, State.SWITCHING, State.SWITCHING},
@@ -81,7 +81,7 @@ public class LifecycleTransitionTableTest {
                 {State.STOPPED, State.STARTING, State.STOPPED},     // STOPPED is terminal
                 {State.STOPPED, State.READY, State.STOPPED},
                 {State.STOPPED, State.FAILED, State.STOPPED},     // even FAILED rejected from STOPPED
-                {State.FAILED, State.READY, State.FAILED},      // FAILED is terminal (D-11)
+                {State.FAILED, State.READY, State.FAILED},      // FAILED is terminal
                 {State.FAILED, State.STARTING, State.FAILED},
                 {State.FAILED, State.STOPPING, State.FAILED},
                 {State.FAILED, State.STOPPED, State.FAILED},

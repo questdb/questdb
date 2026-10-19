@@ -33,6 +33,7 @@ import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
+import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
@@ -78,6 +79,21 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testDeltaSymbolDictContiguousAppendAccepted() throws Exception {
+        // The exact boundary the gap check sits on: deltaStartId == size() adds
+        // no hole and must be accepted. An off-by-one here would reject every
+        // incremental delta a healthy client sends, i.e. the whole feature.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b"));
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 2, "sym_c"));
+            Assert.assertEquals(3, dict.size());
+            Assert.assertEquals("sym_c", dict.getQuick(2));
+        });
+    }
+
+    @Test
     public void testDeltaSymbolDictExcessiveStartId() throws Exception {
         // A malicious client sends deltaStartId = 100_001, deltaCount = 0.
         // The while loop in parseDeltaSymbolDict() grows connectionSymbolDict
@@ -114,6 +130,170 @@ public class QwpSymbolDecoderTest {
                 Unsafe.free(address, totalSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    @Test
+    public void testDeltaSymbolDictGapRejected() throws Exception {
+        // A delta starting above the server's coverage leaves ids
+        // [size, deltaStartId) undefined. The parser used to null-pad them,
+        // which inflated size() past the referencing index and so slipped the
+        // frame through QwpSymbolColumnCursor's idx >= dictLimit guard -- the
+        // row then read back null and landed a NULL symbol instead of failing.
+        // Reject it at parse time, while it is still attributable.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b"));
+
+            try {
+                decodeDeltaDict(cursor, dict, 3, "sym_d"); // id 2 was never defined
+                Assert.fail("Expected QwpParseException for a gapped delta symbol dictionary");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.DELTA_DICT_GAP, e.getErrorCode());
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("delta symbol dictionary gap"));
+            }
+            // The rejected frame must not have grown the dictionary on its way out.
+            Assert.assertEquals(2, dict.size());
+        });
+    }
+
+    @Test
+    public void testDeltaSymbolDictGapUsesItsOwnErrorCode() throws Exception {
+        // The gap verdict depends on connectionSymbolDict.size() -- server state, not
+        // frame bytes -- so it must not share an error code with the row-index bounds
+        // check in QwpSymbolColumnCursor, whose terminal classification rests on
+        // "malformed bytes never parse". The identical frame succeeds after a catch-up.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b"));
+            try {
+                decodeDeltaDict(cursor, dict, 3, "sym_d");
+                Assert.fail("Expected a gap rejection");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.DELTA_DICT_GAP, e.getErrorCode());
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("delta symbol dictionary gap"));
+            }
+            Assert.assertEquals(2, dict.size());
+        });
+    }
+
+    @Test
+    public void testDeltaSymbolDictCapIsTwoMillion() throws Exception {
+        // Pins the ingress ceiling at 2,000,000 with literals rather than the constant:
+        // MAX_SYMBOL_DICTIONARY_SIZE is a WIRE constant, so a silent move desyncs every
+        // already-shipped sender, which enforces the same number at registration time.
+        // Both frames declare their count in the header and carry one entry, which keeps
+        // this cheap -- the cap gate runs BEFORE extendPos, so neither ever allocates a
+        // cap-sized backing array.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+
+            // Exactly the cap clears the gate and falls through to the payload-bytes
+            // check. Asserting the LATER message is what proves the gate admitted it:
+            // a cap that had refused this frame would report "exceeds limit" instead.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 0, 2_000_000, "x");
+                Assert.fail("Expected rejection on the payload-bytes check, not the cap");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+                Assert.assertTrue(e.getMessage(),
+                        e.getMessage().contains("delta symbol dictionary declares 2000000 entries"));
+            }
+
+            // One past the cap: the gate itself refuses it.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 0, 2_000_001, "x");
+                Assert.fail("Expected rejection on the dictionary cap");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+                Assert.assertTrue(e.getMessage(),
+                        e.getMessage().contains("delta symbol dictionary size exceeds limit: 2000001"));
+            }
+
+            // The gate sums the two fields, so a start id can straddle the cap on its
+            // own -- deltaCount 1 is refused when deltaStartId already sits at the cap.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 2_000_000, 1, "x");
+                Assert.fail("Expected rejection on the dictionary cap");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+                Assert.assertTrue(e.getMessage(),
+                        e.getMessage().contains("delta symbol dictionary size exceeds limit: 2000001"));
+            }
+
+            Assert.assertEquals("a rejected frame must not grow the connection dictionary", 0, dict.size());
+        });
+    }
+
+    @Test
+    public void testDeltaSymbolDictDecodesIdsAboveTheOldCap() throws Exception {
+        // The raised cap is only real if ids the old 1,000,000 ceiling refused now
+        // decode. Pre-extending the connection dictionary to 1,500,000 puts the append
+        // above that ceiling for the price of one reference array instead of 1.5M
+        // decoded entries; deltaStartId == size() keeps it a pure append, so the
+        // gap check passes and no slot is overwritten.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            dict.extendPos(1_500_000);
+
+            decodeDeltaDict(cursor, dict, 1_500_000, "above", "the_old_cap");
+
+            Assert.assertEquals(1_500_002, dict.size());
+            Assert.assertEquals("above", dict.getQuick(1_500_000));
+            Assert.assertEquals("the_old_cap", dict.getQuick(1_500_001));
+        });
+    }
+
+    @Test
+    public void testDeltaSymbolDictClaimedCountExceedsPayloadRejected() throws Exception {
+        // A frame can be complete -- payloadEnd is the true end of the message -- and
+        // still claim far more entries than it carries: every entry costs at least its
+        // own length varint, so deltaCount must not exceed the payload bytes left after
+        // the header. Before this check, this exact input reached extendPos and grew the
+        // connection dictionary to a MAX_SYMBOL_DICTIONARY_SIZE-sized backing array before
+        // failing on the first entry with "truncated delta symbol entry".
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 0, 1_000_000);
+                Assert.fail("Expected rejection for deltaCount exceeding the remaining payload");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+                Assert.assertTrue(e.getMessage(),
+                        e.getMessage().contains("delta symbol dictionary declares 1000000 entries"));
+            }
+            Assert.assertEquals("a rejected frame must not grow the connection dictionary", 0, dict.size());
+        });
+    }
+
+    @Test
+    public void testParseErrorRoutingDiscriminatesTheGap() {
+        // A malformed row index must stay terminal; only the gap becomes retriable.
+        Assert.assertEquals(QwpIngressProcessorState.Status.DICTIONARY_GAP,
+                QwpIngressProcessorState.statusForParseError(
+                        QwpParseException.ErrorCode.DELTA_DICT_GAP));
+        Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR,
+                QwpIngressProcessorState.statusForParseError(
+                        QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX));
+        Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH,
+                QwpIngressProcessorState.statusForParseError(
+                        QwpParseException.ErrorCode.SCHEMA_MISMATCH));
+        Assert.assertEquals(0x0D, STATUS_DICTIONARY_GAP);
+    }
+
+    @Test
+    public void testClientSymbolDictionaryCapDoesNotExceedTheServer() {
+        int clientCap = io.questdb.client.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY_SIZE;
+        Assert.assertTrue(
+                "client symbol-dictionary cap (" + clientCap + ") must not exceed the server's ("
+                        + MAX_SYMBOL_DICTIONARY_SIZE + "): a client that admits ids this decoder"
+                        + " rejects strands its store-and-forward backlog",
+                clientCap <= MAX_SYMBOL_DICTIONARY_SIZE);
     }
 
     @Test
@@ -159,6 +339,237 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testDeltaSymbolDictLeavesNoNullEntries() throws Exception {
+        // The invariant the gap check buys: because deltaStartId <= size(),
+        // every slot the pre-sizing appends falls inside the range the entry
+        // loop then overwrites, so a parsed connection dictionary can never
+        // hold a null. A surviving null is indistinguishable from a defined
+        // symbol to QwpSymbolColumnCursor's bounds check and reads back as a
+        // NULL value. Covers a pure append and an overlap-plus-extend.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b");
+            decodeDeltaDict(cursor, dict, 2, "sym_c");
+            decodeDeltaDict(cursor, dict, 1, "sym_b2", "sym_c2", "sym_d");
+            Assert.assertEquals(4, dict.size());
+            for (int i = 0; i < dict.size(); i++) {
+                Assert.assertNotNull("dictionary slot " + i + " must be defined", dict.getQuick(i));
+            }
+        });
+    }
+
+    @Test
+    public void testTruncatedDeltaLeavesNoNullResidueOnTheConnection() throws Exception {
+        // The invariant the method claims -- "no null can survive" -- is only true if a
+        // frame that fails PARTWAY leaves nothing behind. The pre-sizing runs before the
+        // entry loop, and reject() does NOT close the connection or clear the dictionary
+        // (state.clear() preserves connectionSymbolDict for the next message), so a null
+        // pre-filled for an entry the loop never reached would persist onto the connection,
+        // inflate size(), and slip a later row past QwpSymbolColumnCursor's idx >= dictLimit
+        // guard to read back as a silent NULL symbol. A frame declaring more entries than it
+        // carries is the reachable trigger (a torn store-and-forward dictionary, a buggy or
+        // third-party client). The rejected frame must leave the dictionary exactly as it
+        // was: same size, no nulls.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b");
+
+            // deltaStartId == size() (a legal contiguous append), but declares 5 entries
+            // while carrying only 1 -- the entry loop throws on the second, after
+            // extendPos has already grown the dictionary without filling the new slots.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 2, 5, "sym_c");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+
+            // The rejected frame must have left the connection dictionary untouched.
+            Assert.assertEquals("a rejected frame must not grow the connection dictionary",
+                    2, dict.size());
+            for (int i = 0; i < dict.size(); i++) {
+                Assert.assertNotNull("dictionary slot " + i + " must be defined", dict.getQuick(i));
+            }
+
+            // And the connection must still accept the correct frame afterwards, landing
+            // the ids where they belong (no null residue shifted the dense map).
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 2, "sym_c", "sym_d"));
+            Assert.assertEquals(4, dict.size());
+            Assert.assertEquals("sym_c", dict.getQuick(2));
+            Assert.assertEquals("sym_d", dict.getQuick(3));
+        });
+    }
+
+    @Test
+    public void testTruncatedOverlapDeltaRestoresOverwrittenEntries() throws Exception {
+        // The overlap twin of testTruncatedDeltaLeavesNoNullResidueOnTheConnection.
+        // setPos restores the SIZE only; for deltaStartId < size() the entry loop has
+        // already overwritten pre-existing slots, and reject() neither closes the
+        // connection nor clears the dictionary. A later bare row referencing id 0 then
+        // resolves against the failed frame's symbol -- silent misattribution, with
+        // symbolDictRedefined (success-path only) discarded alongside the exception.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b", "sym_c"));
+
+            // deltaStartId == 0 over a 3-entry dictionary: declares 3, carries 2.
+            // requiredSize == sizeBefore, so the pre-sizing is a no-op and setPos cannot
+            // undo anything. Slots 0 and 1 are rewritten, then the loop throws.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 0, 3, "sym_x", "sym_y");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+
+            Assert.assertEquals(3, dict.size());
+            Assert.assertEquals("sym_a", dict.getQuick(0));
+            Assert.assertEquals("sym_b", dict.getQuick(1));
+            Assert.assertEquals("sym_c", dict.getQuick(2));
+        });
+    }
+
+    @Test
+    public void testTruncatedMidDictionaryOverlapRestoresAtTheRightOffset() throws Exception {
+        // Pins the i - deltaStartId scratch offset in the rollback: every other
+        // rollback test runs with deltaStartId == 0, where the offset is a no-op.
+        // Here the failed frame starts at id 1, so restoring scratch[j] into slot
+        // 1 + j is load-bearing -- a mutant dropping the offset restores the wrong
+        // entries and (with assertions off) reads past the scratch content.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b", "sym_c", "sym_d"));
+
+            // Overlap [1, 4): declares 3 entries, carries 2 -- the loop overwrites
+            // ids 1 and 2, then throws on the missing third.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 1, 3, "sym_x", "sym_y");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+
+            Assert.assertEquals(4, dict.size());
+            Assert.assertEquals("sym_a", dict.getQuick(0));
+            Assert.assertEquals("sym_b", dict.getQuick(1));
+            Assert.assertEquals("sym_c", dict.getQuick(2));
+            Assert.assertEquals("sym_d", dict.getQuick(3));
+        });
+    }
+
+    @Test
+    public void testSmallOverlapRollbackAfterLargeOverlapCommit() throws Exception {
+        // Pins the prefix-release discipline of dictRollbackScratch: a large
+        // committed overlap grows the scratch's capacity, and a later small
+        // failing overlap must restore correctly from scratch[0..pos) alone,
+        // independent of the stale capacity above pos.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            // Register 8 ids, then re-send all 8 (full-dict overlap): the
+            // committed frame drives scratch pos, and capacity, to 8.
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0,
+                    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"));
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0,
+                    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"));
+            Assert.assertEquals(8, dict.size());
+
+            // A small overlapping frame fails mid-loop: declares 3 at id 2,
+            // carries 2. The loop overwrites ids 2 and 3, then throws; the
+            // rollback must restore both from THIS frame's scratch prefix.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 2, 3, "x2", "x3");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+            Assert.assertEquals(8, dict.size());
+            for (int i = 0; i < 8; i++) {
+                Assert.assertEquals("s" + i, dict.getQuick(i));
+            }
+
+            // And the connection still takes a clean delta afterwards.
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 8, "s8"));
+            Assert.assertEquals(9, dict.size());
+            Assert.assertEquals("s8", dict.getQuick(8));
+        });
+    }
+
+    @Test
+    public void testRolledBackFrameDoesNotLeakStaleRedefinition() throws Exception {
+        // extendPos grows pos WITHOUT null-filling, and the rollback's setPos does not
+        // clear, so slots above the restored size can still hold a failed frame's
+        // strings. A later delta extending into that range must not read them as a
+        // "previous value": that raises symbolDictRedefined and forces a spurious
+        // symbolCache.clear() on a healthy frame. This is the regression guard for
+        // that non-null-filling extendPos behaviour.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a"));
+
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 1, 3, "stale_x");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+            Assert.assertEquals(1, dict.size());
+
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 1, "sym_b", "sym_c"));
+            Assert.assertEquals(3, dict.size());
+            Assert.assertEquals("sym_b", dict.getQuick(1));
+            Assert.assertEquals("sym_c", dict.getQuick(2));
+        });
+    }
+
+    @Test
+    public void testFailedFirstDeltaLeavesNoResidueOnThePooledConnection() throws Exception {
+        // A FIRST frame that fails mid-entry-loop rolls back to size 0 -- and
+        // ObjList.clear() is a no-op at pos == 0 (it only Arrays.fill's when
+        // pos > 0), so the connection-teardown clear cannot release anything the
+        // failed frame wrote above pos. The rollback itself must null the slots
+        // it grew into, or the parsed Strings stay strongly reachable on the
+        // pooled context until the next successful overlapping parse --
+        // indefinitely, for a client that only ever sends failing frames.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+
+            // First frame on the connection: declares 3, carries 2 -- the loop
+            // writes ids 0 and 1, then throws. sizeBefore == 0, so setPos(0) is
+            // the entire rollback unless the tail is nulled explicitly.
+            try {
+                decodeDeltaDictDeclaring(cursor, dict, 0, 3, "sym_a", "sym_b");
+                Assert.fail("Expected a truncated-entry parse error");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+            }
+            Assert.assertEquals(0, dict.size());
+
+            // Model the next frame's pre-sizing: extendPos re-exposes the slots
+            // the failed frame grew into, without writing them. They must hold
+            // null, not the failed frame's Strings.
+            dict.extendPos(3);
+            for (int i = 0; i < 3; i++) {
+                Assert.assertNull("slot " + i + " must not retain the failed frame's symbol",
+                        dict.getQuick(i));
+            }
+
+            // And the connection still accepts a correct first frame afterwards.
+            dict.setPos(0);
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b"));
+            Assert.assertEquals(2, dict.size());
+            Assert.assertEquals("sym_a", dict.getQuick(0));
+            Assert.assertEquals("sym_b", dict.getQuick(1));
+        });
+    }
+
+    @Test
     public void testSymbolDictRedefinitionDetected() throws Exception {
         // Guards the orphan-adoption symbol-corruption fix: when a connection's
         // delta symbol dictionary remaps an already-defined client symbol ID to
@@ -200,10 +611,29 @@ public class QwpSymbolDecoderTest {
             int deltaStartId,
             String... symbols
     ) throws Exception {
-        int deltaCount = symbols.length;
-        byte[][] symbolBytes = new byte[deltaCount][];
-        int payloadSize = QwpVarint.encodedLength(deltaStartId) + QwpVarint.encodedLength(deltaCount);
-        for (int i = 0; i < deltaCount; i++) {
+        return decodeDeltaDictDeclaring(cursor, connectionDict, deltaStartId, symbols.length, symbols);
+    }
+
+    /**
+     * As {@link #decodeDeltaDict}, but stamps {@code declaredCount} into the frame's
+     * deltaCount header field independently of how many {@code symbols} are actually
+     * written. With {@code declaredCount > symbols.length} the decoder's entry loop runs
+     * off the end of the payload and throws -- the reachable trigger for a torn or
+     * mismatched delta frame.
+     */
+    private static boolean decodeDeltaDictDeclaring(
+            QwpMessageCursor cursor,
+            ObjList<String> connectionDict,
+            int deltaStartId,
+            int declaredCount,
+            String... symbols
+    ) throws Exception {
+        // The header advertises declaredCount; the payload carries only the symbols
+        // actually supplied. When declaredCount > symbols.length the frame is genuinely
+        // short and the decoder's entry loop runs off the end.
+        byte[][] symbolBytes = new byte[symbols.length][];
+        int payloadSize = QwpVarint.encodedLength(deltaStartId) + QwpVarint.encodedLength(declaredCount);
+        for (int i = 0; i < symbols.length; i++) {
             symbolBytes[i] = symbols[i].getBytes(StandardCharsets.UTF_8);
             payloadSize += QwpVarint.encodedLength(symbolBytes[i].length) + symbolBytes[i].length;
         }
@@ -218,8 +648,8 @@ public class QwpSymbolDecoderTest {
 
             long pos = address + HEADER_SIZE;
             pos = QwpVarint.encode(pos, deltaStartId);
-            pos = QwpVarint.encode(pos, deltaCount);
-            for (int i = 0; i < deltaCount; i++) {
+            pos = QwpVarint.encode(pos, declaredCount);
+            for (int i = 0; i < symbols.length; i++) {
                 pos = QwpVarint.encode(pos, symbolBytes[i].length);
                 for (byte b : symbolBytes[i]) {
                     Unsafe.putByte(pos++, b);

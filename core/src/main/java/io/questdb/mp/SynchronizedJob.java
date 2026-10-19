@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -35,15 +36,29 @@ public abstract class SynchronizedJob implements Job {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        if (Unsafe.cas(this, LOCKED_OFFSET, 0, 1)) {
+        if (tryAcquireRunLock()) {
             try {
                 return runSerially();
             } finally {
-                locked = 0;
+                releaseRunLock();
             }
         }
         return false;
     }
 
+    protected final void acquireRunLock() {
+        while (!tryAcquireRunLock()) {
+            Os.pause();
+        }
+    }
+
+    protected final void releaseRunLock() {
+        locked = 0;
+    }
+
     protected abstract boolean runSerially();
+
+    private boolean tryAcquireRunLock() {
+        return Unsafe.cas(this, LOCKED_OFFSET, 0, 1);
+    }
 }

@@ -48,7 +48,7 @@ final class StringLongTuplesRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (keys.length > pos + 1) {
             pos++;
             return true;

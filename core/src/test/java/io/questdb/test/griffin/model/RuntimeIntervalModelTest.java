@@ -154,6 +154,29 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeterminismClassificationSkipsStaticPlaceholder() throws Exception {
+        assertMemoryLeak(() -> {
+            final RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+            builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, configuration);
+            builder.intersectRuntimeTimestamp(
+                    TimestampConstant.newInstance(5_000L, ColumnType.TIMESTAMP),
+                    0
+            );
+            builder.intersect(1_000L, 10_000L);
+            try (RuntimeIntervalModel model = (RuntimeIntervalModel) builder.build()) {
+                builder.clear();
+                Assert.assertEquals(2, model.getDynamicRangeList().size());
+                Assert.assertNull(model.getDynamicRangeList().getQuick(1));
+                Assert.assertFalse(model.isNonDeterministic());
+                Assert.assertTrue(model.isStableWithinExecution());
+            }
+
+            assertRuntimeStabilityClassification(true);
+            assertRuntimeStabilityClassification(false);
+        });
+    }
+
+    @Test
     public void testDynamicIntervalWithNullPositionList() throws Exception {
         assertMemoryLeak(() -> {
             final LongList intervals = new LongList();
@@ -225,6 +248,34 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         });
     }
 
+    // An intersection that produced no overlap is an ESTABLISHED empty set, not "nothing applied".
+    // Both states report divider == 0, so negatedNothing() must disambiguate them via
+    // firstFuncApplied; keying on divider alone re-seeded the full domain and resurrected every
+    // row of an identically-false predicate. This facet needs no union run to trigger.
+    @Test
+    public void testEstablishedEmptyIntersectionFollowedByNegatedNullStaysEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            // [1000,1000] INTERSECT [2000,2000] = empty, and the accumulator collapses to size 0
+            for (long value : new long[]{1_000L, 2_000L}) {
+                encodeIntersectPointLeaf(intervals);
+                dynamicFunctions.add(TimestampConstant.newInstance(value, ColumnType.TIMESTAMP));
+            }
+            encodeSubtractPointLeaf(intervals);
+            dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                // empty MINUS empty = empty
+                assertIntervals(model.calculateIntervals(sqlExecutionContext));
+            }
+        });
+    }
+
     @Test
     public void testMultiRowSubQueryErrorFallsBackToPositionZeroWithNullPositionList() throws Exception {
         assertMemoryLeak(() -> {
@@ -282,6 +333,252 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         });
     }
 
+    // A negated NULL bound is the FIRST expression applied: nothing has been accumulated yet, so
+    // "subtract nothing" legitimately seeds the full timestamp domain. This is the case the
+    // divider == 0 branch of negatedNothing() exists to serve, and it must keep working - the
+    // established-empty guard added alongside it must not swallow a genuine anchor.
+    @Test
+    public void testNegatedNullAsFirstExpressionSeedsFullDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            encodeSubtractPointLeaf(intervals);
+            dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                // nothing applied yet MINUS empty = the full domain
+                assertIntervals(model.calculateIntervals(sqlExecutionContext), Long.MIN_VALUE, Long.MAX_VALUE);
+            }
+        });
+    }
+
+    @Test
+    public void testUnionLeafRunAllNullLeavesFollowingIntersectYieldsEmptySet() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            // every union leaf is NULL: the union expression's value is the empty set. A
+            // following intersect must combine with that empty result and stay empty; it
+            // must NOT be treated as the first applied expression and seed the intervals.
+            for (int i = 0; i < 3; i++) {
+                encodeUnionPointLeaf(intervals);
+                dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            }
+            IntervalUtils.encodeInterval(
+                    1_500L,
+                    0,
+                    (short) 0,
+                    IntervalDynamicIndicator.IS_HI_DYNAMIC,
+                    IntervalOperation.INTERSECT,
+                    intervals
+            );
+            dynamicFunctions.add(TimestampConstant.newInstance(6_000L, ColumnType.TIMESTAMP));
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                // (empty UNION empty UNION empty) INTERSECT [1500, 6000] = empty
+                assertIntervals(model.calculateIntervals(sqlExecutionContext));
+            }
+        });
+    }
+
+    // Control for the test above: the same all-NULL union run followed by a NON-NULL negated
+    // bound already stayed empty (subtract takes the normal path), which is what made the NULL
+    // variant an isolated leak rather than a broadly visible failure.
+    @Test
+    public void testUnionLeafRunAllNullLeavesFollowingNegatedNonNullYieldsEmptySet() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            for (int i = 0; i < 2; i++) {
+                encodeUnionPointLeaf(intervals);
+                dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            }
+            encodeSubtractPointLeaf(intervals);
+            dynamicFunctions.add(TimestampConstant.newInstance(5_000L, ColumnType.TIMESTAMP));
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                // (empty UNION empty) MINUS [5000,5000] = empty
+                assertIntervals(model.calculateIntervals(sqlExecutionContext));
+            }
+        });
+    }
+
+    // Sibling of the intersect case above, for the NEGATED follow-on. When every union leaf is
+    // NULL the run's value is the empty set and the accumulator sits at divider == 0 with
+    // firstFuncApplied already true. A following negated NULL bound (`ts != $n`) must subtract
+    // from that established empty set and stay empty - it must NOT be mistaken for the first
+    // applied expression and seed [MIN, MAX]. The residual predicate is already removed from the
+    // filter by WhereClauseParser (intrinsicValue = TRUE), so a full-domain seed here returns
+    // every row of the table for an identically-false predicate.
+    @Test
+    public void testUnionLeafRunAllNullLeavesFollowingNegatedNullYieldsEmptySet() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            for (int i = 0; i < 2; i++) {
+                encodeUnionPointLeaf(intervals);
+                dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            }
+            encodeSubtractPointLeaf(intervals);
+            dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                // (empty UNION empty) MINUS empty = empty
+                assertIntervals(model.calculateIntervals(sqlExecutionContext));
+            }
+        });
+    }
+
+    @Test
+    public void testUnionLeafRunFoldsBeforeFollowingIntersect() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            for (long value : new long[]{8_000L, 2_000L, 5_000L, 2_000L}) {
+                encodeUnionPointLeaf(intervals);
+                dynamicFunctions.add(TimestampConstant.newInstance(value, ColumnType.TIMESTAMP));
+            }
+            // the trailing intersect leaf must see the union run already folded into one
+            // sorted, coalesced accumulator
+            IntervalUtils.encodeInterval(
+                    1_500L,
+                    0,
+                    (short) 0,
+                    IntervalDynamicIndicator.IS_HI_DYNAMIC,
+                    IntervalOperation.INTERSECT,
+                    intervals
+            );
+            dynamicFunctions.add(TimestampConstant.newInstance(6_000L, ColumnType.TIMESTAMP));
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                assertIntervals(
+                        model.calculateIntervals(sqlExecutionContext),
+                        2_000L, 2_000L, 5_000L, 5_000L
+                );
+            }
+        });
+    }
+
+    // A live union leaf must survive a following negated NULL bound: the run is non-empty, so the
+    // subtract removes nothing and the accumulated point stays. Guards against over-correcting the
+    // established-empty fix into "a negated NULL always yields empty".
+    @Test
+    public void testUnionLeafRunWithLiveLeafFollowingNegatedNullKeepsIntervals() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            encodeUnionPointLeaf(intervals);
+            dynamicFunctions.add(TimestampConstant.newInstance(1_000L, ColumnType.TIMESTAMP));
+            encodeUnionPointLeaf(intervals);
+            dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            encodeSubtractPointLeaf(intervals);
+            dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                // ([1000,1000] UNION empty) MINUS empty = [1000,1000]
+                assertIntervals(model.calculateIntervals(sqlExecutionContext), 1_000L, 1_000L);
+            }
+        });
+    }
+
+    @Test
+    public void testUnionLeafRunsMergeOnceAndMatchIncrementalSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            // shuffled OR-ed point leaves with duplicates, adjacent values and a NULL: the NULL
+            // is the empty-set identity, duplicates collapse, and adjacent points stay separate
+            // intervals - exactly what per-leaf incremental unionInPlace used to produce
+            final long[] values = {5_000L, 1_000L, 5_000L, 3_000L, 1_001L, 9_000L};
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            for (long value : values) {
+                encodeUnionPointLeaf(intervals);
+                dynamicFunctions.add(TimestampConstant.newInstance(value, ColumnType.TIMESTAMP));
+            }
+            encodeUnionPointLeaf(intervals);
+            dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                assertIntervals(
+                        model.calculateIntervals(sqlExecutionContext),
+                        1_000L, 1_000L, 1_001L, 1_001L, 3_000L, 3_000L, 5_000L, 5_000L, 9_000L, 9_000L
+                );
+            }
+        });
+    }
+
+    private static void assertIntervals(LongList actual, long... expectedLoHiPairs) {
+        Assert.assertEquals("interval count", expectedLoHiPairs.length, actual.size());
+        for (int i = 0; i < expectedLoHiPairs.length; i++) {
+            Assert.assertEquals("value at index " + i, expectedLoHiPairs[i], actual.getQuick(i));
+        }
+    }
+
+    private static void encodeIntersectPointLeaf(LongList intervals) {
+        // mirrors RuntimeIntervalModelBuilder.intersectRuntimeTimestamp encoding of `ts = $n`
+        IntervalUtils.encodeInterval(
+                0,
+                0,
+                (short) 0,
+                IntervalDynamicIndicator.IS_LO_HI_DYNAMIC,
+                IntervalOperation.INTERSECT,
+                intervals
+        );
+    }
+
+    private static void encodeSubtractPointLeaf(LongList intervals) {
+        // mirrors RuntimeIntervalModelBuilder.subtractEquals encoding of a negated scalar
+        // timestamp bound (`ts != $n`)
+        IntervalUtils.encodeInterval(
+                0,
+                0,
+                (short) 0,
+                IntervalDynamicIndicator.IS_LO_HI_DYNAMIC,
+                IntervalOperation.SUBTRACT,
+                intervals
+        );
+    }
+
+    private static void encodeUnionPointLeaf(LongList intervals) {
+        // mirrors RuntimeIntervalModelBuilder.unionRuntimeTimestamp encoding of an OR-ed
+        // scalar timestamp disjunct
+        IntervalUtils.encodeInterval(
+                0,
+                0,
+                (short) 0,
+                IntervalDynamicIndicator.IS_LO_HI_DYNAMIC,
+                IntervalOperation.UNION,
+                intervals
+        );
+    }
+
     private static void assertDynamicModel(int timestampType, long lo, long hi) throws SqlException {
         final LongList intervals = new LongList();
         IntervalUtils.encodeInterval(
@@ -304,6 +601,21 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
             Assert.assertEquals(lo, calculated.getQuick(0));
             Assert.assertEquals(hi, calculated.getQuick(1));
             Assert.assertFalse(model.allIntervalsHitOnePartition());
+        }
+    }
+
+    private static void assertRuntimeStabilityClassification(boolean isStableWithinExecution) {
+        final ObjList<Function> dynamicFunctions = new ObjList<>();
+        dynamicFunctions.add(new StabilityFunction(isStableWithinExecution));
+        dynamicFunctions.add(null);
+        try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                PartitionBy.DAY,
+                new LongList(),
+                dynamicFunctions
+        )) {
+            Assert.assertTrue(model.isNonDeterministic());
+            Assert.assertEquals(isStableWithinExecution, model.isStableWithinExecution());
         }
     }
 
@@ -471,6 +783,30 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        }
+    }
+
+    private static class StabilityFunction extends TimestampFunction {
+        private final boolean isStableWithinExecution;
+
+        private StabilityFunction(boolean isStableWithinExecution) {
+            super(ColumnType.TIMESTAMP);
+            this.isStableWithinExecution = isStableWithinExecution;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return isStableWithinExecution;
         }
     }
 }

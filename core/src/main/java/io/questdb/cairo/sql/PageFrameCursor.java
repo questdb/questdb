@@ -103,6 +103,19 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     StaticSymbolTable getSymbolTable(int columnIndex);
 
     /**
+     * Returns true when the cursor drops whole parquet row groups up front using pushed-down filter
+     * conditions, so its iteration is not a 1:1 pass over the physical partition rows.
+     * <p>
+     * The metadata-only skip fast path in {@code skipRows()} counts physical partition/row-group row
+     * counts; when pushdown pruning is active those counts overstate the rows the cursor actually
+     * yields (a fully non-matching row group contributes zero output rows but non-zero physical rows),
+     * so callers must fall back to a row-by-row skip. Defaults to false for cursors without pushdown.
+     */
+    default boolean hasActivePushdownFilter() {
+        return false;
+    }
+
+    /**
      * Returns true if the cursor belongs to an external parquet file, false in case of table partition files.
      */
     boolean isExternal();
@@ -161,6 +174,23 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      */
     default void setScanProfile(ReaderScanProfile profile) {
         // no-op by default
+    }
+
+    /**
+     * Notifies the cursor that the consumer stops pulling rows for reasons
+     * unrelated to query execution, such as network backpressure or a
+     * suspended PGWire portal. Timing-aware cursors exclude the interval
+     * until {@link #resumeTimer()} from active execution time. No-op by
+     * default. Both methods are idempotent.
+     */
+    default void suspendTimer() {
+    }
+
+    /**
+     * Ends the wait interval started by {@link #suspendTimer()}. No-op by
+     * default and when the cursor is not suspended.
+     */
+    default void resumeTimer() {
     }
 
     /**

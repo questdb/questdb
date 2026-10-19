@@ -38,6 +38,12 @@ public final class FloatType implements FuzzColumnType {
         if (rnd.nextInt(32) == 0) {
             return FuzzConstant.nonBindable("null");
         }
+        if (rnd.nextInt(4) == 0) {
+            // 1:4 -> a bare integer value, cast so the literal stays FLOAT-typed. The range is
+            // kept below 2^24 so it is exactly representable in a float (no INT->FLOAT rounding).
+            String v = Integer.toString(rnd.nextInt(2_000_000) - 1_000_000);
+            return new FuzzConstant(v + "::FLOAT", "FLOAT", v);
+        }
         String v = String.format(java.util.Locale.ROOT, "%.6f", rnd.nextFloat());
         return new FuzzConstant(v + "::FLOAT", "FLOAT", v);
     }

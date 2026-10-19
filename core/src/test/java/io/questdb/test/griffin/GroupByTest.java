@@ -23,6 +23,7 @@
  ******************************************************************************/
 package io.questdb.test.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -848,6 +849,43 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountStarInExpressions() throws Exception {
+        assertQuery("SELECT count(*) + count(*) AS s, coalesce(count(*), 5) AS c, 2 * count(*) AS d FROM t")
+                .ddl("CREATE TABLE t AS (SELECT x AS v FROM long_sequence(3))")
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        s\tc\td
+                        6\t3\t6
+                        """);
+    }
+
+    @Test
+    public void testCountStarInWindowSpec() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x AS a, x AS b FROM long_sequence(3))");
+            assertExceptionNoLeakCheck(
+                    "SELECT row_number() OVER (PARTITION BY count(*)) FROM t",
+                    7,
+                    "aggregate functions in partition by are not supported",
+                    false
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT row_number() OVER (PARTITION BY 2 * count(*)) FROM t",
+                    43,
+                    "Aggregate function cannot be passed as an argument",
+                    false
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT row_number() OVER w FROM t WINDOW w AS (PARTITION BY 2 * count(*))",
+                    64,
+                    "Aggregate function cannot be passed as an argument",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testGroupByAliasInDifferentOrder1() throws Exception {
         assertQuery("select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1, 2")
                 .ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ")
@@ -1640,7 +1678,7 @@ public class GroupByTest extends AbstractCairoTest {
         configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             final int workerCount = 4;
-            final WorkerPool pool = new TestWorkerPool("groupBy", workerCount);
+            final WorkerPool pool = new TestWorkerPool("groupBy", workerCount, Metrics.DISABLED);
             try {
                 WorkerPoolUtils.setupQueryJobs(pool, engine);
                 pool.start(null);
@@ -2101,7 +2139,7 @@ public class GroupByTest extends AbstractCairoTest {
         configOverrideRostiAllocFacade(facade);
         assertMemoryLeak(() -> {
             final int workerCount = 4;
-            final WorkerPool pool = new TestWorkerPool("groupByMerge", workerCount);
+            final WorkerPool pool = new TestWorkerPool("groupByMerge", workerCount, Metrics.DISABLED);
             try {
                 WorkerPoolUtils.setupQueryJobs(pool, engine);
                 pool.start(null);
@@ -2321,6 +2359,163 @@ public class GroupByTest extends AbstractCairoTest {
                         1970-01-01T00:00:00.000002Z
                         1970-01-01T00:00:00.000001Z
                         """);
+    }
+
+    @Test
+    public void testGroupByOrderByExpressionOverNonSelectedColumn() throws Exception {
+        // ORDER BY an expression over a column that the select list does not output, such as
+        // price * 2, adds the expression to the GROUP BY model as a hidden key, so the groups split
+        // by it. When the select list also needs a projection above the GROUP BY model, as with
+        // avg(price) + 1, that projection used to reference the key as a regular column, so the
+        // query, and SELECT * over it, returned an extra column named "column".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                        ('2000-01-01T00:00:01.000000Z', 'B', 20.0),
+                        ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                        ('2000-01-01T00:00:03.000000Z', 'C', 40.0)
+                    """);
+
+            final String splitGroups = """
+                    sym\ta
+                    A\t11.0
+                    B\t21.0
+                    A\t31.0
+                    C\t41.0
+                    """;
+            final String[][] queries = {
+                    {"SELECT sym, avg(price) + 1 a FROM trades ORDER BY price * 2, sym", splitGroups},
+                    {"SELECT sym, avg(price) + 1 a FROM trades ORDER BY abs(price), sym", splitGroups},
+                    {"SELECT sym, avg(price) + 1 a FROM trades ORDER BY price::INT, sym", splitGroups},
+                    {"SELECT sym, avg(price) + 1 a FROM trades WHERE price > 0 ORDER BY price * 2, sym", splitGroups},
+                    // a duplicate aggregate puts a projection above the GROUP BY model
+                    {
+                            "SELECT sym, avg(price) a, avg(price) b FROM trades ORDER BY price * 2, sym",
+                            """
+                            sym\ta\tb
+                            A\t10.0\t10.0
+                            B\t20.0\t20.0
+                            A\t30.0\t30.0
+                            C\t40.0\t40.0
+                            """
+                    },
+                    // so does a constant
+                    {
+                            "SELECT sym, 1 one, avg(price) a FROM trades ORDER BY price * 2, sym",
+                            """
+                            sym\tone\ta
+                            A\t1\t10.0
+                            B\t1\t20.0
+                            A\t1\t30.0
+                            C\t1\t40.0
+                            """
+                    },
+                    {
+                            "SELECT ts, avg(price) + 1 a FROM trades SAMPLE BY 1s ORDER BY price * 2",
+                            """
+                            ts\ta
+                            2000-01-01T00:00:00.000000Z\t11.0
+                            2000-01-01T00:00:01.000000Z\t21.0
+                            2000-01-01T00:00:02.000000Z\t31.0
+                            2000-01-01T00:00:03.000000Z\t41.0
+                            """
+                    },
+                    // with DISTINCT, the distinct model referenced the expression as a regular column
+                    {
+                            "SELECT DISTINCT sym, count() c FROM trades ORDER BY max(price) * 2, sym",
+                            """
+                            sym\tc
+                            B\t1
+                            A\t2
+                            C\t1
+                            """
+                    },
+                    {
+                            "SELECT DISTINCT sym, avg(price) a FROM trades GROUP BY sym ORDER BY sym || 'x'",
+                            """
+                            sym\ta
+                            A\t20.0
+                            B\t20.0
+                            C\t40.0
+                            """
+                    },
+            };
+            // SAMPLE BY with FILL, and ALIGN TO FIRST OBSERVATION, which keeps the SAMPLE BY model,
+            // with and without a projection above it; their sorted cursors do not report a size
+            final String[][] sampleByQueries = {
+                    {
+                            "SELECT ts, avg(price) + 1 a FROM trades WHERE sym = 'A' SAMPLE BY 1s FILL(NULL) ORDER BY price * 2, ts",
+                            """
+                            ts\ta
+                            2000-01-01T00:00:00.000000Z\t11.0
+                            2000-01-01T00:00:01.000000Z\tnull
+                            2000-01-01T00:00:02.000000Z\tnull
+                            2000-01-01T00:00:00.000000Z\tnull
+                            2000-01-01T00:00:01.000000Z\tnull
+                            2000-01-01T00:00:02.000000Z\t31.0
+                            """
+                    },
+                    {
+                            "SELECT ts, avg(price) a FROM trades SAMPLE BY 1s ALIGN TO FIRST OBSERVATION ORDER BY price * 2, ts",
+                            """
+                            ts\ta
+                            2000-01-01T00:00:00.000000Z\t10.0
+                            2000-01-01T00:00:01.000000Z\t20.0
+                            2000-01-01T00:00:02.000000Z\t30.0
+                            2000-01-01T00:00:03.000000Z\t40.0
+                            """
+                    },
+                    {
+                            "SELECT ts, avg(price) + 1 a FROM trades SAMPLE BY 1s ALIGN TO FIRST OBSERVATION ORDER BY price * 2, ts",
+                            """
+                            ts\ta
+                            2000-01-01T00:00:00.000000Z\t11.0
+                            2000-01-01T00:00:01.000000Z\t21.0
+                            2000-01-01T00:00:02.000000Z\t31.0
+                            2000-01-01T00:00:03.000000Z\t41.0
+                            """
+                    },
+            };
+            for (String[] query : queries) {
+                assertOrderByHiddenKeyNoLeakCheck(query[0], query[1], true);
+            }
+            for (String[] query : sampleByQueries) {
+                assertOrderByHiddenKeyNoLeakCheck(query[0], query[1], false);
+            }
+
+            // a re-sort over the query drops its ORDER BY, and the groups still split by the hidden key
+            assertQuery("SELECT * FROM (" + queries[0][0] + ") ORDER BY sym, a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\ta
+                            A\t11.0
+                            A\t31.0
+                            B\t21.0
+                            C\t41.0
+                            """);
+
+            // the sort still reads the hidden key
+            assertQuery(queries[0][0])
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [column, sym]
+                                    VirtualRecord
+                                      functions: [sym,avg+1,column]
+                                        Async Group By workers: 1
+                                          keys: [sym,column]
+                                          keyFunctions: [price*2]
+                                          values: [avg(price)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                            """);
+        });
     }
 
     @Test
@@ -3106,6 +3301,7 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [s2]
                               values: [sum(l)]
                                 LatestByDeferredListValuesFiltered
+                                  jit: true
                                   filter: s2 in [c]
                                     Frame backward scan on: t
                             """);
@@ -3143,6 +3339,7 @@ public class GroupByTest extends AbstractCairoTest {
                                   keys: [s2]
                                   values: [sum(l)]
                                     LatestByDeferredListValuesFiltered
+                                      jit: true
                                       filter: s2 in [c,d]
                                         Frame backward scan on: t
                             """);
@@ -3179,6 +3376,7 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [concat]
                               values: [sum(l)]
                                 LatestByDeferredListValuesFiltered
+                                  jit: true
                                   filter: s2 in [d]
                                     Frame backward scan on: t
                             """);
@@ -4768,6 +4966,88 @@ public class GroupByTest extends AbstractCairoTest {
                                             Frame forward scan on: avg
                             """);
         });
+    }
+
+    @Test
+    public void testWindowSpecExpressionRewrites() throws Exception {
+        assertQuery("""
+                SELECT x, grp, sum(v) OVER w AS running, count(*) OVER w AS n
+                FROM t
+                WINDOW w AS (
+                    PARTITION BY grp::string, concat(
+                        CASE
+                            WHEN grp = 0 THEN 'a'
+                            WHEN grp = 1 THEN 'b'
+                            ELSE 'c'
+                        END,
+                        'partition'
+                    )
+                    ORDER BY x
+                    ROWS BETWEEN (1 + 1) PRECEDING AND CURRENT ROW
+                )
+                ORDER BY x
+                """)
+                .ddl("CREATE TABLE t AS (SELECT x, x % 2 AS grp, x AS v FROM long_sequence(6))")
+                .expectSize()
+                .returns("""
+                        x\tgrp\trunning\tn
+                        1\t1\t1.0\t1
+                        2\t0\t2.0\t1
+                        3\t1\t4.0\t2
+                        4\t0\t6.0\t2
+                        5\t1\t9.0\t3
+                        6\t0\t12.0\t3
+                        """);
+        assertQuery("""
+                SELECT x, abs(sum(v) OVER (
+                    PARTITION BY grp::string, concat(
+                        CASE
+                            WHEN grp = 0 THEN 'a'
+                            WHEN grp = 1 THEN 'b'
+                            ELSE 'c'
+                        END,
+                        'partition'
+                    )
+                    ORDER BY x
+                    ROWS BETWEEN (1 + 1) PRECEDING AND CURRENT ROW
+                )) AS running
+                FROM t
+                ORDER BY x
+                """)
+                .expectSize()
+                .returns("""
+                        x\trunning
+                        1\t1.0
+                        2\t2.0
+                        3\t4.0
+                        4\t6.0
+                        5\t9.0
+                        6\t12.0
+                        """);
+    }
+
+    @Test
+    public void testWindowSpecNonSwitchCaseRewrite() throws Exception {
+        // a CASE whose WHEN is not `col = const` cannot fold to a switch, so rewriteCase
+        // takes its in-place else-branch; the window-spec rewrite must apply it exactly once
+        assertQuery("""
+                SELECT x, sum(v) OVER (
+                    PARTITION BY CASE WHEN x > 3 THEN 'hi' ELSE 'lo' END
+                ) AS partition_sum
+                FROM t
+                ORDER BY x
+                """)
+                .ddl("CREATE TABLE t AS (SELECT x, x AS v FROM long_sequence(6))")
+                .expectSize()
+                .returns("""
+                        x\tpartition_sum
+                        1\t6.0
+                        2\t6.0
+                        3\t6.0
+                        4\t15.0
+                        5\t15.0
+                        6\t15.0
+                        """);
     }
 
     private void assertError(String query, String errorMessage) throws Exception {

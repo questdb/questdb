@@ -85,6 +85,15 @@ public interface UnaryFunction extends Function {
         return getArg().isRandom();
     }
 
+    // Within-execution stability composes independently of determinism: an arg may be
+    // non-deterministic yet stable (bind variable, now()), or appear deterministic through
+    // isNonDeterministic() yet be unstable (a cursor arg wrapping an rnd_* projection).
+    // Deriving this from !isNonDeterministic() would get both cases wrong.
+    @Override
+    default boolean isStableWithinExecution() {
+        return getArg().isStableWithinExecution();
+    }
+
     @Override
     default boolean isRuntimeConstant() {
         return getArg().isRuntimeConstant();

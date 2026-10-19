@@ -43,9 +43,4 @@ public class CharColumn extends CharFunction implements ColumnFunction {
     public int getColumnIndex() {
         return columnIndex;
     }
-
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
 }

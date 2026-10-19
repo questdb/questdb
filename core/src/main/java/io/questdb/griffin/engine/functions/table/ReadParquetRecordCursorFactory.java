@@ -77,6 +77,13 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
         return false;
     }
 
+    // Reads a file outside the database: contents can change between cursor opens with no
+    // transaction to observe, so a materialized view cannot be defined over it.
+    @Override
+    public boolean usesExternalDataSource() {
+        return true;
+    }
+
     @Override
     public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         this.pushdownFilterConditions = pushdownFilterConditions;

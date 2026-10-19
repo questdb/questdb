@@ -29,6 +29,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -141,7 +142,7 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
         // column and tripping the "typeTag of encodedType is not ARRAY" assert.
         assertMemoryLeak(() -> {
             final int workerCount = 4;
-            final WorkerPool pool = new WorkerPool(() -> workerCount);
+            final WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             try (

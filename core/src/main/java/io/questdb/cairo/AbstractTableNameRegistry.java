@@ -53,6 +53,11 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
+    public @Nullable ReverseTableMapItem getReverseMapItemByDirName(CharSequence dirName) {
+        return dirNameToTableTokenMap.get(dirName);
+    }
+
+    @Override
     public TableToken getTableToken(CharSequence tableName) {
         return tableNameToTableTokenMap.get(tableName);
     }
