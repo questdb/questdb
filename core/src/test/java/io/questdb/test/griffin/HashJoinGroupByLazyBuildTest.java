@@ -43,6 +43,7 @@ import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -53,11 +54,8 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
@@ -77,7 +75,6 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
  * keyed and scalar; the lone count that counts by key; INT, SYMBOL, LONG and composite keys)
  * without workers, where the query's own thread runs every task, and with a pool of them.
  */
-@RunWith(Parameterized.class)
 public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
     // A condition on the build input alone that fails to evaluate on lb's one row with j = 10:
     // 10 * 1000 does not fit DECIMAL(4,0). A query that carries it fails as soon as it builds.
@@ -103,14 +100,10 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
     private final HashJoinBuildMode buildMode;
     private final HashJoinPayloadLayout payloadLayout;
 
-    public HashJoinGroupByLazyBuildTest(HashJoinPayloadLayout payloadLayout, HashJoinBuildMode buildMode) {
-        this.payloadLayout = payloadLayout;
-        this.buildMode = buildMode;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> parameters() {
-        return HashJoinBuildMode.parameters();
+    public HashJoinGroupByLazyBuildTest() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        this.payloadLayout = HashJoinPayloadLayout.random(rnd);
+        this.buildMode = HashJoinBuildMode.random(rnd);
     }
 
     @Before

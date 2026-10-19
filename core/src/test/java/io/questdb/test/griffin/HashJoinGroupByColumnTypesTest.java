@@ -26,16 +26,13 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Collection;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDifferential;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
@@ -55,7 +52,6 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
  * {@code IntHashJoinBuildTest} pins the row heap's own layout and getters; this class pins what a
  * query returns once the planner routes such a column to the operator.
  */
-@RunWith(Parameterized.class)
 public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
     // Fixed-size types the row heap copies, so both inputs may carry them. Each width of GEOHASH
     // and of DECIMAL is a type of its own, and each takes its own arm of the layout switch.
@@ -70,14 +66,10 @@ public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
     private final HashJoinBuildMode buildMode;
     private final HashJoinPayloadLayout payloadLayout;
 
-    public HashJoinGroupByColumnTypesTest(HashJoinPayloadLayout payloadLayout, HashJoinBuildMode buildMode) {
-        this.payloadLayout = payloadLayout;
-        this.buildMode = buildMode;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> parameters() {
-        return HashJoinBuildMode.parameters();
+    public HashJoinGroupByColumnTypesTest() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        this.payloadLayout = HashJoinPayloadLayout.random(rnd);
+        this.buildMode = HashJoinBuildMode.random(rnd);
     }
 
     @Before

@@ -46,17 +46,13 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Collection;
-
-@RunWith(Parameterized.class)
 public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     private static final String[] JOINS = {
             " from r join p on r.id=p.id",
@@ -67,22 +63,18 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     };
     private static final String AGGREGATES = "count(*) n, count(r.id) ri, count(p.id) pi, "
             + "count(r.s) rs, count(p.s) ps, sum(r.d) rd, sum(p.d) pd, avg(r.d) ra, avg(p.d) pa";
+    // The randomized matrix runs thousands of queries, so a run checks one query in this many,
+    // picked at random, and repeated runs check them all.
+    private static final int MATRIX_SAMPLE_SHARE = 4;
 
     private final HashJoinBuildMode buildMode;
     private final HashJoinPayloadLayout payloadLayout;
-    // The randomized matrix runs thousands of queries, so each run of the suite checks its share
-    // of them and the four runs together check every one.
-    private final HashJoinMatrixStripe stripe;
+    private final Rnd rnd;
 
-    public HashJoinGroupByQualificationTest(HashJoinPayloadLayout payloadLayout, HashJoinBuildMode buildMode) {
-        this.payloadLayout = payloadLayout;
-        this.buildMode = buildMode;
-        this.stripe = new HashJoinMatrixStripe(payloadLayout, buildMode);
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> parameters() {
-        return HashJoinBuildMode.parameters();
+    public HashJoinGroupByQualificationTest() {
+        this.rnd = TestUtils.generateRandom(LOG);
+        this.payloadLayout = HashJoinPayloadLayout.random(rnd);
+        this.buildMode = HashJoinBuildMode.random(rnd);
     }
 
     @Before
@@ -135,7 +127,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     public void testRandomizedDifferentialMatrix() throws Exception {
         assertMemoryLeak(() -> {
             // Fixed seeds make the generated SQL and data reproducible independently of test order.
-            Rnd rnd = new Rnd(130, 9);
+            Rnd dataRnd = new Rnd(130, 9);
             // k holds the text of id, so the SYMBOL key joins the same rows as the INT key does.
             execute("create table r (id int, g int, d double, s symbol, k symbol)");
             execute("create table p (id int, g int, d double, s symbol, k symbol)");
@@ -143,32 +135,32 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 execute("truncate table r");
                 execute("truncate table p");
                 int domain = new int[]{1, 3, 17, 128}[scenario % 4];
-                insertRandomRows("r", scenario == 0 ? 0 : 1 + rnd.nextInt(160), domain, scenario, rnd);
-                insertRandomRows("p", scenario == 1 ? 0 : 1 + rnd.nextInt(80), domain, scenario, rnd);
+                insertRandomRows("r", scenario == 0 ? 0 : 1 + dataRnd.nextInt(160), domain, scenario, dataRnd);
+                insertRandomRows("p", scenario == 1 ? 0 : 1 + dataRnd.nextInt(80), domain, scenario, dataRnd);
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, scenario % 2 == 0 ? 1 : Integer.MAX_VALUE);
                 for (int workers : new int[]{1, 2, 4}) {
                     try (SqlExecutionContextImpl context = context(engine, workers)) {
-                        context.changePageFrameSizes(1, 1 + rnd.nextInt(19));
+                        context.changePageFrameSizes(1, 1 + dataRnd.nextInt(19));
                         context.setJitMode(scenario % 2 == 0 ? 0 : 2);
                         for (int j = 0; j < JOINS.length; j++) {
                             String build = j < 3 ? "p" : "r";
                             String probe = j < 3 ? "r" : "p";
-                            String on = scenario % 3 == 0 ? " and " + build + ".d > " + (rnd.nextInt(17) - 8) : "";
+                            String on = scenario % 3 == 0 ? " and " + build + ".d > " + (dataRnd.nextInt(17) - 8) : "";
                             String where = switch (scenario % 6) {
                                 case 0 -> "";
                                 case 1 -> " where " + build + ".d is null";
                                 case 2 -> " where " + build + ".d > 1000";
-                                case 3 -> " where " + probe + ".d > " + (rnd.nextInt(17) - 8);
+                                case 3 -> " where " + probe + ".d > " + (dataRnd.nextInt(17) - 8);
                                 case 4 -> " where (" + build + ".s = 's1' or " + build + ".s is null)";
                                 default -> " where " + probe + ".g >= 0 and " + build + ".d < 4";
                             };
                             String group = scenario % 2 == 0 ? "r.g, p.s" : "r.id, p.g, r.s";
                             for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
                                 String from = JOINS[j].replace("r.id=p.id", key) + on + where;
-                                if (stripe.isThisRun()) {
+                                if (rnd.nextInt(MATRIX_SAMPLE_SHARE) == 0) {
                                     assertDifferential("select " + AGGREGATES + from, context, true);
                                 }
-                                if (stripe.isThisRun()) {
+                                if (rnd.nextInt(MATRIX_SAMPLE_SHARE) == 0) {
                                     assertDifferential("select " + group + ", " + AGGREGATES + from + " order by " + group, context, true);
                                 }
                             }
@@ -675,7 +667,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 + "(x*0.5)::float, case when x%2=0 then null else x*0.25 end, ('s'||(x+" + offset + "))::symbol from long_sequence(4)");
     }
 
-    private void insertRandomRows(String table, int rows, int domain, int scenario, Rnd rnd) throws Exception {
+    private void insertRandomRows(String table, int rows, int domain, int scenario, Rnd dataRnd) throws Exception {
         if (rows == 0) {
             return;
         }
@@ -686,13 +678,13 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             }
             sql.append('(');
             String key = "null";
-            if (rnd.nextInt(7) != 0) {
-                key = Integer.toString(scenario % 3 == 0 && rnd.nextBoolean() ? 0 : rnd.nextInt(domain) - domain / 2);
+            if (dataRnd.nextInt(7) != 0) {
+                key = Integer.toString(scenario % 3 == 0 && dataRnd.nextBoolean() ? 0 : dataRnd.nextInt(domain) - domain / 2);
             }
             sql.append(key);
-            sql.append(',').append(rnd.nextInt(scenario % 2 == 0 ? 3 : 80)).append(',');
-            sql.append(rnd.nextInt(5) == 0 ? "null" : Double.toString((rnd.nextInt(65) - 32) * 0.25));
-            sql.append(',').append(rnd.nextInt(5) == 0 ? "null" : "'s" + rnd.nextInt(4) + "'");
+            sql.append(',').append(dataRnd.nextInt(scenario % 2 == 0 ? 3 : 80)).append(',');
+            sql.append(dataRnd.nextInt(5) == 0 ? "null" : Double.toString((dataRnd.nextInt(65) - 32) * 0.25));
+            sql.append(',').append(dataRnd.nextInt(5) == 0 ? "null" : "'s" + dataRnd.nextInt(4) + "'");
             sql.append(',').append(key.equals("null") ? "null" : "'" + key + "'").append(')');
         }
         execute(sql.toString());

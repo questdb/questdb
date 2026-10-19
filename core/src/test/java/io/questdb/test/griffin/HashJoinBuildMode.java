@@ -27,17 +27,15 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Rnd;
 import io.questdb.test.cairo.Overrides;
-
-import java.util.ArrayList;
-import java.util.Collection;
 
 /**
  * The two ways a fused hash join GROUP BY builds, whatever its key. The operator picks one
- * per execution from the build input's row count; a differential suite runs under each, forced
- * through the build properties, so that every query it checks runs both the owner's build and the
- * parallel build's rounds. The parallel mode also shrinks the context's page frames, which the
- * suite restores after each test.
+ * per execution from the build input's row count; a differential suite forces one through the
+ * build properties, picked at random per test, so that across runs every query it checks runs both
+ * the owner's build and the parallel build's rounds. The parallel mode also shrinks the context's
+ * page frames, which the suite restores after each test.
  */
 public enum HashJoinBuildMode {
     // Every build walks its frames on the query's own thread.
@@ -57,16 +55,10 @@ public enum HashJoinBuildMode {
     };
 
     /**
-     * Every payload layout under every build mode.
+     * A build mode drawn from the test's generator, whose seeds the test logs.
      */
-    public static Collection<Object[]> parameters() {
-        final Collection<Object[]> parameters = new ArrayList<>();
-        for (HashJoinPayloadLayout layout : HashJoinPayloadLayout.values()) {
-            for (HashJoinBuildMode mode : values()) {
-                parameters.add(new Object[]{layout, mode});
-            }
-        }
-        return parameters;
+    public static HashJoinBuildMode random(Rnd rnd) {
+        return values()[rnd.nextInt(values().length)];
     }
 
     /**

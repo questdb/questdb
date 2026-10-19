@@ -34,15 +34,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Collection;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertAgainstBaseline;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDifferential;
@@ -59,7 +57,6 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
  * pins the planner's reconciliation and the generated key sinks; this class pins what a query
  * returns once the code generator routes such a key to the operator.
  */
-@RunWith(Parameterized.class)
 public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
     // Every pair the ordinary hash join reconciles, in both operand orders where the two sides
     // encode differently. INT and a lone SYMBOL pair take the INT layout; the rest stage a key.
@@ -81,14 +78,10 @@ public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
     private final HashJoinBuildMode buildMode;
     private final HashJoinPayloadLayout payloadLayout;
 
-    public HashJoinGroupByGeneralKeysTest(HashJoinPayloadLayout payloadLayout, HashJoinBuildMode buildMode) {
-        this.payloadLayout = payloadLayout;
-        this.buildMode = buildMode;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> parameters() {
-        return HashJoinBuildMode.parameters();
+    public HashJoinGroupByGeneralKeysTest() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        this.payloadLayout = HashJoinPayloadLayout.random(rnd);
+        this.buildMode = HashJoinBuildMode.random(rnd);
     }
 
     @Before

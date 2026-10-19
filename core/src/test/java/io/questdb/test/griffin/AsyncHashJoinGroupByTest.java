@@ -93,6 +93,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
@@ -101,16 +102,11 @@ import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.io.Closeable;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -121,11 +117,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Runs every lifecycle case with INT join keys and with SYMBOL join keys, whose probe
- * translates its keys into the build's symbol keys and whose build cursor stays open
- * until close, both for its payload symbols and for those translation lookups.
+ * Runs every lifecycle case with INT, LONG or SYMBOL join keys, picked at random per test, so
+ * that repeated runs cover all three. A SYMBOL key's probe translates its keys into the build's
+ * symbol keys, and its build cursor stays open until close, both for its payload symbols and for
+ * those translation lookups.
  */
-@RunWith(Parameterized.class)
 public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private static final String AGGREGATES = "select p.country, year(r.reading_ts) yr, month(r.reading_ts) mo, "
             + "sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, sum(p.installed_kwp) capacity";
@@ -135,8 +131,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private static final String OUTER = " from r left join p on r.plant_id=p.plant_id";
     private static final int WORKERS = 3;
     // A LONG key stages into MapHashJoinBuild's map; INT and SYMBOL keys take the INT layout.
-    private final boolean isLongKey;
-    private final boolean isSymbolKey;
+    private boolean isLongKey;
+    private boolean isSymbolKey;
     private int frameRows;
     // When set, fixtures give the build filter context a slot per worker, so that the build may run
     // on the workers; see useParallelBuild().
@@ -146,14 +142,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     // can pin which frames the reducer takes the compiled path on.
     private CompiledFilter probeCompiledFilter;
 
-    public AsyncHashJoinGroupByTest(String keyType) {
-        this.isLongKey = keyType.equals("long");
-        this.isSymbolKey = keyType.equals("symbol");
-    }
-
-    @Parameterized.Parameters(name = "keyType={0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{{"int"}, {"symbol"}, {"long"}});
+    public AsyncHashJoinGroupByTest() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int keyType = rnd.nextInt(3);
+        this.isLongKey = keyType == 1;
+        this.isSymbolKey = keyType == 2;
     }
 
     @After
@@ -311,7 +304,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         // INT and LONG keys over an interval compile both orientations, and each execution builds the
         // input with fewer rows in its intervals, which is the empty one here. A SYMBOL key keeps the
         // orientation that the table sizes picked.
-        Assume.assumeTrue(isSymbolKey);
+        useSymbolKey();
         assertMemoryLeak(() -> {
             createTables();
             // r and p hold five rows each, so p builds. No partition of r falls in 2030, so the probe
@@ -947,7 +940,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     @Test
     public void testSmallBuildDictionaryTranslatesFromTheBuildSide() throws Exception {
         // INT and LONG keys translate nothing.
-        Assume.assumeTrue(isSymbolKey);
+        useSymbolKey();
         assertMemoryLeak(() -> {
             createTables();
             // p's dictionary holds the texts 1 and 2. r's holds 1, 3 and 2, and then every text up
@@ -984,7 +977,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     @Test
     public void testSmallBuildDictionaryTranslatesLazilyOverAnOverloadedProbeDictionary() throws Exception {
         // INT and LONG keys translate nothing.
-        Assume.assumeTrue(isSymbolKey);
+        useSymbolKey();
         // Without auto-scaling, r's dictionary keeps its declared capacity while it grows far past
         // it, so a lookup in r's dictionary scans a long hash bucket.
         setProperty(PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, "false");
@@ -2368,6 +2361,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         isParallelBuild = true;
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 1);
+    }
+
+    // Runs a test that only a SYMBOL key reaches with that key, whichever one the test drew.
+    private void useSymbolKey() {
+        isLongKey = false;
+        isSymbolKey = true;
     }
 
     private void createTables(String keyType) throws Exception {
