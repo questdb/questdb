@@ -34,6 +34,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjIntHashMap;
@@ -227,10 +228,26 @@ public final class PreparedFunctions implements Mutable {
                 leaf.setColumnId(BoundExpressionRewriter.projectionColumn(projection, leaf.getColumnId(), leaf.getType()).getColumnId());
             }
         }
-        describe(entry, replacement);
-        if (!entry.isRelocatable(projection.getChild().getOutput(), null)) {
-            entry.isRebuildRequired = true;
+        describeRelocated(entry, replacement, projection.getChild().getOutput());
+    }
+
+    /**
+     * Makes the entry describe the replacement of its expression that reads each column the map holds under its
+     * mapped id over {@code input}, renaming its open leaves alike; a leaf whose static symbol table capability the
+     * input does not share requires the root to be rebuilt.
+     */
+    public void retarget(Entry entry, BoundExpression replacement, IntIntHashMap columnIds, OutputSchema input) {
+        assert hasOnlyReadLeaves(entry) : "prepared leaf is not read by its description";
+        for (int i = 0, n = entry.leaves.size(); i < n; i++) {
+            final BindableColumn leaf = entry.leaves.getQuick(i);
+            if (leaf.isOpen()) {
+                final int columnId = columnIds.get(leaf.getColumnId());
+                if (columnId >= 0) {
+                    leaf.setColumnId(columnId);
+                }
+            }
         }
+        describeRelocated(entry, replacement, input);
     }
 
     /**
@@ -238,6 +255,13 @@ public final class PreparedFunctions implements Mutable {
      */
     public Function root(Entry entry) {
         return resources.function(entry.slot);
+    }
+
+    private void describeRelocated(Entry entry, BoundExpression replacement, OutputSchema input) {
+        describe(entry, replacement);
+        if (!entry.isRelocatable(input, null)) {
+            entry.isRebuildRequired = true;
+        }
     }
 
     private boolean isOwned(Entry entry) {

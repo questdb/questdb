@@ -145,9 +145,8 @@ final class NegativeLimitReversal implements OptimiserPass {
         for (int i = 0, n = ids.size(); i < n; i++) {
             int sourceId = ids.getQuick(i);
             for (LogicalPlan p = lowerTop; p != source && sourceId >= 0; p = p.inputAt(0)) {
-                final int index = p.getOutput().getColumnIndexById(sourceId);
-                sourceId = index >= 0 && ((ProjectPlan) p).getExpressions().getQuick(index) instanceof ColumnExpression column
-                        && column.isDirectReference() && !column.isCast() ? column.getColumnId() : -1;
+                final ColumnExpression column = LogicalPlans.passedColumn((ProjectPlan) p, sourceId);
+                sourceId = column != null && column.isDirectReference() && !column.isCast() ? column.getColumnId() : -1;
             }
             if (sourceId < 0) {
                 return plan;

@@ -172,10 +172,9 @@ final class LatestByFactoryGenerator {
             @Nullable Function filter,
             IntList columnIndexes,
             IntList columnSizeShifts,
-            ScanPlan.IndexRead indexRead,
-            boolean hasNullableKey,
-            boolean isBackupSuppressed
+            ScanPlan scan
     ) {
+        final ScanPlan.IndexRead indexRead = scan.getIndexRead();
         if (indexRead == ScanPlan.IndexRead.NONE) {
             return new LatestByDeferredListValuesFilteredRecordCursorFactory(configuration,
                     metadata, frames, keyIndex, keys, excludedKeys, filter, columnIndexes, columnSizeShifts);
@@ -194,12 +193,12 @@ final class LatestByFactoryGenerator {
             Misc.freeObjList(keys, th);
             throw th;
         }
-        final RecordCursorFactory backup = !isBackupSuppressed && hasNullableKey
+        final RecordCursorFactory backup = scan.hasCoveringBackup()
                 ? new LatestByValuesIndexedFilteredRecordCursorFactory(configuration, metadata,
                 frames, keyIndex, keys, filter, columnIndexes, columnSizeShifts)
                 : null;
         return new CoveringIndexRecordCursorFactory(metadata, frames, readerKeyIndex, null, columnIndexes,
-                coveringMapping, keys, true, filter, null, backup, backup == null && hasNullableKey);
+                coveringMapping, keys, true, filter, null, backup, scan.isCoveringBackupSuppressed());
     }
 
     private RecordCursorFactory generateLatestByPrepared(GenerationFrame frame, RecordCursorFactory factory, int timestampIndex,
@@ -230,10 +229,9 @@ final class LatestByFactoryGenerator {
             @Nullable Function filter,
             IntList columnIndexes,
             IntList columnSizeShifts,
-            ScanPlan.IndexRead indexRead,
-            boolean canKeyBeNull,
-            boolean isBackupSuppressed
+            ScanPlan scan
     ) {
+        final ScanPlan.IndexRead indexRead = scan.getIndexRead();
         if (indexRead == ScanPlan.IndexRead.NONE) {
             return new LatestByValueDeferredFilteredRecordCursorFactory(configuration, metadata, frames,
                     keyIndex, key, filter, columnIndexes, columnSizeShifts);
@@ -251,11 +249,11 @@ final class LatestByFactoryGenerator {
             Misc.free(key, th);
             throw th;
         }
-        final RecordCursorFactory backup = !isBackupSuppressed && canKeyBeNull
+        final RecordCursorFactory backup = scan.hasCoveringBackup()
                 ? buildLatestByIndexScan(configuration, metadata, frames, keyIndex, key, filter, columnIndexes, columnSizeShifts)
                 : null;
         return new CoveringIndexRecordCursorFactory(metadata, frames, readerKeyIndex, key, columnIndexes, coveringMapping,
-                null, true, filter, null, backup, backup == null && canKeyBeNull);
+                null, true, filter, null, backup, scan.isCoveringBackupSuppressed());
     }
 
     /**
@@ -325,13 +323,12 @@ final class LatestByFactoryGenerator {
             throw th;
         }
         final int keyIndex = keyColumnIds.size() == 0 ? -1 : scan.getOutput().getColumnIndexById(keyColumnIds.getQuick(0));
-        final boolean isBackupSuppressed = scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING);
         return switch (scan.getAccessPath()) {
             case LATEST_BY_VALUE ->
                     generateLatestBySingleKey(table, queryMetadata, frames, keyIndex, keys.getQuick(0), filter,
-                            columnIndexes, columnSizeShifts, scan.getIndexRead(), scan.hasNullableKey(), isBackupSuppressed);
+                            columnIndexes, columnSizeShifts, scan);
             case LATEST_BY_VALUES -> generateLatestByKeyList(table, queryMetadata, frames, keyIndex, keys, excludedKeys,
-                    filter, columnIndexes, columnSizeShifts, scan.getIndexRead(), scan.hasNullableKey(), isBackupSuppressed);
+                    filter, columnIndexes, columnSizeShifts, scan);
             case LATEST_BY_ALL_INDEXED ->
                     new LatestByAllIndexedRecordCursorFactory(executionContext.getCairoEngine(), configuration,
                             queryMetadata, frames, keyIndex, columnIndexes, columnSizeShifts, tmpLongs);

@@ -218,8 +218,7 @@ final class UpdateBinder implements Mutable {
      */
     ScanPlan bindTarget(QueryModel source, ExpressionNode tableName, TableToken token, SqlExecutionContext executionContext) throws SqlException {
         if (token.isView()) {
-            throw SqlException.position(tableName.position).put("cannot modify ").put(token.getType().keyword())
-                    .put(" [view=").put(token.getTableName()).put(']');
+            throw SqlException.cannotModify(tableName.position, token);
         }
         try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token, source.getMetadataVersion())) {
             final ScanPlan scan = binder.bindScan(source, tableName, metadata.getTableToken(), metadata.getMetadataVersion(), metadata);

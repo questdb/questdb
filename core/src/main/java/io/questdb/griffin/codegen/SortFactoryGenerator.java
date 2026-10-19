@@ -35,7 +35,6 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -51,6 +50,7 @@ import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -63,12 +63,9 @@ import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 final class SortFactoryGenerator {
@@ -98,6 +95,15 @@ final class SortFactoryGenerator {
         this.recordComparatorCompiler = recordComparatorCompiler;
     }
 
+    // Consumes the input and limit functions.
+    private static RecordCursorFactory applyLimit(RecordCursorFactory base, @Nullable LimitPlan limit, @Nullable Function lo, @Nullable Function hi) {
+        if (lo == null) {
+            return base;
+        }
+        assert limit != null;
+        return new LimitRecordCursorFactory(base, lo, hi, limit.getPosition(), null);
+    }
+
     private static int sourceIndex(@Nullable ProjectPlan projection, OutputSchema sorted, OutputSchema source, int sortedIndex) {
         final int columnId = projection == null ? sorted.getColumnId(sortedIndex)
                 : ((ColumnExpression) projection.getExpressions().getQuick(sortedIndex)).getColumnId();
@@ -107,65 +113,57 @@ final class SortFactoryGenerator {
     // Consumes the input and optional limit functions on entry, including failure.
     RecordCursorFactory generate(GenerationFrame frame, SortPlan sort, RecordCursorFactory base, @Nullable LimitPlan limit, Function lo, Function hi)
             throws SqlException {
+        boolean isInputTransferred = false;
+        boolean isLimitTransferred = false;
         try {
             final SortPlan.Algorithm algorithm = sort.getAlgorithm();
-            if (algorithm != SortPlan.Algorithm.INPUT_ORDER) {
-                final OutputSchema input = sort.getChild().getOutput();
-                final ListColumnFilter keys = frame.listColumnFilterB;
-                keys.clear();
-                for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
-                    final int index = input.getColumnIndexById(sort.getColumnIds().getQuick(i));
-                    keys.add(sort.getDirections().getQuick(i) == SortDirection.DESCENDING ? -index - 1 : index + 1);
+            if (algorithm == SortPlan.Algorithm.INPUT_ORDER) {
+                isInputTransferred = true;
+                isLimitTransferred = true;
+                return applyLimit(base, limit, lo, hi);
+            }
+            final OutputSchema input = sort.getChild().getOutput();
+            final ListColumnFilter keys = frame.listColumnFilterB;
+            keys.clear();
+            for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
+                final int index = input.getColumnIndexById(sort.getColumnIds().getQuick(i));
+                keys.add(sort.getDirections().getQuick(i) == SortDirection.DESCENDING ? -index - 1 : index + 1);
+            }
+            final int firstKey = keys.getQuick(0);
+            final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(base.getMetadata());
+            metadata.setTimestampIndex(PhysicalProperties.timestampIndex(sort));
+            switch (algorithm) {
+                case LONG_TOP_K -> {
+                    assert limit != null;
+                    final long count = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
+                    isInputTransferred = true;
+                    return new LongTopKRecordCursorFactory(metadata, base, Math.abs(firstKey) - 1, (int) count, firstKey > 0);
                 }
-                final int firstKey = keys.getQuick(0);
-                final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(base.getMetadata());
-                metadata.setTimestampIndex(PhysicalProperties.timestampIndex(sort));
-                final RecordCursorFactory ownedBase = base;
-                switch (algorithm) {
-                    case LONG_TOP_K -> {
-                        assert limit != null;
-                        final long count = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
-                        base = null;
-                        return new LongTopKRecordCursorFactory(metadata, ownedBase, Math.abs(firstKey) - 1, (int) count, firstKey > 0);
-                    }
-                    case PARALLEL_FILTERED_TOP_K, PARALLEL_TOP_K -> {
-                        final IllegalStateException failure = new IllegalStateException("parallel top-K generates its own input");
-                        base = null;
-                        Misc.free(ownedBase, failure);
-                        throw failure;
-                    }
-                    case LIMITED, PRESORTED_LIMITED -> {
-                        final Function ownedLo = lo;
-                        final Function ownedHi = hi;
-                        base = null;
-                        lo = null;
-                        hi = null;
-                        return generateSort(metadata, ownedBase, keys, ownedLo, ownedHi,
-                                algorithm == SortPlan.Algorithm.PRESORTED_LIMITED ? Math.abs(firstKey) - 1 : -1,
-                                configuration.isSqlOrderBySortEnabled(), false);
-                    }
-                    default -> {
-                        base = null;
-                        base = generateSort(metadata, ownedBase, keys, null, null, -1, configuration.isSqlOrderBySortEnabled(),
-                                algorithm == SortPlan.Algorithm.MATERIALIZED);
-                    }
+                case PARALLEL_FILTERED_TOP_K, PARALLEL_TOP_K ->
+                        throw new IllegalStateException("parallel top-K generates its own input");
+                case LIMITED, PRESORTED_LIMITED -> {
+                    isInputTransferred = true;
+                    isLimitTransferred = true;
+                    return generateSort(metadata, base, keys, lo, hi,
+                            algorithm == SortPlan.Algorithm.PRESORTED_LIMITED ? Math.abs(firstKey) - 1 : -1,
+                            configuration.isSqlOrderBySortEnabled(), false);
+                }
+                default -> {
+                    isInputTransferred = true;
+                    final RecordCursorFactory sorted = generateSort(metadata, base, keys, null, null, -1, configuration.isSqlOrderBySortEnabled(),
+                            algorithm == SortPlan.Algorithm.MATERIALIZED);
+                    isLimitTransferred = true;
+                    return applyLimit(sorted, limit, lo, hi);
                 }
             }
-            if (lo == null) {
-                return base;
-            }
-            assert limit != null;
-            final RecordCursorFactory limited = base;
-            final Function ownedLo = lo;
-            final Function ownedHi = hi;
-            base = null;
-            lo = null;
-            hi = null;
-            return new LimitRecordCursorFactory(limited, ownedLo, ownedHi, limit.getPosition(), null);
         } catch (Throwable th) {
-            Misc.free(base, th);
-            Misc.free(lo, th);
-            Misc.free(hi, th);
+            if (!isInputTransferred) {
+                Misc.free(base, th);
+            }
+            if (!isLimitTransferred) {
+                Misc.free(lo, th);
+                Misc.free(hi, th);
+            }
             throw th;
         }
     }
@@ -183,6 +181,7 @@ final class SortFactoryGenerator {
         final PreparedFilter prepared = frame.pushPreparedFilter(isFilterStolen);
         final RecordCursorFactory topK;
         RecordCursorFactory leaf = null;
+        boolean isLeafTransferred = false;
         try {
             leaf = codeGenerator.generateSource(frame, source, prepared, executionContext);
             final long count = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
@@ -204,22 +203,15 @@ final class SortFactoryGenerator {
             if (isFilterStolen) {
                 filterGenerator.prepareParallel(frame, prepared, leaf, executionContext);
             }
-            final RecordCursorFactory ownedLeaf = leaf;
-            leaf = null;
-            final Function filter = isFilterStolen ? prepared.getFilter() : null;
-            final IntHashSet filterColumns = isFilterStolen ? prepared.getColumns() : null;
-            final ObjList<Function> workerFilters = isFilterStolen ? prepared.getWorkers() : null;
-            final CompiledFilter compiledFilter = isFilterStolen ? prepared.getCompiledFilter() : null;
-            final MemoryCARW bindVarMemory = isFilterStolen ? prepared.getBindVarMemory() : null;
-            final ObjList<Function> bindVarFunctions = isFilterStolen ? prepared.getBindVarFunctions() : null;
-            if (isFilterStolen) {
-                prepared.adopt();
-            }
+            final AsyncFilterResources filterResources = isFilterStolen ? prepared.adopt() : new AsyncFilterResources();
+            isLeafTransferred = true;
             topK = new AsyncTopKRecordCursorFactory(executionContext.getCairoEngine(), configuration, executionContext.getMessageBus(),
-                    metadata, ownedLeaf, filter, filterColumns, workerFilters, compiledFilter, bindVarMemory, bindVarFunctions,
-                    recordComparatorCompiler, keys, leafMetadata, count, executionContext.getSharedQueryWorkerCount());
+                    metadata, leaf, filterResources, recordComparatorCompiler, keys, leafMetadata, count,
+                    executionContext.getSharedQueryWorkerCount());
         } catch (Throwable th) {
-            Misc.free(leaf, th);
+            if (!isLeafTransferred) {
+                Misc.free(leaf, th);
+            }
             frame.popPreparedFilter(prepared, th);
             throw th;
         }

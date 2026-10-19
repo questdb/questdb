@@ -38,6 +38,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -720,7 +721,7 @@ final class SetOperationFactoryGenerator {
         final RecordCursorFactory left = codeGenerator.generate(frame, operation.getLeft(), executionContext);
         RecordCursorFactory right;
         try {
-            final LogicalPlan leftBranch = SqlCodeGenerator.unwrapColumnProjections(operation.getLeft());
+            final LogicalPlan leftBranch = LogicalPlans.unwrapColumnProjections(operation.getLeft());
             final int leftHead = leftBranch instanceof SetOperationPlan ? frame.setOperationPlans.indexOf(leftBranch) : -1;
             frame.setOperationPlans.add(operation);
             frame.setOperationHeads.add(leftHead >= 0 ? frame.setOperationHeads.getQuick(leftHead) : left);

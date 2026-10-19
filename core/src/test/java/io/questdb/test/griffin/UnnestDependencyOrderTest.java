@@ -78,9 +78,9 @@ public class UnnestDependencyOrderTest extends AbstractCairoTest {
                 final JoinInput dependent = input(join, "u");
                 final JoinInput ordinary = input(join, "s");
                 Assert.assertTrue(join.getOrderedInputs().indexOf(dependent) < join.getOrderedInputs().indexOf(ordinary));
-                Assert.assertEquals(1, ordinary.getMasterKeyColumnIds().size());
-                Assert.assertEquals(dependent.getUnnest().getOutput().getColumnId(0), ordinary.getMasterKeyColumnIds().getQuick(0));
-                Assert.assertEquals(ordinary.getSourceOutput().getColumnId(0), ordinary.getSlaveKeyColumnIds().getQuick(0));
+                Assert.assertEquals(1, ordinary.getKeys().size());
+                Assert.assertEquals(dependent.getUnnest().getOutput().getColumnId(0), ordinary.getKeys().getQuick(0).getMasterColumnId());
+                Assert.assertEquals(ordinary.getSourceOutput().getColumnId(0), ordinary.getKeys().getQuick(0).getSlaveColumnId());
             }
             assertQuery(sql).noLeakCheck().returns("""
                     id\tvalue\tv

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -46,8 +47,8 @@ import java.io.Closeable;
  * node, with the pattern and residual a symbol pattern filter builds its per-worker clones from, and, once
  * {@link FilterFactoryGenerator#prepareParallel} ran, the column set it reads, its per-worker clones and its compiled
  * JIT filter with the bind variables it reads; a parallel HORIZON JOIN sets only the clones. It owns every resource
- * it holds until the consumer's constructor adopts them, see {@link #adopt()}; {@link #close()} frees what it still
- * holds.
+ * it holds until the consumer's constructor adopts them as one value, see {@link #adopt()}; {@link #close()} frees
+ * what it still holds.
  */
 final class PreparedFilter implements Closeable {
     private ObjList<Function> bindVarFunctions;
@@ -71,26 +72,32 @@ final class PreparedFilter implements Closeable {
         failure = Misc.freeBestEffort(failure, bindVarMemory);
         failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
         failure = Misc.freeBestEffort(failure, filter);
-        adopt();
+        forget();
         CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
-     * Hands every resource to the constructor that consumes them, including on its failure.
+     * Hands every resource to the constructor that consumes them, including on its failure, as the value it takes them
+     * from.
      */
-    void adopt() {
-        bindVarFunctions = null;
-        bindVarMemory = null;
-        columns = null;
-        compiledCountOnlyFilter = null;
+    AsyncFilterResources adopt() {
+        final AsyncFilterResources resources = new AsyncFilterResources(compiledFilter, compiledCountOnlyFilter, bindVarMemory,
+                bindVarFunctions, filter, columns, workers);
+        forget();
+        return resources;
+    }
+
+    /**
+     * Frees the JIT filters and the bind variables they read, best effort, and returns the failure to free them.
+     */
+    Throwable freeJit() {
+        Throwable failure = Misc.freeBestEffort(null, compiledFilter);
+        failure = Misc.freeBestEffort(failure, compiledCountOnlyFilter);
+        failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
         compiledFilter = null;
-        filter = null;
-        input = null;
-        isJitAllowed = false;
-        pattern = null;
-        patternResidual = null;
-        predicate = null;
-        workers = null;
+        compiledCountOnlyFilter = null;
+        bindVarFunctions = null;
+        return failure;
     }
 
     ObjList<Function> getBindVarFunctions() {
@@ -183,5 +190,20 @@ final class PreparedFilter implements Closeable {
 
     void setWorkers(ObjList<Function> workers) {
         this.workers = workers;
+    }
+
+    private void forget() {
+        bindVarFunctions = null;
+        bindVarMemory = null;
+        columns = null;
+        compiledCountOnlyFilter = null;
+        compiledFilter = null;
+        filter = null;
+        input = null;
+        isJitAllowed = false;
+        pattern = null;
+        patternResidual = null;
+        predicate = null;
+        workers = null;
     }
 }

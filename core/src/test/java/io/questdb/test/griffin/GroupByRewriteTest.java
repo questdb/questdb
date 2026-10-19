@@ -551,6 +551,85 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumNormalisationWithDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            createSumNormalisationTable();
+            assertQuery("SELECT DISTINCT sum(x * 2) a, sum(x + 1) b, sum(x - 1) c FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("values: [sum(x),count(x)]")
+                    .returns("""
+                            a\tb\tc
+                            16\t11\t5
+                            """);
+            assertQuery("SELECT DISTINCT sum(x + 1), sum(nocol - 1) FROM tab")
+                    .noLeakCheck()
+                    .fails(32, "Invalid column: nocol");
+        });
+    }
+
+    @Test
+    public void testSumNormalisationWithGroupByAndOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (k SYMBOL, i INT)");
+            execute("INSERT INTO g VALUES ('a', 1), ('b', null), ('a', 3), ('b', 4), ('a', null)");
+            assertQuery("SELECT k, sum(i * 2) a, sum(i + 1) b, sum(i - 1) c FROM g GROUP BY k ORDER BY sum(i + 1) DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("values: [sum(i),count(i)]")
+                    .returns("""
+                            k\ta\tb\tc
+                            a\t8\t6\t2
+                            b\t8\t5\t3
+                            """);
+            assertQuery("SELECT k, sum(i * 2) a FROM g GROUP BY k ORDER BY sum(i - 1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ta
+                            a\t8
+                            b\t8
+                            """);
+            assertQuery("SELECT k, sum(nocol * 2) FROM g GROUP BY k")
+                    .noLeakCheck()
+                    .fails(14, "Invalid column: nocol");
+        });
+    }
+
+    @Test
+    public void testSumNormalisationWithSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('2024-01-01T00:00:00', 1), ('2024-01-01T00:30:00', 2), ('2024-01-01T02:00:00', 3)");
+            assertQuery("SELECT ts, sum(i * 2) a, sum(i + 1) b, sum(i - 1) c FROM s SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("values: [sum(i),count(i)]")
+                    .returns("""
+                            ts\ta\tb\tc
+                            2024-01-01T00:00:00.000000Z\t6\t5\t1
+                            2024-01-01T02:00:00.000000Z\t6\t4\t2
+                            """);
+            assertQuery("SELECT ts, sum(i * 2) a, sum(i + 1) b, sum(i - 1) c FROM s SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("values: [sum(i*2),sum(i+1),sum(i-1)]")
+                    .returns("""
+                            ts\ta\tb\tc
+                            2024-01-01T00:00:00.000000Z\t6\t5\t1
+                            2024-01-01T01:00:00.000000Z\tnull\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\t6\t4\t2
+                            """);
+            assertQuery("SELECT ts, sum(nocol + 1) FROM s SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .fails(15, "Invalid column: nocol");
+        });
+    }
+
+    @Test
     public void testSumOfAddition1() throws Exception {
         assertAggQuery("""
                         r

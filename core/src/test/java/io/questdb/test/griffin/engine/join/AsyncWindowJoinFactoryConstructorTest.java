@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntHashSet;
@@ -307,12 +308,7 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
                 new ArrayColumnTypes(),  // valueTypes
                 groupByFunctions,        // groupByFunctions (empty is a valid 0-function updater)
                 null,                    // perWorkerGroupByFunctions
-                null,                    // compiledMasterFilter
-                null,                    // bindVarMemory
-                null,                    // bindVarFunctions
-                masterFilter,
-                perWorkerMasterFilters,
-                new IntHashSet(),        // filterUsedColumnIndexes
+                new AsyncFilterResources(null, null, null, null, masterFilter, new IntHashSet(), perWorkerMasterFilters),
                 null,                    // argumentColumnIndex
                 reduceTaskFactory,
                 1                        // workerCount
@@ -359,12 +355,7 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
                 new ArrayColumnTypes(),  // valueTypes
                 groupByFunctions,        // groupByFunctions
                 null,                    // perWorkerGroupByFunctions
-                null,                    // compiledMasterFilter
-                null,                    // bindVarMemory
-                null,                    // bindVarFunctions
-                masterFilter,
-                perWorkerMasterFilters,
-                new IntHashSet(),        // filterUsedColumnIndexes
+                new AsyncFilterResources(null, null, null, null, masterFilter, new IntHashSet(), perWorkerMasterFilters),
                 null,                    // argumentColumnIndex
                 reduceTaskFactory,
                 1                        // workerCount

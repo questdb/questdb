@@ -285,7 +285,7 @@ public final class SymbolKeyExtractor implements Mutable {
             return;
         }
         if (call.isAnd()) {
-            // The intrinsic parser examines the right leaf before the left subtree.
+            // A right leaf comes before its left subtree, so the last conjunct of a chain is the first key candidate.
             if (call.argumentAt(1) instanceof FunctionExpression nested && nested.isAnd()) {
                 analyze(call.argumentAt(0));
                 analyze(call.argumentAt(1));

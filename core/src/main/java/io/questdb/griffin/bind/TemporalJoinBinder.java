@@ -46,6 +46,7 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
+import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -65,7 +66,6 @@ final class TemporalJoinBinder {
     private final AggregateBinder aggregateBinder;
     private final SqlBinder binder;
     private final BindContext ctx;
-    private final OutputSchema emptySchema;
     private final JoinBinder joinBinder;
     private final OrderBinder orderBinder;
     private final WindowBinder windowBinder;
@@ -73,7 +73,6 @@ final class TemporalJoinBinder {
     TemporalJoinBinder(
             BindContext ctx,
             SqlBinder binder,
-            OutputSchema emptySchema,
             OrderBinder orderBinder,
             AggregateBinder aggregateBinder,
             JoinBinder joinBinder,
@@ -81,7 +80,6 @@ final class TemporalJoinBinder {
     ) {
         this.ctx = ctx;
         this.binder = binder;
-        this.emptySchema = emptySchema;
         this.orderBinder = orderBinder;
         this.aggregateBinder = aggregateBinder;
         this.joinBinder = joinBinder;
@@ -353,7 +351,7 @@ final class TemporalJoinBinder {
             return bindHorizonKeys(criteria.rhs, slaveFilter, step, master, masterAlias, slave, slaveAlias);
         }
         if (isSlavePredicate(criteria, master, masterAlias, slaveAlias)) {
-            return joinBinder.combineJoinPredicates(slaveFilter, criteria);
+            return ctx.combinePredicates(slaveFilter, criteria);
         }
         if (criteria.paramCount == 2 && Chars.equals(criteria.token, '=')
                 && criteria.lhs.type == ExpressionNode.LITERAL && criteria.rhs.type == ExpressionNode.LITERAL) {
@@ -363,9 +361,7 @@ final class TemporalJoinBinder {
             final int masterIndex = FunctionBinder.findColumn(masterNode, master, masterAlias);
             final int slaveIndex = FunctionBinder.findColumn(slaveNode, slave, slaveAlias);
             if (masterIndex >= 0 && slaveIndex >= 0) {
-                step.getMasterKeyColumnIds().add(master.getColumnId(masterIndex));
-                step.getSlaveKeyColumnIds().add(slave.getColumnId(slaveIndex));
-                step.getKeyPositions().add(slaveNode.position);
+                step.addKey(master.getColumnId(masterIndex), slave.getColumnId(slaveIndex), slaveNode.position);
                 return slaveFilter;
             }
         }
@@ -516,24 +512,8 @@ final class TemporalJoinBinder {
         if (hasColumnReference(expression)) {
             return -1;
         }
-        final BoundExpression bound = ctx.functionBinder.bind(expression, emptySchema, null, executionContext);
-        if (!(bound instanceof ConstantExpression constant)) {
-            return -1;
-        }
-        final long value;
-        switch (ColumnType.tagOf(constant.getDataType())) {
-            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> value = constant.getLongValue();
-            case ColumnType.CHAR -> {
-                final long digit = (byte) (constant.getLongValue() - '0');
-                value = digit > -1 && digit < 10 ? digit : Numbers.LONG_NULL;
-            }
-            case ColumnType.NULL -> value = Numbers.LONG_NULL;
-            default -> throw SqlException.$(expression.position, "integer expression expected");
-        }
-        if (value < 0) {
-            throw SqlException.$(expression.position, "non-negative integer expression expected");
-        }
-        return value;
+        final BoundExpression bound = ctx.functionBinder.bind(expression, ctx.emptySchema, null, executionContext);
+        return bound instanceof ConstantExpression ? windowBinder.constantBoundValue(bound, expression.position) : -1;
     }
 
     private ExpressionNode windowJoinCriteria(QueryModel occurrence, CharSequence masterAlias, CharSequence slaveAlias) {
@@ -541,19 +521,11 @@ final class TemporalJoinBinder {
         final ObjList<ExpressionNode> shorthand = occurrence.getJoinColumns();
         for (int i = 0, n = shorthand.size(); i < n; i++) {
             final ExpressionNode column = shorthand.getQuick(i);
-            final ExpressionNode equality = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "=", 0, column.position);
-            equality.paramCount = 2;
-            equality.lhs = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, ctx.qualifiedJoinName(masterAlias, column.token), 0, column.position);
-            equality.rhs = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, ctx.qualifiedJoinName(slaveAlias, column.token), 0, column.position);
-            if (criteria == null) {
-                criteria = equality;
-            } else {
-                final ExpressionNode and = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "and", 0, column.position);
-                and.paramCount = 2;
-                and.lhs = criteria;
-                and.rhs = equality;
-                criteria = and;
-            }
+            final ExpressionNode equality = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0,
+                    ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, ctx.qualifiedJoinName(masterAlias, column.token), 0, column.position),
+                    ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, ctx.qualifiedJoinName(slaveAlias, column.token), 0, column.position),
+                    column.position);
+            criteria = ctx.combinePredicates(criteria, equality);
         }
         return criteria;
     }
@@ -815,9 +787,8 @@ final class TemporalJoinBinder {
             final ObjList<ExpressionNode> shorthand = occurrence.getJoinColumns();
             for (int k = 0, m = shorthand.size(); k < m; k++) {
                 final ExpressionNode column = shorthand.getQuick(k);
-                step.getMasterKeyColumnIds().add(masterOutput.getColumnId(ctx.bindColumnIndex(column, masterOutput, masterAlias)));
-                step.getSlaveKeyColumnIds().add(slaveOutput.getColumnId(ctx.bindColumnIndex(column, slaveOutput, slaveAlias)));
-                step.getKeyPositions().add(column.position);
+                step.addKey(masterOutput.getColumnId(ctx.bindColumnIndex(column, masterOutput, masterAlias)),
+                        slaveOutput.getColumnId(ctx.bindColumnIndex(column, slaveOutput, slaveAlias)), column.position);
             }
         }
         bindHorizonOffsets(plan, horizon, masterOutput.getColumnType(masterTimestampIndex),
@@ -825,10 +796,11 @@ final class TemporalJoinBinder {
         for (int s = 0, m = plan.getSlaves().size(); s < m; s++) {
             final HorizonJoinSlave step = plan.getSlaves().getQuick(s);
             final OutputSchema slaveOutput = step.getInput().getOutput();
-            for (int i = 0, n = step.getMasterKeyColumnIds().size(); i < n; i++) {
-                if (!LogicalPlans.isJoinKeyTypeCompatible(masterOutput.getColumnType(masterOutput.getColumnIndexById(step.getMasterKeyColumnIds().getQuick(i))),
-                        slaveOutput.getColumnType(slaveOutput.getColumnIndexById(step.getSlaveKeyColumnIds().getQuick(i))))) {
-                    throw SqlException.$(step.getKeyPositions().getQuick(i), "join column type mismatch");
+            for (int i = 0, n = step.getKeys().size(); i < n; i++) {
+                final JoinKey key = step.getKeys().getQuick(i);
+                if (!LogicalPlans.isJoinKeyTypeCompatible(masterOutput.getColumnType(masterOutput.getColumnIndexById(key.getMasterColumnId())),
+                        slaveOutput.getColumnType(slaveOutput.getColumnIndexById(key.getSlaveColumnId())))) {
+                    throw SqlException.$(key.getPosition(), "join column type mismatch");
                 }
             }
         }

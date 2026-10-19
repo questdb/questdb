@@ -29,6 +29,7 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ComparisonOperator;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
@@ -59,6 +60,7 @@ import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -85,18 +87,6 @@ public final class LogicalPlans {
     private LogicalPlans() {
     }
 
-    /**
-     * True when no expression depends on the order of the rows it is evaluated over, see {@link #isOrderIndependent}.
-     */
-    public static boolean areOrderIndependent(ObjList<? extends BoundExpression> expressions) {
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            if (!isOrderIndependent(expressions.getQuick(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     public static boolean canPushJoinFilter(JoinPlan join, int source, int lastInput) {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         return canPushJoinFilter(ordered, ordered.indexOf(join.getInputs().getQuick(source)), lastInput);
@@ -111,14 +101,8 @@ public final class LogicalPlans {
         if (position < 0 || position > lastPosition || steps.getQuick(position).getInput() == null) {
             return false;
         }
-        if (position > 0) {
-            switch (steps.getQuick(position).getJoinType()) {
-                case LEFT_OUTER, RIGHT_OUTER, FULL_OUTER, ASOF, LT, SPLICE -> {
-                    return false;
-                }
-                default -> {
-                }
-            }
+        if (position > 0 && steps.getQuick(position).getJoinType().isNulling()) {
+            return false;
         }
         for (int i = position + 1; i <= lastPosition; i++) {
             if (steps.getQuick(i).getJoinType().isMasterNulling()) {
@@ -157,7 +141,7 @@ public final class LogicalPlans {
     }
 
     public static void collectConjuncts(BoundExpression predicate, ObjList<BoundExpression> sink) {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
+        if (predicate instanceof FunctionExpression call && call.isAnd()) {
             collectConjuncts(call.argumentAt(0), sink);
             collectConjuncts(call.argumentAt(1), sink);
         } else {
@@ -212,11 +196,11 @@ public final class LogicalPlans {
         while (true) {
             switch (plan) {
                 case ProjectPlan project -> {
-                    final int index = project.getOutput().getColumnIndexById(id);
-                    if (index < 0) {
-                        throw new IllegalStateException("predicate column is outside its projection");
-                    }
-                    if (!(project.getExpressions().getQuick(index) instanceof ColumnExpression column)) {
+                    final ColumnExpression column = passedColumn(project, id);
+                    if (column == null) {
+                        if (project.getOutput().getColumnIndexById(id) < 0) {
+                            throw new IllegalStateException("predicate column is outside its projection");
+                        }
                         return plan;
                     }
                     id = column.getColumnId();
@@ -314,6 +298,19 @@ public final class LogicalPlans {
     public static int findJoinColumnSource(JoinPlan join, int columnId) {
         for (int i = 0, n = join.getInputs().size(); i < n; i++) {
             if (join.getInputs().getQuick(i).getSourceOutput().getColumnIndexById(columnId) >= 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The index of the first grouping key that is a reference to the column, or -1 when none is.
+     */
+    public static int groupingColumnIndex(GroupingPlan grouping, int columnId) {
+        final ObjList<BoundExpression> keys = grouping.getGroupingExpressions();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (keys.getQuick(i) instanceof ColumnExpression column && column.getColumnId() == columnId) {
                 return i;
             }
         }
@@ -437,9 +434,13 @@ public final class LogicalPlans {
     }
 
     public static boolean isColumnProjection(ProjectPlan project) {
-        if (project.hasUpdateConversions() || project.hasPrunedComputedColumns()) {
-            return false;
-        }
+        return !project.hasUpdateConversions() && !project.hasPrunedComputedColumns() && isColumnReferenceProjection(project);
+    }
+
+    /**
+     * True when every expression of the projection is a column reference, cast or not.
+     */
+    public static boolean isColumnReferenceProjection(ProjectPlan project) {
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression)) {
                 return false;
@@ -464,15 +465,7 @@ public final class LogicalPlans {
      * True when the projection computes a column: anything but plain, uncast column references.
      */
     public static boolean isComputedProjection(ProjectPlan project) {
-        if (project.hasUpdateConversions() || project.hasPrunedComputedColumns()) {
-            return true;
-        }
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column) || column.isCast()) {
-                return true;
-            }
-        }
-        return false;
+        return project.hasUpdateConversions() || project.hasPrunedComputedColumns() || !isPlainColumnProjection(project);
     }
 
     /**
@@ -640,15 +633,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * True when the value of the aggregate function does not depend on the order of its input rows: it is not
-     * order-sensitive, and its arguments depend on no row order.
-     */
-    public static boolean isOrderIndependentAggregate(FunctionExpression aggregate) {
-        return aggregate.isAggregate() && !aggregate.getOverload().isOrderSensitiveAggregate()
-                && areOrderIndependent(aggregate.getArguments());
-    }
-
-    /**
      * True when the plan hands its input's rows on in their order, so a consumer that discards the order of the plan's
      * rows discards the order of its input's rows as well: a filter, or a projection that declares no designated
      * timestamp. What the plan computes does not count: a sub-query's ORDER BY orders the rows the sub-query returns,
@@ -657,6 +641,18 @@ public final class LogicalPlans {
     public static boolean isOrderTransparent(LogicalPlan plan) {
         return plan instanceof FilterPlan
                 || plan instanceof ProjectPlan project && !project.hasTimestampDeclaration() && !project.hasUpdateConversions();
+    }
+
+    /**
+     * True when every expression of the projection is a plain, uncast column reference.
+     */
+    public static boolean isPlainColumnProjection(ProjectPlan project) {
+        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
+            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column) || column.isCast()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -811,10 +807,46 @@ public final class LogicalPlans {
     }
 
     /**
+     * The operation {@code c * k}, {@code c + k} or {@code c - k}, either operand order, of an aggregate
+     * {@code sum(c op k)} of the grouping, where {@code c} is an uncast BYTE, SHORT, INT or LONG column of the grouping's
+     * input and {@code k} an integer literal; a projection over the grouping can compute such a sum from {@code sum(c)}
+     * and {@code count(c)}, see {@link #sumNormalisingGrouping}. Null for any other aggregate.
+     */
+    public static FunctionExpression normalisableSumOperation(GroupingPlan grouping, FunctionExpression aggregate) {
+        if (aggregate.getArgumentCount() != 1 || !Chars.equalsIgnoreCase(aggregate.getName(), "sum")
+                || !(aggregate.argumentAt(0) instanceof FunctionExpression operation) || operation.getArgumentCount() != 2
+                || operation.getName().length() != 1 || "*+-".indexOf(operation.getName().charAt(0)) < 0) {
+            return null;
+        }
+        final boolean isColumnOnLeft = isIntegerLiteral(operation.argumentAt(1));
+        if (!isColumnOnLeft && !isIntegerLiteral(operation.argumentAt(0))
+                || !(operation.argumentAt(isColumnOnLeft ? 0 : 1) instanceof ColumnExpression column) || column.isCast()) {
+            return null;
+        }
+        final OutputSchema input = grouping.getChild().getOutput();
+        final int index = input.getColumnIndexById(column.getColumnId());
+        if (index < 0) {
+            return null;
+        }
+        final int type = input.getColumnType(index);
+        return type == ColumnType.BYTE || type == ColumnType.SHORT || type == ColumnType.INT || type == ColumnType.LONG ? operation : null;
+    }
+
+    /**
      * The join's steps in the order the join runs them, or in binding order before the order is decided.
      */
     public static ObjList<JoinInput> orderedSteps(JoinPlan join) {
         return join.getOrderedInputs().size() > 0 ? join.getOrderedInputs() : join.getInputs();
+    }
+
+    /**
+     * The column reference the projection selects as its output column {@code columnId}, or null when the projection
+     * computes that column or does not select it. Every walk that follows a column down through projections takes
+     * each step here and applies its own rule to the reference's cast and direct-reference flags.
+     */
+    public static ColumnExpression passedColumn(ProjectPlan project, int columnId) {
+        final int index = project.getOutput().getColumnIndexById(columnId);
+        return index >= 0 && project.getExpressions().getQuick(index) instanceof ColumnExpression column ? column : null;
     }
 
     public static int projectedColumnIndex(ProjectPlan project, int columnId) {
@@ -831,8 +863,8 @@ public final class LogicalPlans {
      * The input column the projection passes through as the given output column, or -1 when it computes that column.
      */
     public static int projectedSourceColumnId(ProjectPlan project, int columnId) {
-        final int index = project.getOutput().getColumnIndexById(columnId);
-        return index >= 0 && project.getExpressions().getQuick(index) instanceof ColumnExpression column ? column.getColumnId() : -1;
+        final ColumnExpression column = passedColumn(project, columnId);
+        return column == null ? -1 : column.getColumnId();
     }
 
     /**
@@ -899,6 +931,23 @@ public final class LogicalPlans {
     }
 
     /**
+     * True when every column the expression reads is a key of the map and the expression reads no sub-query.
+     */
+    public static boolean readsOnly(BoundExpression expression, IntIntHashMap columnIds) {
+        if (expression instanceof ColumnExpression column) {
+            return columnIds.keyIndex(column.getColumnId()) < 0;
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                if (!readsOnly(call.argumentAt(i), columnIds)) {
+                    return false;
+                }
+            }
+        }
+        return !(expression instanceof CursorExpression);
+    }
+
+    /**
      * True when the call reads at least one outer column and no column of its own input.
      */
     public static boolean readsOnlyOuterColumns(FunctionExpression call) {
@@ -918,12 +967,14 @@ public final class LogicalPlans {
      * {@link #SELF_COMPARISON_NONE}.
      */
     public static int selfComparison(FunctionExpression call) {
-        if (call.getArgumentCount() == 2 && call.argumentAt(0) instanceof ColumnExpression left && call.argumentAt(1) instanceof ColumnExpression right
-                && left.isDirectReference() && right.isDirectReference() && left.getColumnId() == right.getColumnId()) {
-            return switch (call.getName()) {
-                case "=" -> SELF_COMPARISON_TRUE;
-                case "!=", "<>", ">", "<" -> SELF_COMPARISON_FALSE;
-                default -> SELF_COMPARISON_NONE;
+        final ComparisonOperator operator = ComparisonOperator.of(call.getName());
+        if (operator != null && call.getArgumentCount() == 2 && call.argumentAt(0) instanceof ColumnExpression left
+                && call.argumentAt(1) instanceof ColumnExpression right && left.isDirectReference() && right.isDirectReference()
+                && left.getColumnId() == right.getColumnId()) {
+            return switch (operator) {
+                case EQUAL -> SELF_COMPARISON_TRUE;
+                case NOT_EQUAL, LESS, GREATER -> SELF_COMPARISON_FALSE;
+                case LESS_OR_EQUAL, GREATER_OR_EQUAL -> SELF_COMPARISON_NONE;
             };
         }
         return SELF_COMPARISON_NONE;
@@ -1000,6 +1051,25 @@ public final class LogicalPlans {
     }
 
     /**
+     * The grouping the projection reads directly, or through a sort of its rows whose keys it passes through
+     * unchanged, when the grouping reads its tables directly and fills no gaps itself: the grouping whose
+     * {@link #normalisableSumOperation normalisable sums} the projection computes from sums and counts of their
+     * columns. Null otherwise.
+     */
+    public static GroupingPlan sumNormalisingGrouping(ProjectPlan project) {
+        final GroupingPlan grouping;
+        if (project.getChild() instanceof GroupingPlan direct) {
+            grouping = direct;
+        } else if (project.getChild() instanceof SortPlan sort && sort.getChild() instanceof GroupingPlan sorted && projectsSortKeys(project, sort)) {
+            grouping = sorted;
+        } else {
+            return null;
+        }
+        return grouping.hasDirectTableInput() && !(grouping instanceof SampleByPlan sampleBy && sampleBy.getFillModes().size() > 0)
+                ? grouping : null;
+    }
+
+    /**
      * The column of the plan that holds the designated timestamp of the rows a sort by a key that is not a timestamp
      * reorders: the sort designates none, and the column projections and filters over it pass that column on; -1
      * otherwise.
@@ -1018,6 +1088,16 @@ public final class LogicalPlans {
     }
 
     /**
+     * The plan under the column-only projections over it, see {@link #isColumnOnlyProjection}.
+     */
+    public static LogicalPlan unwrapColumnProjections(LogicalPlan plan) {
+        while (plan instanceof ProjectPlan project && isColumnOnlyProjection(project)) {
+            plan = plan.inputAt(0);
+        }
+        return plan;
+    }
+
+    /**
      * The type an UPDATE stores a value of type {@code type} as in a column of type {@code targetType}: the target
      * type for a built-in widening cast, except into a timestamp column from a type with a timestamp precision of its
      * own (DATE, text), which the update converts from; the value's own type otherwise.
@@ -1025,6 +1105,18 @@ public final class LogicalPlans {
     public static int updateColumnType(int type, int targetType) {
         return targetType < 0 || !ColumnType.isBuiltInWideningCast(type, targetType)
                 || ColumnType.isTimestamp(targetType) && ColumnType.getTimestampType(type) != ColumnType.UNDEFINED ? type : targetType;
+    }
+
+    /**
+     * True when no expression depends on the order of the rows it is evaluated over, see {@link #isOrderIndependent}.
+     */
+    private static boolean areOrderIndependent(ObjList<? extends BoundExpression> expressions) {
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            if (!isOrderIndependent(expressions.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean areStable(ObjList<? extends BoundExpression> expressions) {
@@ -1110,6 +1202,15 @@ public final class LogicalPlans {
         return expression instanceof FunctionExpression call && "=".equals(call.getName()) && call.getArgumentCount() == 2
                 && (isKeyColumn(call.argumentAt(0), columnId) && SymbolKeyExtractor.isKeyConstant(call.argumentAt(1))
                 || isKeyColumn(call.argumentAt(1), columnId) && SymbolKeyExtractor.isKeyConstant(call.argumentAt(0)));
+    }
+
+    /**
+     * True when the value of the aggregate function does not depend on the order of its input rows: it is not
+     * order-sensitive, and its arguments depend on no row order.
+     */
+    private static boolean isOrderIndependentAggregate(FunctionExpression aggregate) {
+        return aggregate.isAggregate() && !aggregate.getOverload().isOrderSensitiveAggregate()
+                && areOrderIndependent(aggregate.getArguments());
     }
 
     private static boolean isStable(BoundExpression expression) {

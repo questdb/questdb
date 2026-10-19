@@ -139,7 +139,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             this.narrowSymbolTableResolver = createNarrowSymbolTableResolver(sourceMap, windowSymbolFunctions);
 
             // Caller guarantees every group is encoded-sort-eligible; the LIGHT factory does not
-            // accept the tree fallback (see SqlCodeGenerator's isAllGroupsEncodedEligible gate).
+            // accept the tree fallback (see OperatorPlanning.isCachedLightShape).
             sortBuffers = new ObjList<>(orderedGroupCount);
             for (int i = 0; i < orderedGroupCount; i++) {
                 sortBuffers.add(new EncodedWindowSortBuffer(configuration, chainMetadata, sortKeys.getQuick(i)));
@@ -296,15 +296,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     /**
      * Switches this factory into row-selecting mode: the cursor fuses the keep-flag filter, skipping
      * the per-row boolean pass2 write and emitting only the rows the sole row-selecting window
-     * function keeps. Must only be called after {@link #getSingleRowSelectingFunction()} returns
-     * non-null (verified by the caller). Idempotent.
+     * function keeps. The planner verifies that the function is the sole row-selecting keep flag. Idempotent.
      */
     public void enableRowSelecting(WindowFunction selectingFunction) {
-        // The caller (WindowFactoryGenerator.tryFuseKeepFlagFilter) has already resolved and validated the
-        // sole row-selecting keep-flag function via getSingleRowSelectingFunction(); take it directly
-        // rather than recomputing behind an assert (a no-op under -da, which would leave a null
-        // selectingFunction and NPE at cursor time). Guard defensively: a null here means the caller's
-        // contract was violated, so stay on the normal boolean-materializing path.
         if (selectingFunction == null) {
             return;
         }
@@ -1127,7 +1121,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             // computeWindow's buffering loop), so repositioning into it here would read
             // unallocated/out-of-bounds native memory. Safe to skip: projected columns resolve
             // to base columns and the sole function's boolean output is dropped by the outer
-            // projection (see getSingleRowSelectingFunction/tryFuseKeepFlagFilter).
+            // projection (see PlanToFactoryRules.isWindowKeepFlag).
             if (!rowSelecting) {
                 narrowChain.recordAtRowIndex(narrowChain.getRecord(), rowIndex);
             }

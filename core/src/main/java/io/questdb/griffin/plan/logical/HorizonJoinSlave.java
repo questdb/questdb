@@ -24,26 +24,29 @@
 
 package io.questdb.griffin.plan.logical;
 
-import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjectPool;
 
 import java.util.Objects;
 
 public final class HorizonJoinSlave implements Mutable {
     public static final ObjectFactory<HorizonJoinSlave> FACTORY = HorizonJoinSlave::new;
-    private final IntList keyPositions = new IntList();
-    private final IntList masterKeyColumnIds = new IntList();
-    private final IntList slaveKeyColumnIds = new IntList();
+    private final ObjectPool<JoinKey> keyPool = new ObjectPool<>(JoinKey.FACTORY, 1, 1);
+    private final ObjList<JoinKey> keys = new ObjList<>();
     private CharSequence alias;
     private LogicalPlan input;
     private int position;
 
+    public void addKey(int masterId, int slaveId, int position) {
+        keys.add(keyPool.next().of(masterId, slaveId, null, null, position));
+    }
+
     @Override
     public void clear() {
-        keyPositions.clear();
-        masterKeyColumnIds.clear();
-        slaveKeyColumnIds.clear();
+        keys.clear();
+        keyPool.clear();
         alias = null;
         input = null;
         position = 0;
@@ -57,20 +60,12 @@ public final class HorizonJoinSlave implements Mutable {
         return input;
     }
 
-    public IntList getKeyPositions() {
-        return keyPositions;
-    }
-
-    public IntList getMasterKeyColumnIds() {
-        return masterKeyColumnIds;
+    public ObjList<JoinKey> getKeys() {
+        return keys;
     }
 
     public int getPosition() {
         return position;
-    }
-
-    public IntList getSlaveKeyColumnIds() {
-        return slaveKeyColumnIds;
     }
 
     public HorizonJoinSlave of(LogicalPlan input, CharSequence alias, int position) {
@@ -85,7 +80,6 @@ public final class HorizonJoinSlave implements Mutable {
     }
 
     void visitReads(PlanExpressionVisitor visitor) {
-        PlanReads.columnIds(masterKeyColumnIds, keyPositions, visitor);
-        PlanReads.columnIds(slaveKeyColumnIds, keyPositions, visitor);
+        JoinKey.visitReads(keys, visitor);
     }
 }

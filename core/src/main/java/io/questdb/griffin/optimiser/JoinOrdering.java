@@ -118,15 +118,9 @@ final class JoinOrdering implements OptimiserPass {
      * step between them nulls master rows.
      */
     private static boolean isTemporalAnchor(ObjList<JoinInput> ordered, int target, int originPosition) {
-        if (target >= originPosition || ordered.getQuick(originPosition).getJoinType().isBarrier()) {
+        if (target >= originPosition || ordered.getQuick(originPosition).getJoinType().isBarrier()
+                || !ordered.getQuick(target).getJoinType().isTemporal()) {
             return false;
-        }
-        switch (ordered.getQuick(target).getJoinType()) {
-            case ASOF, LT, SPLICE -> {
-            }
-            default -> {
-                return false;
-            }
         }
         for (int i = target + 1; i < originPosition; i++) {
             if (ordered.getQuick(i).getJoinType().isMasterNulling()) {
@@ -276,10 +270,7 @@ final class JoinOrdering implements OptimiserPass {
     private void place(JoinPlan join, JoinGraph graph) throws SqlException {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         final int last = ordered.size() - 1;
-        boolean hasBarriers = false;
-        for (int i = 1; i <= last; i++) {
-            hasBarriers |= ordered.getQuick(i).getJoinType().isBarrier();
-        }
+        final boolean hasBarriers = LogicalPlans.hasBarrierInput(join);
         placed.clear();
         placed.setPos(ordered.size());
         final ObjList<BoundExpression> residuals = graph.getResiduals();

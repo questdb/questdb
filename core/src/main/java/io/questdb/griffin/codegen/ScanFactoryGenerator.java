@@ -302,7 +302,7 @@ final class ScanFactoryGenerator {
     }
 
     private RecordCursorFactory filterScan(GenerationFrame frame, RecordCursorFactory base, ScanPlan scan, BoundExpression residual,
-                                           SqlExecutionContext executionContext) throws SqlException {
+                                           @Nullable PreparedFilter stolenFilter, SqlExecutionContext executionContext) throws SqlException {
         final Function filter;
         try {
             filter = functionInstantiator.instantiate(residual, scan.getOutput(), base.getMetadata(), executionContext);
@@ -311,17 +311,17 @@ final class ScanFactoryGenerator {
             throw th;
         }
         final boolean isParallel = scan.getResidualAlgorithm() == FilterPlan.Algorithm.PARALLEL;
-        if (frame.stolenFilter != null) {
-            frame.stolenFilter.of(residual, scan.getOutput(), filter, isParallel && (!scan.isUpdate() || executionContext.isWalApplication()));
+        if (stolenFilter != null) {
+            stolenFilter.of(residual, scan.getOutput(), filter, isParallel && FilterFactoryGenerator.isJitApplicable(scan.isUpdate(), executionContext));
             return base;
         }
         return filterGenerator.generate(frame, residual, scan.getOutput(), base, filter, executionContext,
-                scan.isUpdate(), isParallel, scan.getFilterLimit(), scan.hasHint(ScanPlan.HINT_PRE_TOUCH));
+                scan.isUpdate(), isParallel, scan.getFilterLimit(), scan.isResidualPreTouched());
     }
 
     private RecordCursorFactory generateIndexedScan(
             GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
-            GenericRecordMetadata metadata, PlanTable table, IntList indexes, IntList shifts
+            GenericRecordMetadata metadata, PlanTable table, IntList indexes, IntList shifts, @Nullable PreparedFilter stolenFilter
     ) throws SqlException {
         final BoundExpression residual = scan.getResidual();
         final int keyIndex = scan.getOutput().getColumnIndexById(scan.getIndexColumnId());
@@ -335,6 +335,7 @@ final class ScanFactoryGenerator {
         final int indexDirection = indexDirection(scan);
         final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
         int[] coveringMapping = null;
+        boolean isIntervalModelTransferred = false;
         try {
             filter = residual == null ? null : functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
             if (ParanoiaState.PLAN_PARANOIA_MODE && filter != null && filter.isConstant()) {
@@ -344,15 +345,16 @@ final class ScanFactoryGenerator {
             if (!isExcluded && isCovering) {
                 coveringMapping = buildCoveringMapping(table, indexes.getQuick(keyIndex), indexes);
             }
-            final RuntimeIntrinsicIntervalModel frameIntervals = intervalModel;
-            intervalModel = null;
-            frames = newFrames(scan, frameIntervals, table, frameOrder(scan));
+            isIntervalModelTransferred = true;
+            frames = newFrames(scan, intervalModel, table, frameOrder(scan));
             configurePushdown(frame, frames, residual, scan, metadata, indexes, table, executionContext);
         } catch (Throwable th) {
             Misc.free(frames, th);
             Misc.freeObjList(keys, th);
             Misc.free(filter, th);
-            Misc.free(intervalModel, th);
+            if (!isIntervalModelTransferred) {
+                Misc.free(intervalModel, th);
+            }
             throw th;
         }
         if (isExcluded) {
@@ -366,11 +368,11 @@ final class ScanFactoryGenerator {
             if (keyCount == 1) {
                 factory = generateSingleSymbolIndexScan(metadata, frames, keyIndex, keys.getQuick(0),
                         coveringMapping == null ? filter : null, indexDirection, scan.isRequestedOrderDelivered(),
-                        indexes, shifts, coveringMapping, scan.hasNullableKey(), scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING));
+                        indexes, shifts, coveringMapping, scan);
             } else {
                 factory = generateSymbolValuesIndexScan(metadata, frames, keys, keyIndex,
                         coveringMapping == null ? filter : null, scan.getIndexOrder(), requestedDirection(scan), indexDirection,
-                        indexes, shifts, coveringMapping, scan.hasNullableKey(), scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING));
+                        indexes, shifts, coveringMapping, scan);
             }
         } catch (Throwable th) {
             Misc.free(coveredFilter, th);
@@ -379,13 +381,13 @@ final class ScanFactoryGenerator {
         if (coveredFilter == null) {
             return factory;
         }
-        if (frame.stolenFilter != null) {
-            frame.stolenFilter.of(residual, scan.getOutput(), coveredFilter, false);
+        if (stolenFilter != null) {
+            stolenFilter.of(residual, scan.getOutput(), coveredFilter, false);
             return factory;
         }
         return filterGenerator.generateCovering(frame, residual, scan.getOutput(), (CoveringIndexRecordCursorFactory) factory, coveredFilter,
                 executionContext, scan.getResidualAlgorithm() == FilterPlan.Algorithm.PARALLEL,
-                scan.getCoveredFilterLimit(), scan.hasHint(ScanPlan.HINT_PRE_TOUCH));
+                scan.getCoveredFilterLimit(), scan.isResidualPreTouched());
     }
 
     private RecordCursorFactory generateLatestByScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext,
@@ -404,7 +406,7 @@ final class ScanFactoryGenerator {
         try {
             filter = residual == null ? null : functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
             if (filter != null && scan.getIndexRead() == ScanPlan.IndexRead.NONE) {
-                filter = filterGenerator.compileLatestBy(filter, residual, scan.getOutput(), metadata, table, indexes,
+                filter = filterGenerator.compileLatestBy(frame, filter, residual, scan.getOutput(), metadata, table, indexes,
                         scan.isUpdate(), executionContext);
             }
             instantiateKeys(scan.getIndexKeys(), keys, scan, metadata, executionContext);
@@ -438,7 +440,8 @@ final class ScanFactoryGenerator {
 
     private RecordCursorFactory generatePageFrameScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext,
                                                       IntervalExtractor scanIntervals, GenericRecordMetadata metadata,
-                                                      PlanTable table, IntList indexes, IntList shifts) throws SqlException {
+                                                      PlanTable table, IntList indexes, IntList shifts,
+                                                      @Nullable PreparedFilter stolenFilter) throws SqlException {
         final BoundExpression residual = scan.getTableToken().isLiveView() ? null : scan.getResidual();
         final int order = frameOrder(scan);
         final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table, order);
@@ -453,7 +456,7 @@ final class ScanFactoryGenerator {
         if (residual == null) {
             return factory;
         }
-        return filterScan(frame, factory, scan, residual, executionContext);
+        return filterScan(frame, factory, scan, residual, stolenFilter, executionContext);
     }
 
     private RecordCursorFactory generatePostingDistinctScan(AggregatePlan aggregate, ScanPlan scan, IntervalExtractor scanIntervals,
@@ -477,8 +480,8 @@ final class ScanFactoryGenerator {
     }
 
     private RecordCursorFactory generateReaderScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext,
-                                                   IntervalExtractor scanIntervals, LatestByPlan latest, PlanTable table)
-            throws SqlException {
+                                                   IntervalExtractor scanIntervals, LatestByPlan latest, PlanTable table,
+                                                   @Nullable PreparedFilter stolenFilter) throws SqlException {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         final RecordMetadata readerMetadata = table.getMetadata();
         final IntList indexes = new IntList(scan.getOutput().getColumnCount());
@@ -499,7 +502,7 @@ final class ScanFactoryGenerator {
         return switch (accessPath) {
             case EMPTY -> new EmptyTableRecordCursorFactory(metadata);
             case PAGE_FRAMES -> generatePageFrameScan(frame, scan, executionContext, scanIntervals, metadata, table,
-                    indexes, shifts);
+                    indexes, shifts, stolenFilter);
             case SORTED_SYMBOL_INDEX -> {
                 final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table, frameOrder(scan));
                 yield new SortedSymbolIndexRecordCursorFactory(configuration, metadata, frames,
@@ -509,11 +512,11 @@ final class ScanFactoryGenerator {
             }
             case SYMBOL_INDEX, EXCLUDED_SYMBOL_INDEX ->
                     generateIndexedScan(frame, scan, executionContext, scanIntervals, metadata,
-                            table, indexes, shifts);
+                            table, indexes, shifts, stolenFilter);
             case SYMBOL_SUBQUERY -> generateSubqueryScan(frame, scan, executionContext, scanIntervals, metadata, table,
                     indexes, shifts);
             case SYMBOL_PATTERN -> generateSymbolPatternIndex(frame, scan, executionContext, scanIntervals, metadata,
-                    table, indexes, shifts);
+                    table, indexes, shifts, stolenFilter);
             case LATEST_BY_SUBQUERY, LATEST_BY_VALUE, LATEST_BY_VALUES, LATEST_BY_ALL_INDEXED, LATEST_BY_STATIC_SYMBOL,
                  LATEST_BY_SYMBOLS,
                  LATEST_BY_ALL -> generateLatestByScan(frame, scan, executionContext, scanIntervals, latest, metadata,
@@ -524,8 +527,8 @@ final class ScanFactoryGenerator {
     }
 
     private RecordCursorFactory generateScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
-                                             LatestByPlan latest) throws SqlException {
-        final RecordCursorFactory factory = generateTableScan(frame, scan, executionContext, scanIntervals, latest);
+                                             LatestByPlan latest, @Nullable PreparedFilter stolenFilter) throws SqlException {
+        final RecordCursorFactory factory = generateTableScan(frame, scan, executionContext, scanIntervals, latest, stolenFilter);
         if (!scan.getTableToken().isLiveView() || scan.isUpdate()) {
             return factory;
         }
@@ -560,7 +563,7 @@ final class ScanFactoryGenerator {
 
     private RecordCursorFactory generateSymbolPatternIndex(
             GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
-            GenericRecordMetadata metadata, PlanTable table, IntList indexes, IntList shifts
+            GenericRecordMetadata metadata, PlanTable table, IntList indexes, IntList shifts, @Nullable PreparedFilter stolenFilter
     ) throws SqlException {
         final BoundExpression predicate = scan.getResidual();
         final FunctionExpression pattern = scan.getKeyPattern();
@@ -578,7 +581,7 @@ final class ScanFactoryGenerator {
         if ("!~".equals(pattern.getName())) {
             Misc.free(functionInstantiator.instantiate(pattern, input, metadata, executionContext));
         }
-        AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter =
+        final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter =
                 filterGenerator.instantiatePatternFilter(frame, pattern, residual, input, metadata, executionContext);
         if (filter == null) {
             throw new AssertionError("symbol pattern provider declaration differs from the instantiated function");
@@ -586,8 +589,8 @@ final class ScanFactoryGenerator {
         ObjList<Function> workerFilters = null;
         Function limit = null;
         final BoundExpression limitCount = isCovering ? scan.getCoveredFilterLimit() : scan.getFilterLimit();
-        final PreparedFilter stolenFilter = frame.stolenFilter;
         final boolean isParallel = scan.getResidualAlgorithm() == FilterPlan.Algorithm.PARALLEL && stolenFilter == null;
+        boolean isTransferred = false;
         try {
             if (isParallel) {
                 workerFilters = filterGenerator.instantiatePatternWorkers(frame, pattern, residual, input, metadata, filter, executionContext);
@@ -602,29 +605,26 @@ final class ScanFactoryGenerator {
                 Misc.free(frames, th);
                 throw th;
             }
-            final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter ownedFilter = filter;
-            final ObjList<Function> ownedWorkers = workerFilters;
-            final Function ownedLimit = limit;
-            filter = null;
-            workerFilters = null;
-            limit = null;
-            return generateSymbolPatternIndex(frames, metadata, table, indexes, shifts, ownedFilter, predicate, pattern, residual, input,
-                    ownedWorkers, ownedLimit, limitCount == null ? 0 : limitCount.getPosition(), scan.getIndexOrder(), isCovering,
-                    isParallel, scan.hasHint(ScanPlan.HINT_PRE_TOUCH), stolenFilter, executionContext);
+            isTransferred = true;
+            return generateSymbolPatternIndex(frames, metadata, table, indexes, shifts, filter, predicate, pattern, residual, input,
+                    workerFilters, limit, limitCount == null ? 0 : limitCount.getPosition(), scan.getIndexOrder(), isCovering,
+                    isParallel, scan.isResidualPreTouched(), stolenFilter, executionContext);
         } catch (Throwable th) {
-            Misc.free(filter, th);
-            Misc.freeObjList(workerFilters, th);
-            Misc.free(limit, th);
+            if (!isTransferred) {
+                Misc.free(filter, th);
+                Misc.freeObjList(workerFilters, th);
+                Misc.free(limit, th);
+            }
             throw th;
         }
     }
 
     private RecordCursorFactory generateTableScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
-                                                  LatestByPlan latest) throws SqlException {
+                                                  LatestByPlan latest, @Nullable PreparedFilter stolenFilter) throws SqlException {
         final boolean isOverridden = executionContext.isOverriddenIntrinsics(scan.getTableToken()) && !scan.isWalClientUpdate();
         final WindowJoinStep step = scan.getJoinIntervalStep();
         if (!isOverridden && step == null) {
-            return generateTableScan0(frame, scan, executionContext, scanIntervals, latest);
+            return generateTableScan0(frame, scan, executionContext, scanIntervals, latest, stolenFilter);
         }
         final int timestampType = scan.getNativeTimestampType();
         final IntervalExtractor rangeIntervals = frame.intervals;
@@ -641,7 +641,7 @@ final class ScanFactoryGenerator {
                 final long lo = step.getIntervalLo(timestampType);
                 rangeIntervals.merge(scan.getJoinIntervals(), lo, hi);
             }
-            factory = generateTableScan0(frame, scan, executionContext, rangeIntervals, latest);
+            factory = generateTableScan0(frame, scan, executionContext, rangeIntervals, latest, stolenFilter);
         } catch (Throwable th) {
             Misc.clear(rangeIntervals, th);
             throw th;
@@ -650,7 +650,7 @@ final class ScanFactoryGenerator {
     }
 
     private RecordCursorFactory generateTableScan0(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
-                                                   LatestByPlan latest) throws SqlException {
+                                                   LatestByPlan latest, @Nullable PreparedFilter stolenFilter) throws SqlException {
         if (scan.isWalClientUpdate()) {
             // Client-side WAL UPDATE validates against sequencer metadata. The data
             // reader may still have an older schema; rows are read only during WAL apply.
@@ -670,7 +670,7 @@ final class ScanFactoryGenerator {
             }
             return SqlCodeGenerator.closeAfter(tableMetadata, factory);
         }
-        return generateReaderScan(frame, scan, executionContext, scanIntervals, latest, planTables.of(scan));
+        return generateReaderScan(frame, scan, executionContext, scanIntervals, latest, planTables.of(scan), stolenFilter);
     }
 
     private void instantiateKeys(ObjList<BoundExpression> values, ObjList<Function> keys, ScanPlan scan,
@@ -703,8 +703,12 @@ final class ScanFactoryGenerator {
         }
     }
 
-    RecordCursorFactory generateFiltered(GenerationFrame frame, ScanPlan scan, BoundExpression predicate, SqlExecutionContext executionContext)
-            throws SqlException {
+    /**
+     * Builds the scan of a filter fused into it. With a {@code stolenFilter}, builds the scan without the filter, which
+     * a parallel consumer steals, and prepares the filter over it there.
+     */
+    RecordCursorFactory generateFiltered(GenerationFrame frame, ScanPlan scan, BoundExpression predicate, @Nullable PreparedFilter stolenFilter,
+                                         SqlExecutionContext executionContext) throws SqlException {
         final int timestampIndex = scan.getOutput().getColumnIndexById(scan.getNativeTimestampColumnId());
         final RecordCursorFactory factory;
         try {
@@ -712,10 +716,11 @@ final class ScanFactoryGenerator {
                 frame.intervals.extract(predicate, scan.getOutput().getColumnId(timestampIndex), scan.getOutput(), intervalBounds,
                         expressionRewriter, scan.getDepth(), executionContext);
             }
-            final RecordCursorFactory scanFactory = generateScan(frame, scan, executionContext, frame.intervals, null);
+            final RecordCursorFactory scanFactory = generateScan(frame, scan, executionContext, frame.intervals, null, stolenFilter);
             final BoundExpression residual = scan.getResidual();
             // Rows the live view serves from memory bypass the wrapped scan, so only intervals go below it.
-            factory = scan.getTableToken().isLiveView() && residual != null ? filterScan(frame, scanFactory, scan, residual, executionContext) : scanFactory;
+            factory = scan.getTableToken().isLiveView() && residual != null
+                    ? filterScan(frame, scanFactory, scan, residual, stolenFilter, executionContext) : scanFactory;
         } catch (Throwable th) {
             Misc.clear(frame.intervals, th);
             throw th;
@@ -757,7 +762,7 @@ final class ScanFactoryGenerator {
 
     RecordCursorFactory generateLatestBy(GenerationFrame frame, LatestByPlan latest, ScanPlan scan, SqlExecutionContext executionContext) throws SqlException {
         if (!(latest.getChild() instanceof FilterPlan filter)) {
-            return generateScan(frame, scan, executionContext, null, latest);
+            return generateScan(frame, scan, executionContext, null, latest, null);
         }
         final RecordCursorFactory factory;
         try {
@@ -765,7 +770,7 @@ final class ScanFactoryGenerator {
                 frame.intervals.extract(filter.getPredicate(), scan.getNativeTimestampColumnId(), scan.getOutput(), intervalBounds,
                         expressionRewriter, scan.getDepth(), executionContext);
             }
-            factory = generateScan(frame, scan, executionContext, frame.intervals, latest);
+            factory = generateScan(frame, scan, executionContext, frame.intervals, latest, null);
         } catch (Throwable th) {
             Misc.clear(frame.intervals, th);
             throw th;
@@ -795,7 +800,7 @@ final class ScanFactoryGenerator {
     }
 
     RecordCursorFactory generateScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext) throws SqlException {
-        return generateScan(frame, scan, executionContext, null, null);
+        return generateScan(frame, scan, executionContext, null, null, null);
     }
 
     /**
@@ -828,18 +833,17 @@ final class ScanFactoryGenerator {
             IntList columnIndexes,
             IntList columnSizeShifts,
             int @Nullable [] coveringMapping,
-            boolean canKeyBeNull,
-            boolean isBackupSuppressed
+            ScanPlan scan
     ) {
         if (coveringMapping != null) {
             assert filter == null;
-            final RecordCursorFactory backup = !isBackupSuppressed && canKeyBeNull
+            final RecordCursorFactory backup = scan.hasCoveringBackup()
                     ? buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex,
                     key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts)
                     : null;
             return new CoveringIndexRecordCursorFactory(metadata, frames, columnIndexes.getQuick(keyIndex),
                     key, columnIndexes, coveringMapping, null, false, null, null,
-                    backup, backup == null && canKeyBeNull);
+                    backup, scan.isCoveringBackupSuppressed());
         }
         if (filter == null) {
             return buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex,
@@ -848,20 +852,6 @@ final class ScanFactoryGenerator {
         return new PageFrameRecordCursorFactory(configuration, metadata, frames,
                 new DeferredSymbolIndexFilteredRowCursorFactory(keyIndex, key, filter, indexDirection), followsOrderByAdvice,
                 filter, false, columnIndexes, columnSizeShifts, true, false);
-    }
-
-    /**
-     * Builds the scan of a fused filter a parallel consumer steals, without the filter, and prepares the filter over
-     * it in {@code target}.
-     */
-    RecordCursorFactory generateStolenFilter(GenerationFrame frame, ScanPlan scan, BoundExpression predicate, PreparedFilter target,
-                                             SqlExecutionContext executionContext) throws SqlException {
-        frame.stolenFilter = target;
-        try {
-            return generateFiltered(frame, scan, predicate, executionContext);
-        } finally {
-            frame.stolenFilter = null;
-        }
     }
 
     /**
@@ -929,22 +919,18 @@ final class ScanFactoryGenerator {
             scanDelegate = new PageFrameRecordCursorFactory(configuration, metadata, sharedFrames,
                     new PageFrameRowCursorFactory(frames.getOrder()), false, null, true, columnIndexes, columnSizeShifts, true, false);
             if (coveringDelegate == null && isParallel) {
-                final ObjList<Function> scanWorkerFilters = workerFilters;
-                final Function scanLimit = limit;
-                workerFilters = null;
-                limit = null;
                 isSelfFiltering = true;
                 scanDelegate = new AsyncFilteredRecordCursorFactory(executionContext.getCairoEngine(), configuration,
-                        executionContext.getMessageBus(), scanDelegate, filter, filterColumnIndexes, reduceTaskFactory, scanWorkerFilters,
-                        scanLimit, limitPosition, executionContext.getSharedQueryWorkerCount(), isPreTouchEnabled);
+                        executionContext.getMessageBus(), scanDelegate, filter, filterColumnIndexes, reduceTaskFactory, workerFilters,
+                        limit, limitPosition, executionContext.getSharedQueryWorkerCount(), isPreTouchEnabled);
             }
         } catch (Throwable th) {
             Misc.free(coveringDelegate, th);
             Misc.free(indexDelegate, th);
             Misc.free(frames, th);
-            Misc.freeObjList(workerFilters, th);
-            Misc.free(limit, th);
             if (!isSelfFiltering) {
+                Misc.freeObjList(workerFilters, th);
+                Misc.free(limit, th);
                 Misc.free(filter, th);
             }
             throw th;
@@ -955,9 +941,9 @@ final class ScanFactoryGenerator {
                     columnIndexes.getQuick(keyColumnIndex), isNegated, configuration.getSymbolPatternIndexThreshold(), filter,
                     isSelfFiltering, indexDelegate, coveringDelegate, scanDelegate);
         } catch (Throwable th) {
-            Misc.freeObjList(workerFilters, th);
-            Misc.free(limit, th);
             if (!isSelfFiltering) {
+                Misc.freeObjList(workerFilters, th);
+                Misc.free(limit, th);
                 Misc.free(filter, th);
             }
             throw th;
@@ -992,8 +978,7 @@ final class ScanFactoryGenerator {
             IntList columnIndexes,
             IntList columnSizeShifts,
             int @Nullable [] coveringMapping,
-            boolean hasNullableKey,
-            boolean isBackupSuppressed
+            ScanPlan scan
     ) {
         if (coveringMapping == null) {
             return new FilterOnValuesRecordCursorFactory(configuration, metadata, frames, keys, keyIndex,
@@ -1002,12 +987,12 @@ final class ScanFactoryGenerator {
         }
         assert filter == null;
         final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
-        final RecordCursorFactory backup = hasNullableKey && !isBackupSuppressed
+        final RecordCursorFactory backup = scan.hasCoveringBackup()
                 ? new FilterOnValuesRecordCursorFactory(configuration, metadata, frames, keys, keyIndex,
                 null, indexOrder, orderDirection,
                 indexDirection, columnIndexes, columnSizeShifts)
                 : null;
         return new CoveringIndexRecordCursorFactory(metadata, frames, readerKeyIndex,
-                null, columnIndexes, coveringMapping, keys, false, null, null, backup, hasNullableKey && isBackupSuppressed);
+                null, columnIndexes, coveringMapping, keys, false, null, null, backup, scan.isCoveringBackupSuppressed());
     }
 }

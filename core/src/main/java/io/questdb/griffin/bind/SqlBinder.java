@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CallBinder;
@@ -37,6 +36,7 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.ExpressionParser;
 import io.questdb.griffin.FunctionInstantiator;
+import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OuterColumnReads;
@@ -62,7 +62,9 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -77,21 +79,16 @@ import io.questdb.griffin.plan.logical.SetOperationKind;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
-import io.questdb.griffin.plan.logical.UniqueColumnNames;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.str.StringSink;
 
 import static io.questdb.griffin.bind.BindContext.*;
 import static io.questdb.griffin.bind.OrderBinder.*;
@@ -139,46 +136,27 @@ public final class SqlBinder implements Mutable {
             UpdateTarget updateTarget,
             OutputSchema emptySchema,
             PostOrderTreeTraversalAlgo traversalAlgo,
-            ObjList<BoundExpression> tmpArguments,
-            IntList tmpPositions,
-            OutputSchema tmpScope,
-            ObjList<Function> tmpFunctions,
-            IntList tmpFunctionPositions,
-            ObjList<BoundExpression> tmpExpressions,
-            StringSink tmpSink,
-            LongList tmpLongs,
             OuterColumnReads outerColumnReads,
-            IntHashSet tmpIds,
-            IntList tmpIndexes,
-            IntList tmpValues,
-            IntList tmpMasterKeys,
-            IntList tmpSlaveKeys,
-            ObjList<ExpressionNode> tmpNodes,
-            CharSequenceHashSet tmpTokens,
-            IntIntHashMap tmpIdMap,
-            UniqueColumnNames tmpUniqueNames
+            CompilerTemporaries temporaries
     ) {
         this.configuration = configuration;
         this.functionParser = functionParser;
         this.maxModelDepth = configuration.getSqlWindowMaxRecursion() + 1;
         this.hintScopes = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 4, configuration.getSqlModelPoolCapacity());
-        this.tmpOutputColumns = tmpValues;
-        this.tmpIds = tmpIds;
-        this.referencedColumns = new ReferencedColumns(tmpIdMap);
-        this.ctx = new BindContext(compiler, functionParser, scopes, sqlNodePool, characterStore, planNodePools, planTables,
-                preparedFunctions, functionSources, expressionRewriter, functionInstantiator, traversalAlgo, tmpArguments, tmpPositions,
-                tmpScope, tmpIndexes, tmpFunctions, tmpFunctionPositions, tmpExpressions, tmpSink, tmpLongs, outerColumnReads);
-        this.windowBinder = new WindowBinder(ctx, functionParser, tmpValues, tmpIds);
+        this.tmpOutputColumns = temporaries.values;
+        this.tmpIds = temporaries.ids;
+        this.referencedColumns = new ReferencedColumns(temporaries.idMap);
+        this.ctx = new BindContext(compiler, functionParser, scopes, sqlNodePool, characterStore, emptySchema, planNodePools, planTables,
+                preparedFunctions, functionSources, expressionRewriter, functionInstantiator, traversalAlgo, outerColumnReads, temporaries);
+        this.windowBinder = new WindowBinder(ctx, temporaries);
         this.lateralBinder = new LateralBinder(ctx, this, configuration.getSqlModelPoolCapacity());
-        this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, joinGraphBuilder, tmpIndexes, tmpValues, tmpMasterKeys,
-                tmpSlaveKeys);
-        this.sampleByBinder = new SampleByBinder(ctx, this, configuration, functionParser, emptySchema, windowBinder, joinBinder);
-        this.orderBinder = new OrderBinder(ctx, emptySchema, sampleByBinder, tmpNodes);
-        this.aggregateBinder = new AggregateBinder(ctx, this, configuration, orderBinder, sampleByBinder, tmpIds, tmpIdMap, tmpSlaveKeys,
-                tmpIndexes, tmpValues, tmpMasterKeys, tmpUniqueNames);
-        this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, emptySchema, orderBinder, aggregateBinder, joinBinder, windowBinder);
+        this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, joinGraphBuilder, temporaries);
+        this.sampleByBinder = new SampleByBinder(ctx, this, configuration, functionParser.getFunctionResolver(), windowBinder);
+        this.orderBinder = new OrderBinder(ctx, sampleByBinder, temporaries);
+        this.aggregateBinder = new AggregateBinder(ctx, this, configuration, orderBinder, sampleByBinder, temporaries);
+        this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, orderBinder, aggregateBinder, joinBinder, windowBinder);
         this.pivotBinder = new PivotBinder(ctx, this, configuration, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
-                tmpSink, tmpTokens, compiler);
+                temporaries, compiler);
         this.updateBinder = new UpdateBinder(ctx, this, windowBinder, orderBinder, updateTarget);
     }
 
@@ -188,7 +166,7 @@ public final class SqlBinder implements Mutable {
         }
         return switch (output) {
             case AggregatePlan aggregate -> aggregate.getAggregates().getQuick(index).getPosition();
-            case ProjectPlan project -> project.getExpressions().get(index).getPosition();
+            case ProjectPlan project -> projectedColumnPosition(project, index);
             default -> throw new IllegalStateException("output column is neither aggregated nor projected");
         };
     }
@@ -289,6 +267,26 @@ public final class SqlBinder implements Mutable {
                 || view != null && TableUtils.getTableFunctionView(view, executionContext).isDependency(token);
     }
 
+    /**
+     * The position of a projection column: that of its expression, or, for a sum the projection selects whole and
+     * computes from the sum and count of its column, see {@link LogicalPlans#normalisableSumOperation}, that of the
+     * sum's operation, which roots the computed value.
+     */
+    private static int projectedColumnPosition(ProjectPlan project, int index) {
+        final BoundExpression expression = project.getExpressions().get(index);
+        final GroupingPlan grouping = expression instanceof ColumnExpression column && !column.isCast() ? LogicalPlans.sumNormalisingGrouping(project) : null;
+        if (grouping != null) {
+            final int aggregateIndex = grouping.getOutput().getColumnIndexById(((ColumnExpression) expression).getColumnId())
+                    - grouping.getGroupingExpressions().size();
+            final FunctionExpression operation = aggregateIndex < 0 ? null
+                    : LogicalPlans.normalisableSumOperation(grouping, grouping.getAggregates().getQuick(aggregateIndex));
+            if (operation != null) {
+                return operation.getPosition();
+            }
+        }
+        return expression.getPosition();
+    }
+
     private static SetOperationKind setOperationKind(int modelOperation) {
         return switch (modelOperation) {
             case QueryModel.SET_OPERATION_UNION -> SetOperationKind.UNION;
@@ -333,9 +331,7 @@ public final class SqlBinder implements Mutable {
         if (index < 0) {
             index = scope.cursorSources.size();
             scope.cursorSources.add(node);
-            final CharSequence base = name != null ? name : node.token;
-            final int dot = Chars.indexOfLastUnquoted(base, '.');
-            scope.cursorNames.add(dot < 0 ? base : base.subSequence(dot + 1, base.length()));
+            scope.cursorNames.add(unqualified(name != null ? name : node.token));
         }
         scope.cursorNodes.add(node);
         scope.cursorSourceIndexes.add(index);
@@ -354,7 +350,7 @@ public final class SqlBinder implements Mutable {
         } else {
             join = ctx.planNodes.joins.next().of(position);
             join.addInput(ctx.planNodes.joinInputs.next().of(input, JoinKind.CROSS, inputAlias, position));
-            joinBinder.addJoinOutput(join, input.getOutput(), inputAlias);
+            join.getOutput().addColumnsFrom(input.getOutput(), inputAlias);
             join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, 1));
         }
         for (int i = 0, n = scope.cursorSources.size(); i < n; i++) {
@@ -369,7 +365,7 @@ public final class SqlBinder implements Mutable {
             if (join.getGraph() == null) {
                 join.getOrderedInputs().add(step);
             }
-            joinBinder.addJoinOutput(join, record.getOutput(), alias);
+            join.getOutput().addColumnsFrom(record.getOutput(), alias);
         }
         for (int i = 0, n = scope.cursorNodes.size(); i < n; i++) {
             final int columnIndex = getColumnIndexQuiet(join.getOutput(), scope.cursorNames.getQuick(scope.cursorSourceIndexes.getQuick(i)));
@@ -464,7 +460,7 @@ public final class SqlBinder implements Mutable {
             throw new IllegalStateException("query block has no source");
         }
         final ExpressionNode subsample = source.getSubsample();
-        if (subsample != null && SampleByBinder.subsampleMethod(subsample) == SampleByBinder.SUBSAMPLE_SDT) {
+        if (subsample != null && SampleByBinder.SubsampleMethod.of(subsample.token) == SampleByBinder.SubsampleMethod.SDT) {
             if (bindScope.isInsideJoin || source.getJoinModels().size() > 1) {
                 throw SqlException.$(subsample.position, "SUBSAMPLE sdt is not supported inside a join");
             }
@@ -559,8 +555,8 @@ public final class SqlBinder implements Mutable {
         }
 
         if (subsample != null && !hasWindows && source.getSampleBy() == null && !sampleByBinder.hasSubsampleTimestampProjection(model, source, sourcePlan)) {
-            final int method = sampleByBinder.validateSubsampleCall(subsample);
-            if (method == SampleByBinder.SUBSAMPLE_EXTREMA || method == SampleByBinder.SUBSAMPLE_LTTB) {
+            final SampleByBinder.SubsampleMethod method = sampleByBinder.validateSubsampleCall(subsample);
+            if (method == SampleByBinder.SubsampleMethod.EXTREMA || method == SampleByBinder.SubsampleMethod.LTTB) {
                 sampleByBinder.validateSubsampleSelectValue(subsample.args.getQuick(0), model);
             }
             throw sampleByBinder.subsampleTimestampMissing(source, sourcePlan);
@@ -630,7 +626,7 @@ public final class SqlBinder implements Mutable {
         LogicalPlan result = model.isDistinct()
                 ? aggregateBinder.bindDistinct(model, source, sourcePlan, project, executionContext)
                 : isOrderBound && (hasComputedOrder(project, source)
-                || source.getOrderBy().size() > 0 && (hasComputedProjection(project) || sourcePlan instanceof JoinPlan
+                || source.getOrderBy().size() > 0 && (!LogicalPlans.isColumnReferenceProjection(project) || sourcePlan instanceof JoinPlan
                 || sourcePlan instanceof SetOperationPlan && isSelectedOrder(project, source, sourcePlan.getOutput(), sourceAlias(source)))
                 || source.getOrderBy().size() > 0 && LogicalPlans.hasRepeatedColumn(project, tmpIds) && hasProjectedOrder(project, source)
         )
@@ -857,8 +853,7 @@ public final class SqlBinder implements Mutable {
             output.setTimestampIndex(index);
             return input;
         }
-        // A declaration changes metadata and observes the subquery's order. Keep
-        // that boundary using the existing projection/factory representation.
+        // A declaration changes metadata and observes the subquery's order, so a projection marks that boundary.
         final ProjectPlan project = ctx.identityProjection(input, timestamp.position);
         project.getOutput().setTimestampIndex(index);
         project.markTimestampDeclaration();

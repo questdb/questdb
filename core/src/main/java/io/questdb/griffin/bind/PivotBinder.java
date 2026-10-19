@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CharacterStoreEntry;
+import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -56,6 +57,7 @@ import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
@@ -86,8 +88,7 @@ final class PivotBinder implements Mutable {
             TemporalJoinBinder temporalJoinBinder,
             AggregateBinder aggregateBinder,
             JoinBinder joinBinder,
-            StringSink pivotValueSink,
-            CharSequenceHashSet pivotValues,
+            CompilerTemporaries temporaries,
             SqlCompilerImpl compiler
     ) {
         this.ctx = ctx;
@@ -98,8 +99,8 @@ final class PivotBinder implements Mutable {
         this.temporalJoinBinder = temporalJoinBinder;
         this.aggregateBinder = aggregateBinder;
         this.joinBinder = joinBinder;
-        this.pivotValueSink = pivotValueSink;
-        this.pivotValues = pivotValues;
+        this.pivotValueSink = temporaries.sink;
+        this.pivotValues = temporaries.tokens;
         this.compiler = compiler;
     }
 
@@ -129,21 +130,21 @@ final class PivotBinder implements Mutable {
         throw new IllegalStateException("window join aggregate not found");
     }
 
-    private static int windowJoinPivotKind(ExpressionNode call) throws SqlException {
+    private static WindowJoinPivotKind windowJoinPivotKind(ExpressionNode call) throws SqlException {
         if (call.paramCount <= 1) {
             if (Chars.equalsIgnoreCase(call.token, "count") || Chars.equalsIgnoreCase(call.token, "sum")
                     || Chars.equalsIgnoreCase(call.token, "min") || Chars.equalsIgnoreCase(call.token, "max")) {
-                return WindowJoinPivotAggregate.MERGE;
+                return WindowJoinPivotKind.MERGE;
             }
             if (call.paramCount == 1) {
                 if (Chars.equalsIgnoreCase(call.token, "avg")) {
-                    return WindowJoinPivotAggregate.AVG;
+                    return WindowJoinPivotKind.AVG;
                 }
                 if (Chars.equalsIgnoreCase(call.token, "first")) {
-                    return WindowJoinPivotAggregate.FIRST;
+                    return WindowJoinPivotKind.FIRST;
                 }
                 if (Chars.equalsIgnoreCase(call.token, "last")) {
-                    return WindowJoinPivotAggregate.LAST;
+                    return WindowJoinPivotKind.LAST;
                 }
             }
         }
@@ -255,7 +256,7 @@ final class PivotBinder implements Mutable {
         }
         for (int i = 0, n = scope.windowJoinPivotAggregates.size(); i < n; i++) {
             final WindowJoinPivotAggregate aggregate = scope.windowJoinPivotAggregates.getQuick(i);
-            if (aggregate.kind == WindowJoinPivotAggregate.MERGE) {
+            if (aggregate.kind == WindowJoinPivotKind.MERGE) {
                 continue;
             }
             if (!isDirect) {
@@ -309,10 +310,10 @@ final class PivotBinder implements Mutable {
         bindScope.windowJoinPivotAggregates.clear();
         for (int i = 0, n = bindScope.aggregateNodes.size(), next = 0; i < n; i++) {
             final ExpressionNode call = bindScope.aggregateNodes.getQuick(i);
-            final int kind = windowJoinPivotKind(call);
+            final WindowJoinPivotKind kind = windowJoinPivotKind(call);
             final ColumnExpression value = bindScope.substitutionColumns.getQuick(next++);
-            final ColumnExpression count = kind == WindowJoinPivotAggregate.MERGE ? null : bindScope.substitutionColumns.getQuick(next++);
-            if (kind == WindowJoinPivotAggregate.AVG) {
+            final ColumnExpression count = kind == WindowJoinPivotKind.MERGE ? null : bindScope.substitutionColumns.getQuick(next++);
+            if (kind == WindowJoinPivotKind.AVG) {
                 final OutputSchema scope = windowJoinAggregateStep(plan, count.getColumnId()).getScope();
                 final int type = ColumnType.tagOf(ctx.functionBinder.bind(call.rhs, scope, null, executionContext).getDataType());
                 if (type != ColumnType.DOUBLE && type != ColumnType.FLOAT && type != ColumnType.INT
@@ -333,12 +334,12 @@ final class PivotBinder implements Mutable {
         final ExpressionNode argument;
         final CharSequence merge;
         switch (aggregate.kind) {
-            case WindowJoinPivotAggregate.AVG -> {
+            case AVG -> {
                 merge = "sum";
                 argument = windowJoinPivotPlaceholder(isHidden ? aggregate.count : aggregate.value, position);
             }
-            case WindowJoinPivotAggregate.FIRST, WindowJoinPivotAggregate.LAST -> {
-                merge = aggregate.kind == WindowJoinPivotAggregate.FIRST ? "first_not_null" : "last_not_null";
+            case FIRST, LAST -> {
+                merge = aggregate.kind == WindowJoinPivotKind.FIRST ? "first_not_null" : "last_not_null";
                 argument = isHidden ? windowJoinPivotNullFlag(aggregate, position) : windowJoinPivotPlaceholder(aggregate.value, position);
             }
             default -> {
@@ -356,20 +357,27 @@ final class PivotBinder implements Mutable {
         return function;
     }
 
+    /**
+     * Advances the IN value index of each FOR column to the next combination, the last column fastest.
+     */
+    private void nextPivotCombination(ObjList<PivotForColumn> forColumns) {
+        final IntList indexes = ctx.scope().pivotIndexes;
+        for (int i = forColumns.size() - 1; i >= 0; i--) {
+            final int next = indexes.getQuick(i) + 1;
+            if (next < forColumns.getQuick(i).getValueList().size()) {
+                indexes.setQuick(i, next);
+                return;
+            }
+            indexes.setQuick(i, 0);
+        }
+    }
+
     private CharSequence pivotAlias(ExpressionNode expression) {
         final BindScope scope = ctx.scope();
         final CharSequence alias = SqlUtil.createExprColumnAlias(ctx.characterStore, expression, scope.aliases, scope.aliasSequences,
                 configuration.getColumnAliasGeneratedMaxSize());
         scope.aliases.add(alias);
         return alias;
-    }
-
-    private ExpressionNode pivotAnd(ExpressionNode left, ExpressionNode right) {
-        final ExpressionNode and = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "and", 0, 0);
-        and.paramCount = 2;
-        and.lhs = left;
-        and.rhs = right;
-        return and;
     }
 
     private ExpressionNode pivotFilter(QueryModel pivot) {
@@ -388,7 +396,7 @@ final class PivotBinder implements Mutable {
                 in.args.addReverseAll(values);
                 in.args.add(expression);
             }
-            filter = filter == null ? in : pivotAnd(filter, in);
+            filter = filter == null ? in : ctx.binaryNode(ExpressionNode.OPERATION, "and", 0, filter, in, 0);
         }
         return filter;
     }
@@ -409,11 +417,10 @@ final class PivotBinder implements Mutable {
         } else {
             ExpressionNode condition = null;
             for (int i = 0, n = forColumns.size(); i < n; i++) {
-                final ExpressionNode equals = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "=", 0, position);
-                equals.paramCount = 2;
-                equals.lhs = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(scope.pivotForAliases.getQuick(i)), 0, position);
-                equals.rhs = forColumns.getQuick(i).getValueList().getQuick(scope.pivotIndexes.getQuick(i));
-                condition = condition == null ? equals : pivotAnd(condition, equals);
+                final ExpressionNode equals = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0,
+                        ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(scope.pivotForAliases.getQuick(i)), 0, position),
+                        forColumns.getQuick(i).getValueList().getQuick(scope.pivotIndexes.getQuick(i)), position);
+                condition = condition == null ? equals : ctx.binaryNode(ExpressionNode.OPERATION, "and", 0, condition, equals, 0);
             }
             choice = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "case", 0, position);
             choice.paramCount = 3;
@@ -546,15 +553,13 @@ final class PivotBinder implements Mutable {
             final ExpressionNode call = scope.aggregateNodes.getQuick(i);
             final int position = call.position;
             switch (windowJoinPivotKind(call)) {
-                case WindowJoinPivotAggregate.AVG -> {
-                    final ExpressionNode cast = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "cast", 0, position);
-                    cast.paramCount = 2;
-                    cast.lhs = call.rhs;
-                    cast.rhs = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "double", 0, position);
+                case AVG -> {
+                    final ExpressionNode cast = ctx.binaryNode(ExpressionNode.FUNCTION, "cast", 0, call.rhs,
+                            ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "double", 0, position), position);
                     aggregates.args.add(windowJoinPivotCall("sum", cast, position));
                     aggregates.args.add(windowJoinPivotCall("count", cast, position));
                 }
-                case WindowJoinPivotAggregate.FIRST, WindowJoinPivotAggregate.LAST -> {
+                case FIRST, LAST -> {
                     aggregates.args.add(call);
                     aggregates.args.add(windowJoinPivotCall("count", null, position));
                 }
@@ -566,14 +571,10 @@ final class PivotBinder implements Mutable {
     }
 
     private ExpressionNode windowJoinPivotNullFlag(WindowJoinPivotAggregate aggregate, int position) {
-        final ExpressionNode isEmpty = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "=", 0, position);
-        isEmpty.paramCount = 2;
-        isEmpty.lhs = windowJoinPivotPlaceholder(aggregate.count, position);
-        isEmpty.rhs = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "0", 0, position);
-        final ExpressionNode isNull = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "=", 0, position);
-        isNull.paramCount = 2;
-        isNull.lhs = windowJoinPivotPlaceholder(aggregate.value, position);
-        isNull.rhs = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, position);
+        final ExpressionNode isEmpty = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, windowJoinPivotPlaceholder(aggregate.count, position),
+                ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "0", 0, position), position);
+        final ExpressionNode isNull = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, windowJoinPivotPlaceholder(aggregate.value, position),
+                ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, position), position);
         final ExpressionNode flag = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "case", 0, position);
         flag.paramCount = 5;
         flag.args.add(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "0", 0, position));
@@ -596,18 +597,12 @@ final class PivotBinder implements Mutable {
         final ExpressionNode value = windowJoinPivotPlaceholder(
                 ctx.planNodes.columns.next().of(measured.getColumnId(measureIndex), measured.getColumnType(measureIndex), position), position);
         switch (aggregate.kind) {
-            case WindowJoinPivotAggregate.AVG -> {
-                final ExpressionNode ratio = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "/", 0, position);
-                ratio.paramCount = 2;
-                ratio.lhs = value;
-                ratio.rhs = windowJoinPivotPlaceholder(aggregate.merged, position);
-                return ratio;
+            case AVG -> {
+                return ctx.binaryNode(ExpressionNode.OPERATION, "/", 0, value, windowJoinPivotPlaceholder(aggregate.merged, position), position);
             }
-            case WindowJoinPivotAggregate.FIRST, WindowJoinPivotAggregate.LAST -> {
-                final ExpressionNode isNull = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "=", 0, position);
-                isNull.paramCount = 2;
-                isNull.lhs = windowJoinPivotPlaceholder(aggregate.merged, position);
-                isNull.rhs = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "1", 0, position);
+            case FIRST, LAST -> {
+                final ExpressionNode isNull = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, windowJoinPivotPlaceholder(aggregate.merged, position),
+                        ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "1", 0, position), position);
                 final ExpressionNode choice = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "case", 0, position);
                 choice.paramCount = 3;
                 choice.args.add(value);
@@ -631,7 +626,7 @@ final class PivotBinder implements Mutable {
         final ExpressionNode pivotWhere = pivotFilter(pivot);
         final ExpressionNode userWhere = input.getWhereClause() == null ? null
                 : SqlUtil.optimiseBooleanNot(ExpressionNode.deepClone(ctx.bindingExpressions, input.getWhereClause()), ctx.bindingExpressions);
-        ExpressionNode where = userWhere == null ? pivotWhere : pivotAnd(pivotWhere, userWhere);
+        ExpressionNode where = userWhere == null ? pivotWhere : ctx.binaryNode(ExpressionNode.OPERATION, "and", 0, pivotWhere, userWhere, 0);
         LogicalPlan source;
         WindowJoinPlan windowJoin = null;
         if (joinIndex(input, QueryModel.JOIN_WINDOW) > 0) {
@@ -756,14 +751,7 @@ final class PivotBinder implements Mutable {
                 final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(call, measuredOutput, scope.substitutionNodes, scope.substitutionColumns, executionContext);
                 pivoted.getAggregates().add((FunctionExpression) bound);
             }
-            for (int i = forColumns.size() - 1; i >= 0; i--) {
-                final int next = scope.pivotIndexes.getQuick(i) + 1;
-                if (next < forColumns.getQuick(i).getValueList().size()) {
-                    scope.pivotIndexes.setQuick(i, next);
-                    break;
-                }
-                scope.pivotIndexes.setQuick(i, 0);
-            }
+            nextPivotCombination(forColumns);
         }
         scope.pivotIndexes.setAll(forColumns.size(), 0);
         for (int combination = 0; combination < combinations; combination++) {
@@ -785,25 +773,14 @@ final class PivotBinder implements Mutable {
                     pivoted.getOutput().protectName(pivoted.getOutput().getColumnCount() - 1);
                 }
             }
-            for (int i = forColumns.size() - 1; i >= 0; i--) {
-                final int next = scope.pivotIndexes.getQuick(i) + 1;
-                if (next < forColumns.getQuick(i).getValueList().size()) {
-                    scope.pivotIndexes.setQuick(i, next);
-                    break;
-                }
-                scope.pivotIndexes.setQuick(i, 0);
-            }
+            nextPivotCombination(forColumns);
         }
         return pivoted;
     }
 
     static final class WindowJoinPivotAggregate implements Mutable {
-        private static final int AVG = 1;
-        private static final int FIRST = 2;
-        private static final int LAST = 3;
-        private static final int MERGE = 0;
         private ColumnExpression count;
-        private int kind;
+        private WindowJoinPivotKind kind;
         private ColumnExpression merged;
         private int position;
         private ColumnExpression value;
@@ -811,11 +788,12 @@ final class PivotBinder implements Mutable {
         @Override
         public void clear() {
             count = null;
+            kind = null;
             merged = null;
             value = null;
         }
 
-        WindowJoinPivotAggregate of(int kind, ColumnExpression value, ColumnExpression count, int position) {
+        private WindowJoinPivotAggregate of(WindowJoinPivotKind kind, ColumnExpression value, ColumnExpression count, int position) {
             this.kind = kind;
             this.value = value;
             this.count = count;
@@ -823,5 +801,13 @@ final class PivotBinder implements Mutable {
             this.position = position;
             return this;
         }
+    }
+
+    /**
+     * How a PIVOT measure over a WINDOW JOIN merges the per-row window aggregates into its groups: as the same
+     * aggregate (count as a sum), or, for avg, first and last, through a hidden count of the window rows.
+     */
+    private enum WindowJoinPivotKind {
+        AVG, FIRST, LAST, MERGE
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.bind;
 
+import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.plan.logical.JoinDependency;
 import io.questdb.griffin.plan.logical.JoinEquality;
@@ -66,27 +67,17 @@ public final class JoinGraphBuilder implements Mutable {
      * Borrows {@code markedIndexes} as a temporary of one call, and the other lists and the pool of child sets as
      * temporaries of one collection.
      */
-    public JoinGraphBuilder(
-            PlanNodePools planNodes,
-            IntHashSet markedIndexes,
-            IntList inCounts,
-            IntList semanticEdges,
-            IntSortedList ready,
-            ObjList<IntHashSet> children,
-            ObjectPool<IntHashSet> childrenPool,
-            ObjList<JoinKind> joinTypes,
-            ObjList<JoinDependency> stagedDependencies
-    ) {
+    public JoinGraphBuilder(PlanNodePools planNodes, CompilerTemporaries temporaries) {
         this.dependencyPool = planNodes.joinDependencies;
         this.equalityPool = planNodes.joinEqualities;
-        this.markedIndexes = markedIndexes;
-        this.inCounts = inCounts;
-        this.semanticEdges = semanticEdges;
-        this.ready = ready;
-        this.children = children;
-        this.childrenPool = childrenPool;
-        this.joinTypes = joinTypes;
-        this.stagedDependencies = stagedDependencies;
+        this.markedIndexes = temporaries.ids;
+        this.inCounts = temporaries.masterKeys;
+        this.semanticEdges = temporaries.slaveKeys;
+        this.ready = temporaries.readyInputs;
+        this.children = temporaries.joinChildren;
+        this.childrenPool = temporaries.joinChildrenPool;
+        this.joinTypes = temporaries.joinTypes;
+        this.stagedDependencies = temporaries.joinDependencies;
     }
 
     @Override

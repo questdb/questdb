@@ -33,9 +33,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ConstantExpression;
-import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.JoinEquality;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -63,7 +60,7 @@ import io.questdb.std.ObjObjHashMap;
  * binding of its windows' self references and the translation of its aliases; and its window calls bind before its
  * projection reads earlier aliases.
  */
-public final class BindScope implements Mutable {
+final class BindScope implements Mutable {
     final ObjList<ExpressionNode> aggregateNodes;
     final ObjList<ExpressionNode> aggregateOrderExpressions;
     final IntList aggregateProjectionIndexes;
@@ -140,7 +137,6 @@ public final class BindScope implements Mutable {
     final ObjIntHashMap<ExpressionNode> windowSelectIndexes = new ObjIntHashMap<>();
     final LowerCaseCharSequenceIntHashMap windowSelfReferences = new LowerCaseCharSequenceIntHashMap();
     private final IntList aggregateHashes;
-    private final ObjList<ConstantExpression> pendingSumLiterals = new ObjList<>();
     FunctionBinder.BindingRole bindingRole;
     ExpressionNode bindingRoot;
     Subquery boundLowerBound;
@@ -162,7 +158,7 @@ public final class BindScope implements Mutable {
     LogicalPlan windowCallScopeInput;
     LogicalPlan windowInput;
 
-    public BindScope() {
+    BindScope() {
         aggregateHashes = windowAliasIds;
         aggregateNodes = windowAliasResolutions;
         aggregateOrderExpressions = windowAliasCopies;
@@ -264,19 +260,9 @@ public final class BindScope implements Mutable {
         aggregateHashes.add(ExpressionNode.hashNodesExact(node));
     }
 
-    /**
-     * Appends an aggregate to the plan of the block, with the literal of the sum it holds pending normalisation, or null.
-     */
-    void addPlanAggregate(GroupingPlan aggregate, FunctionExpression function, ConstantExpression pendingSumLiteral) {
-        assert pendingSumLiterals.size() == aggregate.getAggregates().size();
-        aggregate.getAggregates().add(function);
-        pendingSumLiterals.add(pendingSumLiteral);
-    }
-
     void clearAggregateNodes() {
         aggregateNodes.clear();
         aggregateHashes.clear();
-        pendingSumLiterals.clear();
     }
 
     /**
@@ -300,27 +286,9 @@ public final class BindScope implements Mutable {
         return -1;
     }
 
-    /**
-     * The literal of the sum the plan aggregate at {@code index} holds pending normalisation, or null.
-     */
-    ConstantExpression pendingSumLiteral(GroupingPlan aggregate, int index) {
-        assert pendingSumLiterals.size() == aggregate.getAggregates().size();
-        return pendingSumLiterals.getQuick(index);
-    }
-
     void removeAggregateNode(int index) {
         aggregateNodes.remove(index);
         aggregateHashes.removeIndex(index);
-    }
-
-    /**
-     * Removes the plan aggregate at {@code index} with its output column.
-     */
-    void removePlanAggregate(GroupingPlan aggregate, int index) {
-        assert pendingSumLiterals.size() == aggregate.getAggregates().size();
-        aggregate.getAggregates().remove(index);
-        pendingSumLiterals.remove(index);
-        aggregate.getOutput().remove(aggregate.getGroupingExpressions().size() + index);
     }
 
     /**
@@ -339,15 +307,6 @@ public final class BindScope implements Mutable {
         for (int i = 0, n = seed.getColumnCount(); i < n; i++) {
             aliases.add(seed.getColumnName(i));
         }
-    }
-
-    /**
-     * Replaces the plan aggregate at {@code index} with one no normalisation is pending for.
-     */
-    void setPlanAggregate(GroupingPlan aggregate, int index, FunctionExpression function) {
-        assert pendingSumLiterals.size() == aggregate.getAggregates().size();
-        aggregate.getAggregates().setQuick(index, function);
-        pendingSumLiterals.setQuick(index, null);
     }
 
     /**

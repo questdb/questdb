@@ -35,6 +35,7 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.SampleByPlan;
@@ -45,6 +46,7 @@ import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
+import io.questdb.std.IntList;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -62,8 +64,41 @@ final class PhysicalChoiceVerifier {
         return algorithm == SortPlan.Algorithm.LIMITED || algorithm == SortPlan.Algorithm.PRESORTED_LIMITED || isTopK(algorithm);
     }
 
+    /**
+     * Whether the hints of the keyed ASOF step ask for the time-frame scan operator planning records: the dense scan
+     * the {@code asof_dense} hint asks for, else the index or memoized scan of a single key their hints ask for, which
+     * the memoized drive-by hint refines, or the fast scan.
+     */
+    private static boolean isHintedTimeFrameScan(JoinInput.TimeFrameScan scan, JoinInput step) {
+        final int hints = step.getHints();
+        final boolean isDense = (hints & JoinInput.HINT_ASOF_DENSE) != 0;
+        final boolean isSingleKey = step.getKeys().size() == 1;
+        return switch (scan) {
+            case DENSE -> isDense;
+            case DENSE_SINGLE_SYMBOL -> isDense && isSingleKey;
+            case INDEXED -> !isDense && isSingleKey && (hints & JoinInput.HINT_ASOF_INDEX) != 0;
+            case MEMOIZED ->
+                    !isDense && isSingleKey && (hints & JoinInput.HINT_ASOF_MEMOIZED) != 0 && (hints & JoinInput.HINT_ASOF_MEMOIZED_DRIVEBY) == 0;
+            case MEMOIZED_DRIVEBY -> !isDense && isSingleKey && (hints & JoinInput.HINT_ASOF_MEMOIZED_DRIVEBY) != 0;
+            case FAST -> !isDense;
+        };
+    }
+
     private static boolean isLinear(JoinInput step) {
         return (step.getHints() & JoinInput.HINT_ASOF_LINEAR) != 0;
+    }
+
+    /**
+     * Whether the window join step at {@code index} reads the page frames of the master: every step before it
+     * null-extends the master, which keeps its page frames.
+     */
+    private static boolean isMasterPageFrameRead(WindowJoinPlan windowJoin, int index, boolean isPlanned) {
+        for (int i = 0; i < index; i++) {
+            if (!windowJoin.getSteps().getQuick(i).isNullExtending()) {
+                return false;
+            }
+        }
+        return !isUnsatisfied(PhysicalProperties.supportsPageFrameCursor(windowJoin.getMaster()), isPlanned);
     }
 
     /**
@@ -71,6 +106,20 @@ final class PhysicalChoiceVerifier {
      */
     private static boolean isMasterReadByRowId(JoinInput.Algorithm algorithm) {
         return algorithm == JoinInput.Algorithm.MARKOUT;
+    }
+
+    /**
+     * Whether the parallel aggregate reads the frames its algorithm names, of its source, the master of a HORIZON JOIN
+     * or the GROUP BY's base: the source's page frames, or the frames under the filter it steals from the source, as
+     * {@link OperatorPlanning#hasParallelFunctions} and {@link OperatorPlanning#isParallelGroupBy} allow.
+     */
+    private static boolean isParallelAggregate(AggregatePlan aggregate, AggregatePlan.Algorithm algorithm, boolean isHorizon, boolean isPlanned) {
+        final LogicalPlan source = isHorizon ? ((HorizonJoinPlan) aggregate.getChild()).getMaster() : PlanToFactoryRules.aggregateBase(aggregate);
+        if (isHorizon ? !OperatorPlanning.hasParallelFunctions(aggregate) : !OperatorPlanning.isParallelGroupBy(aggregate, source)) {
+            return false;
+        }
+        return algorithm == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER ? PlanToFactoryRules.stolenFilter(source) != null
+                : !isUnsatisfied(PhysicalProperties.supportsPageFrameCursor(source), isPlanned);
     }
 
     /**
@@ -87,10 +136,67 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
+     * Whether the head of the shared source's set operation serves the leading branch of the domain's input the
+     * domain records: the operation is the source's input under column projections, its head serves shared cursors,
+     * and the branch, which leads the domain's set operation, lays out the head's column types.
+     */
+    private static boolean isSharedHeadServed(AggregatePlan aggregate, JoinInput source) {
+        final SetOperationPlan operation = aggregate.getSharedOperation();
+        final LogicalPlan branch = aggregate.getSharedHead();
+        if (operation == null || operation != LogicalPlans.unwrapColumnProjections(source.getInput())
+                || !(LogicalPlans.unwrapColumnProjections(aggregate.getChild()) instanceof SetOperationPlan)
+                || branch != OperatorPlanning.leadingBranch(aggregate.getChild())) {
+            return false;
+        }
+        final LogicalPlan head = OperatorPlanning.leadingBranch(operation);
+        final OutputSchema output = branch.getOutput();
+        final OutputSchema headOutput = head.getOutput();
+        if (PhysicalProperties.supportsSharedCursors(head) != PhysicalProperties.Capability.YES || output.getColumnCount() != headOutput.getColumnCount()) {
+            return false;
+        }
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            if (output.getColumnType(i) != headOutput.getColumnType(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether the factory of the shared source serves the domain's input: it serves shared cursors and the pairs map
+     * every input column, in input order, onto a source column of its type.
+     */
+    private static boolean isSharedSourceServed(AggregatePlan aggregate, JoinInput source) {
+        final OutputSchema input = aggregate.getChild().getOutput();
+        final OutputSchema sourceOutput = source.getSourceOutput();
+        final IntList inputIds = aggregate.getSharedInputIds();
+        final IntList sourceIds = aggregate.getSharedSourceIds();
+        if (PhysicalProperties.supportsSharedCursors(source.getInput()) != PhysicalProperties.Capability.YES
+                || inputIds.size() != input.getColumnCount() || sourceIds.size() != inputIds.size()) {
+            return false;
+        }
+        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+            final int index = sourceOutput.getColumnIndexById(sourceIds.getQuick(i));
+            if (inputIds.getQuick(i) != input.getColumnId(i) || index < 0 || sourceOutput.getColumnType(index) != input.getColumnType(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Whether the join step reads its slave back by row id, which requires a slave with random access.
      */
     private static boolean isSlaveReadByRowId(JoinInput.Algorithm algorithm) {
         return algorithm == JoinInput.Algorithm.LIGHT_HASH || algorithm == JoinInput.Algorithm.TEMPORAL;
+    }
+
+    /**
+     * Whether the ASOF join step steals the filter of its slave, whose factory under the filter serves time frames.
+     */
+    private static boolean isTimeFrameFilterStolen(JoinInput step, boolean isPlanned) {
+        final FilterPlan filter = PlanToFactoryRules.temporalStolenFilter(step.getInput());
+        return filter != null && !isUnsatisfied(PhysicalProperties.supportsLeafTimeFrameCursor(filter), isPlanned);
     }
 
     private static boolean isTopK(SortPlan.Algorithm algorithm) {
@@ -106,7 +212,32 @@ final class PhysicalChoiceVerifier {
         return capability == PhysicalProperties.Capability.NO || isPlanned && capability == PhysicalProperties.Capability.UNKNOWN;
     }
 
+    /**
+     * Checks how a decorrelation domain reads its input: only a domain with a shared source records a read, which the
+     * source's factory or the head of the source's set operation must serve.
+     */
+    private static String sharedRead(AggregatePlan aggregate, boolean isPlanned) {
+        final JoinInput source = aggregate.getSharedSource();
+        final AggregatePlan.SharedRead read = aggregate.getSharedRead();
+        if (read == null) {
+            return isPlanned && source != null ? PlanVerifier.CHOICE_UNPLANNED : null;
+        }
+        if (source == null) {
+            return PlanVerifier.SHARED_READ;
+        }
+        final boolean isServed = switch (read) {
+            case SOURCE -> isSharedSourceServed(aggregate, source);
+            case SET_OPERATION_HEAD -> isSharedHeadServed(aggregate, source);
+            case NONE -> true;
+        };
+        return isServed ? null : PlanVerifier.SHARED_READ;
+    }
+
     static String aggregate(AggregatePlan aggregate, boolean isPlanned) {
+        final String sharedRead = sharedRead(aggregate, isPlanned);
+        if (sharedRead != null) {
+            return sharedRead;
+        }
         final AggregatePlan.Algorithm algorithm = aggregate.getAlgorithm();
         final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
         final boolean isHorizon = factory == PlanToFactoryRules.AggregateFactory.HORIZON;
@@ -116,10 +247,8 @@ final class PhysicalChoiceVerifier {
         }
         final boolean isValid = hasChoice && switch (algorithm) {
             case VECTORISED -> !isHorizon && PlanToFactoryRules.hasVectorShape(aggregate);
-            case PARALLEL_STOLEN_FILTER ->
-                    PlanToFactoryRules.stolenFilter(isHorizon ? ((HorizonJoinPlan) aggregate.getChild()).getMaster()
-                            : PlanToFactoryRules.aggregateBase(aggregate)) != null;
-            case PARALLEL, SERIAL -> true;
+            case PARALLEL, PARALLEL_STOLEN_FILTER -> isParallelAggregate(aggregate, algorithm, isHorizon, isPlanned);
+            case SERIAL -> true;
         };
         return isValid ? null : PlanVerifier.AGGREGATE_ALGORITHM;
     }
@@ -129,7 +258,11 @@ final class PhysicalChoiceVerifier {
         if (algorithm == null) {
             return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        return (algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS) != OperatorPlanning.isSampleByRowsFill(fill) ? PlanVerifier.FILL_ALGORITHM : null;
+        final int inputTimestampIndex = PhysicalProperties.timestampIndex(fill.getChild());
+        return (algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS) != OperatorPlanning.isSampleByRowsFill(fill)
+                || inputTimestampIndex != PhysicalProperties.UNKNOWN_TIMESTAMP
+                && (algorithm == FillPlan.Algorithm.SORTED) == (inputTimestampIndex == fill.derivedTimestampIndex())
+                ? PlanVerifier.FILL_ALGORITHM : null;
     }
 
     static String filter(FilterPlan filter, boolean isPlanned) {
@@ -160,18 +293,29 @@ final class PhysicalChoiceVerifier {
             case TEMPORAL_TIME_FRAME ->
                     !isLinear(step) && (joinType == JoinKind.ASOF || joinType == JoinKind.LT && position > 0
                             && !PlanToFactoryRules.isKeyedTemporalJoin(step, join.getOrderedInputs().getQuick(position - 1).getOutput(),
-                            PhysicalProperties.masterTimestampIndex(join, position), PhysicalProperties.timestampIndex(step.getInput())));
+                            PhysicalProperties.masterTimestampIndex(join, position), PhysicalProperties.timestampIndex(step.getInput())))
+                            && !isUnsatisfied(PhysicalProperties.supportsTimeFrameCursor(step.getInput()), isPlanned);
             case TEMPORAL_STOLEN_FILTER ->
-                    joinType == JoinKind.ASOF && !isLinear(step) && PlanToFactoryRules.temporalStolenFilter(step.getInput()) != null;
+                    joinType == JoinKind.ASOF && !isLinear(step) && isTimeFrameFilterStolen(step, isPlanned);
             case SPLICE, FULL_FAT_SPLICE -> joinType == JoinKind.SPLICE;
             case MARKOUT -> joinType.isRelational() && step.getMarkoutTimestampColumnId() >= 0 && position > 0
                     && PhysicalProperties.masterScanDirection(join, position) == PhysicalProperties.ScanDirection.FORWARD;
-            case NESTED_LOOP -> joinType.isRelational() && step.getMasterKeyColumnIds().size() == 0;
+            case NESTED_LOOP -> joinType.isRelational() && step.getKeys().size() == 0;
             case MATERIALIZED_NESTED_LOOP -> joinType.isRelational() && joinType != JoinKind.RIGHT_OUTER
-                    && step.getMasterKeyColumnIds().size() == 0 && step.getInput() instanceof JoinPlan;
-            case HASH, LIGHT_HASH -> joinType.isRelational() && step.getMasterKeyColumnIds().size() > 0;
+                    && step.getKeys().size() == 0 && step.getInput() instanceof JoinPlan;
+            case HASH, LIGHT_HASH -> joinType.isRelational() && step.getKeys().size() > 0;
         };
         if (!isValid) {
+            return PlanVerifier.JOIN_ALGORITHM;
+        }
+        final JoinInput.TimeFrameScan scan = step.getTimeFrameScan();
+        final boolean hasScanChoice = algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME && joinType == JoinKind.ASOF && position > 0
+                && PlanToFactoryRules.isKeyedTemporalJoin(step, join.getOrderedInputs().getQuick(position - 1).getOutput(),
+                PhysicalProperties.masterTimestampIndex(join, position), PhysicalProperties.timestampIndex(step.getInput()));
+        if (scan == null && isPlanned && hasScanChoice) {
+            return PlanVerifier.CHOICE_UNPLANNED;
+        }
+        if (scan != null && (!hasScanChoice || !isHintedTimeFrameScan(scan, step))) {
             return PlanVerifier.JOIN_ALGORITHM;
         }
         return isSlaveReadByRowId(algorithm) && !PlanToFactoryRules.isSlaveEmptied(step)
@@ -227,7 +371,8 @@ final class PhysicalChoiceVerifier {
         }
         final boolean isValid = (algorithm == SampleByPlan.Algorithm.INTERPOLATE) == OperatorPlanning.isLinearFill(sample) && switch (algorithm) {
             case INTERPOLATE -> true;
-            case FIRST_LAST_INDEX -> sample.getFillMode() == SampleByPlan.FILL_NONE;
+            case FIRST_LAST_INDEX ->
+                    OperatorPlanning.firstLastIndexScan(sample, PlanToFactoryRules.sampleByBase(sample)) != null;
             case FILL_NONE -> OperatorPlanning.isFillNone(sample);
             case FILL_VALUE -> !OperatorPlanning.isFillNone(sample);
         };
@@ -283,7 +428,8 @@ final class PhysicalChoiceVerifier {
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
             isStreamed &= OperatorPlanning.isStreamedWindow(window.getSpecs().getQuick(i), window.getFunctions().getQuick(i));
         }
-        if ((algorithm == WindowPlan.Algorithm.STREAMING) != isStreamed) {
+        if ((algorithm == WindowPlan.Algorithm.STREAMING) != isStreamed
+                || algorithm == WindowPlan.Algorithm.CACHED_LIGHT && !OperatorPlanning.isCachedLightShape(window)) {
             return PlanVerifier.WINDOW_ALGORITHM;
         }
         return algorithm == WindowPlan.Algorithm.CACHED_LIGHT && isUnsatisfied(PhysicalProperties.supportsRandomAccess(window.getChild()), isPlanned)
@@ -295,8 +441,13 @@ final class PhysicalChoiceVerifier {
         if (algorithm == null) {
             return isPlanned && !step.isNullExtending() ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        return step.isNullExtending() || algorithm == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
-                && (index > 0 || PlanToFactoryRules.stolenFilter(windowJoin.getMaster()) == null)
-                ? PlanVerifier.WINDOW_JOIN_ALGORITHM : null;
+        final boolean isValid = !step.isNullExtending() && switch (algorithm) {
+            case PARALLEL_STOLEN_FILTER ->
+                    index == 0 && PlanToFactoryRules.stolenFilter(windowJoin.getMaster()) != null && OperatorPlanning.isParallelWindowJoinStep(step);
+            case PARALLEL ->
+                    isMasterPageFrameRead(windowJoin, index, isPlanned) && OperatorPlanning.isParallelWindowJoinStep(step);
+            case SERIAL -> true;
+        };
+        return isValid ? null : PlanVerifier.WINDOW_JOIN_ALGORITHM;
     }
 }

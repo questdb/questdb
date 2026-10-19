@@ -25,8 +25,8 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
-import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -41,33 +41,41 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.optimiser.DecorrelationContext.OUTER_REF_PREFIX;
-
 /**
  * Builds decorrelation domains: the distinct values of outer columns, read from a copy of the master input or
  * prefix and shared with the master where the generator can re-read it. Crosses them into the inputs of block
- * sources.
+ * sources. Records the steps decorrelation rewrote, whose columns a domain then reads from the master prefix.
  */
 final class DecorrelationDomains implements Mutable {
-    final ObjList<JoinInput> decorrelatedSteps;
-    final IntList domainOuterIds = new IntList();
+    private final OptimiserContext context;
     private final DecorrelationContext ctx;
-    int domainSequence;
+    private final ObjList<JoinInput> decorrelatedSteps;
+    private final IntList domainOuterIds = new IntList();
+    private final OuterColumnMapping mapping;
+    private final PlanNodePools planNodes;
     private JoinInput domainStep;
     private final ConjunctTest nonDomainConjuncts = this::keepsNonDomainConjunct;
 
     /**
      * {@code decorrelatedSteps} is the optimiser's temporary step list, which the owner empties before decorrelation starts.
      */
-    DecorrelationDomains(DecorrelationContext ctx, ObjList<JoinInput> decorrelatedSteps) {
+    DecorrelationDomains(
+            DecorrelationContext ctx,
+            OuterColumnMapping mapping,
+            OptimiserContext context,
+            PlanNodePools planNodes,
+            ObjList<JoinInput> decorrelatedSteps
+    ) {
         this.ctx = ctx;
+        this.mapping = mapping;
+        this.context = context;
+        this.planNodes = planNodes;
         this.decorrelatedSteps = decorrelatedSteps;
     }
 
     @Override
     public void clear() {
         domainOuterIds.clear();
-        domainSequence = 0;
         domainStep = null;
     }
 
@@ -76,7 +84,7 @@ final class DecorrelationDomains implements Mutable {
             return true;
         }
         final BoundExpression moved = domainStep.getPostJoinFilter();
-        domainStep.setPostJoinFilter(moved == null ? conjunct : ctx.context.getRewriter().combineConjunction(moved, conjunct, conjunct.getPosition()));
+        domainStep.setPostJoinFilter(moved == null ? conjunct : context.getRewriter().combineConjunction(moved, conjunct, conjunct.getPosition()));
         return false;
     }
 
@@ -84,19 +92,20 @@ final class DecorrelationDomains implements Mutable {
      * The master prefix of the first {@code inputCount} inputs as a join of the original inputs, for copying.
      */
     private JoinPlan prefix(int inputCount, int position) {
-        final JoinPlan prefix = ctx.planNodes.joins.next().of(position);
+        final JoinPlan master = ctx.master();
+        final JoinPlan prefix = planNodes.joins.next().of(position);
         for (int i = 0; i < inputCount; i++) {
-            prefix.getInputs().add(ctx.master.getInputs().getQuick(i));
+            prefix.getInputs().add(master.getInputs().getQuick(i));
         }
-        for (int i = 0, n = ctx.master.getOrderedInputs().size(); i < n; i++) {
-            final JoinInput input = ctx.master.getOrderedInputs().getQuick(i);
-            if (ctx.master.getInputs().indexOf(input) < inputCount) {
+        for (int i = 0, n = master.getOrderedInputs().size(); i < n; i++) {
+            final JoinInput input = master.getOrderedInputs().getQuick(i);
+            if (master.getInputs().indexOf(input) < inputCount) {
                 prefix.getOrderedInputs().add(input);
             }
         }
         final OutputSchema output = prefix.getOutput();
         for (int i = 0; i < inputCount; i++) {
-            final JoinInput input = ctx.master.getInputs().getQuick(i);
+            final JoinInput input = master.getInputs().getQuick(i);
             final OutputSchema source = input.getSourceOutput();
             for (int c = 0, n = source.getColumnCount(); c < n; c++) {
                 output.add(source.getColumnId(c), source.getColumnName(c), source.getColumnType(c), source.getMetadata(c),
@@ -124,14 +133,18 @@ final class DecorrelationDomains implements Mutable {
             domain.getSharedSourceIds().add(sourceOutput.getColumnId(i));
         }
         domain.setSharedSource(source);
-        ctx.planNodes.recordSharedSource();
+        planNodes.recordSharedSource();
+    }
+
+    void addDecorrelatedStep(JoinInput step) {
+        decorrelatedSteps.add(step);
     }
 
     /**
-     * A domain: the distinct values of the outer columns {@link #domainOuterIds} holds, read from a copy of
-     * the master input that defines them, or of the master prefix when they come from several inputs or from a
-     * decorrelated step, or when a step of the prefix can NULL-extend them. The prefix then reaches the last such
-     * step. Maps each outer column to its domain column.
+     * A domain: the distinct values of the outer columns {@link #outerIds} holds, read from a copy of the master input
+     * that defines them, or of the master prefix when they come from several inputs or from a decorrelated step, or
+     * when a step of the prefix can NULL-extend them. The prefix then reaches the last such step. Maps each outer
+     * column to its domain column.
      */
     AggregatePlan buildDomain(int position) {
         int firstInput = Integer.MAX_VALUE;
@@ -141,32 +154,33 @@ final class DecorrelationDomains implements Mutable {
             firstInput = Math.min(firstInput, input);
             lastInput = Math.max(lastInput, input);
         }
+        final JoinPlan master = ctx.master();
         int prefixCount = lastInput + 1;
         boolean isNulled = false;
         for (int i = 0, n = domainOuterIds.size(); i < n; i++) {
             final int input = ctx.masterInput(domainOuterIds.getQuick(i));
-            for (int step = input; step < ctx.masterLimit; step++) {
-                if (LogicalPlans.isNullingStep(ctx.master, ctx.master.getInputs().getQuick(step), ctx.master.getInputs().getQuick(input))) {
+            for (int step = input, stepIndex = ctx.stepIndex(); step < stepIndex; step++) {
+                if (LogicalPlans.isNullingStep(master, master.getInputs().getQuick(step), master.getInputs().getQuick(input))) {
                     isNulled = true;
                     prefixCount = Math.max(prefixCount, step + 1);
                 }
             }
         }
-        final JoinInput last = ctx.master.getInputs().getQuick(lastInput);
-        final boolean isPrefix = isNulled || firstInput != lastInput || last.getInput() == null || decorrelatedSteps.indexOf(last) > -1;
+        final JoinInput last = master.getInputs().getQuick(lastInput);
+        final boolean isPrefix = isNulled || firstInput != lastInput || last.getInput() == null || isDecorrelated(last);
         final LogicalPlan original = isPrefix ? prefix(prefixCount, position) : last.getInput();
-        final LogicalPlan source = ctx.copier.copy(original);
-        final AggregatePlan domain = ctx.planNodes.aggregates.next().of(source, position);
+        final LogicalPlan source = ctx.copy(original);
+        final AggregatePlan domain = planNodes.aggregates.next().of(source, position);
         domain.setExplicitGrouping(true);
         for (int i = 0, n = domainOuterIds.size(); i < n; i++) {
             final int outerId = domainOuterIds.getQuick(i);
             final int index = original.getOutput().getColumnIndexById(ctx.masterColumn(outerId));
             final int sourceId = source.getOutput().getColumnId(index);
             final int type = source.getOutput().getColumnType(index);
-            domain.getGroupingExpressions().add(ctx.planNodes.columns.next().of(sourceId, type, position));
-            final int columnId = ctx.context.newColumnId();
+            domain.getGroupingExpressions().add(planNodes.columns.next().of(sourceId, type, position));
+            final int columnId = context.newColumnId();
             domain.getOutput().add(columnId, ctx.outerRefName(outerId), type, false);
-            ctx.addMapping(outerId, columnId);
+            mapping.push(outerId, columnId);
         }
         if (!isPrefix) {
             shareMasterSource(domain, last);
@@ -174,10 +188,37 @@ final class DecorrelationDomains implements Mutable {
         return domain;
     }
 
+    void coverMappedMaster(int lo, int hi) {
+        domainOuterIds.clear();
+        final IntList outerIds = ctx.masterOuterIds();
+        for (int i = 0, n = outerIds.size(); i < n; i++) {
+            final int outerId = outerIds.getQuick(i);
+            if (mapping.mappedColumn(outerId, lo, hi) > -1) {
+                domainOuterIds.add(outerId);
+            }
+        }
+    }
+
+    /**
+     * Makes the next domain cover each outer column of the mapping above {@code base}, in mapping order.
+     */
+    void coverMapping(int base) {
+        domainOuterIds.clear();
+        for (int i = base, n = mapping.mark(); i < n; i++) {
+            domainOuterIds.add(mapping.outerIdAt(i));
+        }
+    }
+
+    void coverOuter(int outerId) {
+        if (!domainOuterIds.contains(outerId)) {
+            domainOuterIds.add(outerId);
+        }
+    }
+
     JoinPlan crossDomain(LogicalPlan source, AggregatePlan domain, int position) {
-        final JoinPlan join = ctx.planNodes.joins.next().of(position);
-        join.addInput(ctx.planNodes.joinInputs.next().of(source, JoinKind.CROSS, null, position));
-        join.addInput(ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domainAlias(), position));
+        final JoinPlan join = planNodes.joins.next().of(position);
+        join.addInput(planNodes.joinInputs.next().of(source, JoinKind.CROSS, null, position));
+        join.addInput(planNodes.joinInputs.next().of(domain, JoinKind.CROSS, ctx.domainAlias(), position));
         join.getOutput().copyFrom(source.getOutput());
         join.getOutput().addMissingColumnsFrom(domain.getOutput());
         join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, 2));
@@ -209,21 +250,16 @@ final class DecorrelationDomains implements Mutable {
     LogicalPlan crossMissing(LogicalPlan branch, int otherLo, int otherHi, int ownLo, int ownHi, int position) {
         domainOuterIds.clear();
         for (int i = otherLo; i < otherHi; i++) {
-            final int outerId = ctx.mappedOuterIds.getQuick(i);
-            if (ctx.mappedColumn(outerId, ownLo, ownHi) < 0 && !domainOuterIds.contains(outerId)) {
+            final int outerId = mapping.outerIdAt(i);
+            if (mapping.mappedColumn(outerId, ownLo, ownHi) < 0 && !domainOuterIds.contains(outerId)) {
                 domainOuterIds.add(outerId);
             }
         }
         return domainOuterIds.size() == 0 ? branch : crossDomain(branch, buildDomain(position), position);
     }
 
-    CharSequence domainAlias() {
-        final CharacterStoreEntry alias = ctx.characterStore.newEntry();
-        alias.put(OUTER_REF_PREFIX).put(ctx.outerRefSequence);
-        if (domainSequence++ > 0) {
-            alias.put('_').put(domainSequence - 1);
-        }
-        return alias.toImmutable();
+    boolean hasDecorrelatedSteps() {
+        return decorrelatedSteps.size() > 0;
     }
 
     /**
@@ -231,19 +267,34 @@ final class DecorrelationDomains implements Mutable {
      * index is the step count, and returns the step.
      */
     JoinInput insertDomainStep(JoinPlan join, AggregatePlan domain, int orderedIndex, int position) {
-        final JoinInput step = ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domainAlias(), position);
+        final JoinInput step = planNodes.joinInputs.next().of(domain, JoinKind.CROSS, ctx.domainAlias(), position);
         join.getInputs().add(step);
         join.getOrderedInputs().insert(orderedIndex, 1, step);
         join.addMissingInputColumns();
         return step;
     }
 
+    boolean isDecorrelated(JoinInput step) {
+        return decorrelatedSteps.indexOf(step) > -1;
+    }
+
     /**
-     * Returns the conjuncts of the predicate that read none of {@link #domainOuterIds}, moving the others to the
-     * domain step, which joins after every input.
+     * Returns the conjuncts of the predicate that read none of {@link #outerIds}, moving the others to the domain
+     * step, which joins after every input.
      */
     BoundExpression moveDomainConjuncts(BoundExpression predicate, JoinInput domainStep) throws SqlException {
         this.domainStep = domainStep;
-        return ctx.context.getRewriter().retainConjuncts(predicate, nonDomainConjuncts);
+        return context.getRewriter().retainConjuncts(predicate, nonDomainConjuncts);
+    }
+
+    /**
+     * The outer columns the next domain covers, which the caller only reads.
+     */
+    IntList outerIds() {
+        return domainOuterIds;
+    }
+
+    void resetOuterIds() {
+        domainOuterIds.clear();
     }
 }

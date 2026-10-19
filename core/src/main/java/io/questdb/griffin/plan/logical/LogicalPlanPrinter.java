@@ -225,15 +225,15 @@ public final class LogicalPlanPrinter {
         }
     }
 
-    private void keyPairs(IntList masterIds, IntList slaveIds) {
+    private void keyPairs(ObjList<JoinKey> keys) {
         sink.put('[');
-        for (int i = 0, n = masterIds.size(); i < n; i++) {
+        for (int i = 0, n = keys.size(); i < n; i++) {
             if (i > 0) {
                 sink.put(", ");
             }
-            column(slaveIds.getQuick(i));
+            column(keys.getQuick(i).getSlaveColumnId());
             sink.put(" = ");
-            column(masterIds.getQuick(i));
+            column(keys.getQuick(i).getMasterColumnId());
         }
         sink.put(']');
     }
@@ -428,7 +428,7 @@ public final class LogicalPlanPrinter {
         for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
             final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
             attribute(depth, "keys");
-            keyPairs(slave.getMasterKeyColumnIds(), slave.getSlaveKeyColumnIds());
+            keyPairs(slave.getKeys());
             sink.put('\n');
             print(slave.getInput(), depth + 1);
         }
@@ -452,9 +452,9 @@ public final class LogicalPlanPrinter {
                 sink.put(' ').put(input.getBindingAlias());
             }
             sink.put('\n');
-            if (input.getMasterKeyColumnIds().size() > 0) {
+            if (input.getKeys().size() > 0) {
                 attribute(depth + 1, "keys");
-                keyPairs(input.getMasterKeyColumnIds(), input.getSlaveKeyColumnIds());
+                keyPairs(input.getKeys());
                 sink.put('\n');
             }
             if (input.getOnResidual() != null) {

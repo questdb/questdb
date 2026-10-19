@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.codegen;
 
-import io.questdb.ParanoiaState;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -120,16 +119,6 @@ final class WindowFactoryGenerator {
      * A live view resolves its anchor expression and partition keys against the window's input,
      * so projection aliases of input columns name that input.
      */
-    private static boolean isKeepFlagFusible(FilterPlan filter, RecordCursorFactory factory) {
-        if (!(filter.getPredicate() instanceof ColumnExpression column) || !(factory instanceof CachedWindowLightRecordCursorFactory windowFactory)) {
-            return false;
-        }
-        final WindowFunction function = windowFactory.getSingleRowSelectingFunction();
-        final int columnIndex = filter.getChild().getOutput().getColumnIndexById(column.getColumnId());
-        return function != null && columnIndex >= 0 && columnIndex == function.getColumnIndex()
-                && windowFactory.getMetadata().getColumnType(columnIndex) == ColumnType.BOOLEAN;
-    }
-
     private static RecordCursorFactory renameWindowInput(RecordCursorFactory base, OutputSchema input, ProjectPlan projection) {
         final GenericRecordMetadata renamed;
         final IntList mapping;
@@ -175,9 +164,6 @@ final class WindowFactoryGenerator {
     // boolean write, so a user-visible row-selecting boolean must retain the ordinary window and filter path.
     static boolean fuseKeepFlagFilter(FilterPlan filter, RecordCursorFactory factory) {
         final boolean isFused = filter.getAlgorithm() == FilterPlan.Algorithm.WINDOW_KEEP_FLAG;
-        if (ParanoiaState.PLAN_PARANOIA_MODE && isFused != isKeepFlagFusible(filter, factory)) {
-            throw new AssertionError("recorded keep-flag fusion differs from the window factory under the filter");
-        }
         if (isFused) {
             final CachedWindowLightRecordCursorFactory windowFactory = (CachedWindowLightRecordCursorFactory) factory;
             windowFactory.enableRowSelecting(windowFactory.getAllWindowFunctions().getQuick(0));
@@ -202,7 +188,6 @@ final class WindowFactoryGenerator {
             ObjList<WindowMapSpec> cachedWindowMapSpecs,
             ObjList<TableColumnMetadata> deferredWindowMetadata,
             ObjList<SymbolFunction> windowSymbolFunctions,
-            boolean isAllWindowOutputFixedWidth,
             boolean isLight
     ) throws SqlException {
         CachedWindowMapGroups cachedWindowMapGroups = null;
@@ -212,7 +197,6 @@ final class WindowFactoryGenerator {
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
             final boolean isSortEnabled = configuration.isSqlOrderBySortEnabled();
-            boolean isAllGroupsEncodedEligible = isSortEnabled;
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
                 final boolean isEncodedEligible = isSortEnabled && SortKeyEncoder.isSupported(chainMetadata, e.key);
                 final RecordComparator comparator = isEncodedEligible
@@ -221,7 +205,6 @@ final class WindowFactoryGenerator {
                 windowComparators.add(comparator);
                 functionGroups.add(e.value);
                 keys.add(e.key);
-                isAllGroupsEncodedEligible &= isEncodedEligible;
             }
 
             // The Map subgroups the sort groups' functions form, compiled one bucket at a
@@ -245,19 +228,6 @@ final class WindowFactoryGenerator {
                 );
             }
 
-            // LIGHT path is restricted to queries where every ordered group can use the encoded
-            // sort buffer. Tree-fallback in LIGHT would do O(N log N) random base reads per
-            // compare, which can regress 10-100x on cold/partitioned bases.
-            // It also requires every window-output column to be fixed-width: the narrow chain
-            // never initializes var-size aux pointers, so a var-size output column would read
-            // uninitialized offsets and crash. No window function returns a var-size type today;
-            // this guard keeps the path safe if one is ever added.
-            if (ParanoiaState.PLAN_PARANOIA_MODE && isLight != (configuration.isSqlWindowCachedLightEnabled()
-                    && base.recordCursorSupportsRandomAccess()
-                    && isAllGroupsEncodedEligible
-                    && isAllWindowOutputFixedWidth)) {
-                throw new AssertionError("recorded window algorithm differs from the generator's cached variant");
-            }
             if (isLight) {
                 final IntList sourceMap = new IntList();
                 final ArrayColumnTypes narrowChainTypes = new ArrayColumnTypes();
@@ -386,6 +356,7 @@ final class WindowFactoryGenerator {
         ObjList<Function> partitionFunctions = null;
         WindowFunction pendingWindow = null;
         LiveViewCheckpointRowsPlan rowsPlan = null;
+        boolean isTransferred = false;
         try {
             final RecordMetadata inputMetadata = base.getMetadata();
             final int inputCount = inputMetadata.getColumnCount();
@@ -488,8 +459,6 @@ final class WindowFactoryGenerator {
             specFunctions.clear();
             windowMetadata.clear();
             ObjList<SymbolFunction> symbolFunctions = null;
-            boolean isAllWindowOutputFixedWidth = true;
-            boolean isStreamable = true;
             chainTypes.clear();
             if (isStreaming) {
                 functions = new ObjList<>(outputCount);
@@ -571,9 +540,6 @@ final class WindowFactoryGenerator {
                     function.markSubsampleKeepFlag();
                 }
                 final int outputIndex = functionPositions.getQuick(i);
-                if (ParanoiaState.PLAN_PARANOIA_MODE) {
-                    isStreamable &= (order.size() == 0 || isOrderDismissed) && function.getPassCount() == WindowFunction.ZERO_PASS;
-                }
                 if (isStreaming) {
                     functions.setQuick(outputIndex, function);
                     pendingWindow = null;
@@ -616,7 +582,6 @@ final class WindowFactoryGenerator {
                         Chars.toString(output.getColumnName(outputIndex)), function.getType(), IndexType.NONE, 0,
                         function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic(), null);
                 windowMetadata.extendAndSet(outputIndex, column);
-                isAllWindowOutputFixedWidth &= !ColumnType.isVarSize(function.getType());
                 if (ColumnType.isSymbol(function.getType())) {
                     if (!(function instanceof SymbolFunction symbol)) {
                         throw new IllegalStateException("SYMBOL window function does not implement SymbolFunction");
@@ -627,9 +592,6 @@ final class WindowFactoryGenerator {
                     symbolFunctions.extendAndSet(outputIndex, symbol);
                 }
             }
-            if (ParanoiaState.PLAN_PARANOIA_MODE && isStreamable != isStreaming) {
-                throw new AssertionError("recorded window algorithm differs from the generator's streaming choice");
-            }
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             for (int i = 0; i < outputCount; i++) {
                 metadata.add(sources.getQuick(i) >= 0 ? outputColumns.getQuick(i) : windowMetadata.getQuick(i));
@@ -638,11 +600,8 @@ final class WindowFactoryGenerator {
                     : PlanToFactoryRules.projectedTimestampIndex(projection, inputMetadata.getTimestampIndex()));
             if (isStreaming) {
                 if (!isLiveView) {
-                    final RecordCursorFactory ownedBase = base;
-                    final ObjList<Function> ownedFunctions = functions;
-                    base = null;
-                    functions = null;
-                    return generateStreamingWindow(ownedBase, metadata, ownedFunctions, specs, null, null, null);
+                    isTransferred = true;
+                    return generateStreamingWindow(base, metadata, functions, specs, null, null, null);
                 }
                 final ObjList<LiveViewWindowDescription> descriptions = new ObjList<>(outputCount);
                 descriptions.setPos(outputCount);
@@ -674,13 +633,8 @@ final class WindowFactoryGenerator {
                     frame.windowPartitionKeys.clear();
                 }
                 final LiveViewCheckpointRangePlan rangePlan = LiveViewCheckpointFunctionCompiler.rangePlan(functions, descriptions);
-                final RecordCursorFactory ownedBase = base;
-                final ObjList<Function> ownedFunctions = functions;
-                final LiveViewCheckpointRowsPlan ownedRowsPlan = rowsPlan;
-                base = null;
-                functions = null;
-                rowsPlan = null;
-                return generateStreamingWindow(ownedBase, metadata, ownedFunctions, null, anchorable, rangePlan, ownedRowsPlan);
+                isTransferred = true;
+                return generateStreamingWindow(base, metadata, functions, null, anchorable, rangePlan, rowsPlan);
             }
             final ListColumnFilter sourceFilter = frame.listColumnFilterB;
             final ListColumnFilter copyFilter = frame.listColumnFilterA;
@@ -700,24 +654,23 @@ final class WindowFactoryGenerator {
                     indexes.add(-1);
                 }
             }
-            final RecordCursorFactory ownedBase = base;
-            final ObjList<WindowFunction> ownedNatural = naturalFunctions;
-            base = null;
-            naturalFunctions = null;
-            return generateCachedWindow(ownedBase, metadata, chainMetadata, chainTypes, indexes, copyFilter, sourceFilter,
-                    groups, ownedNatural, specFunctions, specs, windowMetadata, symbolFunctions, isAllWindowOutputFixedWidth,
+            isTransferred = true;
+            return generateCachedWindow(base, metadata, chainMetadata, chainTypes, indexes, copyFilter, sourceFilter,
+                    groups, naturalFunctions, specFunctions, specs, windowMetadata, symbolFunctions,
                     algorithm == WindowPlan.Algorithm.CACHED_LIGHT);
         } catch (Throwable th) {
-            Misc.free(pendingWindow, th);
-            Misc.freeObjList(partitionFunctions, th);
-            Misc.freeObjList(functions, th);
-            for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> entry : groups) {
-                Misc.freeObjList(entry.value, th);
+            if (!isTransferred) {
+                Misc.free(pendingWindow, th);
+                Misc.freeObjList(partitionFunctions, th);
+                Misc.freeObjList(functions, th);
+                for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> entry : groups) {
+                    Misc.freeObjList(entry.value, th);
+                }
+                groups.clear();
+                Misc.freeObjList(naturalFunctions, th);
+                Misc.free(rowsPlan, th);
+                Misc.free(base, th);
             }
-            groups.clear();
-            Misc.freeObjList(naturalFunctions, th);
-            Misc.free(rowsPlan, th);
-            Misc.free(base, th);
             throw th;
         }
     }

@@ -423,6 +423,21 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionFactoryFollowsInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("CREATE TABLE sl (ts TIMESTAMP, y LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            final String window = " FROM m WINDOW JOIN sl RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW";
+            execute("CREATE TABLE m (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            assertProjectionFactory(PlanToFactoryRules.ProjectionFactory.SELECTION, "PageFrame", "SELECT x, ts FROM t");
+            assertProjectionFactory(PlanToFactoryRules.ProjectionFactory.VIRTUAL, "VirtualRecord", "SELECT x + 1 y, ts FROM t");
+            assertProjectionFactory(PlanToFactoryRules.ProjectionFactory.WINDOW, "CachedWindow", "SELECT x, sum(x) OVER () s, ts FROM t");
+            assertProjectionFactory(PlanToFactoryRules.ProjectionFactory.WINDOW_JOIN, "Async Window Join", "SELECT sum(sl.y) s, m.ts" + window);
+            assertProjectionFactory(PlanToFactoryRules.ProjectionFactory.VIRTUAL, "VirtualRecord", "SELECT m.ts, sum(sl.y) + 1 s" + window);
+        });
+    }
+
+    @Test
     public void testProjectionRandomAccessDecidesHashJoin() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -562,6 +577,30 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                             1\t1\t1\t4
                             2\t2\t1\t4
                             2\t2\t2\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testSharedReadRecordedOnDecorrelationDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("CREATE TABLE u (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO u VALUES ('2024-01-03T00:00:00.000000Z', 5)");
+            final String lateral = " o JOIN LATERAL (SELECT x y FROM t WHERE x <= o.x) r ORDER BY o.x, r.y";
+            assertSharedRead(AggregatePlan.SharedRead.SOURCE, "SELECT o.x, o.c, r.y FROM (SELECT x, count() c FROM t GROUP BY x)" + lateral);
+            final String head = "SELECT o.x, r.c FROM (SELECT x, count() c FROM t GROUP BY x UNION SELECT x, count() c FROM u GROUP BY x) o"
+                    + " CROSS JOIN LATERAL (SELECT count() c FROM t WHERE t.x > o.x) r ORDER BY o.x";
+            assertSharedRead(AggregatePlan.SharedRead.SET_OPERATION_HEAD, head);
+            assertSharedRead(AggregatePlan.SharedRead.NONE, "SELECT o.x, r.y FROM (SELECT x FROM t UNION ALL SELECT x FROM u)" + lateral);
+            assertQuery(head)
+                    .returns("""
+                            x\tc
+                            1\t3
+                            2\t2
+                            3\t1
+                            4\t0
+                            5\t0
                             """);
         });
     }
@@ -870,6 +909,16 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertSharedRead(AggregatePlan.SharedRead expected, String sql) throws Exception {
+        try (
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                RecordCursorFactory ignore = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            final AggregatePlan domain = find(compiler.getPlanForTesting(), AggregatePlan.class, aggregate -> aggregate.getSharedSource() != null);
+            Assert.assertEquals(expected, domain.getSharedRead());
+        }
+    }
+
     private static void assertTimeFrame(Capability expected, String sql) throws Exception {
         try (
                 SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
@@ -913,5 +962,15 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                     ('2024-01-01T02:00:00.000000Z', 3),
                     ('2024-01-02T00:00:00.000000Z', 4)
                 """);
+    }
+
+    private void assertProjectionFactory(PlanToFactoryRules.ProjectionFactory expected, String factory, String sql) throws Exception {
+        try (
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                RecordCursorFactory ignore = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            Assert.assertEquals(expected, PlanToFactoryRules.projectionFactory(find(compiler.getPlanForTesting(), ProjectPlan.class)));
+        }
+        assertQuery(sql).noLeakCheck().assertsPlanContaining(factory);
     }
 }

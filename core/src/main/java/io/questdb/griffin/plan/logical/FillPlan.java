@@ -30,11 +30,7 @@ import io.questdb.std.ObjectFactory;
 
 public final class FillPlan extends ForwardingPlan {
     public static final ObjectFactory<FillPlan> FACTORY = FillPlan::new;
-    public static final int FILL_NULL = 0;
-    public static final int FILL_PREV = 1;
-    public static final int FILL_PREV_COLUMN = 3;
-    public static final int FILL_VALUE = 2;
-    private final IntList modes = new IntList();
+    private final ObjList<FillMode> modes = new ObjList<>();
     private final IntList sourceColumnIds = new IntList();
     private final IntList targetColumnIds = new IntList();
     private final ObjList<CharSequence> tokens = new ObjList<>();
@@ -85,7 +81,11 @@ public final class FillPlan extends ForwardingPlan {
         return from;
     }
 
-    public IntList getModes() {
+    /**
+     * The fill of each target column: {@link FillMode#NULL}, {@link FillMode#PREV}, {@link FillMode#PREV_COLUMN} or
+     * {@link FillMode#VALUE}.
+     */
+    public ObjList<FillMode> getModes() {
         return modes;
     }
 

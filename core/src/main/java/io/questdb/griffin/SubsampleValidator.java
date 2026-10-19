@@ -29,78 +29,35 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.window.LttbFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
 
 public final class SubsampleValidator {
     private SubsampleValidator() {
     }
 
-    public static boolean hasUnresolvableSdtCompdevReference(ExpressionNode compdevNode, SqlExecutionContext sqlExecutionContext) {
-        // An independently invalid outer reference preserves SDT's shape error even when
-        // parsing encounters another error first. Inspect only the error path: successful
-        // constant folding can discard binds. Query models have their own metadata scope.
-        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
-        final ObjList<ExpressionNode> nodes = new ObjList<>();
-        nodes.add(compdevNode);
-        while (nodes.size() > 0) {
-            final ExpressionNode node = nodes.popLast();
-            if (node == null || node.type == ExpressionNode.QUERY) {
-                continue;
-            }
-            switch (node.paramCount) {
-                case 0 -> {
-                    if (node.type == ExpressionNode.LITERAL) {
-                        return true;
-                    }
-                    if (node.type == ExpressionNode.BIND_VARIABLE) {
-                        if (node.token.charAt(0) == ':') {
-                            if (bindVariableService != null && bindVariableService.getFunction(node.token) == null) {
-                                return true;
-                            }
-                        } else {
-                            try {
-                                if (Numbers.parseInt(node.token, 1, node.token.length()) < 1) {
-                                    return true;
-                                }
-                            } catch (NumericException e) {
-                                return true;
-                            }
-                        }
-                    }
-                }
-                case 1 -> nodes.add(node.rhs);
-                case 2 -> {
-                    nodes.add(node.lhs);
-                    nodes.add(node.rhs);
-                }
-                default -> {
-                    for (int i = 0; i < node.paramCount; i++) {
-                        nodes.add(node.args.getQuick(i));
-                    }
-                }
+    /**
+     * Whether the compdev names a column or a bind variable no execution defines, outside its sub-queries: such a
+     * reference keeps the sdt shape error even when binding meets another error first.
+     */
+    public static boolean hasUnresolvableSdtCompdevReference(ExpressionNode compdev, SqlExecutionContext sqlExecutionContext) {
+        if (compdev == null || compdev.type == ExpressionNode.QUERY) {
+            return false;
+        }
+        if (compdev.paramCount == 0) {
+            return compdev.type == ExpressionNode.LITERAL
+                    || compdev.type == ExpressionNode.BIND_VARIABLE && isUndefinedBindVariable(compdev.token, sqlExecutionContext.getBindVariableService());
+        }
+        if (compdev.paramCount < 3) {
+            return hasUnresolvableSdtCompdevReference(compdev.lhs, sqlExecutionContext)
+                    || hasUnresolvableSdtCompdevReference(compdev.rhs, sqlExecutionContext);
+        }
+        for (int i = 0; i < compdev.paramCount; i++) {
+            if (hasUnresolvableSdtCompdevReference(compdev.args.getQuick(i), sqlExecutionContext)) {
+                return true;
             }
         }
         return false;
-    }
-
-    public static void validateCadenceSeedOrThrow(
-            ExpressionNode node,
-            FunctionParser functionParser,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        if (node.type == ExpressionNode.LITERAL) {
-            throw SqlException.$(node.position, "seed must be a constant, bind variable, or NULL");
-        }
-        Function function = null;
-        try {
-            function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            validateCadenceSeedOrThrow(function, node.position);
-        } finally {
-            Misc.free(function);
-        }
     }
 
     /**
@@ -119,6 +76,17 @@ public final class SubsampleValidator {
             if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
                 throw SqlException.$(position, "integer or NULL expected for seed");
             }
+        }
+    }
+
+    private static boolean isUndefinedBindVariable(CharSequence token, BindVariableService bindVariableService) {
+        if (token.charAt(0) == ':') {
+            return bindVariableService != null && bindVariableService.getFunction(token) == null;
+        }
+        try {
+            return Numbers.parseInt(token, 1, token.length()) < 1;
+        } catch (NumericException e) {
+            return true;
         }
     }
 
@@ -180,26 +148,6 @@ public final class SubsampleValidator {
                 && valueTag != ColumnType.INT && valueTag != ColumnType.LONG
                 && valueTag != ColumnType.SHORT && valueTag != ColumnType.BYTE) {
             throw SqlException.$(position, "numeric column expected, got: ").put(ColumnType.nameOf(valueType));
-        }
-    }
-
-    // Callers own the AST: FunctionParser can reassociate even a successfully parsed constant.
-    public static void validatePositionTargetOrThrow(
-            ExpressionNode node,
-            boolean isCadence,
-            FunctionParser functionParser,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        if (node.type == ExpressionNode.LITERAL) {
-            throw SqlException.$(node.position, isCadence ? "stride" : "target point count")
-                    .put(" must be a constant or bind variable");
-        }
-        Function func = null;
-        try {
-            func = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            validatePositionTargetOrThrow(func, node.position, isCadence);
-        } finally {
-            Misc.free(func);
         }
     }
 

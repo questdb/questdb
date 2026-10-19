@@ -33,6 +33,8 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import org.junit.Assert;
 
+import java.util.function.Predicate;
+
 /**
  * Renders the factory tree of a physical plan as "Node > Node > ...", keeping every node line
  * (factory, algorithm, scan) and dropping attribute lines such as "filter:" or "intervals:".
@@ -53,13 +55,17 @@ final class PlanShape {
     }
 
     static <T extends LogicalPlan> T find(LogicalPlan plan, Class<T> type) {
-        if (type.isInstance(plan)) {
+        return find(plan, type, ignore -> true);
+    }
+
+    static <T extends LogicalPlan> T find(LogicalPlan plan, Class<T> type, Predicate<T> filter) {
+        if (type.isInstance(plan) && filter.test(type.cast(plan))) {
             return type.cast(plan);
         }
         if (plan instanceof JoinPlan join) {
             for (int i = 0, n = join.getOrderedInputs().size(); i < n; i++) {
                 final LogicalPlan input = join.getOrderedInputs().getQuick(i).getInput();
-                final T found = input == null ? null : find(input, type);
+                final T found = input == null ? null : find(input, type, filter);
                 if (found != null) {
                     return found;
                 }
@@ -67,7 +73,7 @@ final class PlanShape {
             return null;
         }
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            final T found = find(plan.inputAt(i), type);
+            final T found = find(plan.inputAt(i), type, filter);
             if (found != null) {
                 return found;
             }

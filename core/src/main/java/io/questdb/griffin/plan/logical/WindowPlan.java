@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.plan.logical;
 
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -49,6 +50,37 @@ public final class WindowPlan extends UnaryPlan {
         specs.clear();
         algorithm = null;
         isSelectOrdered = false;
+    }
+
+    /**
+     * The one rule that lays the output out over the input's current output: the input's columns, attribute for
+     * attribute, then the window results in the order of {@link #getFunctionColumnIds()}, each keeping its own
+     * attributes, with the column it designated before designated again. An input column the previous output did not
+     * expose stays out when a window result of its name replaced it. A rewrite that changes the input's output in place
+     * calls it; {@code scratch} is a temporary schema it leaves empty.
+     */
+    public void deriveOutput(OutputSchema scratch) {
+        final OutputSchema output = getOutput();
+        final int timestampId = output.getTimestampColumnId();
+        scratch.copyFrom(output);
+        output.copyFrom(getChild().getOutput());
+        int inputCount = output.getColumnCount();
+        int replacedCount = 0;
+        for (int i = 0; i < inputCount; i++) {
+            if (scratch.getColumnIndexById(output.getColumnId(i)) < 0) {
+                replacedCount++;
+            }
+        }
+        for (int i = 0, n = functionColumnIds.size(); i < n; i++) {
+            final int index = scratch.getColumnIndexById(functionColumnIds.getQuick(i));
+            if (replacedCount > 0 && removeReplacedColumn(output, scratch, scratch.getColumnName(index), inputCount)) {
+                inputCount--;
+                replacedCount--;
+            }
+            output.addColumnFrom(scratch, index);
+        }
+        output.setTimestampColumnId(timestampId);
+        scratch.clear();
     }
 
     /**
@@ -104,6 +136,20 @@ public final class WindowPlan extends UnaryPlan {
         for (int i = 0, n = specs.size(); i < n; i++) {
             specs.getQuick(i).visitReads(visitor);
         }
+    }
+
+    /**
+     * Keeps out of the input columns of the output the nested window column, one the previous output did not expose,
+     * that a top-level window result named {@code name} has replaced.
+     */
+    private static boolean removeReplacedColumn(OutputSchema output, OutputSchema previous, CharSequence name, int inputCount) {
+        for (int i = 0; i < inputCount; i++) {
+            if (Chars.equalsIgnoreCase(output.getColumnName(i), name) && previous.getColumnIndexById(output.getColumnId(i)) < 0) {
+                output.remove(i);
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

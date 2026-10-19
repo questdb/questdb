@@ -66,6 +66,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TypeExpression;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -514,6 +515,84 @@ public class FunctionBinderTest extends AbstractCairoTest {
                     try (Function function = binder.instantiate(nullCast, input, sqlExecutionContext)) {
                         Assert.assertTrue(function.isNullConstant());
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testColumnMapCopyLeavesPreparationWithOriginal() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] constructions = {0};
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
+                @Override
+                public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                               ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+                    constructions[0]++;
+                    return super.createFunction(overload, position, name, args, positions, context);
+                }
+            });
+            final OutputSchema consumerInput = new OutputSchema().add(20, "alias", ColumnType.INT, true);
+            final OutputSchema input = new OutputSchema().add(7, "value", ColumnType.INT, true);
+            final IntIntHashMap columnIds = new IntIntHashMap();
+            columnIds.put(20, 7);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                final FunctionExpression original = (FunctionExpression) binder.bind(binary("<=", 6,
+                        binary("&", 3, literal("alias", 0), constant("7", 5)), constant("3", 9)), consumerInput, "t", sqlExecutionContext);
+                Assert.assertEquals(2, constructions[0]);
+                final FunctionExpression copy = (FunctionExpression) binder.getRewriter().copyRemappedColumns(original, columnIds);
+                Assert.assertNotSame(original, copy);
+                Assert.assertNotSame(original.argumentAt(1), copy.argumentAt(1));
+                Assert.assertEquals(20, ((ColumnExpression) ((FunctionExpression) original.argumentAt(0)).argumentAt(0)).getColumnId());
+                Assert.assertEquals(7, ((ColumnExpression) ((FunctionExpression) copy.argumentAt(0)).argumentAt(0)).getColumnId());
+                try (Function function = binder.instantiate(copy, input, sqlExecutionContext)) {
+                    Assert.assertEquals(4, constructions[0]);
+                    Assert.assertTrue(function.getBool(intRecord(3)));
+                    Assert.assertFalse(function.getBool(intRecord(4)));
+                }
+                columnIds.clear();
+                try {
+                    binder.getRewriter().copyRemappedColumns(original, columnIds);
+                    Assert.fail("copied a column the map does not hold");
+                } catch (IllegalArgumentException e) {
+                    Assert.assertEquals("column outside the column map", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testColumnMapRemapRetainsOneConstructionAndSharesUnchangedCalls() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] constructions = {0};
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
+                @Override
+                public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                               ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+                    constructions[0]++;
+                    return super.createFunction(overload, position, name, args, positions, context);
+                }
+            });
+            final OutputSchema consumerInput = new OutputSchema().add(20, "alias", ColumnType.INT, true);
+            final OutputSchema input = new OutputSchema().add(7, "value", ColumnType.INT, true);
+            final IntIntHashMap columnIds = new IntIntHashMap();
+            columnIds.put(30, 8);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                final FunctionExpression original = (FunctionExpression) binder.bind(binary("<=", 6,
+                        binary("&", 3, literal("alias", 0), constant("7", 5)), constant("3", 9)), consumerInput, "t", sqlExecutionContext);
+                Assert.assertEquals(2, constructions[0]);
+                Assert.assertSame(original, binder.getRewriter().remapColumns(original, columnIds, consumerInput));
+                columnIds.put(20, 7);
+                final FunctionExpression replacement = (FunctionExpression) binder.getRewriter().remapColumns(original, columnIds, input);
+                Assert.assertNotSame(original, replacement);
+                Assert.assertSame(original.argumentAt(1), replacement.argumentAt(1));
+                Assert.assertEquals(20, ((ColumnExpression) ((FunctionExpression) original.argumentAt(0)).argumentAt(0)).getColumnId());
+                Assert.assertEquals(7, ((ColumnExpression) ((FunctionExpression) replacement.argumentAt(0)).argumentAt(0)).getColumnId());
+                try (Function function = binder.instantiate(replacement, input, sqlExecutionContext)) {
+                    Assert.assertEquals(2, constructions[0]);
+                    binder.clear();
+                    Assert.assertTrue(function.getBool(intRecord(3)));
+                    Assert.assertFalse(function.getBool(intRecord(4)));
                 }
             }
         });

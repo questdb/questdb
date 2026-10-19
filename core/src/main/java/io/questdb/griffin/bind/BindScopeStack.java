@@ -63,6 +63,13 @@ public final class BindScopeStack implements Mutable {
         usedScopeCount = 1;
     }
 
+    /**
+     * Clears the current scope for the query that binds in it next.
+     */
+    public void clearCurrent() {
+        current.clear();
+    }
+
     public int depth() {
         return depth;
     }
@@ -75,19 +82,6 @@ public final class BindScopeStack implements Mutable {
         this.depth = depth;
         current = scopeAt(depth);
         return previous;
-    }
-
-    public void pop() {
-        current = scopes.getQuick(--depth);
-    }
-
-    /**
-     * Makes the cleared scope of a sub-query of the query binding now current until {@link #pop()}.
-     */
-    public BindScope push() {
-        current = scopeAt(++depth);
-        current.clear();
-        return current;
     }
 
     @TestOnly

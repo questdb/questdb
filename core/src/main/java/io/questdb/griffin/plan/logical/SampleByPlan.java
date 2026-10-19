@@ -32,15 +32,9 @@ import io.questdb.std.ObjectFactory;
  */
 public final class SampleByPlan extends GroupingPlan {
     public static final ObjectFactory<SampleByPlan> FACTORY = SampleByPlan::new;
-    public static final int FILL_NONE = 0;
-    public static final int FILL_PREV = 1;
-    public static final int FILL_NULL = 2;
-    public static final int FILL_LINEAR = 3;
-    public static final int FILL_VALUE = 4;
-    private final ObjList<CharSequence> fillTokens = new ObjList<>();
+    private final ObjList<FillMode> fillModes = new ObjList<>();
     private final ObjList<BoundExpression> fillValues = new ObjList<>();
     private Algorithm algorithm;
-    private int fillMode;
     private BoundExpression from;
     private boolean isFillInput;
     private boolean isJoinInput;
@@ -58,10 +52,9 @@ public final class SampleByPlan extends GroupingPlan {
     @Override
     public void clear() {
         super.clear();
-        fillTokens.clear();
+        fillModes.clear();
         fillValues.clear();
         algorithm = null;
-        fillMode = FILL_NONE;
         from = null;
         isFillInput = false;
         isJoinInput = false;
@@ -84,16 +77,16 @@ public final class SampleByPlan extends GroupingPlan {
         return algorithm;
     }
 
-    public int getFillMode() {
-        return fillMode;
-    }
-
-    public ObjList<CharSequence> getFillTokens() {
-        return fillTokens;
+    /**
+     * The fill of each aggregate a FILL with a {@link FillMode#LINEAR} value states, which the SAMPLE BY performs
+     * itself; empty when a fill node above fills its buckets or nothing does.
+     */
+    public ObjList<FillMode> getFillModes() {
+        return fillModes;
     }
 
     /**
-     * The bound constant of each FILL value, aligned with {@link #getFillTokens()}; null for a keyword.
+     * The bound constant of each FILL value, aligned with {@link #getFillModes()}; null for a keyword.
      */
     public ObjList<BoundExpression> getFillValues() {
         return fillValues;
@@ -177,10 +170,6 @@ public final class SampleByPlan extends GroupingPlan {
 
     public void setAlgorithm(Algorithm algorithm) {
         this.algorithm = algorithm;
-    }
-
-    public void setFillMode(int fillMode) {
-        this.fillMode = fillMode;
     }
 
     public void setFrom(BoundExpression from) {

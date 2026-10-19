@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.CharacterStoreEntry;
+import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.SqlException;
@@ -86,20 +87,17 @@ final class JoinBinder implements Mutable {
             CairoConfiguration configuration,
             LateralBinder lateralBinder,
             JoinGraphBuilder joinGraphBuilder,
-            IntList deferredJoinInputs,
-            IntList forwardLeftJoinInputs,
-            IntList nonEquiNullingJoinInputs,
-            IntList nullingJoinBoundaries
+            CompilerTemporaries temporaries
     ) {
         this.ctx = ctx;
         this.binder = binder;
         this.configuration = configuration;
         this.lateralBinder = lateralBinder;
         this.joinGraphBuilder = joinGraphBuilder;
-        this.deferredJoinInputs = deferredJoinInputs;
-        this.forwardLeftJoinInputs = forwardLeftJoinInputs;
-        this.nonEquiNullingJoinInputs = nonEquiNullingJoinInputs;
-        this.nullingJoinBoundaries = nullingJoinBoundaries;
+        this.deferredJoinInputs = temporaries.indexes;
+        this.forwardLeftJoinInputs = temporaries.values;
+        this.nonEquiNullingJoinInputs = temporaries.masterKeys;
+        this.nullingJoinBoundaries = temporaries.slaveKeys;
     }
 
     @Override
@@ -427,7 +425,7 @@ final class JoinBinder implements Mutable {
         if (prefix == null) {
             return expression;
         }
-        final ExpressionNode result = combineJoinPredicates(prefix, expression);
+        final ExpressionNode result = ctx.combinePredicates(prefix, expression);
         result.precedence = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence())
                 .getOperatorDefinition("and").precedence;
         return result;
@@ -465,7 +463,7 @@ final class JoinBinder implements Mutable {
                     ctx.retainImplicitTimestamp(step.getInput());
                 }
                 join.getInputs().add(step);
-                addJoinOutput(join, step.getSourceOutput(), step.getBindingAlias());
+                join.getOutput().addColumnsFrom(step.getSourceOutput(), step.getBindingAlias());
             }
             return;
         }
@@ -530,10 +528,10 @@ final class JoinBinder implements Mutable {
             final ObjList<JoinEquality> derivedEqualities = scope.joinDerivedEqualities;
             for (int i = 0, n = derivedEqualities.size(); i < n; i++) {
                 final JoinEquality equality = derivedEqualities.getQuick(i);
-                final ExpressionNode comparison = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "=", 0, equality.getLeftPosition());
-                comparison.paramCount = 2;
-                comparison.lhs = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, equality.getLeftName(), 0, equality.getLeftPosition());
-                comparison.rhs = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, equality.getRightName(), 0, equality.getRightPosition());
+                final ExpressionNode comparison = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0,
+                        ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, equality.getLeftName(), 0, equality.getLeftPosition()),
+                        ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, equality.getRightName(), 0, equality.getRightPosition()),
+                        equality.getLeftPosition());
                 final IntList owners = equality.getOwners();
                 graph.addResidual(bindJoinConjunct(comparison, comparison, join, source, lastInput, statedOrigin(owners), executionContext), owners);
             }
@@ -656,7 +654,7 @@ final class JoinBinder implements Mutable {
             }
             step.setHints(resolveJoinHints(source, occurrence));
             join.getInputs().add(step);
-            addJoinOutput(join, step.getSourceOutput(), alias);
+            join.getOutput().addColumnsFrom(step.getSourceOutput(), alias);
         }
     }
 
@@ -697,7 +695,7 @@ final class JoinBinder implements Mutable {
         ExpressionNode conjunction = null;
         for (int i = 0, n = residuals.size(); i < n; i++) {
             if (origins.getQuick(i) == origin) {
-                conjunction = combineJoinPredicates(conjunction, residuals.getQuick(i));
+                conjunction = ctx.combinePredicates(conjunction, residuals.getQuick(i));
             }
         }
         final int lastInput = join.getInputs().size() - 1;
@@ -749,7 +747,7 @@ final class JoinBinder implements Mutable {
         for (int i = 1; i <= lastInput; i++) {
             if (isLatestFilteredOn(join, source, modelBase, i)) {
                 splitJoinTerms(joinModel(source, modelBase, i).getJoinCriteria(), JoinTerms.LATEST_FILTER, join, 0);
-                latestFilter = combineJoinPredicates(latestFilter, selectedTerms);
+                latestFilter = ctx.combinePredicates(latestFilter, selectedTerms);
             }
         }
         final JoinInput first = inputs.getQuick(0);
@@ -847,11 +845,9 @@ final class JoinBinder implements Mutable {
         if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
             final ExpressionNode left = collectJoinConditions(expression.lhs, join, origin, hasBarriers, hasNonEquiNullingJoin);
             final ExpressionNode right = collectJoinConditions(expression.rhs, join, origin, hasBarriers, hasNonEquiNullingJoin);
-            return combineJoinPredicates(left, right);
+            return ctx.combinePredicates(left, right);
         }
-        if (expression.paramCount == 2 && Chars.equals(expression.token, '=')
-                && expression.lhs.type == ExpressionNode.LITERAL && expression.rhs.type == ExpressionNode.LITERAL
-                && !isOuterColumn(expression.lhs, join) && !isOuterColumn(expression.rhs, join)) {
+        if (isColumnEquality(expression, join)) {
             final OutputSchema output = join.getOutput();
             final int leftIndex = ctx.bindColumnIndex(expression.lhs, output, (CharSequence) null);
             final int rightIndex = ctx.bindColumnIndex(expression.rhs, output, (CharSequence) null);
@@ -1004,7 +1000,7 @@ final class JoinBinder implements Mutable {
                 }
             } else {
                 splitJoinTerms(onCriteria, JoinTerms.CONSTANT, join, i);
-                constantFilter = combineJoinPredicates(constantFilter, selectedTerms);
+                constantFilter = ctx.combinePredicates(constantFilter, selectedTerms);
                 collectJoinConditions(rejectedTerms, join, i, hasBarriers, hasNonEquiNullingJoin);
             }
             final ObjList<ExpressionNode> shorthand = occurrence.getJoinColumns();
@@ -1149,9 +1145,7 @@ final class JoinBinder implements Mutable {
         if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
             return hasOwnJoinKey(expression.lhs, join, input) || hasOwnJoinKey(expression.rhs, join, input);
         }
-        if (expression.paramCount == 2 && Chars.equals(expression.token, '=')
-                && expression.lhs.type == ExpressionNode.LITERAL && expression.rhs.type == ExpressionNode.LITERAL
-                && !isOuterColumn(expression.lhs, join) && !isOuterColumn(expression.rhs, join)) {
+        if (isColumnEquality(expression, join)) {
             final int left = joinReferenceSource(expression.lhs, join);
             final int right = joinReferenceSource(expression.rhs, join);
             return left >= 0 && right >= 0 && left != right && Math.max(left, right) == input;
@@ -1172,6 +1166,16 @@ final class JoinBinder implements Mutable {
     // An inner ON conjunct that waits for a later source filters the joined rows once the source is joined
     // after an outer or temporal join, or when deferring its inner join would make the join order cyclic.
     // A key from a later source to a LEFT join that waits for a later source can make the order cyclic; it filters instead.
+
+    /**
+     * Whether the expression equates two columns of the join's inputs, rather than of an enclosing query.
+     */
+    private boolean isColumnEquality(ExpressionNode expression, JoinPlan join) {
+        return expression.paramCount == 2 && Chars.equals(expression.token, '=')
+                && expression.lhs.type == ExpressionNode.LITERAL && expression.rhs.type == ExpressionNode.LITERAL
+                && !isOuterColumn(expression.lhs, join) && !isOuterColumn(expression.rhs, join);
+    }
+
     private boolean isForwardLeftFilteredKey(int leftSource, int rightSource, int origin) {
         if (!isForwardLeftKeyFiltered) {
             return false;
@@ -1334,9 +1338,7 @@ final class JoinBinder implements Mutable {
         if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
             return spliceResidual(spliceResidual(prefix, expression.lhs, join, slave), expression.rhs, join, slave);
         }
-        if (expression.paramCount == 2 && Chars.equals(expression.token, '=')
-                && expression.lhs.type == ExpressionNode.LITERAL && expression.rhs.type == ExpressionNode.LITERAL
-                && !isOuterColumn(expression.lhs, join) && !isOuterColumn(expression.rhs, join)) {
+        if (isColumnEquality(expression, join)) {
             final OutputSchema output = join.getOutput();
             final OutputSchema slaveOutput = slave.getSourceOutput();
             final boolean isLeftSlave = slaveOutput.getColumnIndexById(output.getColumnId(ctx.bindColumnIndex(expression.lhs, output, (CharSequence) null))) >= 0;
@@ -1359,15 +1361,14 @@ final class JoinBinder implements Mutable {
             final ExpressionNode selectedLeft = selectedTerms;
             final ExpressionNode rejectedLeft = rejectedTerms;
             splitJoinTerms(expression.rhs, terms, join, origin);
-            selectedTerms = combineJoinPredicates(selectedLeft, selectedTerms);
+            selectedTerms = ctx.combinePredicates(selectedLeft, selectedTerms);
             rejectedTerms = rejectedLeft == expression.lhs && rejectedTerms == expression.rhs
-                    ? expression : combineJoinPredicates(rejectedLeft, rejectedTerms);
+                    ? expression : ctx.combinePredicates(rejectedLeft, rejectedTerms);
             return;
         }
         final boolean isSelected = switch (terms) {
-            // Match the existing join pass's syntactic constant classification, not
-            // Function.isConstant(): function calls and parameters remain runtime
-            // predicates even when their selected implementation folds at binding.
+            // A constant join term is classified by its spelling, not by Function.isConstant(): function calls and
+            // parameters remain runtime predicates even when their selected implementation folds at binding.
             case CONSTANT -> !hasColumnReference(expression) && isCompileTimeJoinConstant(expression);
             case LATEST_FILTER -> joinExpressionSource(expression, join) == 0;
             case POST_JOIN_FILTER -> isPostJoinFilterReference(expression, join, origin);
@@ -1464,10 +1465,6 @@ final class JoinBinder implements Mutable {
         }
     }
 
-    void addJoinOutput(JoinPlan join, OutputSchema output, CharSequence alias) {
-        join.getOutput().addColumnsFrom(output, alias);
-    }
-
     LogicalPlan bindJoins(QueryModel source, ExpressionNode where, SqlExecutionContext executionContext) throws SqlException {
         return bindJoins(source, where, source.getJoinModels().size(), executionContext);
     }
@@ -1502,20 +1499,6 @@ final class JoinBinder implements Mutable {
         }
         collectHintAliases(model.getNestedModel());
         collectHintAliases(model.getUnionModel());
-    }
-
-    ExpressionNode combineJoinPredicates(ExpressionNode left, ExpressionNode right) {
-        if (left == null) {
-            return right;
-        }
-        if (right == null) {
-            return left;
-        }
-        final ExpressionNode result = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "and", 0, right.position);
-        result.paramCount = 2;
-        result.lhs = left;
-        result.rhs = right;
-        return result;
     }
 
     private enum JoinTerms {

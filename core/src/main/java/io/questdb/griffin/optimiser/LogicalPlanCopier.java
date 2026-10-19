@@ -36,6 +36,7 @@ import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -190,9 +191,10 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
             final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
             final HorizonJoinSlave slaveClone = planNodes.horizonJoinSlaves.next().of(slave.getInput(), slave.getAlias(), slave.getPosition());
-            slaveClone.getKeyPositions().addAll(slave.getKeyPositions());
-            slaveClone.getMasterKeyColumnIds().addAll(slave.getMasterKeyColumnIds());
-            slaveClone.getSlaveKeyColumnIds().addAll(slave.getSlaveKeyColumnIds());
+            for (int k = 0, m = slave.getKeys().size(); k < m; k++) {
+                final JoinKey key = slave.getKeys().getQuick(k);
+                slaveClone.addKey(key.getMasterColumnId(), key.getSlaveColumnId(), key.getPosition());
+            }
             clone.getSlaves().add(slaveClone);
         }
         return clone;
@@ -220,11 +222,10 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             clone.of(input.getInput(), input.getJoinType(), input.getBindingAlias(), input.getPosition());
         }
         clone.getOutput().copyFrom(input.getOutput());
-        clone.getKeyPositions().addAll(input.getKeyPositions());
-        clone.getMasterKeyColumnIds().addAll(input.getMasterKeyColumnIds());
-        clone.getMasterKeyNames().addAll(input.getMasterKeyNames());
-        clone.getSlaveKeyColumnIds().addAll(input.getSlaveKeyColumnIds());
-        clone.getSlaveKeyNames().addAll(input.getSlaveKeyNames());
+        for (int i = 0, n = input.getKeys().size(); i < n; i++) {
+            final JoinKey key = input.getKeys().getQuick(i);
+            clone.addKey(key.getMasterColumnId(), key.getSlaveColumnId(), key.getMasterName(), key.getSlaveName(), key.getPosition());
+        }
         clone.setHints(input.getHints());
         clone.setSubquery(input.isSubquery());
         clone.setKeyFilter(input.getKeyFilter());
@@ -304,9 +305,8 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     private SampleByPlan cloneSampleBy(SampleByPlan sampleBy) {
         final SampleByPlan clone = planNodes.sampleByPlans.next().of(sampleBy.getChild(), sampleBy.getPosition());
         cloneGrouping(sampleBy, clone);
-        clone.getFillTokens().addAll(sampleBy.getFillTokens());
+        clone.getFillModes().addAll(sampleBy.getFillModes());
         clone.getFillValues().addAll(sampleBy.getFillValues());
-        clone.setFillMode(sampleBy.getFillMode());
         clone.setFrom(sampleBy.getFrom());
         clone.setTo(sampleBy.getTo());
         clone.setOffset(sampleBy.getOffset());
@@ -489,7 +489,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             case JoinPlan join -> {
                 for (int i = 0, n = join.getInputs().size(); i < n; i++) {
                     final JoinInput input = join.getInputs().getQuick(i);
-                    remapColumnIds(input.getCarrierColumnIds(), columnIds);
                     remapOutput(input.getOutput(), columnIds);
                     if (input.getUnnest() != null) {
                         remapOutput(input.getUnnest().getOutput(), columnIds);

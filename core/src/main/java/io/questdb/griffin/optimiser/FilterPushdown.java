@@ -36,6 +36,7 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ComparisonOperator;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
@@ -44,6 +45,7 @@ import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -61,6 +63,7 @@ import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
@@ -77,12 +80,12 @@ final class FilterPushdown implements OptimiserPass {
     private static final int RUNTIME_LEAVES = 1;
     private static final int STATIC_LEAVES = 0;
     private final AggregateInputOrder aggregateInputOrder;
+    private final IntIntHashMap columnMap;
     private final ConjunctSplit conjunctSplit = new ConjunctSplit();
     private final OptimiserContext context;
     private final ObjectPool<FilterPlan> filters;
     private final IntList joinConjunctTargets;
-    private final ColumnExpression mappingColumn;
-    private final ProjectPlan mappingProjection;
+    private final ConjunctTest keyConjuncts;
     private final ObjectPool<ColumnExpression> narrowingColumns;
     private final PlanVisitor sharedDomainFilters = plan -> {
         filterSharedDomain(plan);
@@ -91,14 +94,19 @@ final class FilterPushdown implements OptimiserPass {
     private final ObjList<BoundExpression> tmpExpressions;
     private final IntList transitiveFactOrigins;
     private final ObjList<BoundExpression> transitiveFacts;
+    private final ConjunctTest unhoistedJoinConjuncts = conjunct -> !hoistEarlierJoinConjunct(conjunct);
+    private final ConjunctTest unpushedSetConjuncts = conjunct -> !pushSetConjunct(conjunct);
     private ProjectPlan conjunctScope;
     private final ConjunctTest computedProjectionConjuncts = conjunct -> isComputedProjectionPushable(conjunct, conjunctScope);
-    private final ConjunctTest keyConjuncts = conjunct -> isKeyOnly(conjunct, conjunctScope);
     private final ConjunctTest projectionConjuncts = conjunct -> canPushThroughProjection(conjunct, conjunctScope);
+    private JoinPlan hoistJoin;
+    private int hoistPosition;
     private boolean isLatestKeyScope;
     private int joinConjunctIndex;
     private LogicalPlan latestKeyLimit;
     private SortPlan latestKeySort;
+    private SetOperationPlan pushedSetOperation;
+    private int pushedSetTimestampIndex;
     private int selectedJoinSource;
     private final ConjunctTest selectedJoinConjuncts = this::isSelectedJoinConjunct;
     private final PlanRewriter joinFilters = this::pushJoinFilters;
@@ -120,8 +128,7 @@ final class FilterPushdown implements OptimiserPass {
             ObjList<BoundExpression> tmpExpressions,
             ObjectPool<FilterPlan> filters,
             ObjectPool<ColumnExpression> narrowingColumns,
-            ProjectPlan mappingProjection,
-            ColumnExpression mappingColumn,
+            IntIntHashMap columnMap,
             IntList joinConjunctTargets,
             IntList transitiveFactOrigins,
             ObjList<BoundExpression> transitiveFacts
@@ -131,8 +138,8 @@ final class FilterPushdown implements OptimiserPass {
         this.tmpExpressions = tmpExpressions;
         this.filters = filters;
         this.narrowingColumns = narrowingColumns;
-        this.mappingProjection = mappingProjection;
-        this.mappingColumn = mappingColumn;
+        this.columnMap = columnMap;
+        this.keyConjuncts = conjunct -> LogicalPlans.readsOnly(conjunct, columnMap);
         this.joinConjunctTargets = joinConjunctTargets;
         this.transitiveFactOrigins = transitiveFactOrigins;
         this.transitiveFacts = transitiveFacts;
@@ -152,9 +159,11 @@ final class FilterPushdown implements OptimiserPass {
     public void clear() {
         conjunctScope = null;
         conjunctSplit.clear();
+        hoistJoin = null;
         isLatestKeyScope = false;
         latestKeyLimit = null;
         latestKeySort = null;
+        pushedSetOperation = null;
     }
 
     @Override
@@ -190,15 +199,6 @@ final class FilterPushdown implements OptimiserPass {
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (project.getExpressions().getQuick(i) instanceof ColumnExpression column
                     && column.getColumnId() == timestampId) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean hasMasterNullingJoin(JoinPlan join) {
-        for (int i = 1, n = join.getInputs().size(); i < n; i++) {
-            if (join.getInputs().getQuick(i).getJoinType().isMasterNulling()) {
                 return true;
             }
         }
@@ -269,31 +269,6 @@ final class FilterPushdown implements OptimiserPass {
         return expression instanceof BindVariableExpression || expression instanceof TypeExpression;
     }
 
-    private static boolean isInnerJoinRegion(JoinPlan join) {
-        for (int i = 1, n = join.getInputs().size(); i < n; i++) {
-            final JoinKind type = join.getInputs().getQuick(i).getJoinType();
-            if (type != JoinKind.INNER && type != JoinKind.CROSS) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean isKeyOnly(BoundExpression expression, ProjectPlan keys) {
-        if (expression instanceof ColumnExpression column) {
-            return keys.getOutput().getColumnIndexById(column.getColumnId()) >= 0 && canPushThroughProjection(column, keys);
-        }
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (!isKeyOnly(call.argumentAt(i), keys)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        return !(expression instanceof CursorExpression);
-    }
-
     private static boolean isLatestKeyParameter(BoundExpression expression, int keyId, ScanPlan scan) {
         if (!(expression instanceof FunctionExpression call) || !"=".equals(call.getName())
                 || call.getArgumentCount() != 2 || scan.getIndexedColumnIds().indexOf(keyId, 0, scan.getIndexedColumnIds().size()) >= 0) {
@@ -312,15 +287,8 @@ final class FilterPushdown implements OptimiserPass {
         if (call.getArgumentCount() == 1 && "not".equals(call.getName())) {
             return isLatestKeyResidual(call.argumentAt(0));
         }
-        if (call.getArgumentCount() != 2) {
+        if (call.getArgumentCount() != 2 || ComparisonOperator.of(call.getName()) == null) {
             return false;
-        }
-        switch (call.getName()) {
-            case "=", "!=", "<>", "<", "<=", ">", ">=" -> {
-            }
-            default -> {
-                return false;
-            }
         }
         final BoundExpression left = call.argumentAt(0);
         final BoundExpression right = call.argumentAt(1);
@@ -417,12 +385,7 @@ final class FilterPushdown implements OptimiserPass {
 
     private static int joinSourceOrdinal(BoundExpression expression, JoinPlan join) {
         if (expression instanceof ColumnExpression column) {
-            for (int i = 0, n = join.getInputs().size(); i < n; i++) {
-                if (join.getInputs().getQuick(i).getSourceOutput().getColumnIndexById(column.getColumnId()) >= 0) {
-                    return i;
-                }
-            }
-            throw new IllegalStateException("join predicate input has changed");
+            return LogicalPlans.joinColumnSource(join, column.getColumnId());
         }
         int source = -1;
         if (expression instanceof FunctionExpression function) {
@@ -441,13 +404,8 @@ final class FilterPushdown implements OptimiserPass {
 
     private static int latestJoinPosition(BoundExpression expression, JoinPlan join) {
         if (expression instanceof ColumnExpression column) {
-            for (int i = 0, n = join.getInputs().size(); i < n; i++) {
-                final JoinInput input = join.getInputs().getQuick(i);
-                if (input.getSourceOutput().getColumnIndexById(column.getColumnId()) >= 0) {
-                    return join.getOrderedInputs().indexOf(input);
-                }
-            }
-            return Integer.MAX_VALUE;
+            final int source = LogicalPlans.findJoinColumnSource(join, column.getColumnId());
+            return source < 0 ? Integer.MAX_VALUE : join.getOrderedInputs().indexOf(join.getInputs().getQuick(source));
         }
         int position = -1;
         if (expression instanceof FunctionExpression function) {
@@ -508,9 +466,8 @@ final class FilterPushdown implements OptimiserPass {
         while (plan != target) {
             switch (plan) {
                 case ProjectPlan project -> {
-                    final int index = project.getOutput().getColumnIndexById(columnId);
-                    if (index < 0 || !(project.getExpressions().getQuick(index) instanceof ColumnExpression column)
-                            || !column.isDirectReference()) {
+                    final ColumnExpression column = LogicalPlans.passedColumn(project, columnId);
+                    if (column == null || !column.isDirectReference()) {
                         return -1;
                     }
                     columnId = column.getColumnId();
@@ -524,6 +481,23 @@ final class FilterPushdown implements OptimiserPass {
             plan = plan.inputAt(0);
         }
         return columnId;
+    }
+
+    /**
+     * Puts {@code input} in the place of the filter once no residual of its predicate remains, else leaves the residual
+     * filtering {@code input}; returns {@code result}, the root of the chain the filter heads, unless {@code input}
+     * takes the filter's place at the root.
+     */
+    private static LogicalPlan spliceResidual(LogicalPlan result, UnaryPlan parent, FilterPlan filter, LogicalPlan input, BoundExpression residual) {
+        if (residual == null) {
+            if (parent == null) {
+                return input;
+            }
+            parent.replaceInput(0, input);
+        } else if (residual != filter.getPredicate()) {
+            filter.of(input, residual, filter.getPosition());
+        }
+        return result;
     }
 
     private static ColumnExpression transitiveFilterColumn(BoundExpression predicate) {
@@ -541,10 +515,10 @@ final class FilterPushdown implements OptimiserPass {
 
     private static void unqualifyFilteredKeys(JoinInput step, BoundExpression filter) {
         if (filter instanceof ColumnExpression column) {
-            final IntList slaveIds = step.getSlaveKeyColumnIds();
-            for (int i = 0, n = slaveIds.size(); i < n; i++) {
-                if (slaveIds.getQuick(i) == column.getColumnId()) {
-                    step.unqualifySlaveKeyName(i);
+            final ObjList<JoinKey> keys = step.getKeys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                if (keys.getQuick(i).getSlaveColumnId() == column.getColumnId()) {
+                    keys.getQuick(i).unqualifySlaveName();
                 }
             }
         } else if (filter instanceof FunctionExpression function) {
@@ -567,11 +541,8 @@ final class FilterPushdown implements OptimiserPass {
         for (int i = 0, n = conjuncts.size(); i < n; i++) {
             final BoundExpression conjunct = conjuncts.getQuick(i);
             final int origin = origins.getQuick(i);
-            if (!isInnerRegion && origin >= 0) {
-                final JoinKind type = join.getInputs().getQuick(origin).getJoinType();
-                if (type != JoinKind.INNER && type != JoinKind.CROSS) {
-                    continue;
-                }
+            if (!isInnerRegion && origin >= 0 && join.getInputs().getQuick(origin).getJoinType().isBarrier()) {
+                continue;
             }
             final ColumnExpression column = transitiveFilterColumn(conjunct);
             if (column == null || !isTransitiveFact(conjunct)) {
@@ -593,7 +564,7 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     private void deriveTransitiveFilter(BoundExpression predicate, int masterId, JoinInput slave, int keyIndex) throws SqlException {
-        final int slaveId = slave.getSlaveKeyColumnIds().getQuick(keyIndex);
+        final int slaveId = slave.getKeys().getQuick(keyIndex).getSlaveColumnId();
         final ColumnExpression column = transitiveFilterColumn(predicate);
         final LogicalPlan target = slave.getInput();
         if (column == null || target == null || column.getColumnId() != masterId) {
@@ -607,11 +578,9 @@ final class FilterPushdown implements OptimiserPass {
         if (slaveType != column.getDataType() && !LogicalPlans.isJoinKeyTypeCompatible(column.getDataType(), slaveType)) {
             return;
         }
-        mappingProjection.clear();
-        mappingProjection.of(target, predicate.getPosition());
-        mappingProjection.getOutput().add(masterId, target.getOutput().getColumnName(index), column.getDataType(), true);
-        mappingProjection.getExpressions().add(mappingColumn.of(slaveId, column.getDataType(), column.getPosition()));
-        FunctionExpression derived = (FunctionExpression) context.getRewriter().copyRemappedColumns(predicate, mappingProjection);
+        columnMap.clear();
+        columnMap.put(masterId, slaveId);
+        FunctionExpression derived = (FunctionExpression) context.getRewriter().copyRemappedColumns(predicate, columnMap);
         if (((FunctionExpression) predicate).argumentAt(1) == column) {
             derived = context.getRewriter().commuteEquality(derived);
         }
@@ -619,12 +588,12 @@ final class FilterPushdown implements OptimiserPass {
                 derived.getPosition(), narrowingColumns.next().of(slaveId, slaveType, column.getPosition()), derived.argumentAt(1),
                 target.getOutput());
         if (pushSourceJoinFilter(slave, slaveFilter) && slave.isSubquery()) {
-            slave.unqualifySlaveKeyName(keyIndex);
+            slave.getKeys().getQuick(keyIndex).unqualifySlaveName();
         }
     }
 
     private void deriveTransitiveFilters(JoinPlan join, BoundExpression pushedPredicate) throws SqlException {
-        final boolean isInnerRegion = isInnerJoinRegion(join);
+        final boolean isInnerRegion = !LogicalPlans.hasBarrierInput(join);
         if (pushedPredicate == null) {
             collectTransitiveFacts(join, isInnerRegion);
         }
@@ -634,8 +603,8 @@ final class FilterPushdown implements OptimiserPass {
             if (slave.getJoinType() == JoinKind.SPLICE) {
                 continue;
             }
-            for (int k = 0, count = slave.getMasterKeyColumnIds().size(); k < count; k++) {
-                final int masterId = slave.getMasterKeyColumnIds().getQuick(k);
+            for (int k = 0, count = slave.getKeys().size(); k < count; k++) {
+                final int masterId = slave.getKeys().getQuick(k).getMasterColumnId();
                 if (pushedPredicate != null) {
                     deriveTransitiveFilter(pushedPredicate, masterId, slave, k);
                 } else {
@@ -687,75 +656,61 @@ final class FilterPushdown implements OptimiserPass {
                 || !sourceScan.getTableToken().equals(scan.getTableToken())) {
             return;
         }
-        final int position = aggregate.getPosition();
-        mappingProjection.clear();
-        mappingProjection.of(scan, position);
+        columnMap.clear();
         final IntList inputIds = aggregate.getSharedInputIds();
         final IntList sourceIds = aggregate.getSharedSourceIds();
         for (int i = 0, n = inputIds.size(); i < n; i++) {
-            final int index = scan.getOutput().getColumnIndexById(inputIds.getQuick(i));
-            if (index >= 0) {
-                final int type = scan.getOutput().getColumnType(index);
-                mappingProjection.getExpressions().add(narrowingColumns.next().of(inputIds.getQuick(i), type, position));
-                mappingProjection.getOutput().add(sourceIds.getQuick(i), scan.getOutput().getColumnName(index), type, true);
+            final int keyIndex = columnMap.keyIndex(sourceIds.getQuick(i));
+            if (keyIndex > -1 && scan.getOutput().getColumnIndexById(inputIds.getQuick(i)) >= 0) {
+                columnMap.putAt(keyIndex, sourceIds.getQuick(i), inputIds.getQuick(i));
             }
         }
         LogicalPlan input = scan;
         for (LogicalPlan filter = aggregate.getSharedSource().getInput(); filter != source; filter = filter.inputAt(0)) {
             final BoundExpression predicate = ((FilterPlan) filter).getPredicate();
-            if (LogicalPlans.isStableWithinExecution(predicate) && LogicalPlans.readsOnly(predicate, mappingProjection.getOutput())) {
-                input = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, mappingProjection), predicate.getPosition());
+            if (LogicalPlans.isStableWithinExecution(predicate) && LogicalPlans.readsOnly(predicate, columnMap)) {
+                input = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, columnMap), predicate.getPosition());
             }
         }
         aggregate.replaceInput(0, input);
     }
 
-    private ProjectPlan groupingKeyView(AggregatePlan aggregate) {
-        ProjectPlan view = null;
-        final ObjList<BoundExpression> grouping = aggregate.getGroupingExpressions();
-        final OutputSchema output = aggregate.getOutput();
-        final OutputSchema input = aggregate.getChild().getOutput();
-        for (int i = 0, n = grouping.size(); i < n; i++) {
-            if (grouping.getQuick(i) instanceof ColumnExpression column && column.isDirectReference()) {
-                if (view == null) {
-                    view = mappingProjection;
-                    view.clear();
-                    view.of(aggregate.getChild(), aggregate.getPosition());
-                }
-                view.getExpressions().add(column);
-                view.getOutput().add(output.getColumnId(i), output.getColumnName(i), output.getColumnType(i), true);
-                view.getOutput().setSymbolTableStatic(view.getOutput().getColumnCount() - 1,
-                        input.isSymbolTableStatic(input.getColumnIndexById(column.getColumnId())));
-            }
+    /**
+     * Moves the conjunct, which the step at {@link #hoistPosition} of {@link #hoistJoin} filters with, to the LEFT step
+     * before it that joins the last input the conjunct reads, when only INNER, CROSS and LEFT steps lie between them.
+     * Returns whether the conjunct moved.
+     */
+    private boolean hoistEarlierJoinConjunct(BoundExpression conjunct) throws SqlException {
+        if (!LogicalPlans.isOrderIndependent(conjunct)) {
+            return false;
         }
-        return view;
-    }
-
-    private BoundExpression hoistEarlierJoinConjuncts(JoinPlan join, BoundExpression predicate, int position) throws SqlException {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
-            return context.getRewriter().replaceConjunction(call, hoistEarlierJoinConjuncts(join, call.argumentAt(0), position),
-                    hoistEarlierJoinConjuncts(join, call.argumentAt(1), position));
+        final ObjList<JoinInput> ordered = hoistJoin.getOrderedInputs();
+        final int target = latestJoinPosition(conjunct, hoistJoin);
+        if (target < 1 || target >= hoistPosition || ordered.getQuick(target).getJoinType() != JoinKind.LEFT_OUTER) {
+            return false;
         }
-        if (predicate == null || !LogicalPlans.isOrderIndependent(predicate)) {
-            return predicate;
-        }
-        final ObjList<JoinInput> ordered = join.getOrderedInputs();
-        final int target = latestJoinPosition(predicate, join);
-        if (target < 1 || target >= position || ordered.getQuick(target).getJoinType() != JoinKind.LEFT_OUTER) {
-            return predicate;
-        }
-        for (int i = target + 1; i < position; i++) {
+        for (int i = target + 1; i < hoistPosition; i++) {
             switch (ordered.getQuick(i).getJoinType()) {
                 case INNER, CROSS, LEFT_OUTER -> {
                 }
                 default -> {
-                    return predicate;
+                    return false;
                 }
             }
         }
         final JoinInput step = ordered.getQuick(target);
-        step.setPostJoinFilter(context.getRewriter().combineConjunction(step.getPostJoinFilter(), predicate, predicate.getPosition()));
-        return null;
+        step.setPostJoinFilter(context.getRewriter().combineConjunction(step.getPostJoinFilter(), conjunct, conjunct.getPosition()));
+        return true;
+    }
+
+    /**
+     * Hoists each conjunct of the predicate the step at {@code position} filters with that can move, see
+     * {@link #hoistEarlierJoinConjunct}, and returns the conjuncts that stay.
+     */
+    private BoundExpression hoistEarlierJoinConjuncts(JoinPlan join, BoundExpression predicate, int position) throws SqlException {
+        hoistJoin = join;
+        hoistPosition = position;
+        return context.getRewriter().retainConjuncts(predicate, unhoistedJoinConjuncts);
     }
 
     private boolean isNullRejectingFact(FunctionExpression fact) {
@@ -768,12 +723,8 @@ final class FilterPushdown implements OptimiserPass {
      */
     private boolean isOnFactSafe(JoinPlan join, int columnId, JoinInput target, int origin, FunctionExpression fact) {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
-        int sourcePosition = -1;
-        for (int i = 0, n = ordered.size(); i < n && sourcePosition < 0; i++) {
-            if (ordered.getQuick(i).getSourceOutput().getColumnIndexById(columnId) >= 0) {
-                sourcePosition = i;
-            }
-        }
+        final int source = LogicalPlans.findJoinColumnSource(join, columnId);
+        final int sourcePosition = source < 0 ? -1 : ordered.indexOf(join.getInputs().getQuick(source));
         int boundaryPosition = -1;
         for (int i = sourcePosition + 1, n = ordered.size(); i < n && boundaryPosition < 0; i++) {
             if (ordered.getQuick(i).getJoinType().isMasterNulling()) {
@@ -793,15 +744,14 @@ final class FilterPushdown implements OptimiserPass {
 
     private boolean isTransitiveSourceSafe(JoinPlan join, int source, BoundExpression fact) {
         final int last = join.getOrderedInputs().size() - 1;
-        if (isInnerJoinRegion(join)) {
+        if (!LogicalPlans.hasBarrierInput(join)) {
             return LogicalPlans.canPushJoinFilter(join, source, last);
         }
         final JoinInput input = join.getInputs().getQuick(source);
-        if (join.getOrderedInputs().indexOf(input) > 0 && input.getJoinType() != JoinKind.INNER
-                && input.getJoinType() != JoinKind.CROSS) {
+        if (join.getOrderedInputs().indexOf(input) > 0 && input.getJoinType().isBarrier()) {
             return false;
         }
-        if (!hasMasterNullingJoin(join)) {
+        if (LogicalPlans.lastMasterNullingStep(join) < 0) {
             return LogicalPlans.canPushJoinFilter(join, source, last);
         }
         final FunctionExpression call = (FunctionExpression) fact;
@@ -866,6 +816,21 @@ final class FilterPushdown implements OptimiserPass {
         return selector;
     }
 
+    /**
+     * Maps each output column of the aggregate that a grouping key passes through to the input column it reads;
+     * returns whether one does.
+     */
+    private boolean mapGroupingKeys(AggregatePlan aggregate) {
+        columnMap.clear();
+        final ObjList<BoundExpression> grouping = aggregate.getGroupingExpressions();
+        for (int i = 0, n = grouping.size(); i < n; i++) {
+            if (grouping.getQuick(i) instanceof ColumnExpression column && column.isDirectReference()) {
+                columnMap.put(aggregate.getOutput().getColumnId(i), column.getColumnId());
+            }
+        }
+        return columnMap.size() > 0;
+    }
+
     private LogicalPlan pushDownFilter(FilterPlan filter) throws SqlException {
         LogicalPlan result = filter;
         UnaryPlan parent = null;
@@ -879,20 +844,14 @@ final class FilterPushdown implements OptimiserPass {
                 conjunctScope = project;
                 context.getRewriter().splitConjuncts(filter.getPredicate(), computedProjectionConjuncts, conjunctSplit);
                 final BoundExpression movable = conjunctSplit.getMatched();
-                if (movable != null) {
-                    final BoundExpression residual = conjunctSplit.getRemainder();
-                    final BoundExpression substituted = context.getRewriter().substituteProjection(movable, project);
-                    final FilterPlan pushed = filters.next().of(project.getChild(), substituted, substituted.getPosition());
-                    project.replaceInput(0, pushDownScopedFilter(pushed));
-                    if (residual != null) {
-                        filter.of(project, residual, filter.getPosition());
-                    } else if (parent == null) {
-                        return project;
-                    } else {
-                        parent.replaceInput(0, project);
-                    }
+                if (movable == null) {
+                    return result;
                 }
-                return result;
+                final BoundExpression residual = conjunctSplit.getRemainder();
+                final BoundExpression substituted = context.getRewriter().substituteProjection(movable, project);
+                final FilterPlan pushed = filters.next().of(project.getChild(), substituted, substituted.getPosition());
+                project.replaceInput(0, pushDownScopedFilter(pushed));
+                return spliceResidual(result, parent, filter, project, residual);
             }
             if (input instanceof ProjectPlan project) {
                 // A projected timestamp CAST keeps scalar precision in its consumer's scope.
@@ -903,14 +862,14 @@ final class FilterPushdown implements OptimiserPass {
                     conjunctScope = project;
                     context.getRewriter().splitConjuncts(filter.getPredicate(), projectionConjuncts, conjunctSplit);
                     final BoundExpression movable = conjunctSplit.getMatched();
-                    if (movable != null) {
-                        final BoundExpression residual = conjunctSplit.getRemainder();
-                        final BoundExpression remapped = context.getRewriter().remapColumns(movable, project);
-                        final FilterPlan pushed = filters.next().of(project.getChild(), remapped, remapped.getPosition());
-                        project.replaceInput(0, pushDownFilter(pushed));
-                        filter.of(project, residual, filter.getPosition());
+                    if (movable == null) {
+                        return result;
                     }
-                    return result;
+                    final BoundExpression residual = conjunctSplit.getRemainder();
+                    final BoundExpression remapped = context.getRewriter().remapColumns(movable, project);
+                    final FilterPlan pushed = filters.next().of(project.getChild(), remapped, remapped.getPosition());
+                    project.replaceInput(0, pushDownFilter(pushed));
+                    return spliceResidual(result, parent, filter, project, residual);
                 }
                 crossed = project;
                 crossedProject = project;
@@ -940,11 +899,9 @@ final class FilterPushdown implements OptimiserPass {
                         return result;
                     }
                     final BoundExpression residual = conjunctSplit.getRemainder();
-                    final LogicalPlan belowSort = sort.getChild();
-                    final FilterPlan pushed = filters.next().of(belowSort, movable, movable.getPosition());
+                    final FilterPlan pushed = filters.next().of(sort.getChild(), movable, movable.getPosition());
                     sort.replaceInput(0, pushDownFilter(pushed));
-                    filter.of(sort, residual, filter.getPosition());
-                    return result;
+                    return spliceResidual(result, parent, filter, sort, residual);
                 }
                 crossed = sort;
                 predicate = filter.getPredicate();
@@ -952,63 +909,35 @@ final class FilterPushdown implements OptimiserPass {
             } else if (input instanceof JoinPlan join) {
                 final BoundExpression residual = pushSingleSourceJoinFilter(join, filter.getPredicate(), join.getOrderedInputs().size() - 1);
                 deriveTransitiveFiltersFromPushedPredicate(join, filter.getPredicate());
-                if (residual == null) {
-                    if (parent == null) {
-                        return join;
-                    }
-                    parent.replaceInput(0, join);
-                } else if (residual != filter.getPredicate()) {
-                    filter.of(join, residual, filter.getPosition());
-                }
-                return result;
+                return spliceResidual(result, parent, filter, join, residual);
             } else if (input instanceof SetOperationPlan operation) {
                 final int timestampIndex = LogicalPlans.setTimestampIndex(operation);
                 if (timestampIndex < 0) {
                     return result;
                 }
-                final BoundExpression residual = pushSetConjuncts(operation, filter.getPredicate(), timestampIndex);
-                if (residual == null) {
-                    if (parent == null) {
-                        return input;
-                    }
-                    parent.replaceInput(0, input);
-                } else if (residual != filter.getPredicate()) {
-                    filter.of(input, residual, filter.getPosition());
-                }
-                return result;
+                return spliceResidual(result, parent, filter, operation, pushSetConjuncts(operation, filter.getPredicate(), timestampIndex));
             } else if (input instanceof AggregatePlan aggregate && !(aggregate.getChild() instanceof HorizonJoinPlan)) {
-                final ProjectPlan keys = groupingKeyView(aggregate);
-                if (keys == null || isUnstable(filter.getPredicate())) {
+                if (!mapGroupingKeys(aggregate) || isUnstable(filter.getPredicate())) {
                     return result;
                 }
-                conjunctScope = keys;
                 context.getRewriter().splitConjuncts(filter.getPredicate(), keyConjuncts, conjunctSplit);
                 final BoundExpression movable = conjunctSplit.getMatched();
                 if (movable == null) {
                     return result;
                 }
                 final BoundExpression residual = conjunctSplit.getRemainder();
-                final BoundExpression remapped = context.getRewriter().remapColumns(movable, keys);
+                final BoundExpression remapped = context.getRewriter().remapColumns(movable, columnMap, aggregate.getChild().getOutput());
                 final FilterPlan pushed = filters.next().of(aggregate.getChild(), remapped, remapped.getPosition());
                 aggregate.replaceInput(0, pushDownScopedFilter(pushed));
-                if (residual != null) {
-                    filter.of(input, residual, filter.getPosition());
-                    return result;
-                }
-                if (parent == null) {
-                    return input;
-                }
-                parent.replaceInput(0, input);
-                return result;
+                return spliceResidual(result, parent, filter, aggregate, residual);
             } else if (input instanceof FillPlan) {
                 // Keyed fill emits the same buckets for each surviving key, so key-only
                 // conjuncts filter the aggregate input instead.
                 final LogicalPlan fillInput = input.inputAt(0);
-                final ProjectPlan keys = fillInput instanceof AggregatePlan aggregate ? groupingKeyView(aggregate) : null;
-                if (keys == null || !LogicalPlans.isOrderIndependent(filter.getPredicate())) {
+                if (!(fillInput instanceof AggregatePlan aggregate) || !mapGroupingKeys(aggregate)
+                        || !LogicalPlans.isOrderIndependent(filter.getPredicate())) {
                     return result;
                 }
-                conjunctScope = keys;
                 context.getRewriter().splitConjuncts(filter.getPredicate(), keyConjuncts, conjunctSplit);
                 final BoundExpression movable = conjunctSplit.getMatched();
                 if (movable == null) {
@@ -1017,15 +946,7 @@ final class FilterPushdown implements OptimiserPass {
                 final BoundExpression residual = conjunctSplit.getRemainder();
                 final FilterPlan pushed = filters.next().of(fillInput, movable, movable.getPosition());
                 input.replaceInput(0, pushDownFilter(pushed));
-                if (residual != null) {
-                    filter.of(input, residual, filter.getPosition());
-                    return result;
-                }
-                if (parent == null) {
-                    return input;
-                }
-                parent.replaceInput(0, input);
-                return result;
+                return spliceResidual(result, parent, filter, input, residual);
             } else if (input instanceof LatestByPlan latest) {
                 final BoundExpression selector = isOrderCrossed ? null : latestKeySelector(latest, filter, result);
                 if (selector == null) {
@@ -1039,19 +960,8 @@ final class FilterPushdown implements OptimiserPass {
                     }
                     return result;
                 }
-                final LogicalPlan scan = input.inputAt(0);
-                final FilterPlan pushed = filters.next().of(scan, selector, selector.getPosition());
-                input.replaceInput(0, pushed);
-                final BoundExpression residual = context.getRewriter().removeConjunct(filter.getPredicate(), selector);
-                if (residual != null) {
-                    filter.of(input, residual, filter.getPosition());
-                    return result;
-                }
-                if (parent == null) {
-                    return input;
-                }
-                parent.replaceInput(0, input);
-                return result;
+                input.replaceInput(0, filters.next().of(input.inputAt(0), selector, selector.getPosition()));
+                return spliceResidual(result, parent, filter, input, context.getRewriter().removeConjunct(filter.getPredicate(), selector));
             } else {
                 // In particular, never change which rows LATEST BY or LIMIT selects, or
                 // move a predicate through computed projections.
@@ -1121,9 +1031,8 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     /**
-     * Publishes the step order of two-input joins (the binder already ordered wider joins), then
-     * pushes key filters and single-source ON/WHERE conjuncts into join inputs, hoists conjuncts to
-     * the earliest step that can evaluate them and derives transitive filters over equi-join keys.
+     * Pushes key filters and single-source ON/WHERE conjuncts into the inputs of a join {@link JoinOrdering} ordered,
+     * hoists conjuncts to the earliest step that can evaluate them and derives transitive filters over equi-join keys.
      */
     private LogicalPlan pushJoinFilters(LogicalPlan plan) throws SqlException {
         if (!(plan instanceof JoinPlan join)) {
@@ -1141,7 +1050,7 @@ final class FilterPushdown implements OptimiserPass {
             }
             // WHERE conjuncts go to their sources before inner ON conjuncts.
             step.setPostJoinFilter(pushSingleSourceJoinFilter(join, step.getPostJoinFilter(), i));
-            if (step.getJoinType() == JoinKind.INNER || step.getJoinType() == JoinKind.CROSS) {
+            if (!step.getJoinType().isBarrier()) {
                 step.setOnResidual(hoistEarlierJoinConjuncts(join, pushSingleSourceJoinFilter(join, step.getOnResidual(), i), i));
                 step.setPostJoinFilter(hoistEarlierJoinConjuncts(join, step.getPostJoinFilter(), i));
             }
@@ -1159,31 +1068,47 @@ final class FilterPushdown implements OptimiserPass {
         if (branch.getOutput().getColumnType(timestampIndex) != type) {
             return false;
         }
-        // This one-column mapping is temporary only. Copying descriptions leaves
-        // the other branch and any retained residual's preparation untouched.
-        mappingProjection.clear();
-        mappingProjection.of(branch, predicate.getPosition());
-        mappingProjection.getOutput().add(output.getColumnId(timestampIndex), output.getColumnName(timestampIndex), type, true);
-        mappingProjection.getExpressions().add(mappingColumn.of(branch.getOutput().getColumnId(timestampIndex), type, predicate.getPosition()));
-        final BoundExpression replacement = context.getRewriter().copyRemappedColumns(predicate, mappingProjection);
+        // Copying descriptions leaves the other branch and any retained residual's preparation untouched.
+        columnMap.clear();
+        columnMap.put(output.getColumnId(timestampIndex), branch.getOutput().getColumnId(timestampIndex));
+        final BoundExpression replacement = context.getRewriter().copyRemappedColumns(predicate, columnMap);
         final FilterPlan pushed = filters.next().of(branch, replacement, predicate.getPosition());
         // A row-selection barrier keeps the filter above the whole branch.
         operation.replaceInput(branchIndex, isSetBranchSelectionBarrier(branch) ? pushed : pushDownScopedFilter(pushed));
         return true;
     }
 
+    /**
+     * Pushes the conjunct into both branches of {@link #pushedSetOperation} when it is stable and reads only the
+     * column at {@link #pushedSetTimestampIndex}; returns whether both branches took it.
+     */
+    private boolean pushSetConjunct(BoundExpression conjunct) throws SqlException {
+        final SetOperationPlan operation = pushedSetOperation;
+        final int timestampIndex = pushedSetTimestampIndex;
+        if (isUnstable(conjunct) || singleColumnId(conjunct) != operation.getOutput().getColumnId(timestampIndex)) {
+            return false;
+        }
+        final boolean isLeftPushed = pushSetBranch(operation, 0, conjunct, timestampIndex);
+        final boolean isRightPushed = pushSetBranch(operation, 1, conjunct, timestampIndex);
+        return isLeftPushed && isRightPushed;
+    }
+
+    /**
+     * Pushes each conjunct of the predicate that can reach both branches of the set operation, see
+     * {@link #pushSetConjunct}, and returns the conjuncts that stay above it.
+     */
     private BoundExpression pushSetConjuncts(SetOperationPlan operation, BoundExpression predicate, int timestampIndex) throws SqlException {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
-            final BoundExpression left = pushSetConjuncts(operation, call.argumentAt(0), timestampIndex);
-            final BoundExpression right = pushSetConjuncts(operation, call.argumentAt(1), timestampIndex);
-            return context.getRewriter().replaceConjunction(call, left, right);
+        // A branch can be a set operation itself, whose pushdown re-enters here before the outer conjuncts are done.
+        final SetOperationPlan outerOperation = pushedSetOperation;
+        final int outerTimestampIndex = pushedSetTimestampIndex;
+        pushedSetOperation = operation;
+        pushedSetTimestampIndex = timestampIndex;
+        try {
+            return context.getRewriter().retainConjuncts(predicate, unpushedSetConjuncts);
+        } finally {
+            pushedSetOperation = outerOperation;
+            pushedSetTimestampIndex = outerTimestampIndex;
         }
-        if (isUnstable(predicate) || singleColumnId(predicate) != operation.getOutput().getColumnId(timestampIndex)) {
-            return predicate;
-        }
-        final boolean isLeftPushed = pushSetBranch(operation, 0, predicate, timestampIndex);
-        final boolean isRightPushed = pushSetBranch(operation, 1, predicate, timestampIndex);
-        return isLeftPushed && isRightPushed ? null : predicate;
     }
 
     private BoundExpression pushSingleSourceJoinFilter(JoinPlan join, BoundExpression predicate, int lastInput) throws SqlException {

@@ -43,7 +43,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -58,7 +57,6 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -86,12 +84,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull MessageBus messageBus,
             @NotNull RecordMetadata metadata,
             @NotNull RecordCursorFactory base,
-            @Nullable Function filter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
+            @NotNull AsyncFilterResources filterResources,
             @NotNull @Transient RecordComparatorCompiler recordComparatorCompiler,
             @NotNull ListColumnFilter orderByFilter,
             @NotNull @Transient RecordMetadata orderByMetadata,
@@ -102,14 +95,10 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         assert !(base instanceof AsyncTopKRecordCursorFactory);
         try {
             this.base = base;
+            final boolean hasFilter = filterResources.getFilter() != null;
             final AsyncTopKAtom atom = new AsyncTopKAtom(
                     configuration,
-                    filter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
+                    filterResources,
                     recordComparatorCompiler,
                     orderByFilter,
                     orderByMetadata,
@@ -121,7 +110,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                     configuration,
                     messageBus,
                     atom,
-                    filter != null ? FILTER_AND_FIND_TOP_K : FIND_TOP_K,
+                    hasFilter ? FILTER_AND_FIND_TOP_K : FIND_TOP_K,
                     workerCount
             );
             this.cursor = new AsyncTopKRecordCursor();
@@ -130,6 +119,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             this.workerCount = workerCount;
         } catch (Throwable th) {
             Misc.free(this, th);
+            Misc.free(filterResources, th);
             throw th;
         }
     }

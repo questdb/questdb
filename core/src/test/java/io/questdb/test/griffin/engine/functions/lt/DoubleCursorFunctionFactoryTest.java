@@ -53,6 +53,7 @@ import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.griffin.engine.functions.test.TestWorkerCloneFunctionFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedAtom;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
@@ -2233,19 +2234,11 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         groupByFunctions.add(groupByFunction);
         final JoinRecordMetadata horizonMetadata = new JoinRecordMetadata(configuration, 0);
         final GenericRecordMetadata outputMetadata = new GenericRecordMetadata();
-        final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(
-                null,
-                null,
-                null,
-                null,
-                null,
-                ownerFilter,
-                null,
-                perWorkerFilters
-        );
+        final AsyncFilterResources masterFilter = new AsyncFilterResources(null, null, null, null, ownerFilter, null, perWorkerFilters);
 
         try {
             if (isMulti) {
+                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, masterFilter, null);
                 final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
                 slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, null, null, 1, null, null));
                 slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, null, null, 1, null, null));
@@ -2271,7 +2264,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         2
                 );
             } else {
-                resources.setSlaveFilters(slaveFilter, perWorkerSlaveFilters);
+                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, masterFilter,
+                        new AsyncFilterResources(null, null, null, null, slaveFilter, null, perWorkerSlaveFilters));
                 new AsyncHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
                         new BytecodeAssembler(),
@@ -2363,15 +2357,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(
                 perWorkerGroups,
                 perWorkerKeys,
-                compiledFilter,
-                bindMemory,
-                bindFunctions,
-                ownerFilter,
-                null,
-                workerFilters
+                new AsyncFilterResources(compiledFilter, null, bindMemory, bindFunctions, ownerFilter, null, workerFilters),
+                new AsyncFilterResources(null, null, null, null, slaveFilter, null, perWorkerSlaveFilters)
         );
 
-        resources.setSlaveFilters(slaveFilter, perWorkerSlaveFilters);
         try {
             new AsyncHorizonJoinNotKeyedRecordCursorFactory(
                     configuration,
@@ -2448,9 +2437,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         states.add(new CountingSlaveState(thirdSlave, null, Integer.MAX_VALUE));
         final ObjList<GroupByFunction> groups = new ObjList<>();
         groups.add(new CountingGroupByFunction(null));
-        final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(
-                null, null, null, null, null, null, null, null
-        );
+        final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, new AsyncFilterResources(), null);
 
         try {
             new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
@@ -2544,7 +2531,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         final CountingGroupByFunction group = new CountingGroupByFunction(null);
         final ObjList<GroupByFunction> groups = new ObjList<>(group);
         final ObjList<HorizonJoinSlaveState> states = new ObjList<>();
-        final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null, null, null, null, null, null);
+        final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, new AsyncFilterResources(),
+                isMulti ? null : new AsyncFilterResources(null, null, null, null, ownerFilter, null, workerFilters));
         final StatefulAtom atom;
         if (isMulti) {
             final HorizonJoinSlaveState state = new HorizonJoinSlaveState(slaveFactory, 1, 1, null, null, null, 1, null, null);
@@ -2556,7 +2544,6 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     0, new long[]{0}, 1, new int[0], new int[0], groups, resources, 2
             );
         } else {
-            resources.setSlaveFilters(ownerFilter, workerFilters);
             atom = new AsyncHorizonJoinNotKeyedAtom(
                     new BytecodeAssembler(), configuration, slaveFactory, 0, new long[]{0}, 1,
                     null, null, null, 1, null, null, new int[0], new int[0], groups, resources, 1, 1, 2

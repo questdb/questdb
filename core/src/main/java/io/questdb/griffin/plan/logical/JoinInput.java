@@ -24,12 +24,12 @@
 
 package io.questdb.griffin.plan.logical;
 
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjectPool;
 
 import java.util.Objects;
 
@@ -44,13 +44,11 @@ public final class JoinInput implements Mutable {
     public static final int HINT_ASOF_MEMOIZED = 8;
     public static final int HINT_ASOF_MEMOIZED_DRIVEBY = 16;
     public static final int HINT_MARKOUT_HORIZON = 32;
-    private final IntList carrierColumnIds = new IntList();
-    private final IntList keyPositions = new IntList();
-    private final IntList masterKeyColumnIds = new IntList();
-    private final ObjList<CharSequence> masterKeyNames = new ObjList<>();
+    // Column remapping can collapse distinct keys before decorrelation removes them.
+    private final LongIntHashMap keyPairCounts = new LongIntHashMap();
+    private final ObjectPool<JoinKey> keyPool = new ObjectPool<>(JoinKey.FACTORY, 1, 1);
+    private final ObjList<JoinKey> keys = new ObjList<>();
     private final OutputSchema output = new OutputSchema();
-    private final IntList slaveKeyColumnIds = new IntList();
-    private final ObjList<CharSequence> slaveKeyNames = new ObjList<>();
     private Algorithm algorithm;
     private CharSequence bindingAlias;
     private int hints;
@@ -65,6 +63,7 @@ public final class JoinInput implements Mutable {
     private BoundExpression onResidual;
     private int position = -1;
     private BoundExpression postJoinFilter;
+    private TimeFrameScan timeFrameScan;
     private long toleranceInterval = Numbers.LONG_NULL;
     private UnnestSpec unnest;
 
@@ -72,16 +71,13 @@ public final class JoinInput implements Mutable {
      * Keys the step on a master and a slave column unless it already is; a CROSS step that gains a key joins INNER.
      */
     public void addKey(int masterId, int slaveId, CharSequence masterName, CharSequence slaveName, int position) {
-        for (int i = 0, n = masterKeyColumnIds.size(); i < n; i++) {
-            if (masterKeyColumnIds.getQuick(i) == masterId && slaveKeyColumnIds.getQuick(i) == slaveId) {
-                return;
-            }
+        final long pair = Numbers.encodeLowHighInts(masterId, slaveId);
+        final int index = keyPairCounts.keyIndex(pair);
+        if (index < 0) {
+            return;
         }
-        masterKeyColumnIds.add(masterId);
-        slaveKeyColumnIds.add(slaveId);
-        masterKeyNames.add(masterName);
-        slaveKeyNames.add(slaveName);
-        keyPositions.add(position);
+        keyPairCounts.putAt(index, pair, 1);
+        keys.add(keyPool.next().of(masterId, slaveId, masterName, slaveName, position));
         if (joinType == JoinKind.CROSS) {
             joinType = JoinKind.INNER;
         }
@@ -89,13 +85,10 @@ public final class JoinInput implements Mutable {
 
     @Override
     public void clear() {
-        carrierColumnIds.clear();
-        keyPositions.clear();
-        masterKeyColumnIds.clear();
-        masterKeyNames.clear();
+        keyPairCounts.clear();
+        keys.clear();
+        keyPool.clear();
         output.clear();
-        slaveKeyColumnIds.clear();
-        slaveKeyNames.clear();
         algorithm = null;
         bindingAlias = null;
         hints = 0;
@@ -110,6 +103,7 @@ public final class JoinInput implements Mutable {
         onResidual = null;
         position = -1;
         postJoinFilter = null;
+        timeFrameScan = null;
         toleranceInterval = Numbers.LONG_NULL;
         unnest = null;
     }
@@ -123,14 +117,6 @@ public final class JoinInput implements Mutable {
 
     public CharSequence getBindingAlias() {
         return bindingAlias;
-    }
-
-    /**
-     * The columns that stand for outer columns which decorrelation keys the step on or its ON condition reads, master
-     * and slave side alike.
-     */
-    public IntList getCarrierColumnIds() {
-        return carrierColumnIds;
     }
 
     public int getHints() {
@@ -152,8 +138,8 @@ public final class JoinInput implements Mutable {
         return keyFilter;
     }
 
-    public IntList getKeyPositions() {
-        return keyPositions;
+    public ObjList<JoinKey> getKeys() {
+        return keys;
     }
 
     /**
@@ -165,14 +151,6 @@ public final class JoinInput implements Mutable {
 
     public int getMarkoutTimestampColumnId() {
         return markoutTimestampColumnId;
-    }
-
-    public IntList getMasterKeyColumnIds() {
-        return masterKeyColumnIds;
-    }
-
-    public ObjList<CharSequence> getMasterKeyNames() {
-        return masterKeyNames;
     }
 
     /**
@@ -198,16 +176,16 @@ public final class JoinInput implements Mutable {
         return postJoinFilter;
     }
 
-    public IntList getSlaveKeyColumnIds() {
-        return slaveKeyColumnIds;
-    }
-
-    public ObjList<CharSequence> getSlaveKeyNames() {
-        return slaveKeyNames;
-    }
-
     public OutputSchema getSourceOutput() {
         return unnest == null ? input.getOutput() : unnest.getOutput();
+    }
+
+    /**
+     * How a keyed ASOF join that navigates the time frames of its slave finds the slave row of each master row, which
+     * operator planning records; null for any other step.
+     */
+    public TimeFrameScan getTimeFrameScan() {
+        return timeFrameScan;
     }
 
     /**
@@ -220,6 +198,30 @@ public final class JoinInput implements Mutable {
 
     public UnnestSpec getUnnest() {
         return unnest;
+    }
+
+    /**
+     * True when a key is on the column, master or slave side.
+     */
+    public boolean hasKeyOn(int columnId) {
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (keys.getQuick(i).isOn(columnId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The index of the first key on the master column, or -1 when none is.
+     */
+    public int indexOfMasterKey(int masterColumnId) {
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (keys.getQuick(i).getMasterColumnId() == masterColumnId) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -261,21 +263,23 @@ public final class JoinInput implements Mutable {
         return this;
     }
 
+    public void removeKey(int index) {
+        final JoinKey key = keys.getQuick(index);
+        final long pair = Numbers.encodeLowHighInts(key.getMasterColumnId(), key.getSlaveColumnId());
+        final int pairIndex = keyPairCounts.keyIndex(pair);
+        final int count = keyPairCounts.valueAt(pairIndex);
+        if (count == 1) {
+            keyPairCounts.removeAt(pairIndex);
+        } else {
+            keyPairCounts.putAt(pairIndex, pair, count - 1);
+        }
+        keys.remove(index);
+    }
+
     /**
      * Records the algorithm; the master side of a light INNER hash join stays undecided until operator planning decides
      * it.
      */
-    /**
-     * Drops the key at the index, master and slave column alike.
-     */
-    public void removeKey(int index) {
-        masterKeyColumnIds.removeIndex(index);
-        slaveKeyColumnIds.removeIndex(index);
-        masterKeyNames.remove(index);
-        slaveKeyNames.remove(index);
-        keyPositions.removeIndex(index);
-    }
-
     public void setAlgorithm(Algorithm algorithm) {
         this.algorithm = algorithm;
         masterSide = algorithm == Algorithm.LIGHT_HASH && joinType == JoinKind.INNER ? null : MasterSide.FIXED;
@@ -322,32 +326,36 @@ public final class JoinInput implements Mutable {
         this.isSubquery = isSubquery;
     }
 
-    public void setToleranceInterval(long toleranceInterval) {
-        this.toleranceInterval = toleranceInterval;
+    public void setTimeFrameScan(TimeFrameScan timeFrameScan) {
+        this.timeFrameScan = timeFrameScan;
     }
 
-    /**
-     * Drops a slave key's qualifier once a filter sharing the key moves into the slave subquery.
-     */
-    public void unqualifySlaveKeyName(int index) {
-        final CharSequence name = slaveKeyNames.getQuick(index);
-        final int dot = Chars.indexOfLastUnquoted(name, '.');
-        if (dot > -1) {
-            slaveKeyNames.setQuick(index, name.subSequence(dot + 1, name.length()));
-        }
+    public void setToleranceInterval(long toleranceInterval) {
+        this.toleranceInterval = toleranceInterval;
     }
 
     public void visitReads(PlanExpressionVisitor visitor) {
         if (unnest != null) {
             unnest.visitReads(visitor);
         }
-        PlanReads.columnIds(masterKeyColumnIds, keyPositions, visitor);
-        PlanReads.columnIds(slaveKeyColumnIds, keyPositions, visitor);
+        if (JoinKey.visitReads(keys, visitor)) {
+            rebuildKeyPairCounts();
+        }
         keyFilter = PlanReads.expression(keyFilter, visitor);
         onResidual = PlanReads.expression(onResidual, visitor);
         postJoinFilter = PlanReads.expression(postJoinFilter, visitor);
         markoutTimestampColumnId = PlanReads.columnId(markoutTimestampColumnId, -1, visitor);
         markoutSequenceColumnId = PlanReads.columnId(markoutSequenceColumnId, -1, visitor);
+    }
+
+    private void rebuildKeyPairCounts() {
+        keyPairCounts.clear();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final JoinKey key = keys.getQuick(i);
+            final long pair = Numbers.encodeLowHighInts(key.getMasterColumnId(), key.getSlaveColumnId());
+            final int index = keyPairCounts.keyIndex(pair);
+            keyPairCounts.putAt(index, pair, index < 0 ? keyPairCounts.valueAt(index) + 1 : 1);
+        }
     }
 
     /**
@@ -403,6 +411,42 @@ public final class JoinInput implements Mutable {
          * Expands each master row by the UNNEST expressions.
          */
         UNNEST
+    }
+
+    /**
+     * How a keyed ASOF join that navigates the time frames of its slave finds the slave row of each master row, see
+     * {@link #getTimeFrameScan}. The variants that read a single symbol key map the master's symbol keys onto the
+     * slave's symbol table.
+     */
+    public enum TimeFrameScan {
+        /**
+         * Scans the time frames back from the master timestamp until a slave row matches the key.
+         */
+        FAST,
+        /**
+         * Resumes a forward scan from the previous master row and a backward scan from where both started,
+         * remembering the latest slave row of each key either passes, which the {@code asof_dense} hint asks for.
+         */
+        DENSE,
+        /**
+         * The dense scan of a single symbol key.
+         */
+        DENSE_SINGLE_SYMBOL,
+        /**
+         * Reads the latest slave row of the single symbol key from the index of the slave's key column, which the
+         * {@code asof_index} hint asks for.
+         */
+        INDEXED,
+        /**
+         * Scans the time frames back for the single symbol key, remembering where it found each key and where it did
+         * not, which the {@code asof_memoized} hint asks for.
+         */
+        MEMOIZED,
+        /**
+         * The memoized scan that also remembers the other keys it passes on the way, which the
+         * {@code asof_memoized_driveby} hint asks for.
+         */
+        MEMOIZED_DRIVEBY
     }
 
     /**

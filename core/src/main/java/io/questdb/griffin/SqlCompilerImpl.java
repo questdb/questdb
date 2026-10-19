@@ -75,7 +75,6 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
-import io.questdb.griffin.bind.BindScope;
 import io.questdb.griffin.bind.BindScopeStack;
 import io.questdb.griffin.bind.JoinGraphBuilder;
 import io.questdb.griffin.bind.SqlBinder;
@@ -116,29 +115,20 @@ import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.optimiser.SqlOptimiser;
 import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.JoinDependency;
-import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.Subquery;
-import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.GenericLexer;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.IntSortedList;
-import io.questdb.std.IntStack;
-import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -244,31 +234,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<Subquery> subqueries = new ObjList<>();
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
-    private final ObjList<BoundExpression> tmpArguments = new ObjList<>(2);
-    private final ObjList<BoundExpression> tmpExpressions = new ObjList<>();
-    private final IntList tmpFunctionPositions = new IntList();
-    private final ObjList<Function> tmpFunctions = new ObjList<>();
-    private final IntIntHashMap tmpIdMap = new IntIntHashMap();
-    private final IntHashSet tmpIds = new IntHashSet();
-    private final IntList tmpIndexes = new IntList();
-    private final ObjList<IntHashSet> tmpJoinChildren = new ObjList<>();
-    private final ObjectPool<IntHashSet> tmpJoinChildrenPool;
-    private final ObjList<JoinDependency> tmpJoinDependencies = new ObjList<>();
-    private final ObjList<JoinKind> tmpJoinTypes = new ObjList<>();
-    private final LongList tmpLongs = new LongList();
-    private final IntList tmpMasterKeys = new IntList();
-    private final ObjList<CharSequence> tmpNames = new ObjList<>();
-    private final ObjList<ExpressionNode> tmpNodes = new ObjList<>();
-    private final IntList tmpPositions = new IntList(2);
-    private final IntSortedList tmpReadyInputs = new IntSortedList();
-    private final OutputSchema tmpScope = new OutputSchema();
-    private final StringSink tmpSink = new StringSink();
-    private final IntList tmpSlaveKeys = new IntList();
-    private final CharSequenceHashSet tmpTokens = new CharSequenceHashSet();
-    private final UniqueColumnNames tmpUniqueNames = new UniqueColumnNames();
-    private final IntList tmpValues = new IntList();
+    private final CompilerTemporaries temporaries;
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
-    private final UpdateTarget updateTarget = new UpdateTarget(tmpNames);
+    private final UpdateTarget updateTarget;
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence sqlText;
     private boolean closed = false;
@@ -298,7 +266,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final int modelPoolCapacity = configuration.getSqlModelPoolCapacity();
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, modelPoolCapacity, modelPoolCapacity);
             this.planNodePools = new PlanNodePools(configuration);
-            this.tmpJoinChildrenPool = new ObjectPool<>(IntHashSet::new, 4, planNodePools.minRetainedJoinContexts);
+            this.temporaries = new CompilerTemporaries(planNodePools.minRetainedJoinContexts);
+            this.updateTarget = new UpdateTarget(temporaries.names);
             final int windowColumnPoolCapacity = configuration.getWindowColumnPoolCapacity();
             ObjectPool<WindowExpression> windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, windowColumnPoolCapacity, columnPoolCapacity);
             this.compiledQuery = new CompiledQueryImpl(engine);
@@ -310,17 +279,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
             this.functionResolver = new FunctionResolver(configuration, engine.getFunctionFactoryCache());
-            final IntStack tmpStack = new IntStack();
-            this.functionParser = new FunctionParser(configuration, functionResolver, traversalAlgo, tmpFunctions, tmpFunctionPositions, tmpStack);
+            this.functionParser = new FunctionParser(configuration, functionResolver, traversalAlgo, temporaries.functions,
+                    temporaries.functionPositions, temporaries.stack);
             this.preparedFunctions = new PreparedFunctions(expressionPoolCapacity);
             this.functionSources = new TableFunctionSources(this, functionParser, planNodePools);
             this.expressionRewriter = newExpressionRewriter(functionParser);
             this.functionInstantiator = newFunctionInstantiator(functionParser);
-            this.joinGraphBuilder = new JoinGraphBuilder(planNodePools, tmpIds, tmpMasterKeys, tmpSlaveKeys, tmpReadyInputs, tmpJoinChildren,
-                    tmpJoinChildrenPool, tmpJoinTypes, tmpJoinDependencies);
+            this.joinGraphBuilder = new JoinGraphBuilder(planNodePools, temporaries);
             this.codeGenerator = new SqlCodeGenerator(configuration, functionResolver, characterStore, asm,
-                    entityColumnFilter, emptySchema, planTables, expressionRewriter, functionInstantiator, functionSources,
-                    tmpSink, tmpLongs, tmpIds, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpUniqueNames);
+                    entityColumnFilter, emptySchema, planTables, expressionRewriter, functionInstantiator, functionSources, temporaries);
             this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
             registerKeywordBasedExecutors();
@@ -337,11 +304,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     queryColumnPool,
                     queryModelPool,
                     traversalAlgo,
-                    tmpTokens,
-                    tmpNodes,
-                    tmpNames,
-                    tmpPositions,
-                    tmpStack
+                    temporaries.tokens,
+                    temporaries.nodes,
+                    temporaries.names,
+                    temporaries.positions,
+                    temporaries.stack
             );
 
             alterOperationBuilder = createAlterOperationBuilder();
@@ -352,10 +319,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // for COMPILE VIEW, what we care about is validating view dependencies
             compileViewContext = new ViewCompilerExecutionContext(engine, 1);
             binder = newBinder(functionParser, scopes, expressionRewriter, functionInstantiator);
-            optimiser = new SqlOptimiser(configuration, characterStore, engine.getFunctionFactoryCache(), planNodePools, tmpIds, tmpIndexes, tmpValues,
-                    tmpMasterKeys, tmpSlaveKeys, tmpExpressions, tmpScope, tmpSink, tmpLongs, tmpIdMap, tmpUniqueNames, outerColumnReads,
-                    tmpReadyInputs, tmpJoinChildren, tmpJoinChildrenPool, tmpJoinTypes, tmpJoinDependencies, expressionRewriter,
-                    binder.getCallBinder(), functionInstantiator, functionSources, planTables);
+            optimiser = new SqlOptimiser(configuration, characterStore, engine.getFunctionFactoryCache(), planNodePools, temporaries,
+                    outerColumnReads, expressionRewriter, binder.getCallBinder(), functionInstantiator, functionSources, planTables);
         } catch (Throwable th) {
             close();
             throw th;
@@ -453,22 +418,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * optimises it, in the order binding finished, before the statement itself.
      */
     public Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-        final BindScope scope = scopes.push();
+        final int depth = scopes.depth();
+        final int subqueryDepth = depth + 1;
+        final boolean isWindowContextPushed = enterSubquery(SubqueryPhase.BIND, subqueryDepth, executionContext);
         final LogicalPlan subqueryRoot;
-        final boolean isWindowContextPushed = !executionContext.getWindowContext().isEmpty();
-        if (isWindowContextPushed) {
-            executionContext.pushWindowContext();
-        }
         try {
             subqueryRoot = binder.bind(model, binder.getParserCallback(), executionContext);
         } finally {
-            scopes.pop();
-            if (isWindowContextPushed) {
-                executionContext.popWindowContext();
-            }
+            exitSubquery(SubqueryPhase.BIND, depth, executionContext, isWindowContextPushed);
         }
         nonDeterministicCalls.rejectExternalSource(subqueryRoot, position, executionContext);
-        final Subquery subquery = planNodePools.subqueries.next().of(subqueryRoot, scopes.depth() + 1,
+        final Subquery subquery = planNodePools.subqueries.next().of(subqueryRoot, subqueryDepth,
                 LogicalPlans.isResultStable(subqueryRoot, executionContext.isParallelGroupByEnabled(), null));
         subqueries.add(subquery);
         return subquery;
@@ -1123,6 +1083,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || engine.getConfiguration().isAllPartitionOperationsAllowed();
     }
 
+    private static void popSubqueryWindowContext(SqlExecutionContext executionContext, boolean isWindowContextPushed) {
+        if (isWindowContextPushed) {
+            executionContext.popWindowContext();
+        }
+    }
+
+    private static boolean pushSubqueryWindowContext(SqlExecutionContext executionContext) {
+        if (executionContext.getWindowContext().isEmpty()) {
+            return false;
+        }
+        executionContext.pushWindowContext();
+        return true;
+    }
+
     /**
      * Rejects ALTER ... ADD INDEX on a table that has a remotely-served (cold storage) partition.
      * Such a partition has no local data file to build the index from, so the ADD INDEX would fail
@@ -1590,11 +1564,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        tmpNames.clear();
+        temporaries.names.clear();
         if (columnName != null) {
-            tmpNames.add(columnName);
+            temporaries.names.add(columnName);
         }
-        executionContext.getSecurityContext().authorizeAlterTableAlterSymbolCapacity(tableToken, tmpNames);
+        executionContext.getSecurityContext().authorizeAlterTableAlterSymbolCapacity(tableToken, temporaries.names);
 
         final int existingColumnType = tableMetadata.getColumnType(columnIndex);
         if (!ColumnType.isSymbol(existingColumnType)) {
@@ -1734,9 +1708,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // Authorize against the indexed column only. Covering INCLUDE columns
         // are not part of the ADD INDEX privilege; passing them here would let
         // an enterprise ACL conflate INDEX and READ permissions.
-        tmpNames.clear();
-        tmpNames.add(columnName);
-        executionContext.getSecurityContext().authorizeAlterTableAddIndex(tableToken, tmpNames);
+        temporaries.names.clear();
+        temporaries.names.add(columnName);
+        executionContext.getSecurityContext().authorizeAlterTableAddIndex(tableToken, temporaries.names);
         rejectAddIndexOnColdPartitions(executionContext, tableToken, tableNamePosition);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
@@ -2527,7 +2501,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (tableToken == null || tableToken.getType() == TableToken.Type.TABLE) {
             return;
         }
-        throw SqlException.position(position).put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=").put(tableToken.getTableName()).put(']');
+        throw SqlException.cannotModify(position, tableToken);
     }
 
     private Throwable clearBinding(Throwable failure) {
@@ -2568,10 +2542,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         failure = Misc.clearBestEffort(failure, dropOperationBuilder);
         failure = Misc.clearBestEffort(failure, functionParser);
         failure = Misc.clearBestEffort(failure, compiledQuery);
-        failure = Misc.clearBestEffort(failure, tmpFunctions);
-        failure = Misc.clearBestEffort(failure, tmpJoinChildren);
-        failure = Misc.clearBestEffort(failure, tmpJoinChildrenPool);
-        failure = Misc.clearBestEffort(failure, tmpNames);
+        failure = Misc.clearBestEffort(failure, temporaries);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -3159,9 +3130,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 } else if (!IndexType.isPosting(indexType)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "INCLUDE is only supported for POSTING index type");
                                 }
-                                coveringColumnNames = tmpNames;
+                                coveringColumnNames = temporaries.names;
                                 coveringColumnNames.clear();
-                                coveringColumnPositions = tmpPositions;
+                                coveringColumnPositions = temporaries.positions;
                                 coveringColumnPositions.clear();
                                 tok = expectToken(lexer, "'('");
                                 if (!Chars.equals(tok, '(')) {
@@ -4556,11 +4527,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.getPosition(), "EOF expected");
             }
 
-            tmpNames.clear();
+            temporaries.names.clear();
             if (columnName != null) {
-                tmpNames.add(columnName);
+                temporaries.names.add(columnName);
             }
-            executionContext.getSecurityContext().authorizeTableReindex(tableToken, tmpNames);
+            executionContext.getSecurityContext().authorizeTableReindex(tableToken, temporaries.names);
             if (!executionContext.isValidationOnly()) {
                 indexBuilder.reindex(partition, columnName);
             }
@@ -5088,7 +5059,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return;
         }
 
-        final ObjList<CharSequence> views = tmpNames;
+        final ObjList<CharSequence> views = temporaries.names;
         views.clear();
         SqlUtil.collectAllTableAndViewNames(queryModel, views, true);
         for (int i = 0, n = views.size(); i < n; i++) {
@@ -5097,6 +5068,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 engine.getViewStateStore().enqueueCompile(viewDefinition.getViewToken());
             }
         }
+    }
+
+    private boolean enterSubquery(SubqueryPhase phase, int depth, SqlExecutionContext executionContext) {
+        switch (phase) {
+            case BIND -> {
+                scopes.enter(depth);
+                scopes.clearCurrent();
+                return pushSubqueryWindowContext(executionContext);
+            }
+            case OPTIMISE -> {
+                scopes.enter(depth);
+                executionContext.pushTimestampRequiredFlag(false);
+                return false;
+            }
+            case GENERATE -> {
+                executionContext.pushTimestampRequiredFlag(false);
+                final int previousDepth = scopes.enter(depth);
+                try {
+                    return pushSubqueryWindowContext(executionContext);
+                } catch (Throwable th) {
+                    scopes.enter(previousDepth);
+                    executionContext.popTimestampRequiredFlag();
+                    throw th;
+                }
+            }
+        }
+        throw new AssertionError(phase);
     }
 
     private boolean executeCreateLiveView(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
@@ -5806,6 +5804,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return true;
     }
 
+    private void exitSubquery(SubqueryPhase phase, int depth, SqlExecutionContext executionContext, boolean isWindowContextPushed) {
+        switch (phase) {
+            case BIND -> {
+                scopes.enter(depth);
+                popSubqueryWindowContext(executionContext, isWindowContextPushed);
+            }
+            case OPTIMISE -> {
+                executionContext.popTimestampRequiredFlag();
+                scopes.enter(depth);
+            }
+            case GENERATE -> {
+                popSubqueryWindowContext(executionContext, isWindowContextPushed);
+                scopes.enter(depth);
+                executionContext.popTimestampRequiredFlag();
+            }
+        }
+    }
+
     private int filterApply(
             Function filter,
             int functionPosition,
@@ -6045,18 +6061,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private SqlBinder newBinder(FunctionParser parser, BindScopeStack scopes, BoundExpressionRewriter rewriter, FunctionInstantiator instantiator) {
         return new SqlBinder(configuration, parser, this, scopes, sqlNodePool, characterStore, planNodePools, planTables,
                 preparedFunctions, functionSources, rewriter, instantiator, joinGraphBuilder, updateTarget, emptySchema, traversalAlgo,
-                tmpArguments, tmpPositions, tmpScope, tmpFunctions, tmpFunctionPositions, tmpExpressions, tmpSink, tmpLongs, outerColumnReads,
-                tmpIds, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpNodes, tmpTokens, tmpIdMap, tmpUniqueNames);
+                outerColumnReads, temporaries);
     }
 
     private BoundExpressionRewriter newExpressionRewriter(FunctionParser parser) {
         return new BoundExpressionRewriter(parser.getFunctionFactoryCache(), planNodePools.columns, planNodePools.constants,
-                planNodePools.functions, planNodePools.outerColumns, planNodePools.parameters, planNodePools.types, tmpArguments,
-                tmpPositions, preparedFunctions, planNodePools.minRetainedExpressions);
+                planNodePools.functions, planNodePools.outerColumns, planNodePools.parameters, planNodePools.types, temporaries.arguments,
+                temporaries.positions, preparedFunctions, planNodePools.minRetainedExpressions);
     }
 
     private FunctionInstantiator newFunctionInstantiator(FunctionParser parser) {
-        return new FunctionInstantiator(this, parser.getFunctionResolver(), preparedFunctions, tmpScope,
+        return new FunctionInstantiator(this, parser.getFunctionResolver(), preparedFunctions, temporaries.scope,
                 planNodePools.minRetainedExpressions);
     }
 
@@ -6078,13 +6093,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void optimiseSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
-        final int depth = scopes.enter(subquery.getDepth());
-        executionContext.pushTimestampRequiredFlag(false);
+        final int depth = scopes.depth();
+        enterSubquery(SubqueryPhase.OPTIMISE, subquery.getDepth(), executionContext);
         try {
             subquery.setRoot(optimiser.optimise(subquery.getRoot(), executionContext));
         } finally {
-            executionContext.popTimestampRequiredFlag();
-            scopes.enter(depth);
+            exitSubquery(SubqueryPhase.OPTIMISE, depth, executionContext, false);
         }
         assert subquery.getRoot().getOutput().hasColumnTypesOf(subquery.getOutputMetadata().getMetadata())
                 : "optimised sub-query output differs from its bound output";
@@ -6608,14 +6622,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Generates a new, owned factory of an optimised sub-query.
      */
     RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
-        executionContext.pushTimestampRequiredFlag(false);
-        boolean hasPushedWindowContext = false;
-        final int depth = scopes.enter(subquery.getDepth());
+        final int depth = scopes.depth();
+        final boolean isWindowContextPushed = enterSubquery(SubqueryPhase.GENERATE, subquery.getDepth(), executionContext);
         try {
-            if (!executionContext.getWindowContext().isEmpty()) {
-                executionContext.pushWindowContext();
-                hasPushedWindowContext = true;
-            }
             final LogicalPlan plan = subquery.getRoot();
             final RecordCursorFactory factory = codeGenerator.generate(plan, executionContext);
             assert plan.getOutput().hasColumnTypesOf(factory.getMetadata()) : "generated sub-query metadata differs from its plan";
@@ -6623,11 +6632,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     : "external sub-query passed the binding guard";
             return factory;
         } finally {
-            if (hasPushedWindowContext) {
-                executionContext.popWindowContext();
-            }
-            scopes.enter(depth);
-            executionContext.popTimestampRequiredFlag();
+            exitSubquery(SubqueryPhase.GENERATE, depth, executionContext, isWindowContextPushed);
         }
     }
 
@@ -6764,6 +6769,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         public static final int DETACH = 3;
         public static final int DROP = 1;
         public static final int FORCE_DROP = 6;
+    }
+
+    private enum SubqueryPhase {
+        BIND, OPTIMISE, GENERATE
     }
 
     private static class TimestampValueRecord implements Record {

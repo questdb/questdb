@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
@@ -120,7 +121,7 @@ public class SqlTopKGenerationOwnershipTest extends AbstractCairoTest {
         try {
             final RuntimeException actual = Assert.assertThrows(RuntimeException.class, () ->
                     new AsyncTopKRecordCursorFactory(engine, configuration, engine.getMessageBus(),
-                            base.getMetadata(), base, owner, null, workers, compiled, null, bindVariables,
+                            base.getMetadata(), base, new AsyncFilterResources(compiled, null, null, bindVariables, owner, null, workers),
                             new RecordComparatorCompiler(new BytecodeAssembler()), keys, base.getMetadata(), 3, 1));
             Assert.assertSame(failure, actual);
             Assert.assertEquals(1, base.closeCount);

@@ -109,7 +109,6 @@ final class GenerationFrame implements Closeable, Mutable {
     RecordCursorFactory sharedHeadFactory;
     int sharedHeadId;
     LogicalPlan sharedHeadTarget;
-    PreparedFilter stolenFilter;
     private int preparedFilterCount;
 
     GenerationFrame(
@@ -161,7 +160,6 @@ final class GenerationFrame implements Closeable, Mutable {
         sharedHeadFactory = null;
         sharedHeadId = 0;
         sharedHeadTarget = null;
-        stolenFilter = null;
         for (int i = 0; i < preparedFilterCount; i++) {
             failure = Misc.freeBestEffort(failure, preparedFilters.getQuick(i));
         }

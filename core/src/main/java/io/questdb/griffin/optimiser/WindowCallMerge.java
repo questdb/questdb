@@ -49,7 +49,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -61,22 +60,17 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, Exp
     private final ObjList<LogicalPlan> ancestors;
     private final IntIntHashMap callHeads;
     private final IntList callNext;
-    private final ObjectPool<ColumnExpression> columns;
     private final OptimiserContext context;
     private final IntList keptIndexes;
     private final IntList lowerCallIndexes;
     private final ObjList<LogicalPlan> lowerWindows;
-    private final ProjectPlan renaming;
     private final IntIntHashMap tmpColumnMap;
     private long callComparisonCount;
     private LogicalPlan redirectConsumer;
 
-    WindowCallMerge(OptimiserContext context, ObjectPool<ColumnExpression> columns, ProjectPlan renaming, ObjList<LogicalPlan> ancestors,
-                    ObjList<LogicalPlan> lowerWindows, IntList keptIndexes, IntIntHashMap callHeads, IntList callNext,
-                    IntList lowerCallIndexes, IntIntHashMap tmpColumnMap) {
+    WindowCallMerge(OptimiserContext context, ObjList<LogicalPlan> ancestors, ObjList<LogicalPlan> lowerWindows, IntList keptIndexes,
+                    IntIntHashMap callHeads, IntList callNext, IntList lowerCallIndexes, IntIntHashMap tmpColumnMap) {
         this.context = context;
-        this.columns = columns;
-        this.renaming = renaming;
         this.ancestors = ancestors;
         this.lowerWindows = lowerWindows;
         this.keptIndexes = keptIndexes;
@@ -121,19 +115,8 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, Exp
 
     @Override
     public BoundExpression visitExpression(BoundExpression expression) {
-        if (expression.walk(this)) {
-            return expression;
-        }
-        if (renaming.getChild() == null) {
-            final LogicalPlan input = redirectConsumer.inputAt(0);
-            final OutputSchema output = input.getOutput();
-            renaming.of(input, redirectConsumer.getPosition());
-            renaming.getOutput().copyFrom(output);
-            for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-                renaming.getExpressions().add(columns.next().of(visitColumnId(output.getColumnId(i), -1), output.getColumnType(i), redirectConsumer.getPosition()));
-            }
-        }
-        return context.getRewriter().remapColumns(expression, renaming);
+        return expression.walk(this) ? expression
+                : context.getRewriter().remapColumns(expression, tmpColumnMap, redirectConsumer.inputAt(0).getOutput());
     }
 
     /**
@@ -143,13 +126,13 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, Exp
     private static BoundExpression definitionOf(int columnId, LogicalPlan plan) {
         while (true) {
             if (plan instanceof ProjectPlan project) {
-                final int index = project.getOutput().getColumnIndexById(columnId);
-                if (index < 0) {
-                    return null;
+                final ColumnExpression column = LogicalPlans.passedColumn(project, columnId);
+                if (column == null) {
+                    final int index = project.getOutput().getColumnIndexById(columnId);
+                    return index < 0 ? null : project.getExpressions().getQuick(index);
                 }
-                final BoundExpression expression = project.getExpressions().getQuick(index);
-                if (!(expression instanceof ColumnExpression column) || column.getColumnId() != columnId) {
-                    return expression;
+                if (column.getColumnId() != columnId) {
+                    return column;
                 }
             } else if (!(plan instanceof WindowPlan window) || window.getChild().getOutput().getColumnIndexById(columnId) < 0) {
                 return null;
@@ -448,7 +431,6 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, Exp
 
     private void redirectReads(LogicalPlan consumer) {
         redirectConsumer = consumer;
-        renaming.clear();
         try {
             consumer.visitReads(this);
         } finally {

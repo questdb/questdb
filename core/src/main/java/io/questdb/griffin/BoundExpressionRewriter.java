@@ -32,6 +32,7 @@ import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.std.IntIntHashMap;
@@ -176,6 +177,19 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
+     * Copies an expression into fresh descriptions that read each column under the id the map holds for it, leaving
+     * its preparation with the original. The map holds every column the expression reads.
+     */
+    public BoundExpression copyRemappedColumns(BoundExpression expression, IntIntHashMap columnIds) {
+        rewriteArguments.clear();
+        try {
+            return copyRemappedColumns0(expression, columnIds);
+        } finally {
+            rewriteArguments.clear();
+        }
+    }
+
+    /**
      * Describes the argument-free window function {@code name}, such as {@code row_number}, with the function flags
      * the function it builds has, without preparing it; the generator builds windows under their final window context.
      */
@@ -271,6 +285,20 @@ public final class BoundExpressionRewriter implements Mutable {
         return expression;
     }
 
+    /**
+     * Moves an expression onto {@code input}, reading each column the map holds under its mapped id. Unchanged
+     * sub-expressions are shared; an unadopted preparation follows its rewritten description and only its private
+     * leaves change ids. Call only when replacing the old expression occurrence.
+     */
+    public BoundExpression remapColumns(BoundExpression expression, IntIntHashMap columnIds, OutputSchema input) {
+        rewriteArguments.clear();
+        try {
+            return moveRemappedColumns(expression, columnIds, input);
+        } finally {
+            rewriteArguments.clear();
+        }
+    }
+
     public FunctionExpression remapColumns(FunctionExpression call, IntIntHashMap columnIds) {
         final ObjList<BoundExpression> args = rewriteArguments.next();
         boolean isChanged = false;
@@ -291,7 +319,7 @@ public final class BoundExpressionRewriter implements Mutable {
         if (predicate == conjunct) {
             return null;
         }
-        if (predicate instanceof FunctionExpression call && call.isAnd() && call.getArgumentCount() == 2) {
+        if (predicate instanceof FunctionExpression call && call.isAnd()) {
             return replaceConjunction(call, removeConjunct(call.argumentAt(0), conjunct), removeConjunct(call.argumentAt(1), conjunct));
         }
         return predicate;
@@ -311,7 +339,7 @@ public final class BoundExpressionRewriter implements Mutable {
      * conjunct passes, null when none does or the predicate is null. The test sees each conjunct once, left to right.
      */
     public BoundExpression retainConjuncts(BoundExpression predicate, ConjunctTest test) throws SqlException {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
+        if (predicate instanceof FunctionExpression call && call.isAnd()) {
             final BoundExpression left = retainConjuncts(call.argumentAt(0), test);
             return replaceConjunction(call, left, retainConjuncts(call.argumentAt(1), test));
         }
@@ -324,7 +352,7 @@ public final class BoundExpressionRewriter implements Mutable {
      * {@link #retainConjuncts} builds it. The test must not split.
      */
     public void splitConjuncts(BoundExpression predicate, ConjunctTest test, ConjunctSplit split) throws SqlException {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
+        if (predicate instanceof FunctionExpression call && call.isAnd()) {
             splitConjuncts(call.argumentAt(0), test, split);
             final BoundExpression leftMatches = split.matched;
             final BoundExpression leftRemainder = split.remainder;
@@ -488,6 +516,53 @@ public final class BoundExpressionRewriter implements Mutable {
         return functions.next().of(call, args);
     }
 
+    private BoundExpression copyRemappedColumns0(BoundExpression expression, IntIntHashMap columnIds) {
+        if (expression instanceof ColumnExpression column) {
+            final int columnId = columnIds.get(column.getColumnId());
+            if (columnId < 0) {
+                throw new IllegalArgumentException("column outside the column map");
+            }
+            return columns.next().of(columnId, column.getDataType(), column.getPosition(), column.isDirectReference(), column.isCast());
+        }
+        if (expression instanceof FunctionExpression call) {
+            final ObjList<BoundExpression> args = rewriteArguments.next();
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                args.add(copyRemappedColumns0(call.argumentAt(i), columnIds));
+            }
+            return functions.next().of(call, args);
+        }
+        return copy(expression);
+    }
+
+    private BoundExpression moveRemappedColumns(BoundExpression expression, IntIntHashMap columnIds, OutputSchema input) {
+        if (expression instanceof ColumnExpression column) {
+            final int columnId = columnIds.get(column.getColumnId());
+            if (columnId < 0 || columnId == column.getColumnId()) {
+                return column;
+            }
+            final ColumnExpression replacement = columns.next().of(columnId, column.getDataType(), column.getPosition(),
+                    column.isDirectReference(), column.isCast());
+            retargetPreparation(expression, replacement, columnIds, input);
+            return replacement;
+        }
+        if (expression instanceof FunctionExpression call) {
+            final ObjList<BoundExpression> args = rewriteArguments.next();
+            boolean isChanged = false;
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                final BoundExpression argument = call.argumentAt(i);
+                final BoundExpression replacement = moveRemappedColumns(argument, columnIds, input);
+                args.add(replacement);
+                isChanged |= replacement != argument;
+            }
+            if (isChanged) {
+                final FunctionExpression replacement = functions.next().of(call, args);
+                retargetPreparation(expression, replacement, columnIds, input);
+                return replacement;
+            }
+        }
+        return expression;
+    }
+
     private BoundExpression remapColumns0(BoundExpression expression, ProjectPlan projection, boolean isMoving) {
         if (expression instanceof ColumnExpression column) {
             final ColumnExpression input = projectionColumn(projection, column.getColumnId(), column.getDataType());
@@ -532,6 +607,13 @@ public final class BoundExpressionRewriter implements Mutable {
             if (entry != null) {
                 prepared.retarget(entry, replacement, projection);
             }
+        }
+    }
+
+    private void retargetPreparation(BoundExpression expression, BoundExpression replacement, IntIntHashMap columnIds, OutputSchema input) {
+        final PreparedFunctions.Entry entry = prepared.findOwned(expression);
+        if (entry != null) {
+            prepared.retarget(entry, replacement, columnIds, input);
         }
     }
 

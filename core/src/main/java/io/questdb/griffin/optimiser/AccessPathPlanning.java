@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.TableAccessInfo;
+import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
 import io.questdb.griffin.IntervalAnalysis;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
@@ -38,7 +39,6 @@ import io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
@@ -68,9 +68,9 @@ import io.questdb.std.str.StringSink;
  * Decides how every scan of a query level, and of each sub-query it reads, reads its table, once
  * {@link OrderPlanning} has recorded what the consumers of the scan require, and records the decision on the
  * {@link ScanPlan}: the access path, the index it reads and how, the key values, sub-query or pattern that drive it,
- * the requested order it delivers, the residual it filters with and the intervals it relies on. It reads the table
- * table, the interval analysis of the predicate, the pattern declarations and the configuration; the code generator
- * builds exactly what it records.
+ * the requested order it delivers, the residual it filters with and the intervals it relies on. It reads the access
+ * facts of the table, the interval analysis of the predicate, the pattern declarations and the configuration; the code
+ * generator builds exactly what it records.
  * <p>
  * A decision depends on where the generator builds the scan, which this pass follows as the generator walks the
  * plan: the generation depth of the query level, whether a consumer requires the designated timestamp, see
@@ -108,8 +108,10 @@ final class AccessPathPlanning {
     private final OperatorPlanning operatorPlanning;
     private final ObjList<Subquery> subqueries = new ObjList<>();
     private final IntList tableColumnIndexes;
+    private final ConjunctTest unfoldedConjuncts = this::isUnfoldedConjunct;
     private int captureLevel = -1;
     private int depth;
+    private int falseComparisonPosition;
     private ScanPlan horizonSlaveScan;
     private boolean isCapturing;
     private WindowJoinStep pendingStep;
@@ -182,7 +184,7 @@ final class AccessPathPlanning {
         if (!(predicate instanceof FunctionExpression call)) {
             return null;
         }
-        if (call.getArgumentCount() == 2 && call.isAnd()) {
+        if (call.isAnd()) {
             final FunctionExpression left = collectWithin(call.argumentAt(0), output);
             return left != null ? left : collectWithin(call.argumentAt(1), output);
         }
@@ -201,24 +203,14 @@ final class AccessPathPlanning {
         return TreeWalk.CONTINUE;
     }
 
-    private BoundExpression foldSelfComparisons(BoundExpression predicate) {
-        if (!(predicate instanceof FunctionExpression call) || call.getArgumentCount() != 2) {
-            return predicate;
-        }
-        if (call.isAnd()) {
-            final BoundExpression left = foldSelfComparisons(call.argumentAt(0));
-            if (left != call.argumentAt(0) && left instanceof ConstantExpression) {
-                return left;
-            }
-            final BoundExpression right = foldSelfComparisons(call.argumentAt(1));
-            return right != call.argumentAt(1) && right instanceof ConstantExpression ? right
-                    : context.getRewriter().replaceConjunction(call, left, right);
-        }
-        return switch (LogicalPlans.selfComparison(call)) {
-            case LogicalPlans.SELF_COMPARISON_TRUE -> null;
-            case LogicalPlans.SELF_COMPARISON_FALSE -> context.getRewriter().newFalseConstant(call.getPosition());
-            default -> predicate;
-        };
+    /**
+     * Folds the comparisons of a column with itself among the conjuncts of the predicate: one that holds drops out, and
+     * one that fails turns the predicate into a constant false at the position of the first such comparison.
+     */
+    private BoundExpression foldSelfComparisons(BoundExpression predicate) throws SqlException {
+        falseComparisonPosition = -1;
+        final BoundExpression folded = context.getRewriter().retainConjuncts(predicate, unfoldedConjuncts);
+        return falseComparisonPosition < 0 ? folded : context.getRewriter().newFalseConstant(falseComparisonPosition);
     }
 
     private boolean isIndexedSymbolColumn(BoundExpression expression, OutputSchema output) {
@@ -247,6 +239,25 @@ final class AccessPathPlanning {
         final FunctionExpression positive = positivePattern(pattern);
         final boolean isSymbolTableStatic = table.isSymbolTableStatic(tableColumnIndex(output, ((ColumnExpression) positive.argumentAt(0)).getColumnId()));
         return MatchSymbolFunctionFactory.positivePatternFactory(pattern).isSymbolKeySetProvider(positive.getArguments(), isSymbolTableStatic);
+    }
+
+    /**
+     * Drops a comparison of a column with itself that holds, and records where the first one that fails is.
+     */
+    private boolean isUnfoldedConjunct(BoundExpression conjunct) {
+        if (!(conjunct instanceof FunctionExpression call)) {
+            return true;
+        }
+        return switch (LogicalPlans.selfComparison(call)) {
+            case LogicalPlans.SELF_COMPARISON_TRUE -> false;
+            case LogicalPlans.SELF_COMPARISON_FALSE -> {
+                if (falseComparisonPosition < 0) {
+                    falseComparisonPosition = call.getPosition();
+                }
+                yield true;
+            }
+            default -> true;
+        };
     }
 
     private void planIndexed(ScanPlan scan, BoundExpression residual, boolean hasModel, boolean isTimestampRequired) {
@@ -489,6 +500,7 @@ final class AccessPathPlanning {
             final int savedDepth = depth;
             final boolean wasCapturing = isCapturing;
             final WindowJoinStep savedStep = pendingStep;
+            final int enclosingFrameLo = operatorPlanning.enterFrame();
             depth = savedDepth + 1;
             isCapturing = false;
             pendingStep = null;
@@ -499,6 +511,7 @@ final class AccessPathPlanning {
                 depth = savedDepth;
                 isCapturing = wasCapturing;
                 pendingStep = savedStep;
+                operatorPlanning.exitFrame(enclosingFrameLo);
             }
         }
         cursors.setPos(mark);
@@ -733,11 +746,13 @@ final class AccessPathPlanning {
         final boolean wasCapturing = isCapturing;
         try {
             walk(ordered.getQuick(0).getInput(), operatorPlanning.requiresInputTimestamp(join, 0, isTimestampRequired));
+            operatorPlanning.addGeneratedInput(ordered.getQuick(0));
             isCapturing = false;
             for (int i = 1, n = ordered.size(); i < n; i++) {
                 final JoinInput step = ordered.getQuick(i);
                 if (step.getInput() != null) {
                     walk(step.getInput(), operatorPlanning.requiresInputTimestamp(join, i, isTimestampRequired));
+                    operatorPlanning.addGeneratedInput(step);
                 }
             }
         } finally {

@@ -161,11 +161,11 @@ final class JoinOrderSolver implements Mutable {
                     for (int k = 0, count = keys.size(); k < count; k++) {
                         final JoinEquality key = keys.getQuick(k);
                         final boolean isLeftSlave = key.getLeftSource() == source;
-                        input.getMasterKeyColumnIds().add(isLeftSlave ? key.getRightColumnId() : key.getLeftColumnId());
-                        input.getSlaveKeyColumnIds().add(isLeftSlave ? key.getLeftColumnId() : key.getRightColumnId());
-                        input.getMasterKeyNames().add(isLeftSlave ? key.getRightName() : key.getLeftName());
-                        input.getSlaveKeyNames().add(isLeftSlave ? key.getLeftName() : key.getRightName());
-                        input.getKeyPositions().add(isLeftSlave ? key.getLeftPosition() : key.getRightPosition());
+                        if (isLeftSlave) {
+                            input.addKey(key.getRightColumnId(), key.getLeftColumnId(), key.getRightName(), key.getLeftName(), key.getLeftPosition());
+                        } else {
+                            input.addKey(key.getLeftColumnId(), key.getRightColumnId(), key.getLeftName(), key.getRightName(), key.getRightPosition());
+                        }
                     }
                 }
                 join.getOrderedInputs().add(input);

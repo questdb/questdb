@@ -43,7 +43,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -57,7 +56,6 @@ import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
@@ -93,12 +91,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             int valueCount,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function filter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull AsyncFilterResources filterResources,
             int workerCount,
             @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
     ) {
@@ -140,6 +133,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 }
             }
 
+            final boolean hasFilter = filterResources.getFilter() != null;
             AsyncGroupByNotKeyedAtom atom = new AsyncGroupByNotKeyedAtom(
                     asm,
                     configuration,
@@ -147,17 +141,12 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     perWorkerGroupByFunctions,
                     batchColumnIndexes,
                     valueCount,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    filter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
+                    filterResources,
                     workerCount
             );
 
             final UnorderedPageFrameReducer reducer;
-            if (filter != null) {
+            if (hasFilter) {
                 reducer = FILTER_AND_AGGREGATE;
             } else if (hasBatchFunctions) {
                 reducer = AGGREGATE_VECT;
@@ -178,6 +167,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             this.workerCount = workerCount;
         } catch (Throwable e) {
             Misc.free(this, e);
+            Misc.free(filterResources, e);
             throw e;
         }
     }

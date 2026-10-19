@@ -46,7 +46,6 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.cairo.sql.async.PageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -55,6 +54,7 @@ import io.questdb.griffin.engine.groupby.FlyweightMapValue;
 import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncFilterUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
@@ -62,7 +62,6 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -130,12 +129,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @Nullable CompiledFilter compiledMasterFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function masterFilter,
-            @Nullable ObjList<Function> perWorkerMasterFilters,
-            @Nullable IntHashSet filterUsedColumnIndexes,
+            @NotNull AsyncFilterResources masterFilterResources,
             @Nullable IntList argumentColumnIndex,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount
@@ -165,6 +159,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         // releases the frame sequence - which cascades to the atom and every atom-bound resource -
         // only when the cursor ctor is what fails; it always releases the consumed masterFactory,
         // slaveFactory and joinMetadata.
+        final boolean hasMasterFilter = masterFilterResources.getFilter() != null;
         PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence0 = null;
         try {
             final AsyncWindowJoinFastAtom atom = new AsyncWindowJoinFastAtom(
@@ -183,12 +178,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     valueTypes,
                     groupByFunctions,
                     perWorkerGroupByFunctions,
-                    compiledMasterFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    masterFilter,
-                    perWorkerMasterFilters,
-                    filterUsedColumnIndexes,
+                    masterFilterResources,
                     argumentColumnIndex,
                     masterTsScale,
                     slaveTsScale,
@@ -196,7 +186,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             );
             final PageFrameReducer reducer;
             if (includePrevailing) {
-                if (masterFilter != null) {
+                if (hasMasterFilter) {
                     reducer = atom.isVectorized()
                             ? FILTER_AND_AGGREGATE_VECT_PREVAILING
                             : (joinFilter == null ? FILTER_AND_AGGREGATE_PREVAILING : FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED);
@@ -207,8 +197,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 }
             } else {
                 reducer = atom.isVectorized()
-                        ? (masterFilter != null ? FILTER_AND_AGGREGATE_VECT : AGGREGATE_VECT)
-                        : (masterFilter != null ? FILTER_AND_AGGREGATE : AGGREGATE);
+                        ? (hasMasterFilter ? FILTER_AND_AGGREGATE_VECT : AGGREGATE_VECT)
+                        : (hasMasterFilter ? FILTER_AND_AGGREGATE : AGGREGATE);
             }
             frameSequence0 = new PageFrameSequence<>(
                     engine,
@@ -225,10 +215,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     slaveFactory,
                     columnIndex,
                     columnSplit,
-                    masterFilter != null
+                    hasMasterFilter
             );
         } catch (Throwable th) {
             Misc.free(frameSequence0, th);
+            Misc.free(masterFilterResources, th);
             Misc.free(masterFactory, th);
             if (slaveFactory != masterFactory) {
                 Misc.free(slaveFactory, th);

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.str.CharSink;
@@ -60,6 +61,13 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException ambiguousColumn(int position, CharSequence columnName) {
         return position(position).put("Ambiguous column [name=").put(columnName).put(']');
+    }
+
+    /**
+     * The error of a statement that writes to a view of any kind, which only reads its tables.
+     */
+    public static SqlException cannotModify(int position, TableToken view) {
+        return position(position).put("cannot modify ").put(view.getType().keyword()).put(" [view=").put(view.getTableName()).put(']');
     }
 
     public static SqlException duplicateColumn(int position, CharSequence colName) {

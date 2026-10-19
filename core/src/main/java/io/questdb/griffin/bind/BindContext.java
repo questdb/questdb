@@ -31,7 +31,9 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
+import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.PlanTables;
@@ -48,7 +50,6 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.ForwardingPlan;
-import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -57,21 +58,23 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.str.StringSink;
 
 /**
  * The binding context the compiler's binder services share: the statement's pools and preparations, the expression
  * stage, the temporaries whose every use is a leaf step and the {@link BindScope} of the query binding now.
  */
-public final class BindContext implements Mutable {
+final class BindContext implements Mutable {
     final ObjectPool<ExpressionNode> bindingExpressions;
     final CharacterStore characterStore;
+    /**
+     * The input of an expression that reads no columns.
+     */
+    final OutputSchema emptySchema;
     final BoundExpressionRewriter expressionRewriter;
     final FunctionBinder functionBinder;
     final FunctionFactoryCache functionFactoryCache;
@@ -98,12 +101,13 @@ public final class BindContext implements Mutable {
      * instantiator are the compiler's, and the rewriter and instantiator share the argument, position and scope
      * temporaries with this context.
      */
-    public BindContext(
+    BindContext(
             SqlCompilerImpl compiler,
             FunctionParser functionParser,
             BindScopeStack scopes,
             ObjectPool<ExpressionNode> bindingExpressions,
             CharacterStore characterStore,
+            OutputSchema emptySchema,
             PlanNodePools planNodes,
             PlanTables planTables,
             PreparedFunctions preparedFunctions,
@@ -111,34 +115,26 @@ public final class BindContext implements Mutable {
             BoundExpressionRewriter expressionRewriter,
             FunctionInstantiator functionInstantiator,
             PostOrderTreeTraversalAlgo traverseAlgo,
-            ObjList<BoundExpression> tmpArguments,
-            IntList tmpPositions,
-            OutputSchema tmpScope,
-            IntList tmpOuterColumns,
-            ObjList<Function> callFunctions,
-            IntList callPositions,
-            ObjList<BoundExpression> callArguments,
-            StringSink intervalText,
-            LongList parsedIntervals,
-            OuterColumnReads outerColumnReads
+            OuterColumnReads outerColumnReads,
+            CompilerTemporaries temporaries
     ) {
         this.scopes = scopes;
         this.bindingExpressions = bindingExpressions;
         this.characterStore = characterStore;
+        this.emptySchema = emptySchema;
         this.planNodes = planNodes;
         this.planTables = planTables;
         this.preparedFunctions = preparedFunctions;
         this.functionSources = functionSources;
         this.expressionRewriter = expressionRewriter;
         this.functionInstantiator = functionInstantiator;
-        this.tmpArguments = tmpArguments;
-        this.tmpPositions = tmpPositions;
-        this.tmpScope = tmpScope;
-        this.tmpOuterColumns = tmpOuterColumns;
+        this.tmpArguments = temporaries.arguments;
+        this.tmpPositions = temporaries.positions;
+        this.tmpScope = temporaries.scope;
+        this.tmpOuterColumns = temporaries.indexes;
         this.outerColumnReads = outerColumnReads;
         this.functionFactoryCache = functionParser.getFunctionFactoryCache();
-        this.functionBinder = new FunctionBinder(this, functionParser.getFunctionResolver(), compiler, traverseAlgo, callFunctions,
-                callPositions, callArguments, intervalText, parsedIntervals);
+        this.functionBinder = new FunctionBinder(this, functionParser.getFunctionResolver(), compiler, traverseAlgo, temporaries);
     }
 
     @Override
@@ -158,15 +154,6 @@ public final class BindContext implements Mutable {
 
     static ObjList<ExpressionNode> blockGroupBy(QueryModel model, QueryModel source) {
         return source.getGroupBy().size() > 0 && !source.isPivot() ? source.getGroupBy() : model.getGroupBy();
-    }
-
-    static int findGroupingColumn(GroupingPlan aggregate, int columnId) {
-        for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
-            if (aggregate.getGroupingExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == columnId) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     /**
@@ -199,15 +186,6 @@ public final class BindContext implements Mutable {
         return firstColumnReference(expression) != null;
     }
 
-    static boolean hasComputedProjection(ProjectPlan project) {
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     static boolean hasSubQuery(ExpressionNode expression) {
         if (expression == null) {
             return false;
@@ -223,20 +201,17 @@ public final class BindContext implements Mutable {
         return false;
     }
 
-    static boolean isPlainColumnProjection(ProjectPlan project) {
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column) || column.isCast()) {
-                return false;
-            }
-        }
-        return true;
+    /**
+     * A call {@code count(k)} of a non-null constant {@code k}, which counts the rows as {@code count()} does.
+     */
+    static boolean isConstantCount(ExpressionNode expression) {
+        return expression.type == ExpressionNode.FUNCTION && SqlKeywords.isCountKeyword(expression.token) && expression.paramCount == 1
+                && expression.rhs.type == ExpressionNode.CONSTANT && !SqlKeywords.isNullKeyword(expression.rhs.token);
     }
 
     static boolean isRowCount(ExpressionNode expression) {
-        return expression.type == ExpressionNode.FUNCTION && expression.windowExpression == null
-                && SqlKeywords.isCountKeyword(expression.token)
-                && (expression.paramCount == 0 || expression.paramCount == 1
-                && expression.rhs.type == ExpressionNode.CONSTANT && !SqlKeywords.isNullKeyword(expression.rhs.token));
+        return expression.windowExpression == null && (isConstantCount(expression)
+                || expression.type == ExpressionNode.FUNCTION && SqlKeywords.isCountKeyword(expression.token) && expression.paramCount == 0);
     }
 
     static boolean isSameColumn(ExpressionNode left, ExpressionNode right, OutputSchema input, QueryModel source) {
@@ -327,6 +302,18 @@ public final class BindContext implements Mutable {
         scope.projectionAliasIndexes.add(aliasIndex);
     }
 
+    /**
+     * A binary operator or two-argument call node over the operands, which binding builds where the query spells
+     * none.
+     */
+    ExpressionNode binaryNode(int type, CharSequence token, int precedence, ExpressionNode lhs, ExpressionNode rhs, int position) {
+        final ExpressionNode node = bindingExpressions.next().of(type, token, precedence, position);
+        node.paramCount = 2;
+        node.lhs = lhs;
+        node.rhs = rhs;
+        return node;
+    }
+
     int bindColumnIndex(ExpressionNode expression, OutputSchema metadata, QueryModel source) throws SqlException {
         return bindColumnIndex(expression, metadata, sourceAlias(source));
     }
@@ -336,6 +323,19 @@ public final class BindContext implements Mutable {
             throw new IllegalStateException("column reference is not a literal");
         }
         return FunctionBinder.resolveColumn(expression, metadata, scopeAlias);
+    }
+
+    /**
+     * The conjunction of the predicates, either of which may be absent, at the position of the right one.
+     */
+    ExpressionNode combinePredicates(ExpressionNode left, ExpressionNode right) {
+        if (left == null) {
+            return right;
+        }
+        if (right == null) {
+            return left;
+        }
+        return binaryNode(ExpressionNode.OPERATION, "and", 0, left, right, right.position);
     }
 
     void copyTimestampScope(OutputSchema output) {
@@ -450,6 +450,17 @@ public final class BindContext implements Mutable {
         return node != null && node.type == ExpressionNode.FUNCTION && functionFactoryCache.isCursor(node.token);
     }
 
+    /**
+     * The function binding built for the bound root, which the preparations own until code generation adopts it.
+     */
+    Function preparedRoot(BoundExpression root) {
+        final PreparedFunctions.Entry entry = preparedFunctions.findOwned(root);
+        if (entry == null) {
+            throw new IllegalStateException("bound root has no prepared function");
+        }
+        return preparedFunctions.root(entry);
+    }
+
     void promoteNoArgFunctions(QueryModel model, OutputSchema scope, CharSequence alias) {
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final ExpressionNode expression = model.getBottomUpColumns().getQuick(i).getAst();
@@ -479,10 +490,8 @@ public final class BindContext implements Mutable {
             return;
         }
         if (plan instanceof ProjectPlan project) {
-            for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression)) {
-                    return;
-                }
+            if (!LogicalPlans.isColumnReferenceProjection(project)) {
+                return;
             }
             retainImplicitTimestamp(project.getChild());
             final OutputSchema input = project.getChild().getOutput();

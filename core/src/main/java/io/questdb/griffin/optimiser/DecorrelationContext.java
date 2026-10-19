@@ -59,29 +59,35 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Rewrite state {@link Decorrelation} shares with its collaborators: the master join of the step being
- * rewritten, the mapping from outer columns to the columns that satisfy them, column ids and names.
+ * Rewrite state {@link Decorrelation} shares with its collaborators: the step being rewritten, its master join and
+ * the outer columns of the master its body reads, the names decorrelation generates, and the carriers it records
+ * for {@link DecorrelationVerifier}. Builds the expressions and columns the rewrite adds.
  */
 final class DecorrelationContext implements Mutable {
     static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
     private static final String ROW_MARKER_PREFIX = "__qdb_row_marker__";
-    final ObjList<JoinInput> carrierSteps = new ObjList<>();
-    final ObjList<LogicalPlan> chain;
-    final IntList chainOuterIds = new IntList();
-    final CharacterStore characterStore;
-    final OptimiserContext context;
-    final LogicalPlanCopier copier;
-    final IntList mappedColumnIds;
-    final IntList mappedOuterIds;
-    final IntList masterOuterIds;
-    final IntIntHashMap outerAliases = new IntIntHashMap();
-    final OuterColumnReads outerColumnReads;
-    final PlanNodePools planNodes;
-    final IntList tmpColumnIds;
-    final IntIntHashMap substitution;
+    @Nullable
+    private final DecorrelationCarriers carriers;
+    private final ObjList<LogicalPlan> chain;
+    private final CharacterStore characterStore;
+    private final OptimiserContext context;
+    private final LogicalPlanCopier copier;
+    private final OuterColumnMapping mapping;
+    private final IntList masterOuterIds;
+    private final IntIntHashMap outerAliases = new IntIntHashMap();
+    private final OuterColumnReads outerColumnReads;
+    private final PlanNodePools planNodes;
+    private final IntIntHashMap substitution;
     private final UniqueColumnNames takenNames;
+    private final IntList tmpColumnIds;
     private final OutputSchema tmpSchema;
+    private int carrierSequence;
     private IntList columnIdSink;
+    private int domainSequence;
+    private JoinPlan master;
+    private final PlanVisitor masterOuterCollector = this::collectNodeMasterOuterIds;
+    private int masterLimit;
+    private int outerRefSequence = -1;
     private IntList readIds;
     private final ExpressionVisitor columnIdReads = expression -> expression instanceof ColumnExpression column
             && readIds.contains(column.getColumnId()) ? TreeWalk.STOP : TreeWalk.CONTINUE;
@@ -99,47 +105,45 @@ final class DecorrelationContext implements Mutable {
         }
         return TreeWalk.CONTINUE;
     };
-    int carrierSequence;
-    JoinPlan master;
-    int masterLimit;
-    int outerRefSequence = -1;
 
     DecorrelationContext(
             OptimiserContext context,
             PlanNodePools planNodes,
             CharacterStore characterStore,
-            IntList tmpColumnIds,
-            IntList mappedOuterIds,
-            IntList mappedColumnIds,
-            IntList masterOuterIds,
+            OuterColumnMapping mapping,
             ObjList<LogicalPlan> chain,
+            IntList tmpColumnIds,
+            IntList masterOuterIds,
             OutputSchema tmpSchema,
             IntIntHashMap substitution,
             UniqueColumnNames takenNames,
-            OuterColumnReads outerColumnReads
+            OuterColumnReads outerColumnReads,
+            @Nullable DecorrelationCarriers carriers
     ) {
         this.context = context;
         this.planNodes = planNodes;
         this.characterStore = characterStore;
-        this.tmpColumnIds = tmpColumnIds;
-        this.mappedOuterIds = mappedOuterIds;
-        this.mappedColumnIds = mappedColumnIds;
-        this.masterOuterIds = masterOuterIds;
+        this.mapping = mapping;
         this.chain = chain;
+        this.tmpColumnIds = tmpColumnIds;
+        this.masterOuterIds = masterOuterIds;
         this.tmpSchema = tmpSchema;
         this.substitution = substitution;
         this.takenNames = takenNames;
         this.outerColumnReads = outerColumnReads;
+        this.carriers = carriers;
         this.copier = new LogicalPlanCopier(context, planNodes, substitution);
     }
 
     @Override
     public void clear() {
-        releaseCarriers();
-        chainOuterIds.clear();
+        if (carriers != null) {
+            carriers.clear();
+        }
         copier.clear();
         outerAliases.clear();
         carrierSequence = 0;
+        domainSequence = 0;
         master = null;
         masterLimit = 0;
         outerRefSequence = -1;
@@ -162,6 +166,33 @@ final class DecorrelationContext implements Mutable {
 
     private static boolean reads(BoundExpression expression, ExpressionVisitor visitor) {
         return expression != null && !expression.walk(visitor);
+    }
+
+    /**
+     * Lays out {@code output} as the columns of {@code input} in input order, adding the missing ones hidden, followed
+     * by the columns the node itself defines; the designated timestamp keeps its column.
+     */
+    private void alignColumns(OutputSchema output, OutputSchema input) {
+        final OutputSchema copy = tmpSchema;
+        copy.copyFrom(output);
+        final int timestampId = output.getTimestampColumnId();
+        output.clear();
+        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+            final int index = copy.getColumnIndexById(input.getColumnId(i));
+            if (index < 0) {
+                output.add(input.getColumnId(i), input.getColumnName(i), input.getColumnType(i), input.getMetadata(i), false,
+                        input.getColumnQualifier(i));
+            } else {
+                output.addColumnFrom(copy, index);
+            }
+        }
+        for (int i = 0, n = copy.getColumnCount(); i < n; i++) {
+            if (input.getColumnIndexById(copy.getColumnId(i)) < 0) {
+                output.addColumnFrom(copy, i);
+            }
+        }
+        output.setTimestampColumnId(timestampId);
+        copy.clear();
     }
 
     /**
@@ -209,6 +240,19 @@ final class DecorrelationContext implements Mutable {
         }
     }
 
+    private int collectNodeMasterOuterIds(LogicalPlan plan) {
+        final int base = tmpColumnIds.size();
+        outerColumnReads.collect(plan, tmpColumnIds);
+        for (int i = base, n = tmpColumnIds.size(); i < n; i++) {
+            final int outerId = tmpColumnIds.getQuick(i);
+            if (masterInput(outerId) > -1 && !masterOuterIds.contains(outerId)) {
+                masterOuterIds.add(outerId);
+            }
+        }
+        tmpColumnIds.setPos(base);
+        return TreeWalk.CONTINUE;
+    }
+
     private int findOuterRefName(LogicalPlan plan) {
         final OutputSchema output = plan.getOutput();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
@@ -221,7 +265,11 @@ final class DecorrelationContext implements Mutable {
 
     private int findUnmappedOuter(BoundExpression expression) {
         return expression instanceof OuterColumnExpression outer && masterOuterIds.contains(outer.getColumnId())
-                && mappedColumn(outer.getColumnId(), readMappingBase, mappedOuterIds.size()) < 0 ? TreeWalk.STOP : TreeWalk.CONTINUE;
+                && mapping.mappedColumn(outer.getColumnId(), readMappingBase) < 0 ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    }
+
+    private boolean hasOuterRefName(LogicalPlan plan) {
+        return !plan.walkTopDown(outerRefNames);
     }
 
     /**
@@ -229,6 +277,9 @@ final class DecorrelationContext implements Mutable {
      * filter and UNNEST arguments read to.
      */
     private void recordCarriers(JoinInput step) {
+        if (carriers == null) {
+            return;
+        }
         recordCarriers(step, step.getOnResidual());
         recordCarriers(step, step.getKeyFilter());
         final UnnestSpec unnest = step.getUnnest();
@@ -268,49 +319,18 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
-     * Records a carrier of the step for {@link DecorrelationVerifier}, which reads it right after decorrelation; the step's
-     * carriers stay until {@link #releaseCarriers}.
+     * Records a carrier of the step for {@link DecorrelationVerifier}, which reads it right after decorrelation.
      */
     void addCarrier(JoinInput step, int columnId) {
-        final IntList carriers = step.getCarrierColumnIds();
-        if (carriers.size() == 0) {
-            carrierSteps.add(step);
-        }
-        if (!carriers.contains(columnId)) {
-            carriers.add(columnId);
+        if (carriers != null) {
+            carriers.add(step, columnId);
         }
     }
 
-    void addMapping(int outerId, int columnId) {
-        mappedOuterIds.add(outerId);
-        mappedColumnIds.add(columnId);
-    }
-
-    /**
-     * Lays out {@code output} as the columns of {@code input} in input order, adding the missing ones hidden, followed
-     * by the columns the node itself defines; the designated timestamp keeps its column.
-     */
-    void alignColumns(OutputSchema output, OutputSchema input) {
-        final OutputSchema copy = tmpSchema;
-        copy.copyFrom(output);
-        final int timestampId = output.getTimestampColumnId();
-        output.clear();
-        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
-            final int index = copy.getColumnIndexById(input.getColumnId(i));
-            if (index < 0) {
-                output.add(input.getColumnId(i), input.getColumnName(i), input.getColumnType(i), input.getMetadata(i), false,
-                        input.getColumnQualifier(i));
-            } else {
-                output.addColumnFrom(copy, index);
-            }
-        }
-        for (int i = 0, n = copy.getColumnCount(); i < n; i++) {
-            if (input.getColumnIndexById(copy.getColumnId(i)) < 0) {
-                output.addColumnFrom(copy, i);
-            }
-        }
-        output.setTimestampColumnId(timestampId);
-        copy.clear();
+    void beginStep(JoinPlan join, int index) {
+        master = join;
+        masterLimit = index;
+        outerAliases.clear();
     }
 
     /**
@@ -335,8 +355,40 @@ final class DecorrelationContext implements Mutable {
         }
     }
 
+    /**
+     * Collects the outer columns of the master that the body reads, see {@link #masterOuterIds()}.
+     */
+    void collectMasterOuterIds(LogicalPlan body) {
+        body.walkTopDown(masterOuterCollector);
+    }
+
     ColumnExpression column(OutputSchema output, int columnId, int position) {
         return planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position);
+    }
+
+    /**
+     * A copy of the plan under fresh column ids.
+     */
+    LogicalPlan copy(LogicalPlan plan) {
+        return copier.copy(plan);
+    }
+
+    /**
+     * The alias of the next domain of the step: the step's outer reference prefix, numbered after its first domain.
+     */
+    CharSequence domainAlias() {
+        final CharacterStoreEntry alias = characterStore.newEntry();
+        alias.put(OUTER_REF_PREFIX).put(outerRefSequence);
+        if (domainSequence++ > 0) {
+            alias.put('_').put(domainSequence - 1);
+        }
+        return alias.toImmutable();
+    }
+
+    void endStep(int masterBase) {
+        masterOuterIds.setPos(masterBase);
+        master = null;
+        masterLimit = 0;
     }
 
     /**
@@ -371,8 +423,8 @@ final class DecorrelationContext implements Mutable {
         return project;
     }
 
-    boolean hasOuterRefName(LogicalPlan plan) {
-        return !plan.walkTopDown(outerRefNames);
+    boolean hasOuterAlias(int outerId) {
+        return outerAliases.keyIndex(outerId) < 0;
     }
 
     void insertColumn(OutputSchema output, int index, int columnId, CharSequence name, int type) {
@@ -392,11 +444,15 @@ final class DecorrelationContext implements Mutable {
         copy.clear();
     }
 
+    boolean isMasterOuter(int outerId) {
+        return masterOuterIds.contains(outerId);
+    }
+
     /**
      * True when a step the join orders after the step being decorrelated null-extends it.
      */
     boolean isStepNullExtendedLater() {
-        return LogicalPlans.lastMasterNullingStep(master) > LogicalPlans.orderedSteps(master).indexOf(master.getInputs().getQuick(masterLimit));
+        return LogicalPlans.lastMasterNullingStep(master) > LogicalPlans.orderedSteps(master).indexOf(step());
     }
 
     CharSequence joinedName(OutputSchema output, int columnId) {
@@ -409,27 +465,9 @@ final class DecorrelationContext implements Mutable {
      */
     void loadMappedSubstitution(int base) {
         substitution.clear();
-        for (int i = base, n = mappedOuterIds.size(); i < n; i++) {
-            substitution.put(mappedOuterIds.getQuick(i), mappedColumnIds.getQuick(i));
+        for (int i = base, n = mapping.mark(); i < n; i++) {
+            substitution.put(mapping.outerIdAt(i), mapping.columnIdAt(i));
         }
-    }
-
-    int mappedColumn(int outerId, int lo, int hi) {
-        for (int i = lo; i < hi; i++) {
-            if (mappedOuterIds.getQuick(i) == outerId) {
-                return mappedColumnIds.getQuick(i);
-            }
-        }
-        return -1;
-    }
-
-    int mappedIndex(int columnId, int lo, int hi) {
-        for (int i = lo; i < hi; i++) {
-            if (mappedColumnIds.getQuick(i) == columnId) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     /**
@@ -438,10 +476,12 @@ final class DecorrelationContext implements Mutable {
     int markRows(ProjectPlan project, int position) {
         project.getExpressions().add(planNodes.constants.next().ofBoolean(true, position));
         final int markerId = context.newColumnId();
-        final CharacterStoreEntry name = characterStore.newEntry();
-        name.put(ROW_MARKER_PREFIX).put(carrierSequence++);
-        project.getOutput().add(markerId, name.toImmutable(), ColumnType.BOOLEAN, false);
+        project.getOutput().add(markerId, sequencedName(ROW_MARKER_PREFIX).toImmutable(), ColumnType.BOOLEAN, false);
         return markerId;
+    }
+
+    JoinPlan master() {
+        return master;
     }
 
     /**
@@ -489,6 +529,14 @@ final class DecorrelationContext implements Mutable {
         return -1;
     }
 
+    /**
+     * The outer columns of the master that the body of the step reads, in the order the body reads them first. The
+     * caller only reads them.
+     */
+    IntList masterOuterIds() {
+        return masterOuterIds;
+    }
+
     CharSequence outerRefName(int outerId) {
         final OutputSchema output = master.getOutput();
         final CharacterStoreEntry name = characterStore.newEntry();
@@ -505,6 +553,21 @@ final class DecorrelationContext implements Mutable {
             name.put(sameNameCount);
         }
         return name.toImmutable();
+    }
+
+    /**
+     * Takes, for the names of the step, the first outer reference sequence that no column of the body or of the join
+     * names, and restarts its domain aliases.
+     */
+    void pickOuterRefSequence(LogicalPlan body, JoinPlan join) {
+        do {
+            outerRefSequence++;
+        } while (hasOuterRefName(body) || hasOuterRefName(join));
+        domainSequence = 0;
+    }
+
+    void putOuterAlias(int outerId, int columnId) {
+        outerAliases.put(outerId, columnId);
     }
 
     CharSequence qualifiedName(CharSequence qualifier, CharSequence name) {
@@ -573,7 +636,7 @@ final class DecorrelationContext implements Mutable {
             case ForwardingPlan forwarding -> forwarding.deriveOutput();
             case WindowJoinPlan windowJoin -> alignWindowJoin(windowJoin);
             case HorizonJoinPlan horizon -> alignHorizonJoin(horizon);
-            case WindowPlan _ -> alignColumns(node.getOutput(), node.inputAt(0).getOutput());
+            case WindowPlan window -> window.deriveOutput(tmpSchema);
             default -> {
             }
         }
@@ -594,14 +657,13 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
-     * Empties the carriers of every step decorrelation recorded them on: their column ids hold only until the next
-     * pass renames columns.
+     * Renames, in the node itself, the columns {@code columnIds} holds, and with them the carriers of a join's steps.
      */
-    void releaseCarriers() {
-        for (int i = 0, n = carrierSteps.size(); i < n; i++) {
-            carrierSteps.getQuick(i).getCarrierColumnIds().clear();
+    void remap(LogicalPlan node, IntIntHashMap columnIds) {
+        copier.remap(node, columnIds);
+        if (carriers != null && node instanceof JoinPlan join) {
+            carriers.remap(join, columnIds);
         }
-        carrierSteps.clear();
     }
 
     /**
@@ -615,7 +677,7 @@ final class DecorrelationContext implements Mutable {
                 recordCarriers(join.getInputs().getQuick(i));
             }
         }
-        copier.remap(node, substitution);
+        remap(node, substitution);
     }
 
     /**
@@ -636,6 +698,23 @@ final class DecorrelationContext implements Mutable {
                 arguments.setQuick(i, context.getRewriter().remapColumns(arguments.getQuick(i), substitution));
             }
         }
+    }
+
+    /**
+     * A new name of the prefix and the next carrier sequence, to which the caller may append.
+     */
+    CharacterStoreEntry sequencedName(CharSequence prefix) {
+        final CharacterStoreEntry name = characterStore.newEntry();
+        name.put(prefix).put(carrierSequence++);
+        return name;
+    }
+
+    JoinInput step() {
+        return master.getInputs().getQuick(masterLimit);
+    }
+
+    int stepIndex() {
+        return masterLimit;
     }
 
     /**

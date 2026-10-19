@@ -31,6 +31,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
+import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -265,11 +266,11 @@ final class ColumnReads implements Mutable {
                 readColumnIds.add(fill.getTimestampColumnId());
                 final IntList targets = fill.getTargetColumnIds();
                 final IntList sources = fill.getSourceColumnIds();
-                final IntList modes = fill.getModes();
+                final ObjList<FillMode> modes = fill.getModes();
                 for (int i = 0, n = targets.size(); i < n; i++) {
                     if (readColumnIds.contains(targets.getQuick(i))) {
                         int entry = i;
-                        while (entry >= 0 && modes.getQuick(entry) == FillPlan.FILL_PREV_COLUMN) {
+                        while (entry >= 0 && modes.getQuick(entry) == FillMode.PREV_COLUMN) {
                             final int source = sources.getQuick(entry);
                             if (!readColumnIds.add(source)) {
                                 break;

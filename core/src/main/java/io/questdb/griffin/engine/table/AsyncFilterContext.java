@@ -71,9 +71,13 @@ public class AsyncFilterContext implements Closeable {
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
 
-    AsyncFilterContext(
+    /**
+     * Takes the filter and bind variable resources of {@code resources}; a consumer of the filter of its page frames
+     * reads no count-only filter.
+     */
+    public AsyncFilterContext(
             CairoConfiguration configuration,
-            AsyncHorizonJoinResources resources,
+            AsyncFilterResources resources,
             int slotCount,
             int filteredMemoryRecordCount,
             long ownerMemoryPoolMaxBytes,
@@ -94,7 +98,7 @@ public class AsyncFilterContext implements Closeable {
         );
     }
 
-    public AsyncFilterContext(
+    private AsyncFilterContext(
             CairoConfiguration configuration,
             @Nullable CompiledFilter compiledFilter,
             @Nullable MemoryCARW bindVarMemory,

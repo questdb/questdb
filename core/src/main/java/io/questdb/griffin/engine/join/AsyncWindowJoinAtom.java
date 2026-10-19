@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.SelectivityStats;
@@ -165,12 +166,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @Nullable CompiledFilter compiledMasterFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerMasterFilter,
-            @Nullable ObjList<Function> perWorkerMasterFilters,
-            @Nullable IntHashSet filterUsedColumnIndexes,
+            @NotNull AsyncFilterResources masterFilterResources,
             @Nullable IntList argumentColumnIndex,
             long masterTsScale,
             long slaveTsScale,
@@ -195,12 +191,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
             this.masterTimestampIndex = masterTimestampIndex;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
-            this.compiledMasterFilter = compiledMasterFilter;
-            this.bindVarMemory = bindVarMemory;
-            this.bindVarFunctions = bindVarFunctions;
-            this.ownerMasterFilter = ownerMasterFilter;
-            this.perWorkerMasterFilters = perWorkerMasterFilters;
-            this.filterUsedColumnIndexes = filterUsedColumnIndexes;
+            this.compiledMasterFilter = masterFilterResources.takeCompiledFilter();
+            this.bindVarMemory = masterFilterResources.takeBindVarMemory();
+            this.bindVarFunctions = masterFilterResources.takeBindVarFunctions();
+            this.ownerMasterFilter = masterFilterResources.takeFilter();
+            this.perWorkerMasterFilters = masterFilterResources.takePerWorkerFilters();
+            this.filterUsedColumnIndexes = masterFilterResources.getFilterUsedColumnIndexes();
             this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;

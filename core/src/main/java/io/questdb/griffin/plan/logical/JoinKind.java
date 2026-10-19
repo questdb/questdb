@@ -53,6 +53,13 @@ public enum JoinKind {
     }
 
     /**
+     * True when the step can emit rows whose own or master columns are NULL-extended.
+     */
+    public boolean isNulling() {
+        return isSlaveNulling() || isMasterNulling();
+    }
+
+    /**
      * True when the step matches rows by its ON condition alone: CROSS, INNER and the outer joins.
      */
     public boolean isRelational() {

@@ -50,6 +50,31 @@ public class SharedJoinKeyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepeatedKeysAcrossReorderedInputs() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE TABLE lp_shared_t(id INT,a INT,b INT)");
+            execute("INSERT INTO lp_shared_m VALUES(1,10,20,1),(2,10,30,2),(3,null,40,3)");
+            execute("INSERT INTO lp_shared_s VALUES(4,10,20,1),(5,10,30,2),(6,null,40,3)");
+            execute("INSERT INTO lp_shared_t VALUES(7,10,20),(8,10,30),(9,null,40)");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertRows("""
+                        SELECT m.id mid,s.id sid,t.id tid
+                        FROM lp_shared_m m CROSS JOIN lp_shared_s s
+                        JOIN lp_shared_t t ON m.a=t.a AND s.b=t.b AND t.a=m.a AND t.b=s.b
+                        WHERE m.a=s.a AND m.b=s.b
+                        ORDER BY mid,sid,tid
+                        """, """
+                        mid\tsid\ttid
+                        1\t4\t7
+                        2\t5\t8
+                        3\t6\t9
+                        """, isFullFat);
+            }
+        });
+    }
+
+    @Test
     public void testSpliceSharedMasterKeyKeepsEverySlaveEvent() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

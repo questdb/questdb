@@ -27,6 +27,7 @@ package io.questdb.griffin.optimiser;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
@@ -38,6 +39,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -75,11 +77,13 @@ import io.questdb.std.ObjList;
  * calls {@link #planOperators}, which decides from the {@link PhysicalProperties} of the inputs how the generator
  * implements the node and records it on the plan: the sort algorithm, the operator that applies a LIMIT, the windows
  * whose order the input delivers and the window factory, the SAMPLE BY factory and the order a fill reads its input
- * in, the merge of a UNION ALL, the algorithm and master side of each join step, the LATEST BY algorithm of a derived
+ * in, the merge of a UNION ALL, the algorithm and master side of each join step and how a keyed ASOF join scans the
+ * time frames of its slave, the LATEST BY algorithm of a derived
  * input, the timestamp a projection over a window join drops and whether a filter runs in parallel. The walk asks
  * {@link #requiresInputTimestamp} which inputs of a node must designate their timestamp and, before it plans a query
- * level, counts the decorrelation domains that re-read each aggregate, see {@link #countSharedConsumers}. The
- * generator builds exactly what it records. From the same properties it rejects a time series join, a SAMPLE BY and
+ * level, counts the decorrelation domains that re-read each aggregate, see {@link #countSharedConsumers}; it decides
+ * how each domain reads its input from the join inputs the generator builds before it, see {@link #planSharedRead}.
+ * The generator builds exactly what it records. From the same properties it rejects a time series join, a SAMPLE BY and
  * an aggregate function whose input does not deliver the ascending designated timestamp order they require.
  */
 final class OperatorPlanning implements Mutable {
@@ -98,9 +102,11 @@ final class OperatorPlanning implements Mutable {
     };
     private final CairoConfiguration configuration;
     private final OptimiserContext context;
+    private final ObjList<JoinInput> generatedInputs = new ObjList<>();
     private final IntList readIds;
     private final IntList readOrder;
     private final ObjList<JoinInput> undecidedSteps;
+    private int frameInputLo;
     private boolean isFullFatJoins;
 
     OperatorPlanning(CairoConfiguration configuration, OptimiserContext context, IntList readOrder, IntList readIds,
@@ -114,7 +120,18 @@ final class OperatorPlanning implements Mutable {
 
     @Override
     public void clear() {
+        generatedInputs.clear();
+        frameInputLo = 0;
         undecidedSteps.clear();
+    }
+
+    /**
+     * What a factory that computes column {@code columnId} of the plan exposes of its symbol table: the one the plan
+     * records for it, without an index.
+     */
+    private static SymbolKey computedSymbolKey(LogicalPlan plan, int columnId) {
+        final OutputSchema output = plan.getOutput();
+        return output.isSymbolTableStatic(output.getColumnIndexById(columnId)) ? SymbolKey.STATIC : SymbolKey.NONE;
     }
 
     private static boolean hasEarlyExit(ObjList<FunctionExpression> aggregates) {
@@ -126,6 +143,51 @@ final class OperatorPlanning implements Mutable {
         return true;
     }
 
+    /**
+     * True when the factory the generator builds for the plan carries a filter: the parallel, serial or gating filter
+     * over the predicate of a filter node or the residual of a scan, which a selection, a sort or LIMIT the input
+     * implements, a single-input join and a null-extending window join pass through.
+     */
+    private static boolean hasFilter(LogicalPlan plan) {
+        while (true) {
+            switch (plan) {
+                case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION ->
+                        plan = project.getChild();
+                case SortPlan sort when sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER
+                        || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION -> plan = sort.getChild();
+                case LimitPlan limit when limit.getApplication() == LimitPlan.Application.INPUT ->
+                        plan = limit.getChild();
+                case JoinPlan join when join.getOrderedInputs().size() == 1 ->
+                        plan = join.getOrderedInputs().getQuick(0).getInput();
+                case FilterPlan filter when !PlanToFactoryRules.isFusedFilter(filter) -> {
+                    final BoundExpression predicate = filter.getPredicate();
+                    if (!LogicalPlans.isConstant(predicate)) {
+                        return true;
+                    }
+                    if (predicate instanceof ConstantExpression constant && constant.getLongValue() == 0) {
+                        return false;
+                    }
+                    plan = filter.getChild();
+                }
+                case FilterPlan filter -> {
+                    return hasScanFilter((ScanPlan) filter.getChild());
+                }
+                case ScanPlan scan -> {
+                    return hasScanFilter(scan);
+                }
+                case WindowJoinPlan windowJoin -> {
+                    if (!windowJoin.isMasterPassedThrough()) {
+                        return false;
+                    }
+                    plan = windowJoin.getMaster();
+                }
+                default -> {
+                    return false;
+                }
+            }
+        }
+    }
+
     private static boolean hasNoParallelism(ObjList<? extends BoundExpression> expressions) {
         for (int i = 0, n = expressions.size(); i < n; i++) {
             if ((expressions.getQuick(i).getFunctionFlags() & BoundExpression.NO_PARALLELISM) != 0) {
@@ -133,6 +195,16 @@ final class OperatorPlanning implements Mutable {
             }
         }
         return false;
+    }
+
+    private static boolean hasScanFilter(ScanPlan scan) {
+        final BoundExpression residual = scan.getResidual();
+        return switch (scan.getAccessPath()) {
+            case PAGE_FRAMES -> residual != null && !LogicalPlans.isConstant(residual);
+            case SYMBOL_INDEX -> scan.getIndexRead() == ScanPlan.IndexRead.COVERING && residual != null;
+            case SYMBOL_PATTERN -> true;
+            case null, default -> false;
+        };
     }
 
     private static boolean isEncodedKey(WindowSpec spec, OutputSchema input) {
@@ -208,30 +280,11 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the generator builds no factory, or a selection, for the projection, which passes its input's
-     * filter through.
-     */
-    private static boolean isPassedThroughProjection(ProjectPlan project) {
-        final LogicalPlan input = project.getChild();
-        return !LogicalPlans.isComputedProjection(project)
-                && !(input instanceof WindowPlan window && PlanToFactoryRules.isWindowOutputProjection(project, window))
-                && !(input instanceof WindowJoinPlan && LogicalPlans.isColumnOnlyProjection(project));
-    }
-
-    /**
      * The aggregate a decorrelation domain re-reads through its shared source, as the generator finds it: under the
      * column projections and the leading branches of the set operations of the source's input.
      */
     private static LogicalPlan sharedTarget(LogicalPlan source) {
-        while (true) {
-            if (source instanceof ProjectPlan project && LogicalPlans.isColumnOnlyProjection(project)) {
-                source = project.getChild();
-            } else if (source instanceof SetOperationPlan operation) {
-                source = operation.getLeft();
-            } else {
-                return source;
-            }
-        }
+        return LogicalPlans.unwrapColumnProjections(leadingBranch(source));
     }
 
     /**
@@ -282,58 +335,11 @@ final class OperatorPlanning implements Mutable {
         if (isPageFrameSource && PlanToFactoryRules.hasVectorShape(aggregate) && !hasParquetConvertedColumns(base)) {
             return AggregatePlan.Algorithm.VECTORISED;
         }
-        final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
-        final ObjList<FunctionExpression> aggregates = aggregate.getAggregates();
         final boolean isFilterStolen = !isPageFrameSource && isStolenFilter(base, FilterConsumer.AGGREGATE);
-        if (hasNoParallelism(keys) || hasNoParallelism(aggregates) || !isPageFrameSource && !isFilterStolen
-                || keys.size() == 0 && hasEarlyExit(aggregates) && !hasFilter(base)) {
+        if (!isParallelGroupBy(aggregate, base) || !isPageFrameSource && !isFilterStolen) {
             return AggregatePlan.Algorithm.SERIAL;
         }
         return isFilterStolen ? AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER : AggregatePlan.Algorithm.PARALLEL;
-    }
-
-    /**
-     * True when the factory the generator builds for the plan carries a filter: the parallel, serial or gating filter
-     * over the predicate of a filter node or the residual of a scan, which a selection, a sort or LIMIT the input
-     * implements, a single-input join and a null-extending window join pass through.
-     */
-    private boolean hasFilter(LogicalPlan plan) {
-        while (true) {
-            switch (plan) {
-                case ProjectPlan project when isPassedThroughProjection(project) -> plan = project.getChild();
-                case SortPlan sort when sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER
-                        || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION -> plan = sort.getChild();
-                case LimitPlan limit when limit.getApplication() == LimitPlan.Application.INPUT ->
-                        plan = limit.getChild();
-                case JoinPlan join when join.getOrderedInputs().size() == 1 ->
-                        plan = join.getOrderedInputs().getQuick(0).getInput();
-                case FilterPlan filter when !PlanToFactoryRules.isFusedFilter(filter) -> {
-                    final BoundExpression predicate = filter.getPredicate();
-                    if (!LogicalPlans.isConstant(predicate)) {
-                        return true;
-                    }
-                    if (predicate instanceof ConstantExpression constant && constant.getLongValue() == 0) {
-                        return false;
-                    }
-                    plan = filter.getChild();
-                }
-                case FilterPlan filter -> {
-                    return hasScanFilter((ScanPlan) filter.getChild());
-                }
-                case ScanPlan scan -> {
-                    return hasScanFilter(scan);
-                }
-                case WindowJoinPlan windowJoin -> {
-                    if (!windowJoin.isMasterPassedThrough()) {
-                        return false;
-                    }
-                    plan = windowJoin.getMaster();
-                }
-                default -> {
-                    return false;
-                }
-            }
-        }
     }
 
     /**
@@ -347,16 +353,6 @@ final class OperatorPlanning implements Mutable {
         return plan instanceof ScanPlan scan && context.getTableAccessInfo(scan).hasParquetConvertedColumns();
     }
 
-    private boolean hasScanFilter(ScanPlan scan) {
-        final BoundExpression residual = scan.getResidual();
-        return switch (scan.getAccessPath()) {
-            case PAGE_FRAMES -> residual != null && !LogicalPlans.isConstant(residual);
-            case SYMBOL_INDEX -> scan.getIndexRead() == ScanPlan.IndexRead.COVERING && residual != null;
-            case SYMBOL_PATTERN -> true;
-            case null, default -> false;
-        };
-    }
-
     /**
      * The HORIZON JOIN the generator builds: parallel over the page frames of its master, or over the frames under a
      * filter it steals from the master, when every key and aggregate function supports parallelism; serial otherwise.
@@ -367,8 +363,7 @@ final class OperatorPlanning implements Mutable {
         }
         final boolean isPageFrameSource = isPageFrameSource(master);
         final boolean isFilterStolen = !isPageFrameSource && isStolenFilter(master, FilterConsumer.AGGREGATE);
-        if (hasNoParallelism(aggregate.getGroupingExpressions()) || hasNoParallelism(aggregate.getAggregates())
-                || !isPageFrameSource && !isFilterStolen) {
+        if (!hasParallelFunctions(aggregate) || !isPageFrameSource && !isFilterStolen) {
             return AggregatePlan.Algorithm.SERIAL;
         }
         return isFilterStolen ? AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER : AggregatePlan.Algorithm.PARALLEL;
@@ -388,33 +383,36 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the SAMPLE BY, which nothing fills, reads the first and last values of its buckets from the index of its base: a table scan,
-     * under a fused filter or identity projections, of the bitmap index of a single SYMBOL key without a residual, of a table whose parquet partitions store no
-     * column under a converted type, which the SAMPLE BY keys by that symbol or by none.
+     * True when the SAMPLE BY reads the first and last values of its buckets from the index of its base, see
+     * {@link #firstLastIndexScan}, the bitmap index of a table whose parquet partitions store no column under a
+     * converted type.
      */
     private boolean isFirstLastIndexScan(SampleByPlan sample, LogicalPlan base) {
-        while (base instanceof ProjectPlan project && PlanToFactoryRules.isIdentityProjection(project)) {
-            base = project.getChild();
-        }
-        if (base instanceof FilterPlan filter && PlanToFactoryRules.isFusedFilter(filter)) {
-            base = filter.getChild();
-        }
-        if (sample.getFillMode() != SampleByPlan.FILL_NONE || sample.isFillInput() || !(base instanceof ScanPlan scan)
-                || scan.getAccessPath() != ScanPlan.AccessPath.SYMBOL_INDEX || scan.getIndexKeys().size() != 1
-                || scan.getResidual() != null || scan.getIndexRead() == ScanPlan.IndexRead.COVERING
-                || scan.getTableToken().isLiveView() && !scan.isUpdate()) {
+        final ScanPlan scan = firstLastIndexScan(sample, base);
+        if (scan == null) {
             return false;
         }
         final TableAccessInfo table = context.getTableAccessInfo(scan);
         final OutputSchema output = scan.getOutput();
-        final int symbolIndex = output.getColumnIndexById(scan.getIndexColumnId());
-        if (table.hasParquetConvertedColumns() || !IndexType.isBitmap(table.getIndexType(table.getColumnIndex(output.getColumnName(symbolIndex))))) {
-            return false;
-        }
-        final int baseTimestampIndex = timestampIndex(scan);
-        final int timestampIndex = sample.isTimestampRequired() ? baseTimestampIndex
-                : sample.getChild().getOutput().getColumnIndexById(sample.getTimestampColumnId());
-        return isFirstLastShape(sample, timestampIndex, baseTimestampIndex, symbolIndex);
+        return !table.hasParquetConvertedColumns()
+                && IndexType.isBitmap(table.getIndexType(table.getColumnIndex(output.getColumnName(output.getColumnIndexById(scan.getIndexColumnId())))));
+    }
+
+    /**
+     * True when the generator builds the factory of the join input before the node operator planning plans now, in the
+     * same generation frame, see {@link #addGeneratedInput}.
+     */
+    private boolean isGenerated(JoinInput input) {
+        return generatedInputs.indexOf(input) >= frameInputLo;
+    }
+
+    /**
+     * True when the temporal join step at {@code inputIndex} of the join's ordered inputs matches on keys, see
+     * {@link PlanToFactoryRules#isKeyedTemporalJoin}.
+     */
+    private boolean isKeyedTemporalStep(JoinPlan join, int inputIndex, JoinInput step) {
+        return PlanToFactoryRules.isKeyedTemporalJoin(step, join.getOrderedInputs().getQuick(inputIndex - 1).getOutput(),
+                PhysicalProperties.masterTimestampIndex(join, inputIndex), timestampIndex(step.getInput()));
     }
 
     private boolean isPageFrameSource(LogicalPlan plan) {
@@ -423,6 +421,15 @@ final class OperatorPlanning implements Mutable {
 
     private boolean isRandomAccess(LogicalPlan plan) {
         return PhysicalProperties.supportsRandomAccess(plan) == PhysicalProperties.Capability.YES;
+    }
+
+    /**
+     * True when the factories of the master of the join step at {@code inputIndex} and of its slave report one table,
+     * see {@link PhysicalProperties#tableToken}.
+     */
+    private boolean isSelfJoin(JoinPlan join, int inputIndex) {
+        final TableToken master = PhysicalProperties.masterTableToken(join, inputIndex);
+        return master != null && master.equals(PhysicalProperties.tableToken(join.getOrderedInputs().getQuick(inputIndex).getInput()));
     }
 
     /**
@@ -489,6 +496,36 @@ final class OperatorPlanning implements Mutable {
     private boolean isStolenTemporalFilter(LogicalPlan slave) {
         final FilterPlan filter = PlanToFactoryRules.temporalStolenFilter(slave);
         return filter != null && isStolenFilter(filter, FilterConsumer.TEMPORAL_JOIN);
+    }
+
+    /**
+     * Maps every input column of the decorrelation domain onto the column of its shared source it reads, by the pair
+     * decorrelation recorded for it, else by name, and, when each one maps onto a column of its type, replaces the pairs
+     * with one per input column, in input order; returns whether it did.
+     */
+    private boolean mapSharedColumns(AggregatePlan aggregate, JoinInput source) {
+        final OutputSchema sourceOutput = source.getSourceOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
+        final IntList inputIds = aggregate.getSharedInputIds();
+        final IntList sourceIds = aggregate.getSharedSourceIds();
+        final IntList mappedIds = readIds;
+        mappedIds.clear();
+        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+            final int pair = inputIds.indexOf(input.getColumnId(i), 0, inputIds.size());
+            final int index = pair < 0 ? sourceOutput.getColumnIndexQuiet(input.getColumnName(i))
+                    : sourceOutput.getColumnIndexById(sourceIds.getQuick(pair));
+            if (index < 0 || sourceOutput.getColumnType(index) != input.getColumnType(i)) {
+                return false;
+            }
+            mappedIds.add(sourceOutput.getColumnId(index));
+        }
+        inputIds.clear();
+        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+            inputIds.add(input.getColumnId(i));
+        }
+        sourceIds.clear();
+        sourceIds.addAll(mappedIds);
+        return true;
     }
 
     /**
@@ -607,7 +644,10 @@ final class OperatorPlanning implements Mutable {
                 case UNNEST -> step.setAlgorithm(JoinInput.Algorithm.UNNEST);
                 case ASOF, LT -> {
                     validateTimeSeriesOrders(join, i, slave, step.getPosition());
-                    step.setAlgorithm(temporalAlgorithm(join, i, step));
+                    final JoinInput.Algorithm algorithm = temporalAlgorithm(join, i, step);
+                    step.setAlgorithm(algorithm);
+                    step.setTimeFrameScan(algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME && step.getJoinType() == JoinKind.ASOF
+                            && isKeyedTemporalStep(join, i, step) ? timeFrameScan(join, i, step) : null);
                 }
                 case SPLICE -> {
                     validateTimeSeriesOrders(join, i, slave, step.getPosition());
@@ -686,7 +726,7 @@ final class OperatorPlanning implements Mutable {
                 && PhysicalProperties.isLongSequence(slave) == PhysicalProperties.Capability.YES
                 && isAscendingMasterRead(join, inputIndex)) {
             step.setAlgorithm(JoinInput.Algorithm.MARKOUT);
-        } else if (step.getMasterKeyColumnIds().size() == 0) {
+        } else if (step.getKeys().size() == 0) {
             step.setAlgorithm(isSlaveMaterialized(step) ? JoinInput.Algorithm.MATERIALIZED_NESTED_LOOP : JoinInput.Algorithm.NESTED_LOOP);
         } else {
             final boolean isSlaveRandomAccess = PlanToFactoryRules.isSlaveEmptied(step) || isRandomAccess(slave);
@@ -762,6 +802,58 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * Records the head of the set operation under the column projections of the shared source's input, a set operation
+     * serving no shared cursor itself, as the source of the leading branch of the decorrelation domain's input, see
+     * {@link #leadingBranch}: when the head serves shared cursors and the domain's input is a set operation too, whose
+     * leading branch lays out the head's column types. Returns whether it did.
+     */
+    private boolean planSharedHead(AggregatePlan aggregate, JoinInput source) {
+        if (!(LogicalPlans.unwrapColumnProjections(source.getInput()) instanceof SetOperationPlan operation)
+                || PhysicalProperties.supportsSharedCursors(leadingBranch(operation)) != PhysicalProperties.Capability.YES
+                || !(LogicalPlans.unwrapColumnProjections(aggregate.getChild()) instanceof SetOperationPlan)) {
+            return false;
+        }
+        final OutputSchema head = leadingBranch(operation).getOutput();
+        final LogicalPlan branch = leadingBranch(aggregate.getChild());
+        final OutputSchema output = branch.getOutput();
+        if (output.getColumnCount() != head.getColumnCount()) {
+            return false;
+        }
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            if (output.getColumnType(i) != head.getColumnType(i)) {
+                return false;
+            }
+        }
+        aggregate.setSharedHead(operation, branch);
+        return true;
+    }
+
+    /**
+     * Decides how the generator reads the input of a decorrelation domain that re-reads its shared source: through
+     * the factory the generator builds for the source when that factory serves shared cursors and every input column
+     * maps onto a source column, see {@link #mapSharedColumns}; else through the head of the source's set operation,
+     * see {@link #planSharedHead}. The domain generates its input when the generator builds the source after it or in
+     * another frame, see {@link #isGenerated}, or when it builds no GROUP BY or count over its input, or steals its
+     * input's filter.
+     */
+    private void planSharedRead(AggregatePlan aggregate) {
+        final JoinInput source = aggregate.getSharedSource();
+        if (source == null) {
+            return;
+        }
+        final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
+        if (factory != PlanToFactoryRules.AggregateFactory.GROUP_BY && factory != PlanToFactoryRules.AggregateFactory.COUNT
+                || aggregate.getAlgorithm() == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER || !isGenerated(source)) {
+            aggregate.setSharedRead(AggregatePlan.SharedRead.NONE);
+        } else if (PhysicalProperties.supportsSharedCursors(source.getInput()) == PhysicalProperties.Capability.YES
+                && mapSharedColumns(aggregate, source)) {
+            aggregate.setSharedRead(AggregatePlan.SharedRead.SOURCE);
+        } else if (!planSharedHead(aggregate, source)) {
+            aggregate.setSharedRead(AggregatePlan.SharedRead.NONE);
+        }
+    }
+
+    /**
      * Decides how the generator implements a sort without a LIMIT over it; the LIMIT over a bounded sort decides again.
      */
     private void planSort(SortPlan sort, boolean isTimestampRequired) {
@@ -830,8 +922,7 @@ final class OperatorPlanning implements Mutable {
                 continue;
             }
             final boolean isParallel = executionContext.isParallelWindowJoinEnabled() && (hasPageFrames || isFilterStolen)
-                    && !hasNoParallelism(step.getAggregates())
-                    && PhysicalProperties.supportsTimeFrameCursor(step.getSlave()) == PhysicalProperties.Capability.YES;
+                    && isParallelWindowJoinStep(step);
             step.setAlgorithm(!isParallel ? WindowJoinStep.Algorithm.SERIAL
                     : isFilterStolen ? WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER : WindowJoinStep.Algorithm.PARALLEL);
             hasPageFrames = false;
@@ -974,8 +1065,79 @@ final class OperatorPlanning implements Mutable {
         return validatedDirection(PhysicalProperties.scanDirection(plan));
     }
 
+    /**
+     * The slave column of the single symbol key of the ASOF join step at {@code inputIndex}, see {@link #symbolKey},
+     * when the generator maps the master's key onto the slave's symbol table: the master column is a SYMBOL, STRING or
+     * VARCHAR, but not the SYMBOL column at the slave column's position in a self-join, see {@link #isSelfJoin},
+     * which already reads the slave's symbol table. {@link SymbolKey#NONE} otherwise.
+     */
+    private SymbolKey singleSymbolKey(JoinPlan join, int inputIndex, JoinInput step) {
+        if (step.getKeys().size() != 1) {
+            return SymbolKey.NONE;
+        }
+        final OutputSchema master = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput();
+        final OutputSchema slave = step.getInput().getOutput();
+        final int slaveId = step.getKeys().getQuick(0).getSlaveColumnId();
+        final int masterIndex = master.getColumnIndexById(step.getKeys().getQuick(0).getMasterColumnId());
+        final int slaveIndex = slave.getColumnIndexById(slaveId);
+        if (slave.getColumnType(slaveIndex) != ColumnType.SYMBOL) {
+            return SymbolKey.NONE;
+        }
+        return switch (master.getColumnType(masterIndex)) {
+            case ColumnType.SYMBOL -> masterIndex == slaveIndex && isSelfJoin(join, inputIndex)
+                    ? SymbolKey.NONE : symbolKey(step.getInput(), slaveId);
+            case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> symbolKey(step.getInput(), slaveId);
+            default -> SymbolKey.NONE;
+        };
+    }
+
     private SortPlan.Algorithm sortAlgorithm(LogicalPlan input) {
         return isRandomAccess(input) ? SortPlan.Algorithm.LIGHT : SortPlan.Algorithm.MATERIALIZED;
+    }
+
+    /**
+     * What the factory of the time-frame slave exposes of the symbol table and the index of its SYMBOL column
+     * {@code columnId}: those of the table column of the scan the factories under it pass the column on from, through
+     * filters, selections, sorts, LIMITs, single-input joins and the master columns of window joins; a column a factory
+     * computes has the symbol table the plan records for it and no index.
+     */
+    private SymbolKey symbolKey(LogicalPlan plan, int columnId) {
+        while (true) {
+            switch (plan) {
+                case ScanPlan scan -> {
+                    final TableAccessInfo table = context.getTableAccessInfo(scan);
+                    final OutputSchema output = scan.getOutput();
+                    final int columnIndex = table.getColumnIndex(output.getColumnName(output.getColumnIndexById(columnId)));
+                    return !table.isSymbolTableStatic(columnIndex) ? SymbolKey.NONE
+                            : table.isIndexed(columnIndex) ? SymbolKey.INDEXED_STATIC : SymbolKey.STATIC;
+                }
+                case FilterPlan filter -> plan = filter.getChild();
+                case SortPlan sort -> plan = sort.getChild();
+                case LimitPlan limit -> plan = limit.getChild();
+                case JoinPlan join when join.getOrderedInputs().size() == 1 ->
+                        plan = join.getOrderedInputs().getQuick(0).getInput();
+                case ProjectPlan project -> {
+                    switch (PlanToFactoryRules.projectionFactory(project)) {
+                        case SELECTION, WINDOW_JOIN -> {
+                            columnId = ((ColumnExpression) project.getExpressions().getQuick(project.getOutput().getColumnIndexById(columnId))).getColumnId();
+                            plan = project.getChild();
+                        }
+                        default -> {
+                            return computedSymbolKey(project, columnId);
+                        }
+                    }
+                }
+                case WindowJoinPlan windowJoin -> {
+                    if (windowJoin.getMaster().getOutput().getColumnIndexById(columnId) < 0) {
+                        return computedSymbolKey(windowJoin, columnId);
+                    }
+                    plan = windowJoin.getMaster();
+                }
+                default -> {
+                    return computedSymbolKey(plan, columnId);
+                }
+            }
+        }
     }
 
     /**
@@ -995,11 +1157,35 @@ final class OperatorPlanning implements Mutable {
             if (isStolenTemporalFilter(slave)) {
                 return JoinInput.Algorithm.TEMPORAL_STOLEN_FILTER;
             }
-        } else if (PlanToFactoryRules.isKeyedTemporalJoin(step, join.getOrderedInputs().getQuick(inputIndex - 1).getOutput(),
-                PhysicalProperties.masterTimestampIndex(join, inputIndex), timestampIndex(slave))) {
+        } else if (isKeyedTemporalStep(join, inputIndex, step)) {
             return JoinInput.Algorithm.TEMPORAL;
         }
         return isKnownYes(PhysicalProperties.supportsTimeFrameCursor(slave)) ? JoinInput.Algorithm.TEMPORAL_TIME_FRAME : JoinInput.Algorithm.TEMPORAL;
+    }
+
+    /**
+     * How the keyed ASOF join step at {@code inputIndex}, which navigates the time frames of its slave, finds the slave
+     * row of each master row: the dense scan the {@code asof_dense} hint asks for, of the single symbol key when the
+     * step joins on one, see {@link #singleSymbolKey}; over a single symbol key, the index scan the {@code asof_index}
+     * hint asks for when the slave's key column has an index, else the memoized scan the {@code asof_memoized} hints
+     * ask for; the fast scan otherwise.
+     */
+    private JoinInput.TimeFrameScan timeFrameScan(JoinPlan join, int inputIndex, JoinInput step) {
+        final int hints = step.getHints();
+        final SymbolKey key = singleSymbolKey(join, inputIndex, step);
+        if ((hints & JoinInput.HINT_ASOF_DENSE) != 0) {
+            return key == SymbolKey.NONE ? JoinInput.TimeFrameScan.DENSE : JoinInput.TimeFrameScan.DENSE_SINGLE_SYMBOL;
+        }
+        if (key == SymbolKey.NONE) {
+            return JoinInput.TimeFrameScan.FAST;
+        }
+        if ((hints & JoinInput.HINT_ASOF_INDEX) != 0 && key == SymbolKey.INDEXED_STATIC) {
+            return JoinInput.TimeFrameScan.INDEXED;
+        }
+        if ((hints & JoinInput.HINT_ASOF_MEMOIZED_DRIVEBY) != 0) {
+            return JoinInput.TimeFrameScan.MEMOIZED_DRIVEBY;
+        }
+        return (hints & JoinInput.HINT_ASOF_MEMOIZED) != 0 ? JoinInput.TimeFrameScan.MEMOIZED : JoinInput.TimeFrameScan.FAST;
     }
 
     private int timestampIndex(LogicalPlan plan) {
@@ -1068,18 +1254,46 @@ final class OperatorPlanning implements Mutable {
      * window result is fixed-width; else the cached one.
      */
     private WindowPlan.Algorithm windowAlgorithm(WindowPlan window) {
-        final OutputSchema input = window.getChild().getOutput();
-        boolean isStreamed = true;
-        boolean isLight = configuration.isSqlWindowCachedLightEnabled() && configuration.isSqlOrderBySortEnabled()
-                && isKnownYes(PhysicalProperties.supportsRandomAccess(window.getChild()));
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
-            final WindowSpec spec = window.getSpecs().getQuick(i);
-            final FunctionExpression function = window.getFunctions().getQuick(i);
-            final boolean isSorted = spec.getOrderByColumnIds().size() > 0 && !spec.isOrderDelivered();
-            isStreamed &= isStreamedWindow(spec, function);
-            isLight &= !ColumnType.isVarSize(function.getDataType()) && (!isSorted || isEncodedKey(spec, input));
+            if (!isStreamedWindow(window.getSpecs().getQuick(i), window.getFunctions().getQuick(i))) {
+                return configuration.isSqlWindowCachedLightEnabled() && configuration.isSqlOrderBySortEnabled()
+                        && isKnownYes(PhysicalProperties.supportsRandomAccess(window.getChild())) && isCachedLightShape(window)
+                        ? WindowPlan.Algorithm.CACHED_LIGHT : WindowPlan.Algorithm.CACHED;
+            }
         }
-        return isStreamed ? WindowPlan.Algorithm.STREAMING : isLight ? WindowPlan.Algorithm.CACHED_LIGHT : WindowPlan.Algorithm.CACHED;
+        return WindowPlan.Algorithm.STREAMING;
+    }
+
+    /**
+     * The table scan the SAMPLE BY, which nothing fills, reads the first and last values of its buckets from the index
+     * of: under a fused filter or identity projections, the scan of the index of a single SYMBOL key without a
+     * residual, which the SAMPLE BY keys by that symbol or by none; null when the SAMPLE BY reads no such scan.
+     */
+    static ScanPlan firstLastIndexScan(SampleByPlan sample, LogicalPlan base) {
+        while (base instanceof ProjectPlan project && PlanToFactoryRules.isIdentityProjection(project)) {
+            base = project.getChild();
+        }
+        if (base instanceof FilterPlan filter && PlanToFactoryRules.isFusedFilter(filter)) {
+            base = filter.getChild();
+        }
+        if (sample.getFillModes().size() > 0 || sample.isFillInput() || !(base instanceof ScanPlan scan)
+                || scan.getAccessPath() != ScanPlan.AccessPath.SYMBOL_INDEX || scan.getIndexKeys().size() != 1
+                || scan.getResidual() != null || scan.getIndexRead() == ScanPlan.IndexRead.COVERING
+                || scan.getTableToken().isLiveView() && !scan.isUpdate()) {
+            return null;
+        }
+        final int baseTimestampIndex = PhysicalProperties.timestampIndex(scan);
+        final int timestampIndex = sample.isTimestampRequired() ? baseTimestampIndex
+                : sample.getChild().getOutput().getColumnIndexById(sample.getTimestampColumnId());
+        return isFirstLastShape(sample, timestampIndex, baseTimestampIndex, scan.getOutput().getColumnIndexById(scan.getIndexColumnId()))
+                ? scan : null;
+    }
+
+    /**
+     * True when every key and aggregate function of the aggregate supports parallelism.
+     */
+    static boolean hasParallelFunctions(AggregatePlan aggregate) {
+        return !hasNoParallelism(aggregate.getGroupingExpressions()) && !hasNoParallelism(aggregate.getAggregates());
     }
 
     /**
@@ -1101,11 +1315,27 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * True when the light cached window reads its input: every window result is fixed-width and every window that
+     * orders its own rows sorts by keys that encode.
+     */
+    static boolean isCachedLightShape(WindowPlan window) {
+        final OutputSchema input = window.getChild().getOutput();
+        for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
+            final WindowSpec spec = window.getSpecs().getQuick(i);
+            if (ColumnType.isVarSize(window.getFunctions().getQuick(i).getDataType())
+                    || spec.getOrderByColumnIds().size() > 0 && !spec.isOrderDelivered() && !isEncodedKey(spec, input)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * True when the SAMPLE BY fills no bucket: it names no FILL, or FILL(NONE).
      */
     static boolean isFillNone(SampleByPlan sample) {
-        final ObjList<CharSequence> fill = sample.getFillTokens();
-        return fill.size() == 0 || fill.size() == 1 && SqlKeywords.isNoneKeyword(fill.getQuick(0));
+        final ObjList<FillMode> fill = sample.getFillModes();
+        return fill.size() == 0 || fill.size() == 1 && fill.getQuick(0) == FillMode.NONE;
     }
 
     /**
@@ -1128,8 +1358,25 @@ final class OperatorPlanning implements Mutable {
      * True when the SAMPLE BY interpolates its empty buckets: FILL(LINEAR).
      */
     static boolean isLinearFill(SampleByPlan sample) {
-        final ObjList<CharSequence> fill = sample.getFillTokens();
-        return fill.size() == 1 && SqlKeywords.isLinearKeyword(fill.getQuick(0));
+        final ObjList<FillMode> fill = sample.getFillModes();
+        return fill.size() == 1 && fill.getQuick(0) == FillMode.LINEAR;
+    }
+
+    /**
+     * True when the GROUP BY over the base runs in parallel once it reads page frames: every key and aggregate
+     * function supports parallelism, and a keyless aggregate that stops early reads a filtered base.
+     */
+    static boolean isParallelGroupBy(AggregatePlan aggregate, LogicalPlan base) {
+        return hasParallelFunctions(aggregate)
+                && !(aggregate.getGroupingExpressions().size() == 0 && hasEarlyExit(aggregate.getAggregates()) && !hasFilter(base));
+    }
+
+    /**
+     * True when the window join step runs in parallel once it reads the master's page frames: its aggregate functions
+     * support parallelism and its slave serves time frames.
+     */
+    static boolean isParallelWindowJoinStep(WindowJoinStep step) {
+        return !hasNoParallelism(step.getAggregates()) && isKnownYes(PhysicalProperties.supportsTimeFrameCursor(step.getSlave()));
     }
 
     /**
@@ -1177,6 +1424,26 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * The leading branch of the set operations under the column projections of the plan, or the plan itself; the
+     * generator builds the head of a set operation from it.
+     */
+    static LogicalPlan leadingBranch(LogicalPlan plan) {
+        while (LogicalPlans.unwrapColumnProjections(plan) instanceof SetOperationPlan operation) {
+            plan = operation.getLeft();
+        }
+        return plan;
+    }
+
+    /**
+     * Records that the generator has built the factory of the join input once access path planning planned the input,
+     * which a decorrelation domain the generator builds later in the same frame may then share, see
+     * {@link #planSharedRead}.
+     */
+    void addGeneratedInput(JoinInput input) {
+        generatedInputs.add(input);
+    }
+
+    /**
      * Records on every aggregate of the query level how many decorrelation domains of the level re-read it through
      * their shared source; the generator builds the consumers of each one and the aggregate shares its rows with them.
      * A statement without such a domain leaves every count at zero.
@@ -1186,6 +1453,25 @@ final class OperatorPlanning implements Mutable {
             root.walkTopDown(SHARED_CONSUMER_COUNTS);
             root.walkTopDown(SHARED_CONSUMERS);
         }
+    }
+
+    /**
+     * Starts the generation frame of a sub-query, which shares only the join inputs the generator builds in it; returns
+     * the start of the enclosing frame, for {@link #exitFrame}.
+     */
+    int enterFrame() {
+        final int enclosingLo = frameInputLo;
+        frameInputLo = generatedInputs.size();
+        return enclosingLo;
+    }
+
+    /**
+     * Ends the generation frame {@link #enterFrame} started, returning to the enclosing frame starting at
+     * {@code enclosingLo}.
+     */
+    void exitFrame(int enclosingLo) {
+        generatedInputs.setPos(frameInputLo);
+        frameInputLo = enclosingLo;
     }
 
     /**
@@ -1211,12 +1497,15 @@ final class OperatorPlanning implements Mutable {
                 }
             }
             case WindowJoinPlan windowJoin -> planWindowJoin(windowJoin);
-            case AggregatePlan aggregate -> planAggregate(aggregate);
+            case AggregatePlan aggregate -> {
+                planAggregate(aggregate);
+                planSharedRead(aggregate);
+            }
             case SampleByPlan sample -> planSampleBy(sample);
             case FillPlan fill -> planFill(fill);
             case LatestByPlan latest -> planLatestBy(latest);
-            case ProjectPlan project when project.getChild() instanceof WindowJoinPlan windowJoin && !LogicalPlans.isColumnOnlyProjection(project)
-                    && !PlanToFactoryRules.isWindowJoinTimestampKept(project, windowJoin, readOrder, readIds) ->
+            case ProjectPlan project when PlanToFactoryRules.isWindowJoinTimestampDroppable(project)
+                    && !PlanToFactoryRules.isWindowJoinTimestampKept(project, (WindowJoinPlan) project.getChild(), readOrder, readIds) ->
                     project.markTimestampDropped();
             default -> {
             }
@@ -1257,5 +1546,13 @@ final class OperatorPlanning implements Mutable {
      */
     private enum FilterConsumer {
         AGGREGATE, TEMPORAL_JOIN, TOP_K, WINDOW_JOIN
+    }
+
+    /**
+     * What the factory of an ASOF join's slave exposes of the symbol table of its key column: none the generator maps
+     * master symbol keys onto, a static symbol table, or a static symbol table and an index.
+     */
+    private enum SymbolKey {
+        NONE, STATIC, INDEXED_STATIC
     }
 }

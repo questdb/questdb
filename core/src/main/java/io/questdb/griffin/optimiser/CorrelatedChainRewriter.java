@@ -25,6 +25,7 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -44,6 +45,7 @@ import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.optimiser.DecorrelationContext.isTrue;
@@ -73,11 +75,30 @@ import static io.questdb.griffin.optimiser.ScalarCompensation.isTailLimit;
  */
 final class CorrelatedChainRewriter {
     private final ScalarCompensation compensation;
+    private final OuterColumnMapping mapping;
+    private final OptimiserContext context;
+    private final PlanNodePools planNodes;
+    private final ObjList<LogicalPlan> chain;
+    private final IntIntHashMap substitution;
     private final DecorrelationContext ctx;
     private final CorrelationKeys keys;
 
-    CorrelatedChainRewriter(DecorrelationContext ctx, CorrelationKeys keys, ScalarCompensation compensation) {
+    CorrelatedChainRewriter(
+            DecorrelationContext ctx,
+            CorrelationKeys keys,
+            ScalarCompensation compensation,
+            OuterColumnMapping mapping,
+            OptimiserContext context,
+            PlanNodePools planNodes,
+            ObjList<LogicalPlan> chain,
+            IntIntHashMap substitution
+    ) {
         this.ctx = ctx;
+        this.mapping = mapping;
+        this.context = context;
+        this.planNodes = planNodes;
+        this.chain = chain;
+        this.substitution = substitution;
         this.keys = keys;
         this.compensation = compensation;
     }
@@ -109,33 +130,31 @@ final class CorrelatedChainRewriter {
     private void addMappedKeys(GroupingPlan aggregate, int base) {
         final OutputSchema input = aggregate.getChild().getOutput();
         final OutputSchema output = aggregate.getOutput();
-        if (aggregate instanceof AggregatePlan scalar && compensation.scalarAggregates.indexOf(scalar) > -1) {
-            compensation.scalarAggregate = scalar;
-        }
-        for (int i = base, n = ctx.mappedOuterIds.size(); i < n; i++) {
-            final int columnId = ctx.mappedColumnIds.getQuick(i);
+        compensation.keyAggregate(aggregate);
+        for (int i = base, n = mapping.mark(); i < n; i++) {
+            final int columnId = mapping.columnIdAt(i);
             int keyIndex = groupingIndex(aggregate, columnId);
             if (keyIndex < 0) {
                 final int type = input.getColumnType(input.getColumnIndexById(columnId));
-                aggregate.getGroupingExpressions().add(ctx.planNodes.columns.next().of(columnId, type, aggregate.getPosition()));
+                aggregate.getGroupingExpressions().add(planNodes.columns.next().of(columnId, type, aggregate.getPosition()));
                 keyIndex = aggregate.getGroupingExpressions().size() - 1;
-                ctx.insertColumn(output, keyIndex, ctx.context.newColumnId(), ctx.outerRefName(ctx.mappedOuterIds.getQuick(i)), type);
+                ctx.insertColumn(output, keyIndex, context.newColumnId(), ctx.outerRefName(mapping.outerIdAt(i)), type);
             }
-            ctx.mappedColumnIds.setQuick(i, output.getColumnId(keyIndex));
+            mapping.setColumnIdAt(i, output.getColumnId(keyIndex));
         }
     }
 
     private void prependPartitions(WindowSpec spec, OutputSchema input, int base, int position) {
         final ObjList<BoundExpression> partitionBy = spec.getPartitionBy();
         int inserted = 0;
-        for (int k = base, n = ctx.mappedOuterIds.size(); k < n; k++) {
-            final int columnId = ctx.mappedColumnIds.getQuick(k);
+        for (int k = base, n = mapping.mark(); k < n; k++) {
+            final int columnId = mapping.columnIdAt(k);
             boolean isPresent = false;
             for (int p = 0, m = partitionBy.size(); p < m && !isPresent; p++) {
                 isPresent = partitionBy.getQuick(p) instanceof ColumnExpression column && column.getColumnId() == columnId;
             }
             if (!isPresent) {
-                partitionBy.insert(inserted++, 1, ctx.planNodes.columns.next().of(columnId, input.getColumnType(input.getColumnIndexById(columnId)), position));
+                partitionBy.insert(inserted++, 1, planNodes.columns.next().of(columnId, input.getColumnType(input.getColumnIndexById(columnId)), position));
             }
         }
     }
@@ -147,14 +166,14 @@ final class CorrelatedChainRewriter {
     private LogicalPlan rankLatest(LatestByPlan latest, LogicalPlan input, int base) throws SqlException {
         final int position = latest.getPosition();
         final OutputSchema output = input.getOutput();
-        final WindowSpec spec = ctx.planNodes.windowSpecs.next().of(ctx.planNodes.unboundedWindow);
+        final WindowSpec spec = planNodes.windowSpecs.next().of(planNodes.unboundedWindow);
         for (int i = 0, n = latest.getKeyColumnIds().size(); i < n; i++) {
             final int columnId = latest.getKeyColumnIds().getQuick(i);
-            spec.getPartitionBy().add(ctx.planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));
+            spec.getPartitionBy().add(planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));
         }
-        for (int k = base, n = ctx.mappedOuterIds.size(); k < n; k++) {
-            final int columnId = ctx.mappedColumnIds.getQuick(k);
-            spec.getPartitionBy().add(ctx.planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));
+        for (int k = base, n = mapping.mark(); k < n; k++) {
+            final int columnId = mapping.columnIdAt(k);
+            spec.getPartitionBy().add(planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));
         }
         final int timestampId = latest.getTimestampColumnId();
         spec.addOrderBy(timestampId, SortDirection.DESCENDING, output.getColumnName(output.getColumnIndexById(timestampId)), position);
@@ -172,10 +191,10 @@ final class CorrelatedChainRewriter {
                 && LogicalPlans.isColumnProjection(project) ? project : null;
         LogicalPlan ordered = wrapper != null ? wrapper.getChild() : input;
         final OutputSchema output = ordered.getOutput();
-        final WindowSpec spec = ctx.planNodes.windowSpecs.next().of(ctx.planNodes.unboundedWindow);
-        for (int k = base, n = ctx.mappedOuterIds.size(); k < n; k++) {
-            final int columnId = wrapper != null ? LogicalPlans.projectedSourceColumnId(wrapper, ctx.mappedColumnIds.getQuick(k)) : ctx.mappedColumnIds.getQuick(k);
-            spec.getPartitionBy().add(ctx.planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));
+        final WindowSpec spec = planNodes.windowSpecs.next().of(planNodes.unboundedWindow);
+        for (int k = base, n = mapping.mark(); k < n; k++) {
+            final int columnId = wrapper != null ? LogicalPlans.projectedSourceColumnId(wrapper, mapping.columnIdAt(k)) : mapping.columnIdAt(k);
+            spec.getPartitionBy().add(planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));
         }
         final SortPlan sort = orderingSort(ordered);
         if (sort != null) {
@@ -197,12 +216,12 @@ final class CorrelatedChainRewriter {
         BoundExpression lo = limit.getLo();
         BoundExpression hi = limit.getHi();
         if (wrapper != null) {
-            ctx.substitution.clear();
+            substitution.clear();
             for (int i = 0, n = wrapper.getExpressions().size(); i < n; i++) {
-                ctx.substitution.put(wrapper.getOutput().getColumnId(i), ((ColumnExpression) wrapper.getExpressions().getQuick(i)).getColumnId());
+                substitution.put(wrapper.getOutput().getColumnId(i), ((ColumnExpression) wrapper.getExpressions().getQuick(i)).getColumnId());
             }
-            lo = lo == null ? null : ctx.context.getRewriter().remapColumns(lo, ctx.substitution);
-            hi = hi == null ? null : ctx.context.getRewriter().remapColumns(hi, ctx.substitution);
+            lo = lo == null ? null : context.getRewriter().remapColumns(lo, substitution);
+            hi = hi == null ? null : context.getRewriter().remapColumns(hi, substitution);
         }
         final LogicalPlan ranked = rowNumberFilter(ordered, spec, "__lateral_rn", position, lo, hi);
         if (wrapper == null) {
@@ -213,12 +232,12 @@ final class CorrelatedChainRewriter {
     }
 
     private LogicalPlan rewriteChainNode(UnaryPlan node, LogicalPlan input, int base) throws SqlException {
-        final boolean isCorrelated = ctx.mappedOuterIds.size() > base;
+        final boolean isCorrelated = mapping.mark() > base;
         return switch (node) {
             case ProjectPlan project -> {
-                for (int k = base, n = ctx.mappedOuterIds.size(); k < n; k++) {
-                    ctx.mappedColumnIds.setQuick(k, ctx.exposeColumn(project, input.getOutput(), ctx.mappedColumnIds.getQuick(k),
-                            ctx.outerRefName(ctx.mappedOuterIds.getQuick(k)), project.getPosition()));
+                for (int k = base, n = mapping.mark(); k < n; k++) {
+                    mapping.setColumnIdAt(k, ctx.exposeColumn(project, input.getOutput(), mapping.columnIdAt(k),
+                            ctx.outerRefName(mapping.outerIdAt(k)), project.getPosition()));
                 }
                 yield project;
             }
@@ -245,20 +264,20 @@ final class CorrelatedChainRewriter {
 
     private LogicalPlan rowNumberFilter(LogicalPlan input, WindowSpec spec, CharSequence name, int position, BoundExpression lo, BoundExpression hi)
             throws SqlException {
-        final WindowPlan window = ctx.planNodes.windowPlans.next().of(input, position);
+        final WindowPlan window = planNodes.windowPlans.next().of(input, position);
         window.getOutput().copyFrom(input.getOutput());
         final ColumnExpression rank = windowColumn(window, "row_number", 0, spec, name, position);
         if (lo == null) {
-            return ctx.planNodes.filters.next().of(window,
-                    ctx.context.bindCall("=", position, rank, ctx.planNodes.constants.next().ofInt(1, position), window.getOutput()), position);
+            return planNodes.filters.next().of(window,
+                    context.bindCall("=", position, rank, planNodes.constants.next().ofInt(1, position), window.getOutput()), position);
         }
         ColumnExpression size = null;
         if (isTailLimit(lo, hi)) {
-            final WindowSpec partition = ctx.planNodes.windowSpecs.next().ofFrame(spec);
+            final WindowSpec partition = planNodes.windowSpecs.next().ofFrame(spec);
             partition.getPartitionBy().addAll(spec.getPartitionBy());
             size = windowColumn(window, "count", BoundExpression.MULTI_PASS, partition, "__lateral_count", position);
         }
-        return ctx.planNodes.filters.next().of(window, compensation.rankPredicate(lo, hi, rank, size, window.getOutput()), position);
+        return planNodes.filters.next().of(window, compensation.rankPredicate(lo, hi, rank, size, window.getOutput()), position);
     }
 
     /**
@@ -266,13 +285,13 @@ final class CorrelatedChainRewriter {
      * column.
      */
     private ColumnExpression windowColumn(WindowPlan window, CharSequence function, int flags, WindowSpec spec, CharSequence name, int position) {
-        final FunctionExpression call = ctx.context.getRewriter().describeWindowCall(function, flags, position);
-        final int columnId = ctx.context.newColumnId();
+        final FunctionExpression call = context.getRewriter().describeWindowCall(function, flags, position);
+        final int columnId = context.newColumnId();
         window.getFunctions().add(call);
         window.getSpecs().add(spec);
         window.getFunctionColumnIds().add(columnId);
         window.getOutput().add(columnId, name, call.getDataType(), false);
-        return ctx.planNodes.columns.next().of(columnId, call.getDataType(), position);
+        return planNodes.columns.next().of(columnId, call.getDataType(), position);
     }
 
     /**
@@ -291,8 +310,8 @@ final class CorrelatedChainRewriter {
      */
     LogicalPlan rewriteChain(LogicalPlan source, int chainBase, int base, boolean isUncompensated) throws SqlException {
         LogicalPlan input = source;
-        for (int i = ctx.chain.size() - 1; i >= chainBase; i--) {
-            final LogicalPlan node = ctx.chain.getQuick(i);
+        for (int i = chain.size() - 1; i >= chainBase; i--) {
+            final LogicalPlan node = chain.getQuick(i);
             node.replaceInput(0, input);
             if (node instanceof FilterPlan filter) {
                 final BoundExpression predicate = keys.dropEqualities(filter.getPredicate());
@@ -302,11 +321,11 @@ final class CorrelatedChainRewriter {
                 filter.of(input, predicate, filter.getPosition());
             }
             if (node instanceof AggregatePlan aggregate && isImplicitlyKeyedByOuterColumns(aggregate)) {
-                compensation.scalarAggregates.add(aggregate);
+                compensation.recordScalar(aggregate);
             }
             final ProjectPlan scalar = isUncompensated || i != chainBase ? null : compensation.compensableScalar(input);
             if (node instanceof LimitPlan limit) {
-                if (scalar != null || compensation.compensatedScalars.indexOf(input) > -1) {
+                if (scalar != null || compensation.isCompensated(input)) {
                     final LogicalPlan compensated = scalar != null ? compensation.compensateBlock(scalar, base) : input;
                     ctx.remapMapped(limit, base);
                     input = compensation.limitGuardFilter(limit, compensated);
@@ -315,7 +334,7 @@ final class CorrelatedChainRewriter {
                 if (compensation.isStepGuarded(limit, input)) {
                     continue;
                 }
-                if (ctx.mappedOuterIds.size() > base) {
+                if (mapping.mark() > base) {
                     compensation.addBoundChecks(limit);
                 }
             }

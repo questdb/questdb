@@ -26,18 +26,19 @@ package io.questdb.griffin.bind;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
 import io.questdb.griffin.engine.window.LiveViewWindowDescription;
 import io.questdb.griffin.model.ExpressionNode;
@@ -58,14 +59,13 @@ import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.bind.BindContext.*;
 
 final class WindowBinder {
     private static final int MAX_WINDOW_NESTING_DEPTH = 8;
-    private static final int SEARCH_PURE_WINDOW_FUNCTIONS = 1;
-    private static final int SEARCH_UNAGGREGATED = 2;
 
     /**
      * Binding resolves a window's type and validation only; the generator builds the partition sink.
@@ -84,16 +84,14 @@ final class WindowBinder {
 
     private final VirtualRecord bindPartitionRecord = new VirtualRecord(new ObjList<>());
     private final BindContext ctx;
-    private final FunctionParser functionParser;
     private final IntList windowGroupMembers;
     private final IntHashSet windowInheritancePositions;
     private int windowLevelCount;
 
-    WindowBinder(BindContext ctx, FunctionParser functionParser, IntList windowGroupMembers, IntHashSet windowInheritancePositions) {
+    WindowBinder(BindContext ctx, CompilerTemporaries temporaries) {
         this.ctx = ctx;
-        this.functionParser = functionParser;
-        this.windowGroupMembers = windowGroupMembers;
-        this.windowInheritancePositions = windowInheritancePositions;
+        this.windowGroupMembers = temporaries.values;
+        this.windowInheritancePositions = temporaries.ids;
     }
 
     private static void validateWindowNesting(ExpressionNode expression, int depth) throws SqlException {
@@ -482,25 +480,36 @@ final class WindowBinder {
         return ctx.scope().windowNodeIndexes.get(windowOccurrence(expression));
     }
 
-    private int findWindowPosition(ExpressionNode expression, int searchMode) {
+    private int findWindowPosition(ExpressionNode expression, WindowSearch search) {
         if (expression == null) {
             return -1;
         }
-        if (expression.windowExpression != null || (searchMode & SEARCH_PURE_WINDOW_FUNCTIONS) != 0
+        if (expression.windowExpression != null || search.isPureWindowFunctionMatched
                 && expression.type == ExpressionNode.FUNCTION && ctx.functionFactoryCache.isPureWindowFunction(expression.token)) {
             return expression.position;
         }
-        if ((searchMode & SEARCH_UNAGGREGATED) != 0 && ctx.isAggregate(expression)) {
+        if (search.isAggregateSkipped && ctx.isAggregate(expression)) {
             return -1;
         }
-        int position = findWindowPosition(expression.lhs, searchMode);
+        int position = findWindowPosition(expression.lhs, search);
         if (position < 0) {
-            position = findWindowPosition(expression.rhs, searchMode);
+            position = findWindowPosition(expression.rhs, search);
         }
         for (int i = expression.args.size() - 1; position < 0 && i >= 0; i--) {
-            position = findWindowPosition(expression.args.getQuick(i), searchMode);
+            position = findWindowPosition(expression.args.getQuick(i), search);
         }
         return position;
+    }
+
+    private long frameBoundValue(ExpressionNode bound, SqlExecutionContext executionContext) throws SqlException {
+        if (bound == null) {
+            return Long.MAX_VALUE;
+        }
+        final BoundExpression expression = ctx.functionBinder.bindStandalone(bound, executionContext);
+        if ((expression.getFunctionFlags() & BoundExpression.CONSTANT) == 0) {
+            throw SqlException.$(bound.position, "constant expression expected");
+        }
+        return constantBoundValue(expression, bound.position);
     }
 
     private boolean hasPureComputedColumn(QueryModel model) {
@@ -1028,8 +1037,7 @@ final class WindowBinder {
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final ExpressionNode selected = model.getBottomUpColumns().getQuick(i).getAst();
             final ExpressionNode ast = copyWindowSyntax(selected, selected);
-            if (ast.windowExpression != null && ast.type == ExpressionNode.FUNCTION && SqlKeywords.isCountKeyword(ast.token)
-                    && ast.paramCount == 1 && ast.rhs.type == ExpressionNode.CONSTANT && !SqlKeywords.isNullKeyword(ast.rhs.token)) {
+            if (ast.windowExpression != null && isConstantCount(ast)) {
                 ast.rhs = null;
                 ast.paramCount = 0;
             }
@@ -1139,32 +1147,55 @@ final class WindowBinder {
     }
 
     /**
+     * The value of a window frame bound or a WINDOW JOIN bound that binds to a constant, read as a LONG; a character
+     * reads as the digit it spells, otherwise as NULL. Rejects a value that reads as no integer, and a negative one.
+     */
+    long constantBoundValue(BoundExpression bound, int position) throws SqlException {
+        final Function constant = ctx.preparedRoot(bound);
+        final long value;
+        try {
+            if (constant instanceof CharConstant) {
+                final long digit = (byte) (constant.getChar(null) - '0');
+                value = digit > -1 && digit < 10 ? digit : Numbers.LONG_NULL;
+            } else {
+                value = constant.getLong(null);
+            }
+        } catch (UnsupportedOperationException | ImplicitCastException e) {
+            throw SqlException.$(position, "integer expression expected");
+        }
+        if (value < 0) {
+            throw SqlException.$(position, "non-negative integer expression expected");
+        }
+        return value;
+    }
+
+    /**
      * The position of the first window call or call of a function that only windows compute, outside the
      * arguments of aggregate calls, otherwise -1.
      */
     int findUnaggregatedWindowFunctionPosition(ExpressionNode expression) {
-        return findWindowPosition(expression, SEARCH_PURE_WINDOW_FUNCTIONS | SEARCH_UNAGGREGATED);
+        return findWindowPosition(expression, WindowSearch.UNAGGREGATED_WINDOW_FUNCTIONS);
     }
 
     /**
      * The position of the first window call outside the arguments of aggregate calls, otherwise -1.
      */
     int findUnaggregatedWindowPosition(ExpressionNode expression) {
-        return findWindowPosition(expression, SEARCH_UNAGGREGATED);
+        return findWindowPosition(expression, WindowSearch.UNAGGREGATED_WINDOW_CALLS);
     }
 
     /**
      * The position of the first window call or call of a function that only windows compute, otherwise -1.
      */
     int findWindowFunctionPosition(ExpressionNode expression) {
-        return findWindowPosition(expression, SEARCH_PURE_WINDOW_FUNCTIONS);
+        return findWindowPosition(expression, WindowSearch.WINDOW_FUNCTIONS);
     }
 
     /**
      * The position of the first window call, a call with an OVER clause, otherwise -1.
      */
     int findWindowPosition(ExpressionNode expression) {
-        return findWindowPosition(expression, 0);
+        return findWindowPosition(expression, WindowSearch.WINDOW_CALLS);
     }
 
     /**
@@ -1233,6 +1264,15 @@ final class WindowBinder {
     }
 
     /**
+     * Resolves the frame bounds of the window to their offsets, see {@link SqlUtil#normalizeWindowFrame}; each bound
+     * must be a constant, non-negative integer, see {@link #constantBoundValue}.
+     */
+    void normalizeWindowFrame(WindowExpression syntax, SqlExecutionContext executionContext) throws SqlException {
+        SqlUtil.normalizeWindowFrame(syntax, frameBoundValue(syntax.getRowsLoExpr(), executionContext),
+                frameBoundValue(syntax.getRowsHiExpr(), executionContext));
+    }
+
+    /**
      * The window a window call evaluates: its named and inherited windows resolved, its specification
      * validated and its frame normalised.
      */
@@ -1243,7 +1283,7 @@ final class WindowBinder {
         final WindowExpression resolved = resolveWindow(syntax, model);
         validateWindowSpec(resolved.getPartitionBy(), "window function is not allowed in PARTITION BY clause");
         validateWindowSpec(resolved.getOrderBy(), "window function is not allowed in ORDER BY clause of window specification");
-        SqlUtil.normalizeWindowFrame(resolved, functionParser, executionContext);
+        normalizeWindowFrame(resolved, executionContext);
         return resolved;
     }
 
@@ -1308,6 +1348,25 @@ final class WindowBinder {
                 }
                 throw SqlException.emptyWindowContext(expression.position);
             }
+        }
+    }
+
+    /**
+     * Whether a search for the position of a window call, a call with an OVER clause, also matches a call of a
+     * function only windows compute, and whether it skips the arguments of aggregate calls.
+     */
+    private enum WindowSearch {
+        UNAGGREGATED_WINDOW_CALLS(false, true),
+        UNAGGREGATED_WINDOW_FUNCTIONS(true, true),
+        WINDOW_CALLS(false, false),
+        WINDOW_FUNCTIONS(true, false);
+
+        private final boolean isAggregateSkipped;
+        private final boolean isPureWindowFunctionMatched;
+
+        WindowSearch(boolean isPureWindowFunctionMatched, boolean isAggregateSkipped) {
+            this.isPureWindowFunctionMatched = isPureWindowFunctionMatched;
+            this.isAggregateSkipped = isAggregateSkipped;
         }
     }
 }

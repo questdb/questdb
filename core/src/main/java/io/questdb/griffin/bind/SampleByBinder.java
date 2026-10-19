@@ -31,8 +31,7 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.CharacterStoreEntry;
-import io.questdb.griffin.EmptyRecordMetadata;
-import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -60,6 +59,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -85,38 +85,27 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import static io.questdb.griffin.bind.BindContext.*;
 
 final class SampleByBinder {
-    static final int SUBSAMPLE_CADENCE = 0;
-    static final int SUBSAMPLE_EXTREMA = 1;
-    static final int SUBSAMPLE_LTTB = 2;
-    static final int SUBSAMPLE_SDT = 3;
-    static final int SUBSAMPLE_UNIFORM = 4;
     private static final String FROM_BOUND_ERROR = "from lower bound must be a constant expression convertible to a TIMESTAMP";
     private static final String TO_BOUND_ERROR = "to upper bound must be a constant expression convertible to a TIMESTAMP";
     private final SqlBinder binder;
     private final CairoConfiguration configuration;
     private final BindContext ctx;
-    private final OutputSchema emptySchema;
     private final Uuid fillUuid = new Uuid();
-    private final FunctionParser functionParser;
-    private final JoinBinder joinBinder;
+    private final FunctionResolver functionResolver;
     private final WindowBinder windowBinder;
 
     SampleByBinder(
             BindContext ctx,
             SqlBinder binder,
             CairoConfiguration configuration,
-            FunctionParser functionParser,
-            OutputSchema emptySchema,
-            WindowBinder windowBinder,
-            JoinBinder joinBinder
+            FunctionResolver functionResolver,
+            WindowBinder windowBinder
     ) {
         this.ctx = ctx;
         this.binder = binder;
         this.configuration = configuration;
-        this.functionParser = functionParser;
-        this.emptySchema = emptySchema;
+        this.functionResolver = functionResolver;
         this.windowBinder = windowBinder;
-        this.joinBinder = joinBinder;
     }
 
     private static boolean hasLinearFill(QueryModel source) {
@@ -226,9 +215,7 @@ final class SampleByBinder {
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (ColumnType.isTimestamp(targetType)) {
-            // functionParser produces TIMESTAMP_NANO for any string
-            // literal, which drifts by 1000x against a MICRO target.
-            // Re-parse with the target driver to keep units correct.
+            // The target's driver parses the quoted token, so the value takes the target's precision.
             if (!Chars.isQuoted(fillToken)) {
                 throw SqlException.position(fillPosition).put("Invalid fill value: '").put(fillToken)
                         .put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
@@ -248,7 +235,7 @@ final class SampleByBinder {
         if ((value.getFunctionFlags() & BoundExpression.NON_DETERMINISTIC) != 0 || (value.getFunctionFlags() & BoundExpression.CONSTANT) == 0) {
             throw SqlException.$(fillPosition, "fill value must be a constant expression");
         }
-        Function fill = ctx.functionInstantiator.instantiate(value, emptySchema, executionContext);
+        Function fill = ctx.functionInstantiator.instantiate(value, ctx.emptySchema, executionContext);
         try {
             if (ColumnType.tagOf(targetType) == ColumnType.UUID) {
                 validateUuidFill(fill, fillToken, fillPosition);
@@ -260,7 +247,7 @@ final class SampleByBinder {
                 fill = null;
                 final Function cast;
                 try {
-                    cast = functionParser.getFunctionResolver().createImplicitCast(fillPosition, source, targetType, executionContext);
+                    cast = functionResolver.createImplicitCast(fillPosition, source, targetType, executionContext);
                 } catch (ImplicitCastException e) {
                     throw GroupByUtils.invalidSampleByFillValue(fillToken, fillPosition);
                 }
@@ -286,7 +273,7 @@ final class SampleByBinder {
         if (expression.type == ExpressionNode.LITERAL || ctx.isAggregate(expression)) {
             throw GroupByUtils.invalidSampleByFillValue(expression.token, expression.position);
         }
-        return ctx.functionBinder.bind(expression, emptySchema, null, executionContext);
+        return ctx.functionBinder.bind(expression, ctx.emptySchema, null, executionContext);
     }
 
     private BoundExpression bindSampleByBound(ExpressionNode bound, int timestampType, CharSequence error, SqlExecutionContext executionContext) throws SqlException {
@@ -302,7 +289,7 @@ final class SampleByBinder {
         if (ctx.isAggregate(expression)) {
             throw SqlException.$(expression.position, "Aggregate function cannot be passed as an argument");
         }
-        return ctx.functionBinder.bind(expression, emptySchema, null, type, executionContext);
+        return ctx.functionBinder.bind(expression, ctx.emptySchema, null, type, executionContext);
     }
 
     /**
@@ -345,11 +332,7 @@ final class SampleByBinder {
     }
 
     private ExpressionNode sampleByComparison(OutputSchema input, CharSequence operator, ExpressionNode bound) {
-        final ExpressionNode comparison = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, operator, 0, 0);
-        comparison.paramCount = 2;
-        comparison.lhs = sampleByTimestamp(input, 0);
-        comparison.rhs = bound;
-        return comparison;
+        return ctx.binaryNode(ExpressionNode.OPERATION, operator, 0, sampleByTimestamp(input, 0), bound, 0);
     }
 
     private ExpressionNode sampleByNull() {
@@ -376,11 +359,8 @@ final class SampleByBinder {
         if (timestampType == ColumnType.TIMESTAMP_MICRO) {
             return utc;
         }
-        final ExpressionNode cast = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "cast", 0, bound.position);
-        cast.paramCount = 2;
-        cast.lhs = utc;
-        cast.rhs = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, ColumnType.nameOf(timestampType), 0, bound.position);
-        return cast;
+        return ctx.binaryNode(ExpressionNode.FUNCTION, "cast", 0, utc,
+                ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, ColumnType.nameOf(timestampType), 0, bound.position), bound.position);
     }
 
     private ExpressionNode sampleByTimezone(QueryModel source) {
@@ -389,11 +369,7 @@ final class SampleByBinder {
     }
 
     private ExpressionNode sampleByToUtc(ExpressionNode value, ExpressionNode timezone) {
-        final ExpressionNode call = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "to_utc", 0, value.position);
-        call.paramCount = 2;
-        call.lhs = value;
-        call.rhs = timezone;
-        return call;
+        return ctx.binaryNode(ExpressionNode.FUNCTION, "to_utc", 0, value, timezone, value.position);
     }
 
     /**
@@ -410,6 +386,13 @@ final class SampleByBinder {
         final CharacterStoreEntry entry = ctx.characterStore.newEntry();
         entry.put('-').put(operand.token);
         return ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, entry.toImmutable(), 0, expression.position);
+    }
+
+    /**
+     * The function of a SUBSAMPLE argument bound on its own, see {@link FunctionBinder#bindStandalone}.
+     */
+    private Function subsampleArgument(ExpressionNode argument, SqlExecutionContext executionContext) throws SqlException {
+        return ctx.preparedRoot(ctx.functionBinder.bindStandalone(argument, executionContext));
     }
 
     private int subsampleTimestamp(LogicalPlan plan) {
@@ -552,8 +535,8 @@ final class SampleByBinder {
     }
 
     private void validateSdtCompdev(ExpressionNode compdev, SqlExecutionContext executionContext) throws SqlException {
-        try (Function function = functionParser.parseFunction(ExpressionNode.deepClone(ctx.bindingExpressions, compdev), EmptyRecordMetadata.INSTANCE, executionContext)) {
-            SubsampleValidator.validateSdtCompdev(function, compdev.position);
+        try {
+            SubsampleValidator.validateSdtCompdev(subsampleArgument(compdev, executionContext), compdev.position);
         } catch (SqlException e) {
             if (SubsampleValidator.hasUnresolvableSdtCompdevReference(compdev, executionContext)) {
                 throw SqlException.$(compdev.position, "SUBSAMPLE sdt requires a constant, non-negative finite compdev");
@@ -595,23 +578,19 @@ final class SampleByBinder {
     }
 
     /**
-     * The SUBSAMPLE method the call names, one of the {@code SUBSAMPLE_*} kinds, or -1 for an unknown method.
+     * The index of the first argument of the SUBSAMPLE call whose value the binder validates, the target and then the
+     * cadence seed, that reads a sub-query, or -1 when none does. Such an argument binds only with the window call,
+     * which validates it and every validated argument after it; the binder validates the arguments before it on their
+     * own.
      */
-    static int subsampleMethod(ExpressionNode subsample) {
-        final CharSequence token = subsample.token;
-        if (Chars.equalsIgnoreCase(token, "cadence")) {
-            return SUBSAMPLE_CADENCE;
+    static int pendingSubsampleArgument(ExpressionNode subsample, SubsampleMethod method) {
+        final int targetIndex = method.isPositionOnly() ? 0 : 1;
+        for (int i = targetIndex, n = method == SubsampleMethod.CADENCE ? subsample.paramCount : targetIndex + 1; i < n; i++) {
+            if (hasSubQuery(subsample.args.getQuick(i))) {
+                return i;
+            }
         }
-        if (Chars.equalsIgnoreCase(token, "lttb")) {
-            return SUBSAMPLE_LTTB;
-        }
-        if (Chars.equalsIgnoreCase(token, "m4") || Chars.equalsIgnoreCase(token, "minmax")) {
-            return SUBSAMPLE_EXTREMA;
-        }
-        if (Chars.equalsIgnoreCase(token, "sdt")) {
-            return SUBSAMPLE_SDT;
-        }
-        return Chars.equalsIgnoreCase(token, "uniform") ? SUBSAMPLE_UNIFORM : -1;
+        return -1;
     }
 
     /**
@@ -671,13 +650,13 @@ final class SampleByBinder {
             final ExpressionNode expression = signedFillLiteral(fill.getQuick(fillIndex));
             final int targetId = output.getColumnId(keyCount + i);
             final int targetType = output.getColumnType(keyCount + i);
-            int mode = FillPlan.FILL_VALUE;
+            FillMode mode = FillMode.VALUE;
             int sourceId = -1;
             int sourcePosition;
             CharSequence token = expression.token;
             if (SqlKeywords.isPrevKeyword(expression.token)) {
                 validateFillPrev(expression);
-                mode = FillPlan.FILL_PREV;
+                mode = FillMode.PREV;
                 if (expression.type == ExpressionNode.FUNCTION) {
                     token = expression.rhs.token;
                     sourcePosition = expression.rhs.position;
@@ -698,36 +677,36 @@ final class SampleByBinder {
                     }
                     sourceId = output.getColumnId(sourceIndex);
                     if (sourceId != targetId) {
-                        mode = FillPlan.FILL_PREV_COLUMN;
+                        mode = FillMode.PREV_COLUMN;
                         validateFillPrevType(targetType, output.getColumnType(sourceIndex), token, sourcePosition);
                     }
                 }
             } else if (SqlKeywords.isNullKeyword(expression.token)) {
-                mode = FillPlan.FILL_NULL;
+                mode = FillMode.NULL;
                 validateFillNull(targetType, expression.position);
             }
             plan.getTargetColumnIds().add(targetId);
             plan.getModes().add(mode);
-            plan.getValues().add(mode == FillPlan.FILL_VALUE
+            plan.getValues().add(mode == FillMode.VALUE
                     ? bindFillConstant(scope.fillBindings.getQuick(fillIndex), targetType, token, expression.position, executionContext) : null);
             plan.getSourceColumnIds().add(sourceId);
             plan.getTokens().add(token);
         }
         final IntList targetIds = plan.getTargetColumnIds();
         for (int i = 0, n = targetIds.size(); i < n; i++) {
-            if (plan.getModes().getQuick(i) == FillPlan.FILL_PREV_COLUMN) {
-                int sourceMode = FillPlan.FILL_PREV;
+            if (plan.getModes().getQuick(i) == FillMode.PREV_COLUMN) {
+                FillMode sourceMode = FillMode.PREV;
                 for (int k = 0; k < n; k++) {
                     if (targetIds.getQuick(k) == plan.getSourceColumnIds().getQuick(i)) {
                         sourceMode = plan.getModes().getQuick(k);
                         break;
                     }
                 }
-                if (sourceMode == FillPlan.FILL_PREV_COLUMN) {
+                if (sourceMode == FillMode.PREV_COLUMN) {
                     throw SqlException.$(fill.getQuick(i).position,
                             "FILL(PREV) chains are not supported: source column is itself a cross-column PREV");
                 }
-                if (sourceMode == FillPlan.FILL_NULL || sourceMode == FillPlan.FILL_VALUE) {
+                if (sourceMode == FillMode.NULL || sourceMode == FillMode.VALUE) {
                     throw SqlException.$(fill.getQuick(i).position,
                             "FILL(PREV) cannot reference a column that is itself filled with a constant");
                 }
@@ -764,7 +743,7 @@ final class SampleByBinder {
                     sampleBy.token.isEmpty() ? (char) 0 : sampleBy.token.charAt(sampleBy.token.length() - 1), sampleBy.position);
             TimestampSamplerFactory.getInstance(driver, sampleBy.token, sampleBy.position);
         } else {
-            final BoundExpression bound = ctx.functionBinder.bind(sampleBy, emptySchema, null, executionContext);
+            final BoundExpression bound = ctx.functionBinder.bind(sampleBy, ctx.emptySchema, null, executionContext);
             if (!(bound instanceof ConstantExpression period)
                     || bound.getDataType() != ColumnType.INT && bound.getDataType() != ColumnType.LONG) {
                 throw SqlException.$(sampleBy.position, "sample by period must be a constant expression of INT or LONG type");
@@ -786,7 +765,10 @@ final class SampleByBinder {
         bindSampleByBound(from, timestampType, FROM_BOUND_ERROR, executionContext);
         bindSampleByBound(source.getSampleByTo(), timestampType, TO_BOUND_ERROR, executionContext);
         final ExpressionNode timezone = sampleByTimezone(source);
-        SqlUtil.validateSampleByTimezone(timezone, functionParser, executionContext);
+        if (timezone != null) {
+            validateRuntimeConstant(ctx.functionBinder.bindStandalone(timezone, executionContext), ColumnType.STRING,
+                    "timezone must be a constant expression of STRING or CHAR type");
+        }
         final boolean isSubDay = !sampleBy.token.isEmpty() && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
         final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor_utc", 0, sampleBy.position);
         floor.paramCount = 5;
@@ -810,18 +792,14 @@ final class SampleByBinder {
             return;
         }
         final ObjList<ExpressionNode> fill = source.getSampleByFill();
-        plan.setFillMode(fill.size() > 1 ? SampleByPlan.FILL_VALUE : SampleByPlan.FILL_NONE);
         for (int i = 0, n = fill.size(); i < n; i++) {
             final ExpressionNode value = signedFillLiteral(fill.getQuick(i));
-            final int mode = SqlKeywords.isNoneKeyword(value.token) ? SampleByPlan.FILL_NONE
-                    : SqlKeywords.isPrevKeyword(value.token) ? SampleByPlan.FILL_PREV
-                      : SqlKeywords.isNullKeyword(value.token) ? SampleByPlan.FILL_NULL
-                        : SqlKeywords.isLinearKeyword(value.token) ? SampleByPlan.FILL_LINEAR : SampleByPlan.FILL_VALUE;
-            if (n == 1) {
-                plan.setFillMode(mode);
-            }
-            plan.getFillTokens().add(value.token);
-            plan.getFillValues().add(mode == SampleByPlan.FILL_VALUE ? bindFillValue(value, executionContext) : null);
+            final FillMode mode = SqlKeywords.isNoneKeyword(value.token) ? FillMode.NONE
+                    : SqlKeywords.isPrevKeyword(value.token) ? FillMode.PREV
+                      : SqlKeywords.isNullKeyword(value.token) ? FillMode.NULL
+                        : SqlKeywords.isLinearKeyword(value.token) ? FillMode.LINEAR : FillMode.VALUE;
+            plan.getFillModes().add(mode);
+            plan.getFillValues().add(mode == FillMode.VALUE ? bindFillValue(value, executionContext) : null);
         }
         final ObjList<FunctionExpression> aggregates = plan.getAggregates();
         validateFill(aggregates, aggregateNodes, fill);
@@ -874,7 +852,7 @@ final class SampleByBinder {
         if (timezone == null) {
             final ExpressionNode lo = from == null ? null : sampleByComparison(input.getOutput(), ">=", from);
             final ExpressionNode hi = to == null ? null : sampleByComparison(input.getOutput(), "<", to);
-            predicate = binder.bindPredicate(joinBinder.combineJoinPredicates(lo, hi), input, source, executionContext);
+            predicate = binder.bindPredicate(ctx.combinePredicates(lo, hi), input, source, executionContext);
         } else if (to == null) {
             predicate = bindSampleByRangeComparison(input, source, ">=", sampleByRangeBound(from, timezone, timestampType), executionContext);
         } else {
@@ -891,10 +869,10 @@ final class SampleByBinder {
     ) throws SqlException {
         final BindScope scope = ctx.scope();
         final ExpressionNode subsample = source.getSubsample();
-        final int method = validateSubsampleCall(subsample);
-        final boolean isCadence = method == SUBSAMPLE_CADENCE;
-        final boolean isPositionOnly = isCadence || method == SUBSAMPLE_UNIFORM;
-        final boolean isSdt = method == SUBSAMPLE_SDT;
+        final SubsampleMethod method = validateSubsampleCall(subsample);
+        final boolean isCadence = method == SubsampleMethod.CADENCE;
+        final boolean isPositionOnly = method.isPositionOnly();
+        final boolean isSdt = method == SubsampleMethod.SDT;
         final OutputSchema output = input.getOutput();
         final int timestampId = subsampleTimestamp(input);
         final int timestampIndex = output.getColumnIndexById(timestampId);
@@ -910,22 +888,25 @@ final class SampleByBinder {
         } else if (!isPositionOnly) {
             SubsampleValidator.validateNumericType(output.getColumnType(valueIndex), subsample.args.getQuick(0).position);
         }
-        final ExpressionNode target = subsample.args.getQuick(isPositionOnly ? 0 : 1);
+        final int targetIndex = isPositionOnly ? 0 : 1;
+        final ExpressionNode target = subsample.args.getQuick(targetIndex);
         if (!isSdt && target.type == ExpressionNode.LITERAL) {
             throw SqlException.$(target.position, isCadence ? "stride" : "target point count")
                     .put(" must be a constant or bind variable");
         }
-        if (isCadence && subsample.paramCount == 2 && subsample.args.getQuick(1).type == ExpressionNode.LITERAL) {
-            throw SqlException.$(subsample.args.getQuick(1).position, "seed must be a constant, bind variable, or NULL");
+        final ExpressionNode seed = isCadence && subsample.paramCount == 2 ? subsample.args.getQuick(1) : null;
+        if (seed != null && seed.type == ExpressionNode.LITERAL) {
+            throw SqlException.$(seed.position, "seed must be a constant, bind variable, or NULL");
         }
-        if (isSdt) {
-            if (!hasSubQuery(target)) {
+        final int pendingIndex = pendingSubsampleArgument(subsample, method);
+        if (pendingIndex != targetIndex) {
+            if (isSdt) {
                 validateSdtCompdev(target, executionContext);
+            } else {
+                SubsampleValidator.validatePositionTargetOrThrow(subsampleArgument(target, executionContext), target.position, isCadence);
             }
-        } else if (!hasSubQuery(target)) {
-            SubsampleValidator.validatePositionTargetOrThrow(ExpressionNode.deepClone(ctx.bindingExpressions, target), isCadence, functionParser, executionContext);
-            if (isCadence && subsample.paramCount == 2 && !hasSubQuery(subsample.args.getQuick(1))) {
-                SubsampleValidator.validateCadenceSeedOrThrow(ExpressionNode.deepClone(ctx.bindingExpressions, subsample.args.getQuick(1)), functionParser, executionContext);
+            if (seed != null && pendingIndex < 0) {
+                SubsampleValidator.validateCadenceSeedOrThrow(subsampleArgument(seed, executionContext), seed.position);
             }
         }
         final CharSequence timestampName = SqlUtil.protectColumnAlias(ctx.characterStore, output.getColumnName(timestampIndex));
@@ -933,7 +914,7 @@ final class SampleByBinder {
                 subsample.token, 0, subsample.position);
         call.paramCount = isPositionOnly ? subsample.paramCount : subsample.paramCount + 1;
         if (!isPositionOnly) {
-            if (method == SUBSAMPLE_LTTB && subsample.paramCount == 3) {
+            if (method == SubsampleMethod.LTTB && subsample.paramCount == 3) {
                 call.args.add(ExpressionNode.deepClone(ctx.bindingExpressions, subsample.args.getQuick(2)));
             }
             call.args.add(ExpressionNode.deepClone(ctx.bindingExpressions, target));
@@ -944,7 +925,7 @@ final class SampleByBinder {
             call.rhs = ExpressionNode.deepClone(ctx.bindingExpressions, target);
         } else {
             call.lhs = ExpressionNode.deepClone(ctx.bindingExpressions, target);
-            call.rhs = ExpressionNode.deepClone(ctx.bindingExpressions, subsample.args.getQuick(1));
+            call.rhs = ExpressionNode.deepClone(ctx.bindingExpressions, seed);
         }
         final WindowExpression syntax = ctx.planNodes.windowSyntax.next();
         syntax.setSubsampleKeepFlag(true);
@@ -952,7 +933,7 @@ final class SampleByBinder {
         syntax.addOrderBy(ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, timestampName, 0, subsample.position),
                 QueryModel.ORDER_DIRECTION_ASCENDING);
         call.windowExpression = syntax;
-        SqlUtil.normalizeWindowFrame(syntax, functionParser, executionContext);
+        windowBinder.normalizeWindowFrame(syntax, executionContext);
         final WindowSpec spec = ctx.planNodes.windowSpecs.next().of(syntax);
         if (executionContext.isLiveViewCompile()) {
             spec.setLiveViewDescription(LiveViewWindowDescription.of(syntax));
@@ -1035,7 +1016,7 @@ final class SampleByBinder {
 
     SqlException subsampleTimestampMissing(QueryModel source, LogicalPlan sourcePlan) {
         final ExpressionNode subsample = source.getSubsample();
-        final SqlException exception = SqlException.$(subsampleMethod(subsample) == SUBSAMPLE_SDT ? subsample.position : source.getSubsamplePosition(),
+        final SqlException exception = SqlException.$(SubsampleMethod.of(subsample.token) == SubsampleMethod.SDT ? subsample.position : source.getSubsamplePosition(),
                 "SUBSAMPLE requires a designated timestamp column; ");
         return hasSubsampleSourceTimestamp(sourcePlan)
                 ? exception.put("the SELECT list must include it unchanged")
@@ -1046,7 +1027,7 @@ final class SampleByBinder {
         if (plan.getTimezone() instanceof ConstantExpression timezone && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
             final OutputSchema input = plan.getChild().getOutput();
             final int timestampType = input.getColumnType(input.getColumnIndexById(plan.getTimestampColumnId()));
-            try (Function zone = ctx.functionInstantiator.instantiate(timezone, emptySchema, executionContext)) {
+            try (Function zone = ctx.functionInstantiator.instantiate(timezone, ctx.emptySchema, executionContext)) {
                 final CharSequence name = zone.getStrA(null);
                 if (name != null) {
                     try {
@@ -1060,26 +1041,30 @@ final class SampleByBinder {
     }
 
     /**
-     * Validates the SUBSAMPLE method and its argument count, and returns the method's {@code SUBSAMPLE_*} kind.
+     * Validates the SUBSAMPLE method and its argument count, and returns the method.
      */
-    int validateSubsampleCall(ExpressionNode subsample) throws SqlException {
-        final int method = subsampleMethod(subsample);
+    SubsampleMethod validateSubsampleCall(ExpressionNode subsample) throws SqlException {
+        final SubsampleMethod method = SubsampleMethod.of(subsample.token);
+        if (method == null) {
+            throw SqlException.$(subsample.position, "unknown subsample method: ").put(subsample.token)
+                    .put(". Supported methods: lttb, m4, minmax, uniform, cadence, sdt");
+        }
         switch (method) {
-            case SUBSAMPLE_CADENCE -> {
+            case CADENCE -> {
                 if (subsample.paramCount < 1 || subsample.paramCount > 2) {
                     throw SqlException.$(subsample.position, "cadence() requires 1 or 2 arguments: stride and optional seed");
                 }
             }
-            case SUBSAMPLE_UNIFORM -> {
+            case UNIFORM -> {
                 if (subsample.paramCount != 1) {
                     throw SqlException.$(subsample.position, "uniform() requires exactly 1 argument: target points");
                 }
             }
-            case SUBSAMPLE_EXTREMA, SUBSAMPLE_LTTB -> {
+            case EXTREMA, LTTB -> {
                 if (subsample.paramCount < 2) {
                     throw SqlException.$(subsample.position, subsample.token).put("() requires at least 2 arguments: column and target points");
                 }
-                final boolean isLttb = method == SUBSAMPLE_LTTB;
+                final boolean isLttb = method == SubsampleMethod.LTTB;
                 final int maxArgs = isLttb ? 3 : 2;
                 if (subsample.paramCount > maxArgs) {
                     throw SqlException.$(subsample.args.getQuick(maxArgs).position, subsample.token).put(isLttb
@@ -1087,10 +1072,8 @@ final class SampleByBinder {
                             : "() accepts exactly 2 arguments: column and target points");
                 }
             }
-            case SUBSAMPLE_SDT -> {
+            case SDT -> {
             }
-            default -> throw SqlException.$(subsample.position, "unknown subsample method: ").put(subsample.token)
-                    .put(". Supported methods: lttb, m4, minmax, uniform, cadence, sdt");
         }
         return method;
     }
@@ -1105,6 +1088,39 @@ final class SampleByBinder {
                 }
             }
         }
-        subsampleValueIndex(value, emptySchema);
+        subsampleValueIndex(value, ctx.emptySchema);
+    }
+
+    /**
+     * The window function a SUBSAMPLE call binds as.
+     */
+    enum SubsampleMethod {
+        CADENCE, EXTREMA, LTTB, SDT, UNIFORM;
+
+        /**
+         * The method the token names, or null when it names none.
+         */
+        static SubsampleMethod of(CharSequence token) {
+            if (Chars.equalsIgnoreCase(token, "cadence")) {
+                return CADENCE;
+            }
+            if (Chars.equalsIgnoreCase(token, "lttb")) {
+                return LTTB;
+            }
+            if (Chars.equalsIgnoreCase(token, "m4") || Chars.equalsIgnoreCase(token, "minmax")) {
+                return EXTREMA;
+            }
+            if (Chars.equalsIgnoreCase(token, "sdt")) {
+                return SDT;
+            }
+            return Chars.equalsIgnoreCase(token, "uniform") ? UNIFORM : null;
+        }
+
+        /**
+         * The method keeps rows by their position alone, rather than by the values of a column.
+         */
+        boolean isPositionOnly() {
+            return this == CADENCE || this == UNIFORM;
+        }
     }
 }

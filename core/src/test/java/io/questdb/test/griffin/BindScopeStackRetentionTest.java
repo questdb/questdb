@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.std.RetainedCapacity;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -48,6 +49,7 @@ public class BindScopeStackRetentionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertScopeCountAfterFailure(
                 "SELECT x = (" + nestedQuery(2) + ") a, x = (SELECT missing FROM long_sequence(1)) c FROM long_sequence(1)",
                 "Invalid column: missing",
+                145,
                 4
         ));
     }
@@ -100,6 +102,7 @@ public class BindScopeStackRetentionTest extends AbstractCairoTest {
             assertScopeCountAfterFailure(
                     "SELECT price FROM trades WHERE price = (SELECT price FROM prices WHERE price = " + GENERATION_ERROR_SUBQUERY + ")",
                     "left side of time series join doesn't have ASC timestamp order",
+                    142,
                     3
             );
         });
@@ -138,15 +141,25 @@ public class BindScopeStackRetentionTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertScopeCountAfterFailure(String sql, String message, int expected) throws SqlException {
+    private void assertScopeCountAfterFailure(String sql, String message, int position, int expected) throws Exception {
+        final WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        final boolean isTimestampRequired = sqlExecutionContext.isTimestampRequired();
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             for (int i = 0; i < 2; i++) {
                 try (RecordCursorFactory ignore = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                     Assert.fail("compilation must fail");
                 } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), message);
+                    TestUtils.assertEquals(message, e.getFlyweightMessage());
+                    Assert.assertEquals(position, e.getPosition());
                 }
                 Assert.assertEquals(expected, compiler.getBindScopeCount());
+                Assert.assertSame(windowContext, sqlExecutionContext.getWindowContext());
+                Assert.assertTrue(windowContext.isEmpty());
+                Assert.assertEquals(isTimestampRequired, sqlExecutionContext.isTimestampRequired());
+                assertQuery("SELECT x FROM long_sequence(1) WHERE x = (SELECT x FROM long_sequence(1))")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .returns("x\n1\n");
             }
         }
     }

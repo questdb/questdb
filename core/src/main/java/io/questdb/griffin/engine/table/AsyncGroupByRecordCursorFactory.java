@@ -49,7 +49,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -60,7 +59,6 @@ import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
@@ -99,12 +97,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull ObjList<Function> keyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @NotNull ObjList<Function> recordFunctions,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function filter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull AsyncFilterResources filterResources,
             int workerCount,
             @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
     ) {
@@ -113,6 +106,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             this.base = base;
             this.recordFunctions = recordFunctions;
             this.sharedRecordFunctions = sharedRecordFunctions;
+            final boolean hasFilter = filterResources.getFilter() != null;
             AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
                     configuration,
@@ -124,12 +118,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     perWorkerGroupByFunctions,
                     keyFunctions,
                     perWorkerKeyFunctions,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    filter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
+                    filterResources,
                     workerCount
             );
             this.frameSequence = new UnorderedPageFrameSequence<>(
@@ -137,13 +126,14 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     configuration,
                     messageBus,
                     atom,
-                    filter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
+                    hasFilter ? FILTER_AND_AGGREGATE : AGGREGATE,
                     workerCount
             );
             this.cursor = new AsyncGroupByRecordCursor(engine, messageBus, recordFunctions);
             this.workerCount = workerCount;
         } catch (Throwable th) {
             Misc.free(this, th);
+            Misc.free(filterResources, th);
             throw th;
         }
     }

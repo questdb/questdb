@@ -27,11 +27,15 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.PlanShape.assertPlanned;
 
 public class TemporalJoinPlanningTest extends AbstractCairoTest {
     @Test
@@ -948,6 +952,30 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeFrameScanRecordedOnStep() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_tfs_m (k SYMBOL, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE lp_tfs_s (k SYMBOL INDEX, i INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String join = " m.i, s.v FROM lp_tfs_m m ASOF JOIN lp_tfs_s s ON ";
+            assertTimeFrameScan("SELECT" + join + "k", JoinInput.TimeFrameScan.FAST, "AsOf Join Fast");
+            assertTimeFrameScan("SELECT /*+ asof_dense(m s) */" + join + "k", JoinInput.TimeFrameScan.DENSE_SINGLE_SYMBOL, "AsOf Join Dense Single Symbol");
+            assertTimeFrameScan("SELECT /*+ asof_dense(m s) */" + join + "(i)", JoinInput.TimeFrameScan.DENSE, "AsOf Join Dense");
+            assertTimeFrameScan("SELECT /*+ asof_index(m s) */" + join + "k", JoinInput.TimeFrameScan.INDEXED, "AsOf Join Indexed");
+            assertTimeFrameScan("SELECT /*+ asof_index(m s) */" + join + "(i)", JoinInput.TimeFrameScan.FAST, "AsOf Join Fast");
+            assertTimeFrameScan("SELECT /*+ asof_memoized(m s) */" + join + "k", JoinInput.TimeFrameScan.MEMOIZED, "AsOf Join Memoized");
+            assertTimeFrameScan("SELECT /*+ asof_memoized_driveby(m s) */" + join + "k", JoinInput.TimeFrameScan.MEMOIZED_DRIVEBY, "AsOf Join Memoized");
+            // A self-join on the same symbol column maps no symbol keys; a selection over the slave hides its table.
+            assertTimeFrameScan("SELECT /*+ asof_index(m s) */ m.i, s.v FROM lp_tfs_s m ASOF JOIN lp_tfs_s s ON k",
+                    JoinInput.TimeFrameScan.FAST, "AsOf Join Fast");
+            assertTimeFrameScan("SELECT /*+ asof_index(m s) */ m.i, s.v FROM lp_tfs_s m ASOF JOIN (SELECT ts, v, k FROM lp_tfs_s) s ON k",
+                    JoinInput.TimeFrameScan.INDEXED, "AsOf Join Indexed");
+            assertTimeFrameScan("SELECT m.i, s.v FROM lp_tfs_m m ASOF JOIN lp_tfs_s s", null, "AsOf Join Fast");
+            assertTimeFrameScan("SELECT /*+ asof_linear(m s) */" + join + "k", null, "AsOf Join Light");
+            assertTimeFrameScan("SELECT m.i, s.v FROM lp_tfs_m m LT JOIN lp_tfs_s s ON k", null, "Lt Join");
+        });
+    }
+
+    @Test
     public void testTimestampAliasesAndExplicitDesignation() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1172,6 +1200,12 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
                 assertRowsOnly(factory, expected);
             }
         }
+    }
+
+    private void assertTimeFrameScan(String sql, JoinInput.TimeFrameScan expected, String factory) throws Exception {
+        assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
+                join -> Assert.assertEquals(expected, join.getOrderedInputs().getQuick(1).getTimeFrameScan()));
+        assertQuery(sql).noLeakCheck().assertsPlanContaining(factory);
     }
 
     private void createTables() throws Exception {

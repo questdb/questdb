@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.optimiser.PlanVerifier;
+import io.questdb.griffin.optimiser.DecorrelationCarriers;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -45,6 +46,7 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -52,6 +54,8 @@ import io.questdb.griffin.plan.logical.SetOperationKind;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.WindowJoinPlan;
+import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -61,6 +65,7 @@ import org.junit.Test;
 
 public class PlanVerifierTest extends AbstractCairoTest {
     private static final String PASS = "TestPass.rewrite";
+    private final DecorrelationCarriers carriers = new DecorrelationCarriers();
     private final PlanVerifier verifier = PlanVerifier.newStandalone();
 
     @Test
@@ -88,6 +93,25 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testAggregateParallelWithoutParallelFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE grouped (s STRING, x INT)");
+            assertAlgorithmContradicts("SELECT string_agg(s, ',') FROM grouped", AggregatePlan.class, aggregate -> {
+                Assert.assertEquals(AggregatePlan.Algorithm.SERIAL, aggregate.getAlgorithm());
+                aggregate.setAlgorithm(AggregatePlan.Algorithm.PARALLEL);
+            }, PlanVerifier.AGGREGATE_ALGORITHM);
+        });
+    }
+
+    @Test
+    public void testAggregateParallelWithoutPageFrames() throws Exception {
+        assertMemoryLeak(() -> assertAlgorithmContradicts("SELECT x, sum(x) FROM long_sequence(3)", AggregatePlan.class, aggregate -> {
+            Assert.assertEquals(AggregatePlan.Algorithm.SERIAL, aggregate.getAlgorithm());
+            aggregate.setAlgorithm(AggregatePlan.Algorithm.PARALLEL);
+        }, PlanVerifier.AGGREGATE_ALGORITHM));
     }
 
     @Test
@@ -241,16 +265,16 @@ public class PlanVerifierTest extends AbstractCairoTest {
         final JoinPlan inner = join(source(), source(5, 6));
         final JoinInput right = inner.getInputs().getQuick(1);
         right.setJoinType(JoinKind.RIGHT_OUTER);
-        right.getCarrierColumnIds().add(5);
+        carriers.add(right, 5);
         final JoinPlan outer = join(source(10, 11), inner);
         final JoinInput step = outer.getInputs().getQuick(1);
-        step.getCarrierColumnIds().add(5);
+        carriers.add(step, 5);
         verifier.recordBarrierJoins(outer);
-        verifier.verifyDecorrelation(outer, PASS);
-        step.getCarrierColumnIds().add(1);
+        verifier.verifyDecorrelation(outer, PASS, carriers);
+        carriers.add(step, 1);
         verifier.recordBarrierJoins(outer);
         try {
-            verifier.verifyDecorrelation(outer, PASS);
+            verifier.verifyDecorrelation(outer, PASS, carriers);
             Assert.fail("expected " + PlanVerifier.DECORRELATION_CARRIER);
         } catch (AssertionError e) {
             TestUtils.assertContains(e.getMessage(), PlanVerifier.DECORRELATION_CARRIER);
@@ -262,7 +286,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
     @Test
     public void testDecorrelationCarrierUnresolved() {
         final JoinPlan join = join(source(), source(5, 6));
-        join.getInputs().getQuick(1).getCarrierColumnIds().add(9);
+        carriers.add(join.getInputs().getQuick(1), 9);
         verifier.recordBarrierJoins(join);
         assertDecorrelationFails(join, PlanVerifier.DECORRELATION_CARRIER_UNRESOLVED + " [column id 9]", "JoinPlan");
     }
@@ -273,7 +297,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
         final JoinInput step = join.getInputs().getQuick(1);
         step.setJoinType(JoinKind.LEFT_OUTER);
         verifier.recordBarrierJoins(join);
-        verifier.verifyDecorrelation(join, PASS);
+        verifier.verifyDecorrelation(join, PASS, carriers);
         verifier.recordBarrierJoins(join);
         join.getInputs().setQuick(1, JoinInput.FACTORY.newInstance().of(step.getInput(), JoinKind.LEFT_OUTER, "s", 0));
         assertDecorrelationFails(join, PlanVerifier.DECORRELATION_STEP_LOST, "JoinPlan");
@@ -407,38 +431,38 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinKeys() {
-        final JoinPlan join = join(source(), source(5, 6));
-        join.getInputs().getQuick(1).getMasterKeyColumnIds().add(1);
-        assertFails(join, PlanVerifier.JOIN_KEYS, "JoinPlan");
-    }
-
-    @Test
     public void testJoinOnKept() {
         final JoinPlan join = join(source(), source(5, 6));
         final JoinInput step = join.getInputs().getQuick(1);
         step.setJoinType(JoinKind.LEFT_OUTER);
         step.addKey(1, 5, "m.a", "s.a", 0);
-        step.getMasterKeyColumnIds().add(1);
-        step.getSlaveKeyColumnIds().add(5);
-        step.getMasterKeyNames().add("m.a");
-        step.getSlaveKeyNames().add("s.a");
-        step.getKeyPositions().add(0);
+        step.addKey(2, 6, "m.b", "s.b", 0);
+        step.visitReads(new PlanExpressionVisitor() {
+            @Override
+            public int visitColumnId(int columnId, int position) {
+                return switch (columnId) {
+                    case 2 -> 1;
+                    case 6 -> 5;
+                    default -> columnId;
+                };
+            }
+
+            @Override
+            public BoundExpression visitExpression(BoundExpression expression) {
+                return expression;
+            }
+        });
+        step.addKey(1, 5, "m.a", "s.a", 0);
+        Assert.assertEquals(2, step.getKeys().size());
         verifier.recordBarrierJoins(join);
-        step.getMasterKeyColumnIds().removeIndex(1);
-        step.getSlaveKeyColumnIds().removeIndex(1);
-        step.getMasterKeyNames().remove(1);
-        step.getSlaveKeyNames().remove(1);
-        step.getKeyPositions().removeIndex(1);
-        verifier.verifyDecorrelation(join, PASS);
+        step.removeKey(1);
+        step.addKey(1, 5, "m.a", "s.a", 0);
+        Assert.assertEquals(1, step.getKeys().size());
+        verifier.verifyDecorrelation(join, PASS, carriers);
         verifier.recordBarrierJoins(join);
-        step.getMasterKeyColumnIds().clear();
-        step.getSlaveKeyColumnIds().clear();
-        step.getMasterKeyNames().clear();
-        step.getSlaveKeyNames().clear();
-        step.getKeyPositions().clear();
+        step.removeKey(0);
         try {
-            verifier.verifyDecorrelation(join, PASS);
+            verifier.verifyDecorrelation(join, PASS, carriers);
             Assert.fail("expected " + PlanVerifier.JOIN_ON_KEPT);
         } catch (AssertionError e) {
             TestUtils.assertContains(e.getMessage(), PlanVerifier.JOIN_ON_KEPT);
@@ -478,6 +502,18 @@ public class PlanVerifierTest extends AbstractCairoTest {
             execute("CREATE TABLE lt_master (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE lt_slave (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY");
             assertAlgorithmContradicts("SELECT m.ts, s.v FROM lt_master m LT JOIN lt_slave s ON (k)", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.Algorithm.TEMPORAL, step.getAlgorithm());
+                step.setAlgorithm(JoinInput.Algorithm.TEMPORAL_TIME_FRAME);
+            }, PlanVerifier.JOIN_ALGORITHM);
+        });
+    }
+
+    @Test
+    public void testJoinTimeFrameWithoutTimeFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("SELECT a.ts, b.x FROM a ASOF JOIN (SELECT * FROM a LIMIT 3) b", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
                 Assert.assertEquals(JoinInput.Algorithm.TEMPORAL, step.getAlgorithm());
                 step.setAlgorithm(JoinInput.Algorithm.TEMPORAL_TIME_FRAME);
@@ -698,6 +734,17 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFirstLastWithoutIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE grouped (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("SELECT ts, first(x) FROM grouped SAMPLE BY 1h ALIGN TO FIRST OBSERVATION", SampleByPlan.class, sample -> {
+                Assert.assertEquals(SampleByPlan.Algorithm.FILL_NONE, sample.getAlgorithm());
+                sample.setAlgorithm(SampleByPlan.Algorithm.FIRST_LAST_INDEX);
+            }, PlanVerifier.SAMPLE_BY_ALGORITHM);
+        });
+    }
+
+    @Test
     public void testSampleByFillValueWithoutFill() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE grouped (s STRING, sym SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -791,6 +838,33 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 Assert.assertEquals(WindowPlan.Algorithm.STREAMING, window.getAlgorithm());
                 window.setAlgorithm(WindowPlan.Algorithm.CACHED);
             }, PlanVerifier.WINDOW_ALGORITHM);
+        });
+    }
+
+    @Test
+    public void testWindowCachedLightWithoutEncodedKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE grouped (b BINARY, x INT)");
+            assertAlgorithmContradicts("SELECT b, sum(x) OVER (ORDER BY x) FROM grouped", WindowPlan.class, window -> {
+                Assert.assertEquals(WindowPlan.Algorithm.CACHED_LIGHT, window.getAlgorithm());
+                final OutputSchema input = window.getChild().getOutput();
+                window.getSpecs().getQuick(0).getOrderByColumnIds().setQuick(0, input.getColumnId(input.getColumnIndexQuiet("b")));
+            }, PlanVerifier.WINDOW_ALGORITHM);
+        });
+    }
+
+    @Test
+    public void testWindowJoinParallelWithoutMasterPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("""
+                    SELECT a.ts, sum(b.x) FROM (SELECT * FROM a LIMIT 3) a
+                    WINDOW JOIN a b RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW
+                    """, WindowJoinPlan.class, join -> {
+                final WindowJoinStep step = join.getSteps().getQuick(0);
+                Assert.assertEquals(WindowJoinStep.Algorithm.SERIAL, step.getAlgorithm());
+                step.setAlgorithm(WindowJoinStep.Algorithm.PARALLEL);
+            }, PlanVerifier.WINDOW_JOIN_ALGORITHM);
         });
     }
 
@@ -896,7 +970,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
 
     private void assertDecorrelationFails(LogicalPlan plan, String invariant, String nodeName) {
         try {
-            verifier.verifyDecorrelation(plan, PASS);
+            verifier.verifyDecorrelation(plan, PASS, carriers);
             Assert.fail("expected " + invariant);
         } catch (AssertionError e) {
             TestUtils.assertContains(e.getMessage(), invariant);

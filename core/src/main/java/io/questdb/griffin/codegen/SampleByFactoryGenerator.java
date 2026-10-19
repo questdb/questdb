@@ -64,10 +64,10 @@ import io.questdb.griffin.engine.groupby.SampleByUtcBoundFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
-import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
@@ -141,24 +141,24 @@ final class SampleByFactoryGenerator {
     private static ObjList<Function> createSampleByFillPlaceholders(
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            @NotNull @Transient ObjList<CharSequence> fillTokens,
+            @NotNull @Transient ObjList<FillMode> fillModes,
             ObjList<Function> fillConstants
     ) {
         final ObjList<Function> placeholderFunctions = new ObjList<>();
         int fillIndex = 0;
-        final int fillValueCount = fillTokens.size();
+        final int fillValueCount = fillModes.size();
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function function = recordFunctions.getQuick(i);
             if (function instanceof GroupByFunction) {
                 assert fillIndex < fillValueCount;
-                final CharSequence fillToken = fillTokens.getQuick(fillIndex++);
-                if (isNullKeyword(fillToken)) {
+                final FillMode fillMode = fillModes.getQuick(fillIndex++);
+                if (fillMode == FillMode.NULL) {
                     final Function placeholder = GroupByUtils.nullFillConstant(function.getType());
                     assert placeholder != null;
                     placeholderFunctions.add(placeholder);
-                } else if (isPrevKeyword(fillToken)) {
+                } else if (fillMode == FillMode.PREV) {
                     placeholderFunctions.add(function);
-                } else if (isLinearKeyword(fillToken)) {
+                } else if (fillMode == FillMode.LINEAR) {
                     GroupByFunction interpolation = InterpolationGroupByFunction.newInstance((GroupByFunction) function);
                     placeholderFunctions.add(interpolation);
                     groupByFunctions.set(fillIndex - 1, interpolation);
@@ -171,32 +171,6 @@ final class SampleByFactoryGenerator {
             }
         }
         return placeholderFunctions;
-    }
-
-    /**
-     * The SAMPLE BY factory the generator would pick from the built base, which operator planning must have recorded.
-     * Reads the base without converting it.
-     */
-    private static SampleByPlan.Algorithm generatorAlgorithm(
-            RecordCursorFactory base,
-            ObjList<CharSequence> fillTokens,
-            boolean isFirstLastShape,
-            int symbolKeyIndex,
-            SqlExecutionContext executionContext
-    ) {
-        final int fillCount = fillTokens.size();
-        if (fillCount == 1 && isLinearKeyword(fillTokens.getQuick(0))) {
-            return SampleByPlan.Algorithm.INTERPOLATE;
-        }
-        if (isFirstLastShape && !base.hasParquetConvertedColumns(executionContext)
-                && base instanceof DeferredSingleSymbolFilterPageFrameRecordCursorFactory indexScan) {
-            final int symbolIndex = indexScan.getSymbolColumnIndex();
-            if (IndexType.isBitmap(base.getMetadata().getColumnIndexType(symbolIndex)) && (symbolKeyIndex == -1 || symbolIndex == symbolKeyIndex)) {
-                return SampleByPlan.Algorithm.FIRST_LAST_INDEX;
-            }
-        }
-        return fillCount == 0 || fillCount == 1 && isNoneKeyword(fillTokens.getQuick(0))
-                ? SampleByPlan.Algorithm.FILL_NONE : SampleByPlan.Algorithm.FILL_VALUE;
     }
 
     /**
@@ -232,11 +206,6 @@ final class SampleByFactoryGenerator {
             // A SAMPLE BY cursor that keeps its latest rows readable serves the fill
             // its keys and PREV values directly.
             final boolean isSampleBySource = algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS;
-            if (ParanoiaState.PLAN_PARANOIA_MODE && (isSampleBySource != (groupByFactory instanceof SampleByFillNoneRecordCursorFactory
-                    || groupByFactory instanceof SampleByFillNoneNotKeyedRecordCursorFactory)
-                    || (algorithm == FillPlan.Algorithm.SORTED) == (groupByFactory.getMetadata().getTimestampIndex() == timestampIndex))) {
-                throw new AssertionError("recorded fill algorithm differs from the generator's choice");
-            }
             final IntList keyColIndices = new IntList();
             for (int col = 0; col < columnCount; col++) {
                 if (fillModes.getQuick(col) == SampleByFillRecordCursorFactory.FILL_KEY) {
@@ -464,14 +433,12 @@ final class SampleByFactoryGenerator {
             ObjList<Function> recordFunctions,
             int timestampIndex,
             int timestampType,
-            ObjList<CharSequence> fillTokens,
+            ObjList<FillMode> fillModes,
             ObjList<Function> fillConstants,
             IntList firstLastIndexes,
-            boolean isFirstLastShape,
             @Nullable IntList firstLastKinds,
             @Nullable IntList firstLastPositions,
             IntList groupByFunctionPositions,
-            int symbolKeyIndex,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -479,8 +446,7 @@ final class SampleByFactoryGenerator {
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos,
-            SqlExecutionContext executionContext
+            int sampleToFuncPos
     ) throws SqlException {
         boolean isTransferred = false;
         try {
@@ -490,11 +456,7 @@ final class SampleByFactoryGenerator {
             final RecordMetadata baseMetadata = base.getMetadata();
             final ArrayColumnTypes keyTypes = frame.keyTypes;
             final ArrayColumnTypes valueTypes = frame.valueTypes;
-            final int fillCount = fillTokens.size();
-            if (ParanoiaState.PLAN_PARANOIA_MODE
-                    && algorithm != generatorAlgorithm(base, fillTokens, isFirstLastShape, symbolKeyIndex, executionContext)) {
-                throw new AssertionError("recorded SAMPLE BY algorithm differs from the generator's choice");
-            }
+            final int fillCount = fillModes.size();
             if (algorithm == SampleByPlan.Algorithm.INTERPOLATE) {
                 isTransferred = true;
                 return new SampleByInterpolateRecordCursorFactory(
@@ -593,7 +555,7 @@ final class SampleByFactoryGenerator {
 
             assert fillCount > 0 && keyTypes.getColumnCount() == 0;
             final ObjList<Function> placeholders = createSampleByFillPlaceholders(
-                    groupByFunctions, recordFunctions, fillTokens, fillConstants
+                    groupByFunctions, recordFunctions, fillModes, fillConstants
             );
 
             isTransferred = true;
@@ -716,7 +678,7 @@ final class SampleByFactoryGenerator {
             values.clear();
             values.setPos(entryCount);
             for (int i = 0; i < entryCount; i++) {
-                if (plan.getModes().getQuick(i) == FillPlan.FILL_VALUE) {
+                if (plan.getModes().getQuick(i) == FillMode.VALUE) {
                     final int targetType = metadata.getColumnType(input.getColumnIndexById(plan.getTargetColumnIds().getQuick(i)));
                     values.setQuick(i, instantiateFillValue(plan.getValues().getQuick(i), targetType, input, metadata, executionContext));
                 }
@@ -762,21 +724,21 @@ final class SampleByFactoryGenerator {
                     constants.add(NullConstant.NULL);
                 } else {
                     switch (plan.getModes().getQuick(entry)) {
-                        case FillPlan.FILL_NULL -> {
+                        case NULL -> {
                             modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                             constants.add(NullConstant.NULL);
                         }
-                        case FillPlan.FILL_PREV -> {
+                        case PREV -> {
                             modes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
                             constants.add(NullConstant.NULL);
                         }
-                        case FillPlan.FILL_PREV_COLUMN -> {
+                        case PREV_COLUMN -> {
                             final int sourceIndex = input.getColumnIndexById(plan.getSourceColumnIds().getQuick(entry));
                             assert sourceIndex >= 0 && sourceIndex != col && sourceIndex != timestampIndex;
                             modes.add(sourceIndex);
                             constants.add(NullConstant.NULL);
                         }
-                        case FillPlan.FILL_VALUE -> {
+                        case VALUE -> {
                             modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                             constants.add(values.getQuick(entry));
                             values.setQuick(entry, null);
@@ -850,7 +812,7 @@ final class SampleByFactoryGenerator {
             to = plan.getTo() == null ? driver.getTimestampConstantNull()
                     : functionInstantiator.instantiate(plan.getTo(), input, baseMetadata, executionContext);
             assignUndefinedType(to, timestampType, executionContext);
-            if (plan.getFillMode() != SampleByPlan.FILL_LINEAR && plan.getTimezone() != null && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
+            if (plan.getAlgorithm() != SampleByPlan.Algorithm.INTERPOLATE && plan.getTimezone() != null && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
                 from = toSampleByUtc(from, plan, input, baseMetadata, timezone, driver, timestampType, executionContext);
                 to = toSampleByUtc(to, plan, input, baseMetadata, timezone, driver, timestampType, executionContext);
             }
@@ -864,7 +826,7 @@ final class SampleByFactoryGenerator {
             keyTypes.clear();
             valueTypes.clear();
             listColumnFilterA.clear();
-            valueTypes.add(plan.getFillMode() == SampleByPlan.FILL_LINEAR ? BYTE : timestampType);
+            valueTypes.add(plan.getAlgorithm() == SampleByPlan.Algorithm.INTERPOLATE ? BYTE : timestampType);
             final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
             final ObjList<FunctionExpression> calls = plan.getAggregates();
             final ObjList<GroupByFunction> aggregates = new ObjList<>(calls.size());
@@ -872,7 +834,7 @@ final class SampleByFactoryGenerator {
             records = new ObjList<>(output.getColumnCount());
             AggregateFactoryGenerator.instantiateAggregates(plan, baseMetadata, functionInstantiator, executionContext, aggregates, records, valueTypes);
             AggregateFactoryGenerator.layOutColumnKeys(plan, baseMetadata, records, keyTypes, valueTypes, listColumnFilterA, frame.intListA);
-            final int fillCount = plan.getFillTokens().size();
+            final int fillCount = plan.getFillModes().size();
             fillConstants = new ObjList<>(fillCount);
             fillConstants.setPos(fillCount);
             for (int k = 0, n = Math.min(fillCount, aggregates.size()); k < n; k++) {
@@ -882,8 +844,7 @@ final class SampleByFactoryGenerator {
                 }
             }
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
-            int symbolKeyIndex = -1;
-            boolean isFirstLast = plan.getFillMode() == SampleByPlan.FILL_NONE && !plan.isFillInput();
+            final boolean isFirstLast = plan.getAlgorithm() == SampleByPlan.Algorithm.FIRST_LAST_INDEX;
             final IntList firstLastIndexes = columnIndexes;
             firstLastIndexes.clear();
             firstLastKinds.clear();
@@ -902,13 +863,6 @@ final class SampleByFactoryGenerator {
                 firstLastIndexes.add(index);
                 firstLastKinds.add(SampleByFirstLastRecordCursorFactory.KEY);
                 firstLastPositions.add(column.getPosition());
-                if (index == timestampIndex && index == baseMetadata.getTimestampIndex()) {
-                    continue;
-                }
-                if (type != SYMBOL || symbolKeyIndex != -1 && symbolKeyIndex != index || !column.isDirectReference()) {
-                    isFirstLast = false;
-                }
-                symbolKeyIndex = index;
             }
             for (int i = 0, n = calls.size(); i < n; i++) {
                 final FunctionExpression call = calls.getQuick(i);
@@ -916,23 +870,20 @@ final class SampleByFactoryGenerator {
                 groupByFunctionPositions.add(call.getPosition());
                 metadata.add(new TableColumnMetadata(Chars.toString(output.getColumnName(keys.size() + i)), function.getType(),
                         IndexType.NONE, 0, function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic(), function.getMetadata()));
-                if (call.getArgumentCount() != 1 || !(call.argumentAt(0) instanceof ColumnExpression column)
-                        || !column.isDirectReference() || ColumnType.isArray(column.getDataType())
-                        || !isFirstKeyword(call.getName()) && !isLastKeyword(call.getName())) {
-                    isFirstLast = false;
-                    continue;
+                if (isFirstLast) {
+                    final ColumnExpression column = (ColumnExpression) call.argumentAt(0);
+                    firstLastIndexes.add(input.getColumnIndexById(column.getColumnId()));
+                    firstLastKinds.add(isFirstKeyword(call.getName())
+                            ? SampleByFirstLastRecordCursorFactory.FIRST : SampleByFirstLastRecordCursorFactory.LAST);
+                    firstLastPositions.add(call.getPosition());
                 }
-                firstLastIndexes.add(input.getColumnIndexById(column.getColumnId()));
-                firstLastKinds.add(isFirstKeyword(call.getName())
-                        ? SampleByFirstLastRecordCursorFactory.FIRST : SampleByFirstLastRecordCursorFactory.LAST);
-                firstLastPositions.add(call.getPosition());
             }
             isTransferred = true;
             return generateSampleByFactory(frame, plan.getAlgorithm(), base, metadata, sampler, plan.getPeriodUnit(), aggregates, records,
-                    timestampIndex, timestampType, plan.getFillTokens(), fillConstants,
-                    firstLastIndexes, isFirstLast, firstLastKinds, firstLastPositions, groupByFunctionPositions, symbolKeyIndex,
+                    timestampIndex, timestampType, plan.getFillModes(), fillConstants,
+                    firstLastIndexes, firstLastKinds, firstLastPositions, groupByFunctionPositions,
                     timezone, plan.getTimezonePosition(), offset, plan.getOffsetPosition(),
-                    from, plan.getFromPosition(), to, plan.getToPosition(), executionContext);
+                    from, plan.getFromPosition(), to, plan.getToPosition());
         } catch (Throwable th) {
             if (!isTransferred) {
                 Misc.freeObjList(records, th);

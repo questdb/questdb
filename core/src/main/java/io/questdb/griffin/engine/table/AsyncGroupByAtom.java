@@ -37,7 +37,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -52,11 +51,9 @@ import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.DirectLongLongSortedList;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -106,15 +103,10 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> ownerKeyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerFilter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull AsyncFilterResources filterResources,
             int workerCount
     ) {
-        assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
+        assert filterResources.getPerWorkerFilters() == null || filterResources.getPerWorkerFilters().size() == workerCount;
         assert perWorkerKeyFunctions == null || perWorkerKeyFunctions.size() == workerCount;
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
@@ -124,19 +116,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
-            this.filterCtx = new AsyncFilterContext(
-                    configuration,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    ownerFilter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
-                    workerCount,
-                    workerCount,
-                    0L,
-                    0L
-            );
+            this.filterCtx = new AsyncFilterContext(configuration, filterResources, workerCount, workerCount, 0L, 0L);
 
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             final GroupByFunctionsUpdater ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);

@@ -116,8 +116,7 @@ public final class PlanToFactoryRules {
         if (plan instanceof WindowPlan window) {
             return window;
         }
-        return plan instanceof ProjectPlan project && project.getChild() instanceof WindowPlan window
-                && isWindowOutputProjection(project, window) ? window : null;
+        return plan instanceof ProjectPlan project && projectionFactory(project) == ProjectionFactory.WINDOW ? (WindowPlan) project.getChild() : null;
     }
 
     /**
@@ -125,7 +124,7 @@ public final class PlanToFactoryRules {
      * otherwise.
      */
     public static WindowJoinPlan generatedWindowJoin(ProjectPlan project) {
-        return project.getChild() instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project) ? windowJoin : null;
+        return projectionFactory(project) == ProjectionFactory.WINDOW_JOIN ? (WindowJoinPlan) project.getChild() : null;
     }
 
     /**
@@ -258,11 +257,10 @@ public final class PlanToFactoryRules {
      * it only changes the name case.
      */
     public static boolean isIdentityProjection(ProjectPlan project, @Nullable RecordMetadata layout, int timestampIndex, int inputTimestampIndex) {
-        final LogicalPlan input = project.getChild();
-        if (LogicalPlans.isComputedProjection(project) || input instanceof WindowPlan window && isWindowOutputProjection(project, window)
-                || input instanceof WindowJoinPlan && LogicalPlans.isColumnOnlyProjection(project)) {
+        if (projectionFactory(project) != ProjectionFactory.SELECTION) {
             return false;
         }
+        final LogicalPlan input = project.getChild();
         final OutputSchema output = project.getOutput();
         final OutputSchema inputOutput = input.getOutput();
         if (output.getColumnCount() != (layout == null ? inputOutput.getColumnCount() : layout.getColumnCount())
@@ -290,12 +288,12 @@ public final class PlanToFactoryRules {
      * key, and the generator drops it.
      */
     public static boolean isKeyedTemporalJoin(JoinInput step, OutputSchema masterOutput, int masterTimestampIndex, int slaveTimestampIndex) {
-        final IntList masterKeys = step.getMasterKeyColumnIds();
-        if (masterKeys.size() != 1) {
-            return masterKeys.size() > 0;
+        final ObjList<JoinKey> keys = step.getKeys();
+        if (keys.size() != 1) {
+            return keys.size() > 0;
         }
-        return masterOutput.getColumnIndexById(masterKeys.getQuick(0)) != masterTimestampIndex
-                || step.getInput().getOutput().getColumnIndexById(step.getSlaveKeyColumnIds().getQuick(0)) != slaveTimestampIndex;
+        return masterOutput.getColumnIndexById(keys.getQuick(0).getMasterColumnId()) != masterTimestampIndex
+                || step.getInput().getOutput().getColumnIndexById(keys.getQuick(0).getSlaveColumnId()) != slaveTimestampIndex;
     }
 
     /**
@@ -336,7 +334,8 @@ public final class PlanToFactoryRules {
         if (!(plan instanceof ProjectPlan project)) {
             return false;
         }
-        return generatedWindow(project) == null && generatedWindowJoin(project) == null;
+        final ProjectionFactory factory = projectionFactory(project);
+        return factory == ProjectionFactory.VIRTUAL || factory == ProjectionFactory.SELECTION;
     }
 
     /**
@@ -353,6 +352,14 @@ public final class PlanToFactoryRules {
      */
     public static boolean isSlaveEmptied(JoinInput step) {
         return step.getJoinType() == JoinKind.LEFT_OUTER && isNeverMatchingKeyedStep(step);
+    }
+
+    /**
+     * True when operator planning may drop the master's designated timestamp from the projection: a projection over a
+     * window join that the window join factory does not build, see {@link #isWindowJoinTimestampKept}.
+     */
+    public static boolean isWindowJoinTimestampDroppable(ProjectPlan project) {
+        return project.getChild() instanceof WindowJoinPlan && projectionFactory(project) != ProjectionFactory.WINDOW_JOIN;
     }
 
     /**
@@ -528,7 +535,23 @@ public final class PlanToFactoryRules {
                 && (input.getOutput().getTimestampIndex() < 0 || timestamp.getColumnId() == input.getOutput().getTimestampColumnId())) {
             return -1;
         }
-        return input instanceof WindowJoinPlan && !LogicalPlans.isColumnOnlyProjection(project) && project.isTimestampDropped() ? -1 : timestampIndex;
+        return project.isTimestampDropped() && isWindowJoinTimestampDroppable(project) ? -1 : timestampIndex;
+    }
+
+    /**
+     * The factory the generator builds for the projection: the window factory for a projection of the window's output,
+     * the window join factory for a column-only projection of the window join's output, else a virtual projection
+     * when it computes a column and a selection otherwise.
+     */
+    public static ProjectionFactory projectionFactory(ProjectPlan project) {
+        final LogicalPlan input = project.getChild();
+        if (input instanceof WindowPlan window && isWindowOutputProjection(project, window)) {
+            return ProjectionFactory.WINDOW;
+        }
+        if (input instanceof WindowJoinPlan && LogicalPlans.isColumnOnlyProjection(project)) {
+            return ProjectionFactory.WINDOW_JOIN;
+        }
+        return LogicalPlans.isComputedProjection(project) ? ProjectionFactory.VIRTUAL : ProjectionFactory.SELECTION;
     }
 
     /**
@@ -644,7 +667,7 @@ public final class PlanToFactoryRules {
     }
 
     private static boolean isNeverMatchingKeyedStep(JoinInput step) {
-        return step.getMasterKeyColumnIds().size() > 0 && LogicalPlans.constantTruth(step.getOnResidual()) == 0;
+        return step.getKeys().size() > 0 && LogicalPlans.constantTruth(step.getOnResidual()) == 0;
     }
 
     /**
@@ -703,5 +726,27 @@ public final class PlanToFactoryRules {
          * The GROUP BY by the algorithm operator planning records.
          */
         GROUP_BY
+    }
+
+    /**
+     * The factory the generator builds for a projection, see {@link #projectionFactory}.
+     */
+    public enum ProjectionFactory {
+        /**
+         * The window factory, which emits the projected window output itself.
+         */
+        WINDOW,
+        /**
+         * The window join factory, which emits the projected window join output itself.
+         */
+        WINDOW_JOIN,
+        /**
+         * A projection that computes its columns over its input.
+         */
+        VIRTUAL,
+        /**
+         * A selection of input columns, or none when it selects every column in place.
+         */
+        SELECTION
     }
 }

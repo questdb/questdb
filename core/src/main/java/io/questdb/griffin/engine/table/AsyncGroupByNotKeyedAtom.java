@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -46,9 +45,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -89,15 +86,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwne
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             int @NotNull [] batchColumnIndexes,
             int valueCount,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerFilter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull AsyncFilterResources filterResources,
             int workerCount
     ) {
-        assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
+        assert filterResources.getPerWorkerFilters() == null || filterResources.getPerWorkerFilters().size() == workerCount;
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
         try {
@@ -113,19 +105,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwne
             this.hasNonBatchFunctions = hasNonBatch;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
-            this.filterCtx = new AsyncFilterContext(
-                    configuration,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    ownerFilter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
-                    workerCount,
-                    workerCount,
-                    0L,
-                    0L
-            );
+            this.filterCtx = new AsyncFilterContext(configuration, filterResources, workerCount, workerCount, 0L, 0L);
 
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);

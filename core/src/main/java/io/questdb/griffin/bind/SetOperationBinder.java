@@ -35,7 +35,7 @@ import io.questdb.std.IntList;
 /**
  * Binding-side typing of UNION/EXCEPT/INTERSECT: output column types, branch casts, symbol columns and timestamp.
  */
-public final class SetOperationBinder {
+final class SetOperationBinder {
     private SetOperationBinder() {
     }
 

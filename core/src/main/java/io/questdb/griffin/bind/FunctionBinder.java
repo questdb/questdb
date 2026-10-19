@@ -36,6 +36,7 @@ import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionInstantiator;
+import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.IntervalExtractor;
@@ -99,12 +100,6 @@ import org.jetbrains.annotations.TestOnly;
  * {@link PreparedFunctions}.
  */
 public final class FunctionBinder implements CallBinder, FunctionResolver.TimestampTextError, PostOrderTreeTraversalAlgo.Visitor, Mutable {
-    private static final int CALL_AGGREGATE_ROOT = 3;
-    private static final int CALL_ARGUMENT = 0;
-    private static final int CALL_PROJECTED_OFFSET = 5;
-    private static final int CALL_ROOT = 2;
-    private static final int CALL_WINDOW_ARGUMENT = 1;
-    private static final int CALL_WINDOW_ROOT = 4;
     private final IntList argumentLeafMarks = new IntList();
     private final IntList argumentPositions = new IntList();
     private final IntList argumentTypes = new IntList();
@@ -137,21 +132,17 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             FunctionResolver resolver,
             SqlCompilerImpl compiler,
             PostOrderTreeTraversalAlgo traverseAlgo,
-            ObjList<Function> callFunctions,
-            IntList callPositions,
-            ObjList<BoundExpression> callArguments,
-            StringSink intervalText,
-            LongList parsedIntervals
+            CompilerTemporaries temporaries
     ) {
         this.ctx = ctx;
         this.resolver = resolver;
         this.compiler = compiler;
         this.traverseAlgo = traverseAlgo;
-        this.callFunctions = callFunctions;
-        this.callPositions = callPositions;
-        this.callArguments = callArguments;
-        this.intervalText = intervalText;
-        this.parsedIntervals = parsedIntervals;
+        this.callFunctions = temporaries.functions;
+        this.callPositions = temporaries.functionPositions;
+        this.callArguments = temporaries.expressions;
+        this.intervalText = temporaries.sink;
+        this.parsedIntervals = temporaries.longs;
     }
 
     /**
@@ -212,7 +203,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             CharSequence inputAlias,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert isAggregateRoot(node);
+        assert ctx.isAggregate(node);
         return (FunctionExpression) bind(node, BindingRole.AGGREGATE, input, inputAlias, ColumnType.UNDEFINED, null, null, null, executionContext);
     }
 
@@ -255,7 +246,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             CharSequence inputAlias,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert isAggregateRoot(node);
+        assert ctx.isAggregate(node);
         return bind(node, BindingRole.GROUP_BY_EXPRESSION, input, inputAlias, ColumnType.UNDEFINED, null, null, null, executionContext);
     }
 
@@ -266,7 +257,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             ObjList<ColumnExpression> replacementColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert isAggregateRoot(node);
+        assert ctx.isAggregate(node);
         return bind(node, BindingRole.GROUP_BY_EXPRESSION, input, null, ColumnType.UNDEFINED, replacementNodes, replacementColumns, null, executionContext);
     }
 
@@ -471,6 +462,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         if (count == 0) {
             function = switch (node.type) {
                 case ExpressionNode.LITERAL -> {
+                    if (ctx.scope().bindingRole == BindingRole.STANDALONE) {
+                        throw SqlException.invalidColumn(node.position, node.token);
+                    }
                     final int index = findColumn(node, ctx.scope().expressionInput, ctx.scope().expressionInputAlias);
                     yield index == -1 && resolver.findNoArgFunction(node.token) ? resolveCall(node, 0) : createColumn(node, index);
                 }
@@ -690,7 +684,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         for (int i = args.size() - 1; i >= 0; i--) {
             pushArgument(args.getQuick(i));
         }
-        pushFunction(resolveCall(name, position, isGroupBy(name) ? CALL_AGGREGATE_ROOT : CALL_ROOT, false, args.size()), position);
+        pushFunction(resolveCall(name, position, isGroupBy(name) ? CallRole.AGGREGATE_ROOT : CallRole.ROOT, false, args.size()), position);
     }
 
     /**
@@ -824,19 +818,21 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return count > 0 ? argumentLeafMarks.getQuick(count - 1) : leafMark();
     }
 
-    private int callRole(ExpressionNode node) {
+    private CallRole callRole(ExpressionNode node) {
         final BindScope scope = ctx.scope();
         if (node == scope.bindingRoot) {
             return switch (scope.bindingRole) {
-                case WINDOW -> CALL_WINDOW_ROOT;
-                case AGGREGATE, GROUP_BY_EXPRESSION -> CALL_AGGREGATE_ROOT;
-                default -> CALL_ROOT;
+                case WINDOW -> CallRole.WINDOW_ROOT;
+                case AGGREGATE, GROUP_BY_EXPRESSION -> CallRole.AGGREGATE_ROOT;
+                case STANDALONE ->
+                        node.type == ExpressionNode.FUNCTION && isGroupBy(node.token) ? CallRole.AGGREGATE_ROOT : CallRole.ROOT;
+                default -> CallRole.ROOT;
             };
         }
         if (scope.projectedOffsets.indexOf(node) >= 0) {
-            return CALL_PROJECTED_OFFSET;
+            return CallRole.PROJECTED_OFFSET;
         }
-        return isWindowArgument(node) ? CALL_WINDOW_ARGUMENT : CALL_ARGUMENT;
+        return isWindowArgument(node) ? CallRole.WINDOW_ARGUMENT : CallRole.ARGUMENT;
     }
 
     private Function canonicalizeTemporalBetween(ObjList<Function> args) {
@@ -1135,7 +1131,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             FunctionFactoryDescriptor overload,
             CharSequence name,
             int position,
-            int role,
+            CallRole role,
             boolean isSetOperation,
             ObjList<Function> args,
             IntList positions
@@ -1212,7 +1208,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final Function second = first != null ? args.getQuick(1) : null;
         final Function function = resolver.createFunction(overload, position, name, args, positions, sqlExecutionContext);
         try {
-            if (role == CALL_WINDOW_ROOT) {
+            if (role == CallRole.WINDOW_ROOT) {
                 if (!(function instanceof WindowFunction)) {
                     throw SqlException.$(position, "non-window function called in window context");
                 }
@@ -1230,7 +1226,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 // A connective with a constant operand returns its other operand.
                 expression = arguments.getQuick(function == first ? 0 : 1);
             } else {
-                final int flags = role == CALL_WINDOW_ROOT ? callFlags(function, arguments) | windowContextFlags(sqlExecutionContext.getWindowContext())
+                final int flags = role == CallRole.WINDOW_ROOT ? callFlags(function, arguments) | windowContextFlags(sqlExecutionContext.getWindowContext())
                         : callFlags(function, arguments);
                 expression = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, function.getType(), flags, position);
             }
@@ -1272,14 +1268,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     private void dropLeaves(int from, int to) {
         if (from < to) {
-            final ObjList<BindableColumn> leaves = ctx.scope().currentPreparation.leaves;
-            for (int i = from; i < to; i++) {
-                final BindableColumn leaf = leaves.getQuick(i);
-                if (leaf.isOpen()) {
-                    leaf.close();
-                }
-            }
-            leaves.remove(from, to - 1);
+            closeLeaves(from, to);
+            ctx.scope().currentPreparation.leaves.remove(from, to - 1);
         }
     }
 
@@ -1356,10 +1346,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             return intervalText;
         }
         return text;
-    }
-
-    private boolean isAggregateRoot(ExpressionNode node) {
-        return node.type == ExpressionNode.FUNCTION && node.windowExpression == null && isGroupBy(node.token);
     }
 
     private boolean isAstRewritable() {
@@ -1524,11 +1510,11 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         pushFunction(pushReplacement(argument, argument.getPosition()), argument.getPosition());
     }
 
-    private BoundExpression pushCall(CharSequence name, int role, boolean isSetOperation, BoundExpression expression) {
+    private BoundExpression pushCall(CharSequence name, CallRole role, boolean isSetOperation, BoundExpression expression) {
         if (isSetOperation && expression instanceof FunctionExpression call && SqlKeywords.isInKeyword(name)) {
             call.markSetOperation();
         }
-        final BoundExpression pushed = role == CALL_PROJECTED_OFFSET && expression instanceof FunctionExpression call
+        final BoundExpression pushed = role == CallRole.PROJECTED_OFFSET && expression instanceof FunctionExpression call
                 ? ctx.planNodes.functions.next().ofProjectedOffset(call) : expression;
         push(pushed, callLeafMark());
         return pushed;
@@ -1617,7 +1603,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * Resolves the call over its top operands: folds constant arguments, selects the overload, applies the checks
      * of the call's place in the tree and the argument coercions, then builds its description and function.
      */
-    private Function resolveCall(CharSequence name, int position, int role, boolean isSetOperation, int count) throws SqlException {
+    private Function resolveCall(CharSequence name, int position, CallRole role, boolean isSetOperation, int count) throws SqlException {
         beginArguments(count);
         // A float literal's spelling selects its exact DECIMAL cast, as in SQL text.
         final CharSequence literal = count == 2 && arguments.getQuick(0) instanceof ConstantExpression constant ? constant.getLiteralText() : null;
@@ -1652,7 +1638,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 throw th;
             }
         }
-        if (role == CALL_WINDOW_ROOT) {
+        if (role == CallRole.WINDOW_ROOT) {
             try {
                 validateSubsampleArguments(ctx.scope().bindingRoot, args, positions);
             } catch (Throwable th) {
@@ -1742,10 +1728,10 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * admission ({@link FunctionResolver#admitUnconstructed}). {@link ColumnType#UNDEFINED} when the call must be
      * constructed.
      */
-    private int staticResultType(FunctionFactoryDescriptor overload, int role, int count) {
+    private int staticResultType(FunctionFactoryDescriptor overload, CallRole role, int count) {
         final FunctionFactory factory = overload.getFactory();
         if (count == 0 || !overload.isRelocatableScalar() || overload.isCase() || overload.isSwitch()
-                || factory.isGroupBy() || factory.isWindow() || factory.isCursor() || role == CALL_WINDOW_ROOT || role == CALL_AGGREGATE_ROOT) {
+                || factory.isGroupBy() || factory.isWindow() || factory.isCursor() || role == CallRole.WINDOW_ROOT || role == CallRole.AGGREGATE_ROOT) {
             return ColumnType.UNDEFINED;
         }
         boolean hasVariableArgument = false;
@@ -1877,24 +1863,24 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * non-window function at the window root, a window function outside a window. A window function directly under
      * the window root is reported where the window is constructed.
      */
-    private void validateFactory(FunctionFactoryDescriptor overload, int role, int position, ObjList<Function> args) throws SqlException {
+    private void validateFactory(FunctionFactoryDescriptor overload, CallRole role, int position, ObjList<Function> args) throws SqlException {
         final BindScope scope = ctx.scope();
         final FunctionFactory factory = overload.getFactory();
-        if (role != CALL_AGGREGATE_ROOT && role != CALL_WINDOW_ROOT && factory.isGroupBy()) {
-            final SqlException exception = role != CALL_ROOT
+        if (role != CallRole.AGGREGATE_ROOT && role != CallRole.WINDOW_ROOT && factory.isGroupBy()) {
+            final SqlException exception = role != CallRole.ROOT
                     ? SqlException.$(position, "Aggregate function cannot be passed as an argument")
                     : scope.bindingRole == BindingRole.PREDICATE ? SqlException.$(position, "boolean expression expected")
                       : SqlException.$(position, "aggregate functions are not allowed in this context");
             Misc.freeObjList(args, exception);
             throw exception;
         }
-        if (role == CALL_WINDOW_ROOT && !factory.isWindow()) {
+        if (role == CallRole.WINDOW_ROOT && !factory.isWindow()) {
             final SqlException exception = SqlException.$(position, "non-window function called in window context");
             Misc.freeObjList(args, exception);
             throw exception;
         }
-        if (role != CALL_WINDOW_ROOT && role != CALL_AGGREGATE_ROOT && factory.isWindow()) {
-            if (role == CALL_WINDOW_ARGUMENT) {
+        if (role != CallRole.WINDOW_ROOT && role != CallRole.AGGREGATE_ROOT && factory.isWindow()) {
+            if (role == CallRole.WINDOW_ARGUMENT) {
                 if (scope.nestedWindowPosition < 0) {
                     scope.nestedWindowPosition = position;
                 }
@@ -1904,7 +1890,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             Misc.freeObjList(args, exception);
             throw exception;
         }
-        if (role == CALL_AGGREGATE_ROOT && !factory.isGroupBy()
+        if (role == CallRole.AGGREGATE_ROOT && !factory.isGroupBy() && scope.bindingRole != BindingRole.STANDALONE
                 && !(scope.bindingRole == BindingRole.GROUP_BY_EXPRESSION && overload.isArrayElementWiseScalar())) {
             final IllegalStateException exception = new IllegalStateException("aggregate root is bound to a non-aggregate factory");
             Misc.freeObjList(args, exception);
@@ -1934,7 +1920,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         if (node.type == ExpressionNode.QUERY) {
             return;
         }
-        if (node.windowExpression != null && node != windowRoot()
+        if (node.windowExpression != null && node != windowRoot() && ctx.scope().bindingRole != BindingRole.STANDALONE
                 || node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.CONSTANT
                 && node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION
                 && node.type != ExpressionNode.BIND_VARIABLE && node.type != ExpressionNode.MEMBER_ACCESS
@@ -1945,26 +1931,44 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
     }
 
+    /**
+     * Validates, as the SUBSAMPLE window call binds, the arguments the SAMPLE BY binder leaves to it, see
+     * {@link SampleByBinder#pendingSubsampleArgument}, and the LTTB gap threshold.
+     */
     private void validateSubsampleArguments(ExpressionNode node, ObjList<Function> args, IntList positions) throws SqlException {
         if (node.windowExpression == null || !node.windowExpression.isSubsampleKeepFlag() || args == null) {
             return;
         }
-        if (Chars.equalsIgnoreCase(node.token, "uniform") && args.size() == 1) {
-            SubsampleValidator.validatePositionTargetOrThrow(args.getQuick(0), positions.getQuick(0), false);
-        } else if (Chars.equalsIgnoreCase(node.token, "cadence") && args.size() >= 1 && args.size() <= 2) {
-            SubsampleValidator.validatePositionTargetOrThrow(args.getQuick(0), positions.getQuick(0), true);
-            if (args.size() == 2) {
-                SubsampleValidator.validateCadenceSeedOrThrow(args.getQuick(1), positions.getQuick(1));
+        final ExpressionNode subsample = node.windowExpression.getPendingSubsample();
+        final SampleByBinder.SubsampleMethod method = SampleByBinder.SubsampleMethod.of(subsample.token);
+        final int pendingIndex = SampleByBinder.pendingSubsampleArgument(subsample, method);
+        switch (method) {
+            case UNIFORM -> {
+                if (pendingIndex == 0) {
+                    SubsampleValidator.validatePositionTargetOrThrow(args.getQuick(0), positions.getQuick(0), false);
+                }
             }
-        } else if ((Chars.equalsIgnoreCase(node.token, "m4") || Chars.equalsIgnoreCase(node.token, "minmax")
-                || Chars.equalsIgnoreCase(node.token, "lttb")) && args.size() >= 3) {
-            SubsampleValidator.validatePositionTargetOrThrow(args.getQuick(2), positions.getQuick(2), false);
-            final ExpressionNode raw = node.windowExpression.getPendingSubsample();
-            if (Chars.equalsIgnoreCase(node.token, "lttb") && raw != null && raw.paramCount == 3) {
-                SubsampleValidator.validateLttbGapOrThrow(raw.args.getQuick(2));
+            case CADENCE -> {
+                if (pendingIndex == 0) {
+                    SubsampleValidator.validatePositionTargetOrThrow(args.getQuick(0), positions.getQuick(0), true);
+                }
+                if (args.size() == 2 && pendingIndex >= 0) {
+                    SubsampleValidator.validateCadenceSeedOrThrow(args.getQuick(1), positions.getQuick(1));
+                }
             }
-        } else if (Chars.equalsIgnoreCase(node.token, "sdt") && args.size() == 3) {
-            SubsampleValidator.validateSdtCompdev(args.getQuick(2), positions.getQuick(2));
+            case EXTREMA, LTTB -> {
+                if (pendingIndex == 1) {
+                    SubsampleValidator.validatePositionTargetOrThrow(args.getQuick(2), positions.getQuick(2), false);
+                }
+                if (method == SampleByBinder.SubsampleMethod.LTTB && subsample.paramCount == 3) {
+                    SubsampleValidator.validateLttbGapOrThrow(subsample.args.getQuick(2));
+                }
+            }
+            case SDT -> {
+                if (pendingIndex == 1) {
+                    SubsampleValidator.validateSdtCompdev(args.getQuick(2), positions.getQuick(2));
+                }
+            }
         }
     }
 
@@ -2113,6 +2117,13 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return checkColumn(node, findColumn(node, input, inputAlias), input, inputAlias);
     }
 
+    /**
+     * Binds an expression a clause evaluates once, on its own, see {@link BindingRole#STANDALONE}.
+     */
+    BoundExpression bindStandalone(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
+        return bind(node, BindingRole.STANDALONE, ctx.emptySchema, null, ColumnType.UNDEFINED, null, null, null, executionContext);
+    }
+
     ConstantExpression constant(Function function, int position) {
         return switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.TIMESTAMP ->
@@ -2206,9 +2217,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             int fillPosition,
             ExpressionNode aggregateNode
     ) throws SqlException {
-        final PreparedFunctions.Entry entry = ctx.preparedFunctions.findOwned(expression);
-        if (entry == null || !(ctx.preparedFunctions.root(entry) instanceof GroupByFunction function)) {
-            throw new IllegalStateException("aggregate preparation is not owned");
+        if (!(ctx.preparedRoot(expression) instanceof GroupByFunction function)) {
+            throw new IllegalStateException("aggregate preparation is not a group-by function");
         }
         final CharSequence unsupportedFill = GroupByUtils.getUnsupportedSampleByFill(function, fillToken);
         if (unsupportedFill != null) {
@@ -2226,7 +2236,25 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         GROUP_BY_EXPRESSION,
         PREDICATE,
         SCALAR,
+        /**
+         * An expression a clause evaluates once, on its own and over no columns, such as a frame bound or a SUBSAMPLE
+         * argument: every name is an unknown column, an aggregate call binds as the aggregate it is, which no constant
+         * is, and a window call, its OVER clause aside, binds as a call outside any window.
+         */
+        STANDALONE,
         UPDATE_ASSIGNMENT,
         WINDOW
+    }
+
+    /**
+     * The place of a call in the expression tree a binding binds, which decides the factories it admits.
+     */
+    private enum CallRole {
+        AGGREGATE_ROOT,
+        ARGUMENT,
+        PROJECTED_OFFSET,
+        ROOT,
+        WINDOW_ARGUMENT,
+        WINDOW_ROOT
     }
 }

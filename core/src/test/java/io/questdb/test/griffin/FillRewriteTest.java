@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.plan.logical.AggregatePlan;
+import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -107,7 +108,7 @@ public class FillRewriteTest extends AbstractCairoTest {
             Assert.assertEquals(fill.getChild().getOutput().getColumnCount(), fill.getOutput().getColumnCount());
             for (int i = 0, n = fill.getTargetColumnIds().size(); i < n; i++) {
                 Assert.assertTrue(fill.getChild().getOutput().getColumnIndexById(fill.getTargetColumnIds().getQuick(i)) >= 0);
-                if (fill.getModes().getQuick(i) == FillPlan.FILL_PREV_COLUMN) {
+                if (fill.getModes().getQuick(i) == FillMode.PREV_COLUMN) {
                     Assert.assertTrue(fill.getChild().getOutput().getColumnIndexById(fill.getSourceColumnIds().getQuick(i)) >= 0);
                 }
             }

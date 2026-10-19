@@ -25,6 +25,7 @@
 package io.questdb.griffin.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -56,14 +57,12 @@ final class OrderBinder implements Mutable {
     final ExpressionNode normalizedCount = ExpressionNode.FACTORY.newInstance();
     final ObjList<ExpressionNode> selectExpressions;
     private final BindContext ctx;
-    private final OutputSchema emptySchema;
     private final SampleByBinder sampleByBinder;
 
-    OrderBinder(BindContext ctx, OutputSchema emptySchema, SampleByBinder sampleByBinder, ObjList<ExpressionNode> selectExpressions) {
+    OrderBinder(BindContext ctx, SampleByBinder sampleByBinder, CompilerTemporaries temporaries) {
         this.ctx = ctx;
-        this.emptySchema = emptySchema;
         this.sampleByBinder = sampleByBinder;
-        this.selectExpressions = selectExpressions;
+        this.selectExpressions = temporaries.nodes;
     }
 
     @Override
@@ -124,8 +123,7 @@ final class OrderBinder implements Mutable {
                 }
                 final BoundExpression expression;
                 OutputSchema nested = null;
-                final int dot = order.type == ExpressionNode.LITERAL ? Chars.indexOfLastUnquoted(order.token, '.') : -1;
-                CharSequence hiddenName = dot < 0 ? order.token : order.token.subSequence(dot + 1, order.token.length());
+                CharSequence hiddenName = order.type == ExpressionNode.LITERAL ? unqualified(order.token) : order.token;
                 if (ordering != null) {
                     scope.substitutionNodes.clear();
                     scope.substitutionColumns.clear();
@@ -133,22 +131,12 @@ final class OrderBinder implements Mutable {
                     expression = ctx.functionBinder.bind(order, project.getOutput(), null,
                             scope.substitutionNodes, scope.substitutionColumns, executionContext);
                     if (expression instanceof ColumnExpression column) {
-                        for (int k = 0, count = ordering.getExpressions().size(); k < count; k++) {
-                            if (ordering.getExpressions().getQuick(k) instanceof ColumnExpression projected && projected.getColumnId() == column.getColumnId()) {
-                                index = k;
-                                break;
-                            }
-                        }
+                        index = LogicalPlans.projectedColumnIndex(ordering, column.getColumnId());
                     }
                 } else if (order.type == ExpressionNode.LITERAL) {
                     final int sourceIndex = ctx.bindColumnIndex(order, sourceScope, scopeAlias);
                     final int columnId = sourcePlan.getOutput().getColumnId(sourceIndex);
-                    for (int k = 0, count = project.getExpressions().size(); k < count; k++) {
-                        if (project.getExpressions().getQuick(k) instanceof ColumnExpression column && column.getColumnId() == columnId) {
-                            index = k;
-                            break;
-                        }
-                    }
+                    index = LogicalPlans.projectedColumnIndex(project, columnId);
                     expression = index < 0 ? ctx.planNodes.columns.next().of(columnId, sourcePlan.getOutput().getColumnType(sourceIndex), order.position) : null;
                     nested = sourcePlan.getOutput().getMetadata(sourceIndex);
                     hiddenName = sourcePlan.getOutput().getColumnName(sourceIndex);
@@ -246,7 +234,7 @@ final class OrderBinder implements Mutable {
         final int timestampId = input.getColumnId(inputTimestampIndex);
         final CharSequence timestampName = input.getColumnName(inputTimestampIndex);
         // A computed projection designates the last plain reference, as the virtual factory does.
-        final boolean isLastReference = hasComputedProjection(project);
+        final boolean isLastReference = !LogicalPlans.isColumnReferenceProjection(project);
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (project.getExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == timestampId
                     && (column.isDirectReference() || i == orderedProjectionIndex)
@@ -384,11 +372,7 @@ final class OrderBinder implements Mutable {
             if (index < 0) {
                 return false;
             }
-            boolean isSelected = false;
-            for (int k = 0, m = project.getExpressions().size(); k < m && !isSelected; k++) {
-                isSelected = project.getExpressions().getQuick(k) instanceof ColumnExpression column && column.getColumnId() == scope.getColumnId(index);
-            }
-            if (!isSelected) {
+            if (LogicalPlans.projectedColumnIndex(project, scope.getColumnId(index)) < 0) {
                 return false;
             }
         }
@@ -456,7 +440,7 @@ final class OrderBinder implements Mutable {
         if (ctx.isAggregate(expression)) {
             throw SqlException.$(expression.position, "LIMIT expressions must be convertible to INT");
         }
-        final BoundExpression bound = ctx.functionBinder.bind(expression, emptySchema, null, ColumnType.LONG, executionContext);
+        final BoundExpression bound = ctx.functionBinder.bind(expression, ctx.emptySchema, null, ColumnType.LONG, executionContext);
         validateLimitType(bound.getDataType(),
                 (bound.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0 || LogicalPlans.hasOuterColumn(bound),
                 expression.position);
@@ -493,15 +477,11 @@ final class OrderBinder implements Mutable {
     LogicalPlan bindRowCount(QueryModel model, QueryModel source, LogicalPlan input, SqlExecutionContext executionContext) throws SqlException {
         final QueryColumn column = model.getBottomUpColumns().getQuick(0);
         final ExpressionNode expression = column.getAst();
-        // Parser already normalizes COUNT(*). Match rewriteCount's non-NULL
-        // literal normalization without mutating the parser's expression.
-        final ExpressionNode call = expression.paramCount == 0 ? expression
-                : normalizedCount.of(ExpressionNode.FUNCTION, expression.token, expression.precedence, expression.position);
-        final FunctionExpression count = ctx.functionBinder.bindAggregate(call, input.getOutput(), sourceAlias(source), executionContext);
+        final FunctionExpression count = ctx.functionBinder.bindAggregate(rowCountCall(expression), input.getOutput(), sourceAlias(source), executionContext);
         final AggregatePlan aggregate = ctx.planNodes.aggregates.next().of(input, expression.position);
         aggregate.getAggregates().add(count);
-        // Keep SQL names for an outer scope. The existing count specialization
-        // canonicalizes its own COUNT alias; a real outer projection may rename it.
+        // The output keeps the SELECT name an enclosing query reads; the count factory names its column count under
+        // any spelling, see PlanToFactoryRules.factoryColumnName.
         aggregate.getOutput().add(ctx.planNodes.nextColumnId(), ctx.createOutputName(column.getName()), count.getDataType(), true);
         final boolean isOrderBound = !ctx.hasDeferredOrder(source);
         LogicalPlan result = aggregate;
@@ -596,12 +576,7 @@ final class OrderBinder implements Mutable {
             if (index < 0) {
                 final int sourceIndex = ctx.bindColumnIndex(expression, input, scopeAlias);
                 final int columnId = input.getColumnId(sourceIndex);
-                for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                    if (project.getExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == columnId) {
-                        index = i;
-                        break;
-                    }
-                }
+                index = LogicalPlans.projectedColumnIndex(project, columnId);
                 if (index < 0) {
                     index = project.getExpressions().size();
                     ctx.addProjection(project, ctx.planNodes.columns.next().of(columnId, input.getColumnType(sourceIndex), expression.position),
@@ -648,10 +623,8 @@ final class OrderBinder implements Mutable {
         if (!(input instanceof ProjectPlan project) || !(project.getChild() instanceof SortPlan sort) || project.hasTimestampDeclaration()) {
             return input;
         }
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression)) {
-                return input;
-            }
+        if (!LogicalPlans.isColumnReferenceProjection(project)) {
+            return input;
         }
         for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
             if (LogicalPlans.projectedColumnIndex(project, sort.getColumnIds().getQuick(i)) < 0) {
@@ -703,6 +676,15 @@ final class OrderBinder implements Mutable {
     ) {
         final int index = selected == null ? -1 : selectedOrderIndex(order, selected, input, source, aggregate);
         return index >= 0 ? index : earlierOrderIndex(order, orders, i);
+    }
+
+    /**
+     * The call {@code count()} in place of a count of a non-null constant, which counts the same rows, see
+     * {@link BindContext#isConstantCount}; any other expression as it is. The parser's expression stays unchanged.
+     */
+    ExpressionNode rowCountCall(ExpressionNode expression) {
+        return isConstantCount(expression)
+                ? normalizedCount.of(ExpressionNode.FUNCTION, expression.token, expression.precedence, expression.position) : expression;
     }
 
     /**

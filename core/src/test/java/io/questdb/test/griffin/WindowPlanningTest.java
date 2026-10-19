@@ -436,6 +436,30 @@ public class WindowPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFrameBoundValidation() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("SELECT sum(v) OVER(ORDER BY ts ROWS BETWEEN (1 - 2) PRECEDING AND CURRENT ROW) FROM lp_window")
+                    .noLeakCheck().fails(47, "non-negative integer expression expected");
+            assertQuery("SELECT sum(v) OVER(ORDER BY ts ROWS BETWEEN id PRECEDING AND CURRENT ROW) FROM lp_window")
+                    .noLeakCheck().fails(44, "Invalid column: id");
+            assertQuery("SELECT sum(v) OVER(ORDER BY ts ROWS BETWEEN rnd_int() PRECEDING AND CURRENT ROW) FROM lp_window")
+                    .noLeakCheck().fails(44, "constant expression expected");
+            assertRowsOnly(
+                    "SELECT id, sum(v) OVER(ORDER BY ts ROWS BETWEEN '1' PRECEDING AND CURRENT ROW) s FROM lp_window",
+                    """
+                            id\ts
+                            1\t1.0
+                            2\t3.0
+                            3\t2.0
+                            4\t4.0
+                            5\t6.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testValidationPositionsAndCompilerRecovery() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

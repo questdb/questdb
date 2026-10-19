@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
 import io.questdb.jit.CompiledFilter;
@@ -69,12 +70,7 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
             final ObjList<Function> workerFilters = list(worker0, worker1, worker2);
             final AsyncFilterContext context = new AsyncFilterContext(
                     configuration,
-                    compiledFilter,
-                    null,
-                    bindFunctions,
-                    ownerFilter,
-                    null,
-                    workerFilters,
+                    new AsyncFilterResources(compiledFilter, null, null, bindFunctions, ownerFilter, null, workerFilters),
                     3,
                     0,
                     Long.MAX_VALUE,
@@ -112,12 +108,7 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
             final TrackingFunction ownerFilter = new TrackingFunction(sharedFailure);
             final AsyncFilterContext context = new AsyncFilterContext(
                     configuration,
-                    compiledFilter,
-                    null,
-                    null,
-                    ownerFilter,
-                    null,
-                    null,
+                    new AsyncFilterResources(compiledFilter, null, null, null, ownerFilter, null, null),
                     0,
                     0,
                     Long.MAX_VALUE,
@@ -166,12 +157,7 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
             try {
                 new AsyncFilterContext(
                         throwingConfiguration,
-                        compiledFilter,
-                        null,
-                        bindFunctions,
-                        ownerFilter,
-                        null,
-                        workerFilters,
+                        new AsyncFilterResources(compiledFilter, null, null, bindFunctions, ownerFilter, null, workerFilters),
                         2,
                         0,
                         Long.MAX_VALUE,
@@ -219,11 +205,7 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
             final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(
                     null,
                     workers,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
+                    new AsyncFilterResources(),
                     null
             );
 
@@ -267,12 +249,7 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
             final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
             AsyncFilterContext ctx = new AsyncFilterContext(
                     configuration,
-                    new CompiledFilter(),
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
+                    new AsyncFilterResources(new CompiledFilter(), null, null, null, null, null, null),
                     4,
                     0,
                     Long.MAX_VALUE,
@@ -321,12 +298,7 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
             // close() is a no-op.
             AsyncFilterContext ctx = new AsyncFilterContext(
                     configuration,
-                    new CompiledFilter(),
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
+                    new AsyncFilterResources(new CompiledFilter(), null, null, null, null, null, null),
                     slotCount,
                     0,
                     Long.MAX_VALUE,
@@ -388,14 +360,10 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
             final long initialCapacity = configuration.getPageFrameReduceRowIdListCapacity();
             final long grownCapacity = 1_000_000; // a full default page frame: 8 MB per list
 
+            // no compiled filter -> only the row-id lists are allocated
             AsyncFilterContext ctx = new AsyncFilterContext(
                     configuration,
-                    null, // no compiled filter -> only the row-id lists are allocated
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
+                    new AsyncFilterResources(),
                     slotCount,
                     0,
                     Long.MAX_VALUE,

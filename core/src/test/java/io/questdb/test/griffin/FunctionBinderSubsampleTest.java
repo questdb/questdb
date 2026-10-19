@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
@@ -42,6 +43,7 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -53,24 +55,92 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     @Test
     public void testConstantValidationPrecedesOverloadSelection() throws Exception {
         assertMemoryLeak(() -> {
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                configure();
-                try {
-                    assertError(binder, window("uniform", constant("1.5", 17)), 17, "integer expected for target point count");
-                    assertError(binder, window("uniform", constant("'3'", 17)), 17, "integer expected for target point count");
-                    assertError(binder, window("uniform", constant("null", 17)), 17, "target point count must be set");
-                    assertError(binder, window("uniform", constant("1", 17)), 17, "target points must be at least 2");
-                    assertError(binder, window("uniform", constant("2147483648L", 17)), 17, "target points exceeds maximum of 2147483647");
-                    assertError(binder, window("cadence", constant("1.5", 17)), 17, "integer expected for stride");
-                    assertError(binder, window("cadence", constant("null", 17)), 17, "stride must be set");
-                    assertError(binder, window("cadence", constant("0", 17)), 17, "stride must be at least 1");
-                    assertError(binder, window("cadence", constant("2147483648L", 17)), 17, "stride exceeds maximum of 2147483647");
-                    assertError(binder, window("cadence", constant("2", 17), constant("1.5", 31)), 31, "integer or NULL expected for seed");
-                    assertError(binder, window("cadence", constant("2", 17), constant("'seed'", 31)), 31, "integer or NULL expected for seed");
-                    binder.bindWindow(window("cadence", constant("1", 17), constant("null", 31)), schema(), null, sqlExecutionContext);
-                } finally {
-                    sqlExecutionContext.clearWindowContext();
+            execute("CREATE TABLE x (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE uniform(1.5)", 38, "integer expected for target point count");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE uniform('3')", 38, "integer expected for target point count");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE uniform(null)", 38, "target point count must be set");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE uniform(1)", 38, "target points must be at least 2");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE uniform(2147483648L)", 38, "target points exceeds maximum of 2147483647");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(1.5)", 38, "integer expected for stride");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(null)", 38, "stride must be set");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(0)", 38, "stride must be at least 1");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(2147483648L)", 38, "stride exceeds maximum of 2147483647");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(2, 1.5)", 41, "integer or NULL expected for seed");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(2, 'seed')", 41, "integer or NULL expected for seed");
+            assertQuery("SELECT ts, i FROM x SUBSAMPLE cadence(1, null)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\ti\n");
+        });
+    }
+
+    @Test
+    public void testIntegerBoundariesAndFoldedTargets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (0, 1), (1, 2), (2, 3)");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE uniform(null::LONG)", 42,
+                    "target point count must be set");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(null::LONG)", 42,
+                    "stride must be set");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE uniform(-2)", 38,
+                    "target points must be at least 2");
+            assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(-1)", 38,
+                    "stride must be at least 1");
+            assertQuery("SELECT ts, i FROM x SUBSAMPLE uniform(1 + 1)").noLeakCheck().timestamp("ts").returns("""
+                    ts	i
+                    1970-01-01T00:00:00.000000Z	1
+                    1970-01-01T00:00:00.000002Z	3
+                    """);
+            assertQuery("SELECT ts, i FROM x SUBSAMPLE uniform(2::BYTE)").noLeakCheck().timestamp("ts").returns("""
+                    ts	i
+                    1970-01-01T00:00:00.000000Z	1
+                    1970-01-01T00:00:00.000002Z	3
+                    """);
+            assertQuery("SELECT ts, i FROM x SUBSAMPLE uniform(2_147_483_647L)").noLeakCheck().timestamp("ts").returns("""
+                    ts	i
+                    1970-01-01T00:00:00.000000Z	1
+                    1970-01-01T00:00:00.000001Z	2
+                    1970-01-01T00:00:00.000002Z	3
+                    """);
+            assertQuery("SELECT ts, i FROM x SUBSAMPLE cadence(1::SHORT, null::LONG)").noLeakCheck().timestamp("ts").returns("""
+                    ts	i
+                    1970-01-01T00:00:00.000000Z	1
+                    1970-01-01T00:00:00.000001Z	2
+                    1970-01-01T00:00:00.000002Z	3
+                    """);
+        });
+    }
+
+    @Test
+    public void testRuntimeCadenceStrideRevalidatesAfterFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (0, 1), (1, 2), (2, 3)");
+            bindVariableService.setLong(0, 1);
+            try (RecordCursorFactory factory = select("SELECT ts, i FROM x SUBSAMPLE cadence($1, null)")) {
+                final String expected = """
+                        ts	i
+                        1970-01-01T00:00:00.000000Z	1
+                        1970-01-01T00:00:00.000001Z	2
+                        1970-01-01T00:00:00.000002Z	3
+                        """;
+                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").returns(expected);
+                final long[] strides = {Numbers.LONG_NULL, 0, 2_147_483_648L};
+                final ObjList<String> errors = new ObjList<>("stride must be set", "stride must be at least 1",
+                        "stride exceeds maximum of 2147483647");
+                for (int i = 0; i < strides.length; i++) {
+                    bindVariableService.setLong(0, strides[i]);
+                    final SqlException error = Assert.assertThrows(SqlException.class, () -> {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            while (cursor.hasNext()) {
+                            }
+                        }
+                    });
+                    Assert.assertEquals(38, error.getPosition());
+                    TestUtils.assertEquals(errors.getQuick(i), error.getFlyweightMessage());
+                    bindVariableService.setLong(0, 1);
+                    assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").returns(expected);
                 }
             }
         });
@@ -79,20 +149,16 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     @Test
     public void testNativeArgumentValidationFailureReleasesChildren() throws Exception {
         assertMemoryLeak(() -> {
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                configure();
-                try {
-                    for (int i = 0; i < 5; i++) {
-                        assertError(binder, window("uniform", membership(17)), 17, "target point count must be a constant or bind variable");
-                        assertError(binder, window("cadence", constant("2", 17), membership(31)), 31, "seed must be a constant, bind variable, or NULL");
-                        binder.clear();
-                        parser.clear();
-                    }
-                    binder.bindWindow(window("uniform", constant("3", 17)), schema(), null, sqlExecutionContext);
-                } finally {
-                    sqlExecutionContext.clearWindowContext();
-                }
+            execute("CREATE TABLE x (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            for (int i = 0; i < 5; i++) {
+                assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE uniform((SELECT 1))", 39,
+                        "target point count must be a constant or bind variable");
+                assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(2, (SELECT 1))", 42,
+                        "seed must be a constant, bind variable, or NULL");
+                assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE uniform((SELECT 1 FROM long_sequence(1) WHERE x = (SELECT 1)))", 39,
+                        "target point count must be a constant or bind variable");
+                assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(2, (SELECT 1 FROM long_sequence(1) WHERE x = (SELECT 1)))", 42,
+                        "seed must be a constant, bind variable, or NULL");
             }
         });
     }
@@ -193,15 +259,6 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
         });
     }
 
-    private static ExpressionNode membership(int position) {
-        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "in", 0, position);
-        node.paramCount = 3;
-        node.args.add(constant("2", position + 3));
-        node.args.add(constant("1", position + 2));
-        node.args.add(ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, "i", 0, position + 1));
-        return node;
-    }
-
     private static GenericRecordMetadata metadata() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP_MICRO));
@@ -218,27 +275,16 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     }
 
     private static ExpressionNode window(String name, ExpressionNode target) {
+        final ExpressionNode subsample = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
+        subsample.paramCount = 1;
+        subsample.args.add(target);
         final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
         node.paramCount = 1;
         node.rhs = target;
         node.windowExpression = WindowExpression.FACTORY.newInstance();
         node.windowExpression.setSubsampleKeepFlag(true);
+        node.windowExpression.setPendingSubsample(subsample, 0, true);
         return node;
-    }
-
-    private static ExpressionNode window(String name, ExpressionNode target, ExpressionNode seed) {
-        final ExpressionNode node = window(name, target);
-        node.paramCount = 2;
-        node.lhs = target;
-        node.rhs = seed;
-        return node;
-    }
-
-    private void assertError(FunctionBindingHarness binder, ExpressionNode expression, int position, String message) throws Exception {
-        final SqlException error = Assert.assertThrows(SqlException.class,
-                () -> binder.bindWindow(expression, schema(), null, sqlExecutionContext));
-        Assert.assertEquals(position, error.getPosition());
-        TestUtils.assertEquals(message, error.getFlyweightMessage());
     }
 
     private void configure() throws SqlException {

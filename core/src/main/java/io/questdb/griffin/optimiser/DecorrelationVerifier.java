@@ -50,6 +50,7 @@ import io.questdb.std.ObjList;
  * its step or of a step before it, and none reads a column that a step matching per outer row null-extends.
  */
 final class DecorrelationVerifier {
+    private DecorrelationCarriers carriers;
     private final IntList counts;
     private final OnFacts facts;
     private final ObjList<JoinInput> reachedSteps;
@@ -73,7 +74,7 @@ final class DecorrelationVerifier {
      * True when a step at an ordered position up to {@code through} null-extends the input at {@code input} and
      * matches per outer row: it null-extends its master and reads a carrier, or it keys on a carrier of its prefix.
      */
-    private static boolean isNulledPerOuterRow(JoinPlan join, int input, int through) {
+    private boolean isNulledPerOuterRow(JoinPlan join, int input, int through) {
         final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
         for (int i = 1; i <= through; i++) {
             if (LogicalPlans.isNullingStep(join, steps.getQuick(i), steps.getQuick(input)) && isOuterDependent(steps.getQuick(i))) {
@@ -83,8 +84,8 @@ final class DecorrelationVerifier {
         return false;
     }
 
-    private static boolean isOuterDependent(JoinInput step) {
-        final IntList carriers = step.getCarrierColumnIds();
+    private boolean isOuterDependent(JoinInput step) {
+        final IntList carriers = this.carriers.of(step);
         if (carriers.size() == 0) {
             return false;
         }
@@ -110,7 +111,7 @@ final class DecorrelationVerifier {
             final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
             for (int p = 0, n = steps.size(); p < n; p++) {
                 final JoinInput step = steps.getQuick(p);
-                final IntList carriers = step.getCarrierColumnIds();
+                final IntList carriers = this.carriers.of(step);
                 for (int i = 0, m = carriers.size(); i < m; i++) {
                     final int columnId = carriers.getQuick(i);
                     if (step.getSourceOutput().getColumnIndexById(columnId) > -1) {
@@ -214,7 +215,8 @@ final class DecorrelationVerifier {
     /**
      * Verifies decorrelation's output against the steps {@link #record} found.
      */
-    void verify(LogicalPlan root, String pass) {
+    void verify(LogicalPlan root, String pass, DecorrelationCarriers carriers) {
+        this.carriers = carriers;
         this.root = root;
         this.pass = pass;
         reachedSteps.clear();
@@ -228,13 +230,14 @@ final class DecorrelationVerifier {
                 facts.of(step);
                 final int countBase = 3 * i;
                 if (facts.pairCount() < counts.getQuick(countBase) || facts.otherCount < counts.getQuick(countBase + 2)
-                        || counts.getQuick(countBase + 1) > 0 && !facts.hasCarrierPair(step)) {
+                        || counts.getQuick(countBase + 1) > 0 && !facts.hasCarrierPair(carriers.of(step))) {
                     throw PlanVerifier.failure(PlanVerifier.JOIN_ON_KEPT, -1, null, root, pass, root);
                 }
             }
         } finally {
             clear();
             facts.pairs.clear();
+            this.carriers = null;
             this.root = null;
             this.pass = null;
         }
@@ -291,8 +294,7 @@ final class DecorrelationVerifier {
             pairs.add(hi);
         }
 
-        private boolean hasCarrierPair(JoinInput step) {
-            final IntList carriers = step.getCarrierColumnIds();
+        private boolean hasCarrierPair(IntList carriers) {
             for (int i = 0, n = pairs.size(); i < n; i++) {
                 if (carriers.contains(pairs.getQuick(i))) {
                     return true;
@@ -305,8 +307,8 @@ final class DecorrelationVerifier {
             pairs.clear();
             otherCount = 0;
             outerPairCount = 0;
-            for (int i = 0, n = step.getMasterKeyColumnIds().size(); i < n; i++) {
-                addPair(step.getMasterKeyColumnIds().getQuick(i), step.getSlaveKeyColumnIds().getQuick(i));
+            for (int i = 0, n = step.getKeys().size(); i < n; i++) {
+                addPair(step.getKeys().getQuick(i).getMasterColumnId(), step.getKeys().getQuick(i).getSlaveColumnId());
             }
             addConjuncts(step.getOnResidual());
             addConjuncts(step.getKeyFilter());

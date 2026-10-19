@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.jit.CompiledCountOnlyFilter;
@@ -169,13 +170,8 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
                     configuration,
                     engine.getMessageBus(),
                     base,
-                    bindVarFunctions,
-                    compiledFilter,
-                    compiledCountOnlyFilter,
-                    filter,
-                    new IntHashSet(),
+                    new AsyncFilterResources(compiledFilter, compiledCountOnlyFilter, null, bindVarFunctions, filter, new IntHashSet(), perWorkerFilters),
                     reduceTaskFactory,
-                    perWorkerFilters,
                     null,
                     0,
                     1,

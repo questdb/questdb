@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
@@ -128,11 +129,12 @@ final class FilterFactoryGenerator {
     }
 
     /**
-     * Compiles the predicate over the page frames of the factory into the prepared filter's JIT filters and bind
-     * variables. Throws the JIT's decline, leaving what it compiled in the prepared filter.
+     * Compiles a page-frame filter and its count-only variant, or a LATEST BY filter whose symbol tables come from
+     * the table reader. Throws the JIT's decline, leaving what it compiled in the prepared filter.
      */
-    private void compileJit(GenerationFrame frame, PreparedFilter target, RecordCursorFactory base, BoundExpression predicate,
-                            OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
+    private void compileJit(GenerationFrame frame, PreparedFilter target, @Nullable RecordCursorFactory base, BoundExpression predicate,
+                            OutputSchema input, RecordMetadata metadata, @Nullable PlanTable table, @Nullable IntList columnIndexes,
+                            SqlExecutionContext executionContext) throws SqlException {
         final ObjList<Function> bindVarFunctions = frame.functions;
         bindVarFunctions.clear();
         CompiledFilter compiledFilter = null;
@@ -141,21 +143,33 @@ final class FilterFactoryGenerator {
             final int jitOptions;
             Throwable cleanupFailure = null;
             try {
-                try (PageFrameCursor cursor = base.getPageFrameCursor(executionContext, ORDER_ANY)) {
-                    final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                    jitIRSerializer.of(jitIRMem, executionContext, base.getMetadata(), input, cursor, bindVarFunctions);
-                    jitOptions = jitIRSerializer.serialize(predicate, forceScalar, enableJitDebug, enableJitNullChecks);
+                final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
+                if (base != null) {
+                    try (PageFrameCursor cursor = base.getPageFrameCursor(executionContext, ORDER_ANY)) {
+                        jitIRSerializer.of(jitIRMem, executionContext, metadata, input, cursor, bindVarFunctions);
+                        jitOptions = jitIRSerializer.serialize(predicate, forceScalar, enableJitDebug, enableJitNullChecks);
+                    }
+                } else {
+                    assert table != null && columnIndexes != null;
+                    try (TableReader reader = executionContext.getReader(table.getTableToken(), table.getMetadataVersion())) {
+                        jitIRSerializer.of(jitIRMem, executionContext, metadata, input, readerSymbolTables.of(reader, columnIndexes), bindVarFunctions);
+                        jitOptions = jitIRSerializer.serialize(predicate, forceScalar, enableJitDebug, enableJitNullChecks);
+                    }
                 }
                 compiledFilter = new CompiledFilter();
                 compiledFilter.compile(jitIRMem, jitOptions);
-                compiledCountOnlyFilter = new CompiledCountOnlyFilter();
-                compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
+                if (base != null) {
+                    compiledCountOnlyFilter = new CompiledCountOnlyFilter();
+                    compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
+                }
             } catch (Throwable th) {
                 cleanupFailure = th;
                 throw th;
             } finally {
+                readerSymbolTables.clear();
                 clearJitScratch(cleanupFailure);
             }
+            target.setJit(compiledFilter, compiledCountOnlyFilter, new ObjList<>(bindVarFunctions));
         } catch (Throwable th) {
             target.setJit(compiledFilter, compiledCountOnlyFilter, null);
             final Throwable cleanup = Misc.freeObjListBestEffort(null, bindVarFunctions);
@@ -165,7 +179,6 @@ final class FilterFactoryGenerator {
             }
             throw th;
         }
-        target.setJit(compiledFilter, compiledCountOnlyFilter, new ObjList<>(bindVarFunctions));
         bindVarFunctions.clear();
     }
 
@@ -253,6 +266,30 @@ final class FilterFactoryGenerator {
         }
     }
 
+    /**
+     * Compiles the predicate into the prepared filter's JIT filters, see {@link #compileJit}, and returns whether the
+     * JIT accepted it. On its decline frees what it compiled and logs the decline, after which the caller builds the
+     * Java filter; a failure to free it fails with the decline.
+     */
+    private boolean tryCompileJit(GenerationFrame frame, PreparedFilter target, @Nullable RecordCursorFactory base, BoundExpression predicate,
+                                  OutputSchema input, RecordMetadata metadata, @Nullable PlanTable table, @Nullable IntList columnIndexes,
+                                  SqlExecutionContext executionContext) throws SqlException {
+        try {
+            compileJit(frame, target, base, predicate, input, metadata, table, columnIndexes, executionContext);
+            return true;
+        } catch (SqlException | LimitOverflowException decline) {
+            final Throwable cleanup = target.freeJit();
+            if (cleanup != null) {
+                decline.addSuppressed(cleanup);
+                throw decline;
+            }
+            LOG.debug()
+                    .$("JIT cannot be applied to (sub)query [ex=").$safe(decline.getFlyweightMessage())
+                    .$(", fd=").$(executionContext.getRequestFd()).I$();
+            return false;
+        }
+    }
+
     static void collectColumnIndexes(BoundExpression expression, OutputSchema input, IntHashSet columns) {
         if (expression instanceof ColumnExpression column) {
             final int index = input.getColumnIndexById(column.getColumnId());
@@ -294,11 +331,21 @@ final class FilterFactoryGenerator {
     }
 
     /**
+     * Whether the JIT may compile a filter: the execution context enables it, the platform supports it, and the filter
+     * reads the target of an UPDATE only while WAL application runs the UPDATE.
+     */
+    static boolean isJitApplicable(boolean isUpdate, SqlExecutionContext executionContext) {
+        return executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED && JitUtil.isJitSupported()
+                && (!isUpdate || executionContext.isWalApplication());
+    }
+
+    /**
      * Wraps the filter of a LATEST BY scan in a {@link LatestByCompiledFilter}, which adopts it, when the JIT compiles
      * the predicate over the columns of {@code table}; otherwise returns the filter. A reader of the table serves the
      * serializer's symbol tables while it serializes the predicate.
      */
     Function compileLatestBy(
+            GenerationFrame frame,
             Function filter,
             BoundExpression predicate,
             OutputSchema input,
@@ -307,31 +354,16 @@ final class FilterFactoryGenerator {
             IntList columnIndexes,
             boolean isUpdate,
             SqlExecutionContext executionContext
-    ) {
-        if (!configuration.isSqlLatestByJitEnabled() || executionContext.getJitMode() == SqlJitMode.JIT_MODE_DISABLED
-                || !JitUtil.isJitSupported() || filter.isConstant() || filter.isRuntimeConstant()
-                || !filter.isStableWithinExecution() || isUpdate && !executionContext.isWalApplication()) {
+    ) throws SqlException {
+        if (!configuration.isSqlLatestByJitEnabled() || !isJitApplicable(isUpdate, executionContext) || filter.isConstant()
+                || filter.isRuntimeConstant() || !filter.isStableWithinExecution()) {
             return filter;
         }
-        CompiledFilter compiledFilter = null;
-        final ObjList<Function> bindVarFunctions = new ObjList<>();
+        final PreparedFilter jit = frame.pushPreparedFilter();
+        Throwable failure = null;
         try {
-            Throwable cleanupFailure = null;
-            try {
-                final int jitOptions;
-                try (TableReader reader = executionContext.getReader(table.getTableToken(), table.getMetadataVersion())) {
-                    jitIRSerializer.of(jitIRMem, executionContext, metadata, input, readerSymbolTables.of(reader, columnIndexes), bindVarFunctions);
-                    jitOptions = jitIRSerializer.serialize(predicate,
-                            executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR, enableJitDebug, enableJitNullChecks);
-                }
-                compiledFilter = new CompiledFilter();
-                compiledFilter.compile(jitIRMem, jitOptions);
-            } catch (Throwable th) {
-                cleanupFailure = th;
-                throw th;
-            } finally {
-                readerSymbolTables.clear();
-                clearJitScratch(cleanupFailure);
+            if (!tryCompileJit(frame, jit, null, predicate, input, metadata, table, columnIndexes, executionContext)) {
+                return filter;
             }
             latestByColumns.clear();
             collectColumnIndexes(predicate, input, latestByColumns);
@@ -339,17 +371,18 @@ final class FilterFactoryGenerator {
             for (int i = 0, n = latestByColumns.size(); i < n; i++) {
                 filterColumnIndexes.add(latestByColumns.get(i));
             }
-            return new LatestByCompiledFilter(configuration, filter, compiledFilter, bindVarFunctions, filterColumnIndexes);
-        } catch (SqlException | LimitOverflowException decline) {
-            Throwable cleanup = Misc.freeBestEffort(null, compiledFilter);
-            cleanup = Misc.freeObjListBestEffort(cleanup, bindVarFunctions);
-            CairoException.rethrowCleanupFailure(cleanup);
-            LOG.debug().$("JIT cannot be applied to LATEST ON [ex=").$safe(decline.getFlyweightMessage()).I$();
-            return filter;
+            final Function result = new LatestByCompiledFilter(configuration, filter, jit.getCompiledFilter(), jit.getBindVarFunctions(), filterColumnIndexes);
+            jit.setJit(null, null, null);
+            return result;
         } catch (Throwable th) {
-            Misc.free(compiledFilter, th);
-            Misc.freeObjList(bindVarFunctions, th);
+            failure = th;
             throw th;
+        } finally {
+            if (failure == null) {
+                frame.popPreparedFilter();
+            } else {
+                frame.popPreparedFilter(failure);
+            }
         }
     }
 
@@ -574,32 +607,15 @@ final class FilterFactoryGenerator {
         final IntHashSet columns = new IntHashSet();
         collectColumnIndexes(predicate, input, columns);
         target.setColumns(columns);
-        if (target.isJitAllowed() && executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED && JitUtil.isJitSupported()) {
-            try {
-                compileJit(frame, target, leaf, predicate, input, executionContext);
-            } catch (SqlException | LimitOverflowException decline) {
-                Throwable cleanup = Misc.freeBestEffort(null, target.getCompiledFilter());
-                cleanup = Misc.freeBestEffort(cleanup, target.getCompiledCountOnlyFilter());
-                cleanup = Misc.freeObjListBestEffort(cleanup, target.getBindVarFunctions());
-                target.setJit(null, null, null);
-                if (cleanup != null) {
-                    decline.addSuppressed(cleanup);
-                    throw decline;
-                }
-                LOG.debug()
-                        .$("JIT cannot be applied to (sub)query [ex=").$safe(decline.getFlyweightMessage())
-                        .$(", fd=").$(executionContext.getRequestFd()).I$();
-            }
-            if (target.getCompiledFilter() != null) {
-                final CompiledCountOnlyFilter countOnlyFilter = target.getCompiledCountOnlyFilter();
-                target.setJit(target.getCompiledFilter(), null, target.getBindVarFunctions());
-                Misc.free(countOnlyFilter);
-                target.setBindVarMemory(Vm.getCARWInstance(
-                        configuration.getSqlJitBindVarsMemoryPageSize(),
-                        configuration.getSqlJitBindVarsMemoryMaxPages(),
-                        MemoryTag.NATIVE_JIT
-                ));
-            }
+        if (target.isJitAllowed() && tryCompileJit(frame, target, leaf, predicate, input, leaf.getMetadata(), null, null, executionContext)) {
+            final CompiledCountOnlyFilter countOnlyFilter = target.getCompiledCountOnlyFilter();
+            target.setJit(target.getCompiledFilter(), null, target.getBindVarFunctions());
+            Misc.free(countOnlyFilter);
+            target.setBindVarMemory(Vm.getCARWInstance(
+                    configuration.getSqlJitBindVarsMemoryPageSize(),
+                    configuration.getSqlJitBindVarsMemoryMaxPages(),
+                    MemoryTag.NATIVE_JIT
+            ));
         }
         final FunctionExpression pattern = target.getPattern();
         target.setWorkers(pattern == null
@@ -629,41 +645,29 @@ final class FilterFactoryGenerator {
             boolean enablePreTouch,
             @Nullable BoundExpression limitCount
     ) throws SqlException {
-        if (executionContext.getJitMode() == SqlJitMode.JIT_MODE_DISABLED
-                || isUpdate && !executionContext.isWalApplication()
-                || !JitUtil.isJitSupported()) {
+        if (!isJitApplicable(isUpdate, executionContext)) {
             return null;
         }
         final PreparedFilter jit = frame.pushPreparedFilter();
+        final boolean isCompiled;
         try {
-            compileJit(frame, jit, base, predicate, input, executionContext);
-        } catch (SqlException | LimitOverflowException decline) {
-            Throwable cleanup = null;
-            try {
-                frame.popPreparedFilter();
-            } catch (Throwable th) {
-                cleanup = Misc.foldCleanupFailure(null, th);
-            }
-            if (cleanup != null) {
-                decline.addSuppressed(cleanup);
-                Misc.free(filter, decline);
-                Misc.free(base, decline);
-                throw decline;
-            }
-            LOG.debug()
-                    .$("JIT cannot be applied to (sub)query [ex=").$safe(decline.getFlyweightMessage())
-                    .$(", fd=").$(executionContext.getRequestFd()).I$();
-            return null;
+            isCompiled = tryCompileJit(frame, jit, base, predicate, input, base.getMetadata(), null, null, executionContext);
         } catch (Throwable th) {
             frame.popPreparedFilter(th);
             Misc.free(filter, th);
             Misc.free(base, th);
             throw th;
         }
+        if (!isCompiled) {
+            frame.popPreparedFilter();
+            return null;
+        }
         LOG.debug().$("JIT enabled for (sub)query [fd=").$(executionContext.getRequestFd()).I$();
-        ObjList<Function> workers = null;
+        jit.of(predicate, input, filter, true);
+        jit.setColumns(columns);
         Function limit = null;
         final int limitPosition;
+        final AsyncFilterResources resources;
         try {
             if (limitCount != null) {
                 limit = instantiateLimit(frame, limitCount, input, executionContext);
@@ -671,25 +675,19 @@ final class FilterFactoryGenerator {
             } else {
                 limitPosition = 0;
             }
-            workers = functionInstantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
-                    executionContext.getSharedQueryWorkerCount(), executionContext);
+            jit.setWorkers(functionInstantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
+                    executionContext.getSharedQueryWorkerCount(), executionContext));
+            resources = jit.adopt();
         } catch (Throwable th) {
-            Misc.freeObjList(workers, th);
             Misc.free(limit, th);
             frame.popPreparedFilter(th);
-            Misc.free(filter, th);
             Misc.free(base, th);
             throw th;
         }
-        final CompiledFilter compiledFilter = jit.getCompiledFilter();
-        final CompiledCountOnlyFilter compiledCountOnlyFilter = jit.getCompiledCountOnlyFilter();
-        final ObjList<Function> bindVarFunctions = jit.getBindVarFunctions();
-        jit.adopt();
         frame.popPreparedFilter();
         return new AsyncJitFilteredRecordCursorFactory(
                 executionContext.getCairoEngine(), configuration, executionContext.getMessageBus(),
-                base, bindVarFunctions, compiledFilter, compiledCountOnlyFilter, filter, columns,
-                reduceTaskFactory, workers, limit, limitPosition,
+                base, resources, reduceTaskFactory, limit, limitPosition,
                 executionContext.getSharedQueryWorkerCount(), enablePreTouch
         );
     }

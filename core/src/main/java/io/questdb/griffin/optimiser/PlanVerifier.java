@@ -43,6 +43,7 @@ import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinDependency;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -106,7 +107,6 @@ public final class PlanVerifier {
     public static final String JOIN_ALGORITHM = "join step algorithm contradicts its kind, keys or hints";
     public static final String JOIN_FILTER_ORIGINS = "join filter conjuncts and their origins differ in length";
     public static final String JOIN_INPUT_SOURCE = "join input has neither a plan nor an UNNEST, or both";
-    public static final String JOIN_KEYS = "join key lists differ in length";
     public static final String JOIN_ON_KEPT = "join step that does not commute lost an ON condition fact in decorrelation";
     public static final String JOIN_ORDER = "ordered join inputs are not a permutation of the inputs";
     public static final String JOIN_OUTPUT = "join output does not list every input column exactly once";
@@ -124,6 +124,7 @@ public final class PlanVerifier {
     public static final String OUTPUT_TIMESTAMP = "designated timestamp differs from the input's";
     public static final String PREDICATE_CONSTANT = "constant predicate is not folded to a literal";
     public static final String PREDICATE_TYPE = "predicate is not BOOLEAN";
+    public static final String PROJECT_COUNTS = "projection column reference counts are stale";
     public static final String PROJECT_SHAPE = "projection expression count differs from its output";
     public static final String PROJECT_TIMESTAMP_DROP = "projection drops the timestamp outside a computing projection over a window join";
     public static final String PROJECT_TYPE = "projection output type differs from its expression";
@@ -134,6 +135,7 @@ public final class PlanVerifier {
     public static final String SET_OPERATION_MERGE = "merge facts of a set operation other than UNION ALL";
     public static final String SET_OPERATION_SHAPE = "set operation branches and output differ in column count";
     public static final String SET_OPERATION_SYMBOLS = "set operation symbol columns are not ascending output indexes";
+    public static final String SHARED_READ = "decorrelation domain reads its input in a way its shared source does not serve";
     public static final String SHARED_SOURCE_IDS = "shared source input and source id lists differ in length";
     public static final String SHARED_SOURCE_UNRECORDED = "decorrelation domain shares a join input the statement does not record";
     public static final String SORT_ALGORITHM = "sort algorithm contradicts the sort or its input";
@@ -249,8 +251,8 @@ public final class PlanVerifier {
      * Verifies decorrelation's output against the facts {@link #recordBarrierJoins} recorded, see
      * {@link DecorrelationVerifier}.
      */
-    public void verifyDecorrelation(LogicalPlan root, String pass) {
-        decorrelation.verify(root, pass);
+    public void verifyDecorrelation(LogicalPlan root, String pass, DecorrelationCarriers carriers) {
+        decorrelation.verify(root, pass, carriers);
     }
 
     /**
@@ -333,11 +335,6 @@ public final class PlanVerifier {
         columnIds.clear();
         joinScope.clear();
         outerInputs.clear();
-        for (int i = 0, n = visited.size(); i < n; i++) {
-            if (visited.getQuick(i) instanceof ProjectPlan project) {
-                project.clearColumnReferenceCounts();
-            }
-        }
         visited.clear();
     }
 
@@ -555,14 +552,8 @@ public final class PlanVerifier {
         }
         for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
             final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
-            final int keyCount = slave.getMasterKeyColumnIds().size();
-            if (slave.getSlaveKeyColumnIds().size() != keyCount || slave.getKeyPositions().size() != keyCount) {
-                fail(JOIN_KEYS);
-            }
-            site = "master keys";
-            resolveAll(master, slave.getMasterKeyColumnIds());
-            site = "slave keys";
-            resolveAll(slave.getInput().getOutput(), slave.getSlaveKeyColumnIds());
+            masterKeys(master, slave.getKeys());
+            slaveKeys(slave.getInput().getOutput(), slave.getKeys());
         }
     }
 
@@ -666,19 +657,12 @@ public final class PlanVerifier {
                 joinScope.clear();
             }
         }
-        final int keyCount = step.getMasterKeyColumnIds().size();
-        if (step.getSlaveKeyColumnIds().size() != keyCount || step.getKeyPositions().size() != keyCount
-                || step.getMasterKeyNames().size() != keyCount || step.getSlaveKeyNames().size() != keyCount) {
-            fail(JOIN_KEYS);
-        }
-        site = "master keys";
-        resolveAll(joinScope, step.getMasterKeyColumnIds());
+        masterKeys(joinScope, step.getKeys());
         if (step.getMarkoutTimestampColumnId() >= 0) {
             site = "markout timestamp";
             timestampColumn(joinScope, step.getMarkoutTimestampColumnId());
         }
-        site = "slave keys";
-        resolveAll(source, step.getSlaveKeyColumnIds());
+        slaveKeys(source, step.getKeys());
         if (step.getMarkoutSequenceColumnId() >= 0) {
             site = "markout sequence";
             readColumn(source, step.getMarkoutSequenceColumnId());
@@ -722,6 +706,13 @@ public final class PlanVerifier {
         noColumnReads(limit.getLo());
         noColumnReads(limit.getHi());
         failIfViolated(PhysicalChoiceVerifier.limit(limit, isAccessPathRequired));
+    }
+
+    private void masterKeys(OutputSchema scope, ObjList<JoinKey> keys) {
+        site = "master keys";
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            readColumn(scope, keys.getQuick(i).getMasterColumnId());
+        }
     }
 
     private void noColumnReads(BoundExpression expression) {
@@ -838,8 +829,15 @@ public final class PlanVerifier {
         }
         requestedColumn(project.getRequestedOrderColumnId(), output);
         requestedOrder(project.getRequestedOrder(), output);
-        project.deriveColumnReferenceCounts(columnIds);
-        if (project.isTimestampDropped() && (!(project.getChild() instanceof WindowJoinPlan) || LogicalPlans.isColumnOnlyProjection(project))) {
+        final int distinctColumnCount = project.getDistinctColumnCount();
+        if (distinctColumnCount >= 0) {
+            final int distinctWindowColumnCount = project.getDistinctWindowColumnCount();
+            project.deriveColumnReferenceCounts(columnIds);
+            if (project.getDistinctColumnCount() != distinctColumnCount || project.getDistinctWindowColumnCount() != distinctWindowColumnCount) {
+                fail(PROJECT_COUNTS);
+            }
+        }
+        if (project.isTimestampDropped() && !PlanToFactoryRules.isWindowJoinTimestampDroppable(project)) {
             fail(PROJECT_TIMESTAMP_DROP);
         }
     }
@@ -946,6 +944,13 @@ public final class PlanVerifier {
             fail(SHARED_SOURCE_UNRECORDED);
         }
         return TreeWalk.CONTINUE;
+    }
+
+    private void slaveKeys(OutputSchema scope, ObjList<JoinKey> keys) {
+        site = "slave keys";
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            readColumn(scope, keys.getQuick(i).getSlaveColumnId());
+        }
     }
 
     private void sort(SortPlan sort) {

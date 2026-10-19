@@ -25,6 +25,7 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SetOperationCasts;
@@ -35,8 +36,8 @@ import org.jetbrains.annotations.Nullable;
  * Derives, on demand and from the plan alone, the physical properties of the factory codegen builds for a plan node:
  * whether its cursor supports random access, page frames, time frames, shared cursors and long top-K, whether it
  * applies a LIMIT itself, follows the order advice of its scans or reads long_sequence(), and the order it emits its
- * rows in. It reads the access paths and the operator decisions operator planning records on the plan. A property is
- * {@link Capability#UNKNOWN} where codegen decides it from facts the plan does not carry.
+ * rows in, and the table it reports. It reads the access paths and the operator decisions operator planning records on
+ * the plan. A property is {@link Capability#UNKNOWN} where codegen decides it from facts the plan does not carry.
  */
 public final class PhysicalProperties {
     public static final int UNKNOWN_TIMESTAMP = -2;
@@ -93,6 +94,14 @@ public final class PhysicalProperties {
      */
     public static Capability masterSupportsRandomAccess(JoinPlan join, int inputCount) {
         return capability(join(join, inputCount), RANDOM_ACCESS);
+    }
+
+    /**
+     * The table the factory of the first {@code inputCount} ordered inputs of the join reports, see
+     * {@link #tableToken}: the first input's alone, as the factory of a join reports none.
+     */
+    public static TableToken masterTableToken(JoinPlan join, int inputCount) {
+        return inputCount == 1 ? tableToken(join.getOrderedInputs().getQuick(0).getInput()) : null;
     }
 
     /**
@@ -162,6 +171,43 @@ public final class PhysicalProperties {
      */
     public static Capability supportsTimeFrameCursor(LogicalPlan plan) {
         return supportsTimeFrameCursor(plan, null);
+    }
+
+    /**
+     * The table the factory reports, see {@link RecordCursorFactory#getTableToken()}: the table of a scan whose
+     * factory reads the table's page frames, which the operators that keep the scan's cursor, or read its page
+     * frames, report on; null for any other factory. Every access path and operator choice it reads is planned.
+     */
+    public static TableToken tableToken(LogicalPlan plan) {
+        return switch (plan) {
+            case ScanPlan scan -> scanTableToken(scan);
+            case FilterPlan filter -> {
+                final ScanPlan scan = PlanToFactoryRules.fusedScan(filter);
+                yield scan != null ? scanTableToken(scan)
+                        : filteredTableToken(filter.getPredicate(), filter.getAlgorithm(), tableToken(filter.getChild()));
+            }
+            case ProjectPlan project -> switch (PlanToFactoryRules.projectionFactory(project)) {
+                case WINDOW, VIRTUAL -> null;
+                case WINDOW_JOIN -> windowJoinTableToken((WindowJoinPlan) project.getChild());
+                case SELECTION ->
+                        PlanToFactoryRules.isIdentityProjection(project) ? tableToken(project.getChild()) : null;
+            };
+            case SortPlan sort ->
+                    sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER ? tableToken(sort.getChild()) : null;
+            case LimitPlan limit -> {
+                if (LogicalPlans.hasSortUnderStableProjects(limit.getChild())) {
+                    yield sortedLimitTableToken(limit.getChild(), limit);
+                }
+                yield limit.getApplication() == LimitPlan.Application.INPUT ? tableToken(limit.getChild()) : null;
+            }
+            case JoinPlan join -> masterTableToken(join, join.getOrderedInputs().size());
+            case WindowJoinPlan windowJoin -> windowJoinTableToken(windowJoin);
+            case LatestByPlan latest -> {
+                final ScanPlan scan = PlanToFactoryRules.latestByScan(latest);
+                yield scan != null ? scanTableToken(scan) : null;
+            }
+            default -> null;
+        };
     }
 
     /**
@@ -383,6 +429,21 @@ public final class PhysicalProperties {
     }
 
     /**
+     * The table the filter codegen builds over an input that reports {@code input} reports: the input's for a constant
+     * it folds to true, for the gate of a runtime constant and for the parallel filter, which keep the input's cursor
+     * or read its page frames; none for a constant it folds to false and for the serial filter.
+     */
+    private static TableToken filteredTableToken(BoundExpression predicate, @Nullable FilterPlan.Algorithm algorithm, TableToken input) {
+        if (predicate instanceof ConstantExpression constant) {
+            return constant.getLongValue() != 0 ? input : null;
+        }
+        if (!(predicate instanceof ColumnExpression) && (predicate.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0) {
+            return input;
+        }
+        return algorithm == FilterPlan.Algorithm.PARALLEL ? input : null;
+    }
+
+    /**
      * The timestamp index of a factory that designates input 0's timestamp, or, when {@code isSource}, that input:
      * -1 when the index says it designates none.
      */
@@ -432,7 +493,7 @@ public final class PhysicalProperties {
                 final Capability isMarkout = markout(step);
                 final boolean isMasterNullExtended = joinType.isMasterNulling();
                 final boolean isSwappable = step.getMasterSide() == JoinInput.MasterSide.SMALLER;
-                final boolean isKeyed = step.getMasterKeyColumnIds().size() > 0;
+                final boolean isKeyed = step.getKeys().size() > 0;
                 final Capability isJoinFollowingAdvice = isSwappable ? Capability.NO : isKeyed ? (isMasterNullExtended ? Capability.NO : isFollowingAdvice)
                                                                                        : isMasterNullExtended ? capability(derive(step.getInput(), null), ORDER_ADVICE) : isFollowingAdvice;
                 properties = joined(choose(isMarkout, Capability.YES, isJoinFollowingAdvice),
@@ -549,20 +610,16 @@ public final class PhysicalProperties {
     }
 
     private static int project(ProjectPlan project, @Nullable LimitPlan sortedLimit) {
-        final WindowPlan window = PlanToFactoryRules.generatedWindow(project);
-        if (window != null) {
-            return window(window);
-        }
-        final WindowJoinPlan windowJoin = PlanToFactoryRules.generatedWindowJoin(project);
-        if (windowJoin != null) {
-            return windowJoin(windowJoin);
-        }
-        final int properties = derive(project.getChild(), sortedLimit);
-        if (!LogicalPlans.isComputedProjection(project)) {
-            return properties;
-        }
-        return with(with(properties, RANDOM_ACCESS, and(capability(properties, RANDOM_ACCESS), projectionRandomAccess(project))),
-                PAGE_FRAMES, Capability.NO);
+        return switch (PlanToFactoryRules.projectionFactory(project)) {
+            case WINDOW -> window((WindowPlan) project.getChild());
+            case WINDOW_JOIN -> windowJoin((WindowJoinPlan) project.getChild());
+            case VIRTUAL -> {
+                final int properties = derive(project.getChild(), sortedLimit);
+                yield with(with(properties, RANDOM_ACCESS, and(capability(properties, RANDOM_ACCESS), projectionRandomAccess(project))),
+                        PAGE_FRAMES, Capability.NO);
+            }
+            case SELECTION -> derive(project.getChild(), sortedLimit);
+        };
     }
 
     /**
@@ -660,6 +717,30 @@ public final class PhysicalProperties {
     }
 
     /**
+     * The table the factory of the scan reports, see {@link #tableToken}: the factory of its access path under the
+     * residual filter it records, of which a covering index scan and a pattern scan that filters serially report
+     * none; neither does the live-view wrapper nor the stub a client-side UPDATE reads.
+     */
+    private static TableToken scanTableToken(ScanPlan scan) {
+        final TableToken table = scan.getTableToken();
+        if (scan.isWalClientUpdate() || table.isLiveView() && !scan.isUpdate()) {
+            return null;
+        }
+        return switch (scan.getAccessPath()) {
+            case PAGE_FRAMES ->
+                    scan.getResidual() == null ? table : filteredTableToken(scan.getResidual(), scan.getResidualAlgorithm(), table);
+            case SORTED_SYMBOL_INDEX, EXCLUDED_SYMBOL_INDEX, SYMBOL_SUBQUERY, LATEST_BY_SUBQUERY, LATEST_BY_ALL_INDEXED,
+                 LATEST_BY_STATIC_SYMBOL, LATEST_BY_SYMBOLS, LATEST_BY_ALL -> table;
+            case SYMBOL_INDEX -> scan.getIndexRead() == ScanPlan.IndexRead.COVERING ? null : table;
+            case LATEST_BY_VALUE, LATEST_BY_VALUES ->
+                    scan.getKeySubquery() == null && scan.getIndexRead() == ScanPlan.IndexRead.COVERING ? null : table;
+            case SYMBOL_PATTERN -> scan.getResidualAlgorithm() == FilterPlan.Algorithm.PARALLEL ? table : null;
+            case EMPTY, UPDATE_STUB, POSTING_DISTINCT -> null;
+            case null -> throw new IllegalStateException("scan access path is not planned");
+        };
+    }
+
+    /**
      * Whether a page-frame scan serves time frames: it reads whole frames forward with random access, designates a
      * timestamp and carries no residual, or one the generator folds to true.
      */
@@ -721,6 +802,32 @@ public final class PhysicalProperties {
      * The direction of the factory under the filter a parallel GROUP BY or window join steals from the plan: the
      * frames of a self-filtering pattern scan, else the direction of {@code properties}, the properties of the plan.
      */
+    /**
+     * The table the sorted LIMIT over the sort under {@code plan}, read through stable projections, reports: the
+     * input's when the input delivers the order and applies the LIMIT, so no sort runs, and the parallel top-K's, which
+     * reports the table of the page frames it reads unless it builds a projection over itself; none for a sort.
+     */
+    private static TableToken sortedLimitTableToken(LogicalPlan plan, LimitPlan limit) {
+        if (plan instanceof ProjectPlan project) {
+            final TableToken input = sortedLimitTableToken(project.getChild(), limit);
+            return PlanToFactoryRules.isIdentityProjection(project) ? input : null;
+        }
+        final SortPlan sort = (SortPlan) plan;
+        return switch (sort.getAlgorithm()) {
+            case PARALLEL_TOP_K, PARALLEL_FILTERED_TOP_K -> {
+                if (PlanToFactoryRules.parallelTopKProjection(sort) != null) {
+                    yield null;
+                }
+                final LogicalPlan source = PlanToFactoryRules.parallelTopKSource(sort);
+                yield sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_TOP_K ? tableToken(source)
+                        : stolenFilterLeafTableToken(PlanToFactoryRules.stolenFilter(source));
+            }
+            case INPUT_ORDER ->
+                    limit.getApplication() == LimitPlan.Application.INPUT ? tableToken(sort.getChild()) : null;
+            case null, default -> null;
+        };
+    }
+
     private static ScanDirection stolenFilterDirection(LogicalPlan plan, int properties) {
         LogicalPlan filtered = plan;
         while (true) {
@@ -738,6 +845,22 @@ public final class PhysicalProperties {
             return ScanDirection.of(scan.getScanDirection());
         }
         return direction(properties);
+    }
+
+    /**
+     * The table the factory under the filter a parallel consumer steals reports: the factory of a non-fused filter's
+     * input, or the factory of a fused filter's access path without its residual, which the consumer applies.
+     */
+    private static TableToken stolenFilterLeafTableToken(FilterPlan filter) {
+        final ScanPlan scan = PlanToFactoryRules.fusedScan(filter);
+        if (scan == null) {
+            return tableToken(filter.getChild());
+        }
+        final ScanPlan.AccessPath accessPath = scan.getAccessPath();
+        if (accessPath != ScanPlan.AccessPath.PAGE_FRAMES && accessPath != ScanPlan.AccessPath.SYMBOL_PATTERN) {
+            return scanTableToken(scan);
+        }
+        return scan.getTableToken().isLiveView() && !scan.isUpdate() ? null : scan.getTableToken();
     }
 
     private static Capability supportsLongTopK(LogicalPlan plan, @Nullable LimitPlan sortedLimit, int columnIndex) {
@@ -801,7 +924,7 @@ public final class PhysicalProperties {
             case FilterPlan filter -> PlanToFactoryRules.isFusedFilter(filter) ? Capability.NO
                     : wrapped(filter.getPredicate(), supportsSharedCursors(filter.getChild(), null));
             case ProjectPlan project ->
-                    LogicalPlans.isComputedProjection(project) || !PlanToFactoryRules.isPeelableProjection(project)
+                    PlanToFactoryRules.projectionFactory(project) != PlanToFactoryRules.ProjectionFactory.SELECTION
                             ? Capability.NO : supportsSharedCursors(project.getChild(), sortedLimit);
             case SortPlan sort -> {
                 final Capability isPassedThrough = isSortPassedThrough(sort, sortedLimit);
@@ -826,14 +949,11 @@ public final class PhysicalProperties {
             case FilterPlan filter ->
                     PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan ? scanTimeFrame(scan)
                             : wrapped(filter.getPredicate(), supportsTimeFrameCursor(filter.getChild(), null));
-            case ProjectPlan project -> {
-                final WindowJoinPlan windowJoin = PlanToFactoryRules.generatedWindowJoin(project);
-                if (windowJoin != null) {
-                    yield windowJoinTimeFrame(windowJoin);
-                }
-                yield LogicalPlans.isComputedProjection(project) || PlanToFactoryRules.generatedWindow(project) != null
-                        ? Capability.NO : supportsTimeFrameCursor(project.getChild(), sortedLimit);
-            }
+            case ProjectPlan project -> switch (PlanToFactoryRules.projectionFactory(project)) {
+                case WINDOW, VIRTUAL -> Capability.NO;
+                case WINDOW_JOIN -> windowJoinTimeFrame((WindowJoinPlan) project.getChild());
+                case SELECTION -> supportsTimeFrameCursor(project.getChild(), sortedLimit);
+            };
             case SortPlan sort -> {
                 final Capability isPassedThrough = isSortPassedThrough(sort, sortedLimit);
                 yield isPassedThrough == Capability.YES ? supportsTimeFrameCursor(sort.getChild(), null) : isPassedThrough;
@@ -966,6 +1086,28 @@ public final class PhysicalProperties {
         final LogicalPlan master = windowJoin.getMaster();
         return windowJoin.isMasterPassedThrough() && columnIndex < master.getOutput().getColumnCount()
                 ? supportsLongTopK(master, null, columnIndex) : Capability.NO;
+    }
+
+    /**
+     * The table the window join factory reports: its master's when every step joins in parallel, reading the page
+     * frames of the master, or of the factory under the master's filter the first step steals; none when a step
+     * null-extends or joins serially, nor for an empty window join.
+     */
+    private static TableToken windowJoinTableToken(WindowJoinPlan windowJoin) {
+        if (windowJoin.isEmpty()) {
+            return null;
+        }
+        final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
+        final LogicalPlan master = windowJoin.getMaster();
+        TableToken table = steps.size() > 0 && steps.getQuick(0).getAlgorithm() == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
+                ? stolenFilterLeafTableToken(PlanToFactoryRules.stolenFilter(master)) : tableToken(master);
+        for (int i = 0, n = steps.size(); i < n; i++) {
+            final WindowJoinStep step = steps.getQuick(i);
+            if (step.isNullExtending() || step.getAlgorithm() == WindowJoinStep.Algorithm.SERIAL) {
+                table = null;
+            }
+        }
+        return table;
     }
 
     /**

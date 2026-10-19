@@ -40,7 +40,6 @@ import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
@@ -1700,10 +1699,11 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
-    public static void normalizeWindowFrame(WindowExpression ac, FunctionParser functionParser, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
-        long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
-
+    /**
+     * Sets the frame offsets of the window from the values of its bounds, {@link Long#MAX_VALUE} for an absent bound:
+     * a PRECEDING value counts back, a CURRENT ROW bound is 0.
+     */
+    public static void normalizeWindowFrame(WindowExpression ac, long rowsLo, long rowsHi) {
         switch (ac.getRowsLoKind()) {
             case WindowExpression.PRECEDING:
                 rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
@@ -2262,20 +2262,6 @@ public class SqlUtil {
 
     // tableName and columnName have to be string objects,
     // they will be used in the view definition
-    public static void validateSampleByTimezone(
-            ExpressionNode expression,
-            FunctionParser functionParser,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (expression != null) {
-            try (Function function = functionParser.parseFunction(expression, EmptyRecordMetadata.INSTANCE, executionContext)) {
-                if (!function.isConstant() && !function.isRuntimeConstant()) {
-                    throw SqlException.$(expression.position, "timezone must be a constant expression of STRING or CHAR type");
-                }
-            }
-        }
-    }
-
     private static void addDependency(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap, String tableName, String columnName) {
         LowerCaseCharSequenceHashSet columns = depMap.get(tableName);
         if (columns == null) {
@@ -2371,36 +2357,6 @@ public class SqlUtil {
                 depMap.put(tableName, new LowerCaseCharSequenceHashSet());
             }
         }
-    }
-
-    private static long evalNonNegativeLongConstantOrDie(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (expr != null) {
-            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            if (!func.isConstant()) {
-                Misc.free(func);
-                throw SqlException.$(expr.position, "constant expression expected");
-            }
-
-            try {
-                long value;
-                if (!(func instanceof CharConstant)) {
-                    value = func.getLong(null);
-                } else {
-                    long tmp = (byte) (func.getChar(null) - '0');
-                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
-                }
-
-                if (value < 0) {
-                    throw SqlException.$(expr.position, "non-negative integer expression expected");
-                }
-                return value;
-            } catch (UnsupportedOperationException | ImplicitCastException e) {
-                throw SqlException.$(expr.position, "integer expression expected");
-            } finally {
-                Misc.free(func);
-            }
-        }
-        return Long.MAX_VALUE;
     }
 
     private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {

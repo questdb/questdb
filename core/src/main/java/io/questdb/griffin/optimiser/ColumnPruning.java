@@ -29,6 +29,7 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.ForwardingPlan;
@@ -187,19 +188,7 @@ final class ColumnPruning implements OptimiserPass {
         for (int k = alignedPath.size() - 1; k >= 0; k--) {
             final LogicalPlan node = alignedPath.getQuick(k);
             if (node instanceof WindowPlan window) {
-                // Window outputs follow its input columns, then its function columns.
-                final OutputSchema nodeOutput = window.getOutput();
-                final OutputSchema child = window.getChild().getOutput();
-                final int timestampId = nodeOutput.getTimestampColumnId();
-                tmpSchema.copyFrom(nodeOutput);
-                nodeOutput.copyFrom(child);
-                for (int i = 0, n = tmpSchema.getColumnCount(); i < n; i++) {
-                    if (child.getColumnIndexById(tmpSchema.getColumnId(i)) < 0) {
-                        nodeOutput.addColumnFrom(tmpSchema, i);
-                    }
-                }
-                nodeOutput.setTimestampColumnId(timestampId);
-                tmpSchema.clear();
+                window.deriveOutput(tmpSchema);
             } else {
                 ((ForwardingPlan) node).deriveOutput();
             }
@@ -282,7 +271,7 @@ final class ColumnPruning implements OptimiserPass {
             }
             case SampleByPlan sample -> {
                 // FILL values follow the aggregates by position.
-                if (sample.getFillTokens().size() == 0) {
+                if (sample.getFillModes().size() == 0) {
                     columnReads.retainOutputs(sample);
                     pruneOutput(sample);
                 }
@@ -336,26 +325,7 @@ final class ColumnPruning implements OptimiserPass {
                     return;
                 }
                 pruneColumns(input);
-                final OutputSchema output = window.getOutput();
-                tmpSchema.copyFrom(output);
-                output.copyFrom(window.getChild().getOutput());
-                int inputCount = output.getColumnCount();
-                int replacedCount = 0;
-                for (int i = 0; i < inputCount; i++) {
-                    if (tmpSchema.getColumnIndexById(output.getColumnId(i)) < 0) {
-                        replacedCount++;
-                    }
-                }
-                for (int i = 0, n = window.getFunctionColumnIds().size(); i < n; i++) {
-                    final int index = tmpSchema.getColumnIndexById(window.getFunctionColumnIds().getQuick(i));
-                    if (replacedCount > 0 && removeReplacedWindowColumn(output, tmpSchema.getColumnName(index), inputCount)) {
-                        inputCount--;
-                        replacedCount--;
-                    }
-                    output.addColumnFrom(tmpSchema, index);
-                }
-                output.setTimestampColumnId(timestampId);
-                tmpSchema.clear();
+                window.deriveOutput(tmpSchema);
                 return;
             }
             case JoinPlan join -> {
@@ -486,7 +456,7 @@ final class ColumnPruning implements OptimiserPass {
     private void pruneFillEntries(FillPlan fill) {
         final IntList targets = fill.getTargetColumnIds();
         final IntList sources = fill.getSourceColumnIds();
-        final IntList modes = fill.getModes();
+        final ObjList<FillMode> modes = fill.getModes();
         int retained = 0;
         for (int i = 0, n = targets.size(); i < n; i++) {
             if (requiredColumnIds.contains(targets.getQuick(i))) {
@@ -713,19 +683,6 @@ final class ColumnPruning implements OptimiserPass {
             }
             projectionMerge.absorbColumnProject(aggregate, project, boundary);
         }
-    }
-
-    /**
-     * Keeps out the nested window column a top-level window function has replaced in the window's output.
-     */
-    private boolean removeReplacedWindowColumn(OutputSchema output, CharSequence name, int inputCount) {
-        for (int i = 0; i < inputCount; i++) {
-            if (Chars.equalsIgnoreCase(output.getColumnName(i), name) && tmpSchema.getColumnIndexById(output.getColumnId(i)) < 0) {
-                output.remove(i);
-                return true;
-            }
-        }
-        return false;
     }
 
     /**

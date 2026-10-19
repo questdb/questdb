@@ -98,7 +98,12 @@ public final class PlanTables implements Mutable {
     public void refresh(SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0; i < tableCount; i++) {
             final PlanTable table = tables.getQuick(i);
-            try (TableReader reader = getReader(table.getTableToken(), table.getMetadataVersion(), table.getPosition(), executionContext)) {
+            // a table renamed since binding stays the bound table; its factories keep the bound token, so the cursor
+            // rejects the moved name, while a dropped or recreated table fails or rebinds here
+            final TableToken boundToken = table.getTableToken();
+            final TableToken currentToken = executionContext.getCairoEngine().getUpdatedTableToken(boundToken);
+            try (TableReader reader = getReader(currentToken != null ? currentToken : boundToken, table.getMetadataVersion(),
+                    table.getPosition(), executionContext)) {
                 table.readFacts(reader);
             }
         }

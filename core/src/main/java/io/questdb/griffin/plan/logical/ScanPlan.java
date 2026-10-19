@@ -344,15 +344,15 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
-     * The direction the scan reads the table in, by designated timestamp.
-     */
-    /**
      * What the consumers of the scan require of the order of its rows.
      */
     public RowOrder getRowOrder() {
         return rowOrder;
     }
 
+    /**
+     * The direction the scan reads the table in, by designated timestamp.
+     */
     public SortDirection getScanDirection() {
         return scanDirection;
     }
@@ -422,12 +422,28 @@ public final class ScanPlan extends LogicalPlan {
     /**
      * Whether the consumers request the order of the native designated timestamp alone, in either direction.
      */
+    /**
+     * Whether a covering index scan has no backup for a key that may be NULL, because the {@code force_use_covering}
+     * hint suppresses it.
+     */
+    public boolean isCoveringBackupSuppressed() {
+        return hasHint(HINT_FORCE_USE_COVERING) && hasNullableKey();
+    }
+
     public boolean isNativeTimestampOrderRequested() {
         return requestedOrder.size() == 1 && requestedOrder.getColumnIds().getQuick(0) == nativeTimestampColumnId;
     }
 
     public boolean isRandomAccess() {
         return isRandomAccess;
+    }
+
+    /**
+     * Whether the parallel filter over the residual, as operator planning records it, pre-touches the column memory
+     * of the rows it keeps, which the {@code enable_pre_touch} hint asks of the scan.
+     */
+    public boolean isResidualPreTouched() {
+        return residualAlgorithm == FilterPlan.Algorithm.PARALLEL && hasHint(HINT_PRE_TOUCH);
     }
 
     /**

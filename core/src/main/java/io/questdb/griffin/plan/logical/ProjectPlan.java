@@ -48,7 +48,8 @@ public final class ProjectPlan extends UnaryPlan {
         expressions.clear();
         requestedOrder.clear();
         updateTargetTypes.clear();
-        clearColumnReferenceCounts();
+        distinctColumnCount = -1;
+        distinctWindowColumnCount = -1;
         hasPrunedComputedColumns = false;
         hasTimestampDeclaration = false;
         isImplied = false;
@@ -56,11 +57,11 @@ public final class ProjectPlan extends UnaryPlan {
         requestedOrderColumnId = -1;
     }
 
-    public void clearColumnReferenceCounts() {
-        distinctColumnCount = -1;
-        distinctWindowColumnCount = -1;
-    }
-
+    /**
+     * Counts the distinct columns the projection selects as plain column references, and those of them that are
+     * results of the window beneath it; {@code OrderPlanning}, the last optimiser pass, derives the counts once it has
+     * dropped the sorts no consumer reads, and a projection that has none reads -1.
+     */
     public void deriveColumnReferenceCounts(IntHashSet columnIds) {
         columnIds.clear();
         distinctColumnCount = 0;

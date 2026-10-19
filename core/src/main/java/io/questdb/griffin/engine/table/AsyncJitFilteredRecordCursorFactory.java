@@ -48,7 +48,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
@@ -90,13 +89,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
-            @NotNull ObjList<Function> bindVarFunctions,
-            @NotNull CompiledFilter compiledFilter,
-            @NotNull CompiledCountOnlyFilter compiledCountOnlyFilter,
-            @NotNull Function filter,
-            @NotNull IntHashSet filterUsedColumnIndexes,
+            @NotNull AsyncFilterResources filterResources,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
-            @Nullable ObjList<Function> perWorkerFilters,
             @Nullable Function limitLoFunction,
             int limitLoPos,
             int workerCount,
@@ -106,10 +100,12 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         assert !(base instanceof FilteredRecordCursorFactory);
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
-        this.compiledFilter = compiledFilter;
-        this.compiledCountOnlyFilter = compiledCountOnlyFilter;
-        this.filter = filter;
-        this.bindVarFunctions = bindVarFunctions;
+        this.compiledFilter = filterResources.takeCompiledFilter();
+        this.compiledCountOnlyFilter = filterResources.takeCompiledCountOnlyFilter();
+        this.filter = filterResources.takeFilter();
+        this.bindVarFunctions = filterResources.takeBindVarFunctions();
+        final IntHashSet filterUsedColumnIndexes = filterResources.getFilterUsedColumnIndexes();
+        final ObjList<Function> perWorkerFilters = filterResources.takePerWorkerFilters();
         // A throw part-way through this constructor never returns the factory, so _close() never runs
         // and everything allocated up to that point is unreachable: the bind variable memory is
         // native, and a per-worker filter can hold native memory of its own. Build the rest into
@@ -180,6 +176,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             Misc.free(filter, th);
             Misc.freeObjList(bindVarFunctions, th);
             Misc.free(limitLoFunction, th);
+            Misc.free(filterResources, th);
             Misc.free(base, th);
             throw th;
         }
