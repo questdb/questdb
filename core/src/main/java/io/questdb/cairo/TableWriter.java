@@ -352,6 +352,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final DirectIntList parquetBloomFilterIndexes;
     private final IntIntHashMap parquetColIdToIdx = new IntIntHashMap();
     private final DirectIntList parquetColumnIdsAndTypes;
+    // Per decoded column of a parquet -> native conversion: the leading rows that become the
+    // native column top, and the rows written to the column files after them.
+    private final LongList parquetDecodedColumnLeadingRows = new LongList();
+    private final LongList parquetDecodedColumnRowsWritten = new LongList();
     private final IntList parquetDecodedTableColumnIdx = new IntList();
     private final ParquetPartitionDecoder parquetDecoder;
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
@@ -5145,7 +5149,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ColumnTypeDriver columnTypeDriver,
             long dstAuxFd,
             long dstDataFd,
-            int rowGroupIndex,
+            boolean isFirstChunk,
             long rowCount,
             long dataVecBytesWritten
     ) {
@@ -5178,7 +5182,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long auxPtr = nullAuxBuf;
                 long auxBytes = auxSize;
-                if (rowGroupIndex > 0) {
+                if (!isFirstChunk) {
                     final long adjust = columnTypeDriver.getMinAuxVectorSize();
                     auxPtr += adjust;
                     auxBytes -= adjust;
@@ -14437,6 +14441,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 decodedColumnCount++;
             }
 
+            parquetDecodedColumnLeadingRows.setPos(decodedColumnCount);
+            parquetDecodedColumnLeadingRows.fill(0, decodedColumnCount, 0);
+            parquetDecodedColumnRowsWritten.setPos(decodedColumnCount);
+            parquetDecodedColumnRowsWritten.fill(0, decodedColumnCount, 0);
             final int rowGroupCount = parquetMetadata.getRowGroupCount();
             // Scratch decimal buffers for the var->fixed converter when target is DECIMAL.
             // Hoisted out of the row-group loop so the conversion stays zero-allocation
@@ -14465,11 +14473,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(columnIndex);
                     long srcAuxSize = rowGroupBuffers.getChunkAuxSize(columnIndex);
 
+                    final long rowsWritten = parquetDecodedColumnRowsWritten.getQuick(columnIndex);
                     if (srcDataSize == 0 && srcAuxSize == 0) {
-                        // Column fully topped (all NULL in this row group). Rust reset the buffers;
-                        // the empty native file with column_top from the column version is correct.
+                        // The decoder returns empty buffers for a row group that lies entirely
+                        // inside the column top the parquet file records. The row group can be
+                        // any of several leading ones: row groups can be smaller than the top.
+                        if (rowsWritten == 0) {
+                            // Still in the leading NULL run, which becomes the native column top.
+                            parquetDecodedColumnLeadingRows.setQuick(columnIndex, parquetDecodedColumnLeadingRows.getQuick(columnIndex) + rowGroupRowCount);
+                        } else if (ColumnType.isVarSize(tableColumnType)) {
+                            final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
+                            final long newDataVecBytesWritten = appendAllNullVarSizeChunk(
+                                    ColumnType.getDriver(tableColumnType),
+                                    columnFdAndDataSize.get(3L * columnIndex),
+                                    columnFdAndDataSize.get(3L * columnIndex + 1),
+                                    false,
+                                    rowGroupRowCount,
+                                    dataVecBytesWritten
+                            );
+                            columnFdAndDataSize.set(3L * columnIndex + 2, newDataVecBytesWritten);
+                            parquetDecodedColumnRowsWritten.setQuick(columnIndex, parquetDecodedColumnRowsWritten.getQuick(columnIndex) + rowGroupRowCount);
+                        } else {
+                            appendAllNullFixedChunk(columnFdAndDataSize.get(3L * columnIndex + 1), tableColumnType, rowGroupRowCount);
+                            parquetDecodedColumnRowsWritten.setQuick(columnIndex, parquetDecodedColumnRowsWritten.getQuick(columnIndex) + rowGroupRowCount);
+                        }
                         continue;
                     }
+                    // Rows this chunk appends to the column files; less than the row group's
+                    // rows when a leading column top is skipped below.
+                    long chunkRowsWritten = rowGroupRowCount;
 
                     if (ColumnType.isVarSize(tableColumnType)) {
                         if (srcAuxSize == 0 && srcDataPtr != 0) {
@@ -14509,7 +14541,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                                     long auxWritePtr = auxBuf;
                                     long auxWriteSize = auxSize;
-                                    if (rowGroupIndex > 0) {
+                                    if (rowsWritten > 0) {
                                         // Aux entries from convertFixedColumnTo* are relative to
                                         // the start of the local data buffer (offset 0). Shift
                                         // them to be relative to the start of the destination
@@ -14542,7 +14574,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
                             final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
 
-                            if (rowGroupIndex > 0) {
+                            if (rowsWritten > 0) {
                                 // Adjust offsets in the auxiliary vector
                                 columnTypeDriver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
                                 // Remove the extra entry for string columns
@@ -14587,7 +14619,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     || dstTagFixed == ColumnType.SHORT
                                     || dstTagFixed == ColumnType.CHAR;
                             final int colTopRows = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
-                            if (noNullSentinel && colTopRows > 0) {
+                            if (noNullSentinel && colTopRows > 0 && rowsWritten == 0) {
                                 // No-sentinel columns (BOOLEAN/BYTE/SHORT/CHAR) decode their
                                 // column-top rows to an in-band 0/false the reader cannot tell
                                 // from a real value. Reconstruct the parquet column top in the
@@ -14599,12 +14631,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 if (srcDataSize > skipBytes) {
                                     appendBuffer(dstFixFd, srcDataPtr + skipBytes, srcDataSize - skipBytes);
                                 }
-                                columnVersionWriter.upsertColumnTop(partitionTimestamp, tableColIdx, colTopRows);
+                                // The skipped rows extend the leading NULL run; the column top
+                                // is published once every row group is decoded.
+                                parquetDecodedColumnLeadingRows.setQuick(columnIndex, parquetDecodedColumnLeadingRows.getQuick(columnIndex) + colTopRows);
+                                chunkRowsWritten = rowGroupRowCount - colTopRows;
                             } else {
                                 appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
                             }
                         }
                     }
+                    parquetDecodedColumnRowsWritten.setQuick(columnIndex, parquetDecodedColumnRowsWritten.getQuick(columnIndex) + chunkRowsWritten);
+                }
+            }
+
+            // The native column files start after each column's leading NULL run. Publish that
+            // as the column top: converting to parquet zeroes the tops in the column versions,
+            // while the parquet file keeps them, and the decoder skips the row groups inside one.
+            for (int columnIndex = 0; columnIndex < decodedColumnCount; columnIndex++) {
+                final int tableColIdx = parquetDecodedTableColumnIdx.getQuick(columnIndex);
+                final long columnTop = parquetDecodedColumnLeadingRows.getQuick(columnIndex);
+                if (columnVersionWriter.getColumnTop(partitionTimestamp, tableColIdx) != columnTop) {
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, tableColIdx, columnTop);
                 }
             }
         } catch (CairoException e) {
