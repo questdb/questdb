@@ -54,6 +54,27 @@ harness runnable without root on a shared machine.
 writes in the host page cache and `cache=directsync` makes every guest write durable
 immediately; both produce false green.
 
+### The patched dm-log-writes module
+
+The guest does not run Ubuntu's `dm-log-writes`. The stock module gives a flush the writes that
+completed before the flush was issued, but logs them when the flush completes. Two flushes in
+flight at once can complete in the opposite order, and the log then holds an older write after a
+newer write of the same block. A replay through that point rebuilds a device state that never
+existed. This needs only two tasks flushing at once on a disk with more than one hardware queue,
+and every virtio disk of the 8-vCPU guest has 8. It made the product arm report a false
+`DURABILITY_FAILURE` (build 274156): the client's store-and-forward segment came back with a
+stale block and the client set it aside.
+
+`build-image.sh` therefore rebuilds the module from Ubuntu's own source for the guest kernel
+(the `linux-source` package of the guest kernel's exact version), plus `kernel/dm-log-writes-flush-order.patch`, and
+installs it in place of the stock one (`guest/build-dm-log-writes.sh`). The unpatched source must
+rebuild the shipped module exactly (equal `srcversion`), or the build fails. `t01` checks that the
+patched module is the one that loads, and `t14` proves every night that the stock module reorders
+and the patched one does not.
+
+When upstream Linux fixes this and the guest kernel carries the fix, `t14` fails on its stock arm
+and says so. Then delete the patch, `guest/build-dm-log-writes.sh`, `t14` and its CI step.
+
 ## Coverage vs the Java crash suite
 
 The harness offers the following workload dimensions. They are not exhaustive coverage of
@@ -198,7 +219,8 @@ silently stops checking.
 
 | Guard | Test | Fails when |
 |---|---|---|
-| **Golden image** | `t01` | The image does not boot, or lacks what the sweep needs |
+| **Golden image** | `t01` | The image does not boot, lacks what the sweep needs, or loads a dm-log-writes other than the patched one |
+| **Recorder order** | `t14` | The stock dm-log-writes no longer reorders overlapping flushes (the check cannot tell the modules apart), or the patched one does |
 | **Boundary discrimination** | `t06` | Replaying to boundary N leaks writes issued after it |
 | **Oracle control** | `t07` | Corrupt data still verifies clean, proving the oracle cannot fire |
 | **Barrier control** | `t10` | A WAL table committing with NO durability barrier still verifies clean |
@@ -264,6 +286,7 @@ bash test/t10-wal-barrier-control.sh --self-test  # the barrier judge, VM-free
 
 # these boot a VM
 bash test/t01-golden-image.sh
+bash test/t14-log-writes-order.sh         # the recorder must keep overlapping flushes in order
 bash test/t06-log-writes-replay.sh        # boundaries must discriminate, or sweeps are fiction
 bash test/t07-oracle-negative-control.sh  # the ORACLE must be able to fail
 bash test/t10-wal-barrier-control.sh      # a missing BARRIER must be noticed

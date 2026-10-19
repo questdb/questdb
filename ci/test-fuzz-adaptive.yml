@@ -733,30 +733,39 @@ stages:
             timeoutInMinutes: 5
             condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'))
 
-          # 3. THE GOLDEN IMAGE. Built only in provision mode, or when missing and there is
-          #    room: a nightly that spends its window rebuilding it measures nothing.
+          # 3. THE GOLDEN IMAGE. Built in provision mode, or when missing or stale and there is
+          #    room: a nightly that spends its window rebuilding it measures nothing. Stale means
+          #    its recorded inputs (build-image.sh, the dm-log-writes patch) differ from this
+          #    commit's, or its build never finished.
           - bash: |
               set -uo pipefail
               source "$(Agent.TempDirectory)/durability-budget.sh"
               GOLDEN="$(QDB_VMCRASH_STATE)/base/golden.qcow2"
               cd tools/durability/vm
+              source lib/qemu.sh
+              want=$(golden_inputs_hash)
+              have=$(cat "$GOLDEN.inputs" 2>/dev/null || echo none)
 
-              if [ -f "$GOLDEN" ] && [ "${{ parameters.durabilityMode }}" != "provision" ]; then
-                echo "golden image present: $(du -h "$GOLDEN" | cut -f1) — reusing"
+              if [ -f "$GOLDEN" ] && [ "$have" = "$want" ] && [ "${{ parameters.durabilityMode }}" != "provision" ]; then
+                echo "golden image present: $(du -h "$GOLDEN" | cut -f1), inputs $want — reusing"
                 echo "##vso[task.setvariable variable=DURABILITY_IMAGE_FRESH]false"
                 exit 0
               fi
 
               if [ "${{ parameters.durabilityMode }}" != "provision" ]; then
-                echo "##vso[task.logissue type=warning]no golden image on this agent; provisioning instead of measuring. This run takes NO measurement."
+                if [ -f "$GOLDEN" ]; then
+                  echo "##vso[task.logissue type=warning]the golden image is stale (inputs $have, this commit $want); rebuilding it before measuring."
+                else
+                  echo "##vso[task.logissue type=warning]no golden image on this agent; provisioning instead of measuring. This run takes NO measurement."
+                fi
               fi
               if ! phase_fits 35; then
-                echo "##vso[task.logissue type=error]no golden image and only $(( $(remaining) / 60 ))m of budget; queue this pipeline manually with durabilityMode=provision outside the window"
+                echo "##vso[task.logissue type=error]no usable golden image and only $(( $(remaining) / 60 ))m of budget; queue this pipeline manually with durabilityMode=provision outside the window"
                 exit 1
               fi
               run_phase build-image 35 bash build-image.sh || exit 1
               echo "##vso[task.setvariable variable=DURABILITY_IMAGE_FRESH]true"
-            displayName: "Golden image (build only if missing, or durabilityMode=provision)"
+            displayName: "Golden image (build only if missing or stale, or durabilityMode=provision)"
             timeoutInMinutes: 45
             condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'))
 
@@ -844,6 +853,7 @@ stages:
           #      t09 the report is honest      t11 the env builders agree
           #      t12 a verdict token means one thing
           #      t13 a lost table is judged by its own arm's watermark
+          #      t14 the recorder keeps overlapping flushes in order
           - bash: |
               set -uo pipefail
               source "$(Agent.TempDirectory)/durability-budget.sh"
@@ -875,7 +885,10 @@ stages:
               source "$(Agent.TempDirectory)/durability-budget.sh"
               cd tools/durability/vm
               rc=0
-              # t06 first: if replay to boundary N leaks later writes, every verdict below
+              # t14 first: if the recorder logs an older write after a newer one, the
+              # recording itself is wrong and no replay of it can be right.
+              run_phase t14-log-writes-order  5  bash test/t14-log-writes-order.sh       || rc=1
+              # t06 next: if replay to boundary N leaks later writes, every verdict below
               # is fiction.
               run_phase t06-log-writes-replay 8  bash test/t06-log-writes-replay.sh      || rc=1
               run_phase t07-oracle-control    10 bash test/t07-oracle-negative-control.sh || rc=1
@@ -884,7 +897,7 @@ stages:
               # A control skipped by the deadline is not a control either, and run_phase
               # returns 0 on a skip -- so "did every control run" is asserted separately.
               complete=true
-              for t in t06-log-writes-replay t07-oracle-control t10-barrier-control; do
+              for t in t14-log-writes-order t06-log-writes-replay t07-oracle-control t10-barrier-control; do
                 if ! grep -q "^$t .* rc=0$" "$(Agent.TempDirectory)/durability-timing.txt" 2>/dev/null; then
                   echo "control did not complete: $t"
                   complete=false
@@ -898,7 +911,7 @@ stages:
                 echo "##vso[task.logissue type=warning]a control was cut by the pre-nightly deadline; the sweeps are skipped. A sweep whose controls did not run that night is not evidence."
               fi
               exit $rc
-            displayName: "Controls: t06 boundaries, t07 oracle, t10 barrier (VM)"
+            displayName: "Controls: t14 flush order, t06 boundaries, t07 oracle, t10 barrier (VM)"
             timeoutInMinutes: 45
             condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'), ne('${{ parameters.durabilityMode }}', 'provision'))
 
@@ -1335,7 +1348,7 @@ stages:
                 [ -z "$FAILED" ] && FAILED="unknown (check the build)"
                 HINT=""
                 if [ "$RESULT_DURABILITY" = Failed ]; then
-                  HINT='\n\nFor durability-sweep: check the CONTROLS first (t06/t07/t10). A red control means the INSTRUMENT, not the product. Grep the log for AGENT CANNOT RUN VMS -- that is an infrastructure answer, not a durability result.'
+                  HINT='\n\nFor durability-sweep: check the CONTROLS first (t14/t06/t07/t10). A red control means the INSTRUMENT, not the product. Grep the log for AGENT CANNOT RUN VMS -- that is an infrastructure answer, not a durability result.'
                 fi
                 curl -X POST -H 'Content-type: application/json' \
                   --data '{"text":"🚨 *Adaptive Commit Fuzz Failed (OSS)*\n\nFailed job(s): `'"$FAILED"'`\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`'"$HINT"'"}' \

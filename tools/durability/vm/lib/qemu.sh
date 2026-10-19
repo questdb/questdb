@@ -9,6 +9,16 @@
 #                      False green.
 #   cache=none       — O_DIRECT, no host page cache, so the guest page cache dies with the VMM.
 
+# The fingerprint of everything baked into the golden image: build-image.sh writes it next to
+# the image when a build succeeds, and CI rebuilds the image when it differs. Guest scripts are
+# not part of it: every run re-ships them.
+golden_inputs_hash() {
+    local vm
+    vm="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    cat "$vm/build-image.sh" "$vm/guest/build-dm-log-writes.sh" "$vm"/kernel/*.patch \
+        | sha256sum | cut -d' ' -f1
+}
+
 # Pick an unused loopback port for the SSH forward. Bound to 127.0.0.1 only:
 # the harness never exposes a service on this host.
 vm_free_port() {

@@ -19,5 +19,11 @@ vm_ssh "$P" "$KEY" "which dmsetup mkfs.ext4" >/dev/null || { echo "FAIL t01: mis
 # image reports itself ready and the first sweep dies instead with "could not build the
 # log-writes stack" -- which reads like a scripting fault rather than a missing module.
 vm_ssh "$P" "$KEY" "lsmod | grep -q dm_log_writes" || { echo "FAIL t01: dm-log-writes not loaded"; exit 1; }
+# The module that loads at boot must be the patched one (guest/build-dm-log-writes.sh), not
+# Ubuntu's: the stock module can log overlapping flushes out of order. t14 proves the difference.
+fixed_sv=$(vm_ssh "$P" "$KEY" "sed -n 's/^FIXED_SRCVERSION=//p' /etc/qdb-vmcrash/dm-log-writes.env" 2>/dev/null || true)
+[ -n "$fixed_sv" ] || { echo "FAIL t01: no patched dm-log-writes recorded in /etc/qdb-vmcrash/dm-log-writes.env"; exit 1; }
+[ "$(vm_ssh "$P" "$KEY" "cat /sys/module/dm_log_writes/srcversion")" = "$fixed_sv" ] \
+    || { echo "FAIL t01: the loaded dm-log-writes is not the patched module ($fixed_sv)"; exit 1; }
 vm_ssh "$P" "$KEY" "test -d /opt/vmcrash" || { echo "FAIL t01: /opt/vmcrash absent"; exit 1; }
 vm_kill "$RUN"; rm -rf "$RUN"; echo "PASS t01"

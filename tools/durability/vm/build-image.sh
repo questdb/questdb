@@ -2,8 +2,12 @@
 # build-image.sh — build the golden guest image. Idempotent: re-run to rebuild.
 #
 # Produces $STATE_DIR/base/golden.qcow2, a bootable Ubuntu 24.04 guest carrying a JDK, dmsetup,
-# e2fsprogs and the dm-log-writes module. A run creates a qcow2 overlay on it, so
+# e2fsprogs and a dm-log-writes module patched to keep overlapping flushes in order (README, "The
+# patched dm-log-writes module"). A run creates a qcow2 overlay on it, so
 # resetting a run is `rm overlay.qcow2` rather than a rebuild.
+#
+# golden.qcow2.inputs records golden_inputs_hash (lib/qemu.sh) and is written only when the build
+# succeeds: CI rebuilds an image whose inputs changed, or whose build did not finish.
 #
 # The guest JDK is a pinned Temurin tarball rather than a distro package or the host's JDK.
 # Ubuntu 24.04 ships no JDK 25, so a distro package gives a class-file version mismatch, and
@@ -90,7 +94,7 @@ genisoimage -quiet -output "$BASE/seed.iso" -volid cidata -joliet -rock \
     "$WORK/user-data" "$WORK/meta-data"
 
 echo "preparing golden disk ..."
-rm -f "$GOLDEN"
+rm -f "$GOLDEN.inputs" "$GOLDEN"
 qemu-img convert -O qcow2 "$CLOUD_IMG" "$GOLDEN"
 qemu-img resize "$GOLDEN" 20G >/dev/null
 
@@ -142,8 +146,17 @@ echo "JDK verified in the guest: real ELF launcher, complete, no dangling symlin
 # not require an image rebuild.
 vm_scp_dir "$PORT" "$KEY" "$HERE/guest" /opt/vmcrash/
 
+# Ubuntu's dm-log-writes can log an older write after a newer one when two flushes overlap, and
+# every disk of this 8-vCPU guest has 8 hardware queues, so they do. Replace it with the same
+# source plus kernel/dm-log-writes-flush-order.patch, or fail the build.
+echo "building the patched dm-log-writes module ..."
+vm_scp "$PORT" "$KEY" "$HERE/kernel/dm-log-writes-flush-order.patch" /tmp/dm-log-writes-flush-order.patch
+vm_ssh "$PORT" "$KEY" "sudo bash /opt/vmcrash/guest/build-dm-log-writes.sh /tmp/dm-log-writes-flush-order.patch" \
+    || { echo "ERROR: could not install the patched dm-log-writes module" >&2; exit 1; }
+
 vm_ssh "$PORT" "$KEY" "sudo cloud-init clean --logs" >/dev/null 2>&1 || true
 vm_ssh "$PORT" "$KEY" "sudo poweroff" >/dev/null 2>&1 || true
 vm_wait_gone "$BASE/provision" 90
 
+golden_inputs_hash > "$GOLDEN.inputs"
 echo "golden image ready: $GOLDEN"
