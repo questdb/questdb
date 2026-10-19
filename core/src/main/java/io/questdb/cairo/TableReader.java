@@ -2065,6 +2065,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         txnAcquired = true;
         txnScoreboardSeqTxn = seqTxn;
         txFile.loadAllFrom(srcReader.txFile);
+        // The pool keeps this copy, and a checkout at the same txn skips readTxnSlow().
+        rowCount = txFile.getRowCount();
         columnVersionReader.readFrom(srcReader.columnVersionReader);
         reloadMetadataFrom(srcReader.metadata, reshuffle);
     }
