@@ -42,6 +42,23 @@ public abstract class AbstractIntervalIteratorTest {
         this.timestampDriver = timestampDriver;
     }
 
+    // Asserts the steps of an iterator walk: expectedBounds holds the lower bound of each step, followed by the upper
+    // bound of the last step.
+    protected static void assertSteps(SampleByIntervalIterator iterator, LongList expectedBounds) {
+        final int expectedStepCount = expectedBounds.size() - 1;
+        Assert.assertEquals(expectedBounds.getQuick(0), iterator.getMinTimestamp());
+        Assert.assertEquals(expectedBounds.getQuick(expectedStepCount), iterator.getMaxTimestamp());
+        int stepCount = 0;
+        while (iterator.next()) {
+            // fail on the first surplus step, so that an iterator that stops advancing fails instead of hanging
+            Assert.assertTrue("unexpected step " + stepCount, stepCount < expectedStepCount);
+            Assert.assertEquals(expectedBounds.getQuick(stepCount), iterator.getTimestampLo());
+            Assert.assertEquals(expectedBounds.getQuick(stepCount + 1), iterator.getTimestampHi());
+            stepCount++;
+        }
+        Assert.assertEquals(expectedStepCount, stepCount);
+    }
+
     private static void intersectInPlace(LongList dest, long lo, long hi) {
         dest.add(lo, hi);
         IntervalUtils.intersectInPlace(dest, dest.size() - 2);
