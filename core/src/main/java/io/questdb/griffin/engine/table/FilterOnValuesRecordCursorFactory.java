@@ -88,7 +88,8 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
                 addSymbolKey(keyValues.get(i), indexDirection, keyFilter);
             }
             rowCursorFactory = switch (indexOrder) {
-                case KEY -> new KeyOrderedSequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx, indexDirection);
+                case KEY ->
+                        new KeyOrderedSequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx, indexDirection);
                 case TIMESTAMP, TABLE -> new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
                 case TABLE_PER_FRAME -> new BitSetRowCursorFactory(cursorFactories, cursorFactoriesIdx, filter);
                 case KEY_PER_FRAME -> new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);

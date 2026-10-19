@@ -340,6 +340,44 @@ final class OrderPlanning implements OptimiserPass {
                 ? SortDirection.DESCENDING : SortDirection.ASCENDING;
     }
 
+    private boolean hasGroupByWindowFunction(WindowPlan window) {
+        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
+            if (functionFactoryCache.isGroupBy(window.getFunctions().getQuick(i).getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when a parallel filter cannot hold the last rows a constant negative LIMIT selects, which the LIMIT then
+     * applies over all rows of the filter instead.
+     */
+    private boolean isPastFilterCapacity(LimitPlan limit) {
+        return limit.getLo() instanceof ConstantExpression lo && LogicalPlans.mayBeNegativeLimit(lo)
+                && LogicalPlans.limitValue(lo) < -configuration.getSqlMaxNegativeLimit();
+    }
+
+    /**
+     * Re-expresses an order over the projection's output as an order over its input, or returns null when a key is
+     * computed.
+     */
+    private SortPlan projectedOrder(ProjectPlan project, SortPlan order) {
+        if (order == null) {
+            return null;
+        }
+        final SortPlan mapped = sorts.next().of(project.getChild(), order.getPosition());
+        for (int i = 0, n = order.getColumnIds().size(); i < n; i++) {
+            final int index = project.getOutput().getColumnIndexById(order.getColumnIds().getQuick(i));
+            if (index < 0 || !(project.getExpressions().getQuick(index) instanceof ColumnExpression column)) {
+                return null;
+            }
+            mapped.getColumnIds().add(column.getColumnId());
+            mapped.getDirections().add(order.getDirections().getQuick(i));
+        }
+        return mapped;
+    }
+
     /**
      * Drops the sorts whose order a consumer re-sorts or discards, and the sorts of a single row that keep its
      * designated timestamp; a window's own ORDER BY and a markout sort stay.
@@ -394,7 +432,8 @@ final class OrderPlanning implements OptimiserPass {
                 }
                 project.deriveColumnReferenceCounts(columnIds);
             }
-            case FilterPlan filter -> replaceReorderedInput(filter, isReordered && LogicalPlans.isOrderTransparent(filter), isSetBranchReordered);
+            case FilterPlan filter ->
+                    replaceReorderedInput(filter, isReordered && LogicalPlans.isOrderTransparent(filter), isSetBranchReordered);
             case WindowPlan window -> {
                 final boolean wasTimestampRead = isReorderedTimestampRead;
                 isReorderedTimestampRead |= hasTimestampWindowFunction(window);
@@ -452,44 +491,6 @@ final class OrderPlanning implements OptimiserPass {
         } else if (plan instanceof WindowPlan) {
             plan.getOutput().setTimestampColumnId(timestampId);
         }
-    }
-
-    private boolean hasGroupByWindowFunction(WindowPlan window) {
-        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
-            if (functionFactoryCache.isGroupBy(window.getFunctions().getQuick(i).getName())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * True when a parallel filter cannot hold the last rows a constant negative LIMIT selects, which the LIMIT then
-     * applies over all rows of the filter instead.
-     */
-    private boolean isPastFilterCapacity(LimitPlan limit) {
-        return limit.getLo() instanceof ConstantExpression lo && LogicalPlans.mayBeNegativeLimit(lo)
-                && LogicalPlans.limitValue(lo) < -configuration.getSqlMaxNegativeLimit();
-    }
-
-    /**
-     * Re-expresses an order over the projection's output as an order over its input, or returns null when a key is
-     * computed.
-     */
-    private SortPlan projectedOrder(ProjectPlan project, SortPlan order) {
-        if (order == null) {
-            return null;
-        }
-        final SortPlan mapped = sorts.next().of(project.getChild(), order.getPosition());
-        for (int i = 0, n = order.getColumnIds().size(); i < n; i++) {
-            final int index = project.getOutput().getColumnIndexById(order.getColumnIds().getQuick(i));
-            if (index < 0 || !(project.getExpressions().getQuick(index) instanceof ColumnExpression column)) {
-                return null;
-            }
-            mapped.getColumnIds().add(column.getColumnId());
-            mapped.getDirections().add(order.getDirections().getQuick(i));
-        }
-        return mapped;
     }
 
     /**

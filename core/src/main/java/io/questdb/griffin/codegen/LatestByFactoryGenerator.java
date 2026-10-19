@@ -330,9 +330,8 @@ final class LatestByFactoryGenerator {
             case LATEST_BY_VALUE ->
                     generateLatestBySingleKey(table, queryMetadata, frames, keyIndex, keys.getQuick(0), filter,
                             columnIndexes, columnSizeShifts, scan.getIndexRead(), scan.hasNullableKey(), isBackupSuppressed);
-            case LATEST_BY_VALUES ->
-                    generateLatestByKeyList(table, queryMetadata, frames, keyIndex, keys, excludedKeys,
-                            filter, columnIndexes, columnSizeShifts, scan.getIndexRead(), scan.hasNullableKey(), isBackupSuppressed);
+            case LATEST_BY_VALUES -> generateLatestByKeyList(table, queryMetadata, frames, keyIndex, keys, excludedKeys,
+                    filter, columnIndexes, columnSizeShifts, scan.getIndexRead(), scan.hasNullableKey(), isBackupSuppressed);
             case LATEST_BY_ALL_INDEXED ->
                     new LatestByAllIndexedRecordCursorFactory(executionContext.getCairoEngine(), configuration,
                             queryMetadata, frames, keyIndex, columnIndexes, columnSizeShifts, tmpLongs);

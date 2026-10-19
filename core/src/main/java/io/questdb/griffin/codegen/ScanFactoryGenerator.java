@@ -498,9 +498,8 @@ final class ScanFactoryGenerator {
         }
         return switch (accessPath) {
             case EMPTY -> new EmptyTableRecordCursorFactory(metadata);
-            case PAGE_FRAMES ->
-                    generatePageFrameScan(frame, scan, executionContext, scanIntervals, metadata, table,
-                            indexes, shifts);
+            case PAGE_FRAMES -> generatePageFrameScan(frame, scan, executionContext, scanIntervals, metadata, table,
+                    indexes, shifts);
             case SORTED_SYMBOL_INDEX -> {
                 final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table, frameOrder(scan));
                 yield new SortedSymbolIndexRecordCursorFactory(configuration, metadata, frames,
@@ -511,17 +510,14 @@ final class ScanFactoryGenerator {
             case SYMBOL_INDEX, EXCLUDED_SYMBOL_INDEX ->
                     generateIndexedScan(frame, scan, executionContext, scanIntervals, metadata,
                             table, indexes, shifts);
-            case SYMBOL_SUBQUERY ->
-                    generateSubqueryScan(frame, scan, executionContext, scanIntervals, metadata, table,
-                            indexes, shifts);
-            case SYMBOL_PATTERN ->
-                    generateSymbolPatternIndex(frame, scan, executionContext, scanIntervals, metadata,
-                            table, indexes, shifts);
+            case SYMBOL_SUBQUERY -> generateSubqueryScan(frame, scan, executionContext, scanIntervals, metadata, table,
+                    indexes, shifts);
+            case SYMBOL_PATTERN -> generateSymbolPatternIndex(frame, scan, executionContext, scanIntervals, metadata,
+                    table, indexes, shifts);
             case LATEST_BY_SUBQUERY, LATEST_BY_VALUE, LATEST_BY_VALUES, LATEST_BY_ALL_INDEXED, LATEST_BY_STATIC_SYMBOL,
                  LATEST_BY_SYMBOLS,
-                 LATEST_BY_ALL ->
-                    generateLatestByScan(frame, scan, executionContext, scanIntervals, latest, metadata,
-                            table, indexes, shifts);
+                 LATEST_BY_ALL -> generateLatestByScan(frame, scan, executionContext, scanIntervals, latest, metadata,
+                    table, indexes, shifts);
             case POSTING_DISTINCT, UPDATE_STUB ->
                     throw new IllegalStateException("access path does not read the table through a reader scan");
         };
