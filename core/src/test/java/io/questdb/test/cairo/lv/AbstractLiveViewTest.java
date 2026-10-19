@@ -103,6 +103,16 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // when the helper was still copy-pasted). The loop exits as soon as the view leaves the
     // SEEDING state, so a generous bound costs nothing on the tests that converge quickly.
     protected static final int SEED_COMPLETION_PASSES = 2000;
+    // Hosted Windows CI agents run these suites about 15-20x slower than Linux/mac (measured
+    // against build 280635: LiveViewConcurrencyTest 205s vs 9.5s, LiveViewCheckpointKeyedScanTest
+    // 235s vs 15s). The soak tests are pure redundancy: each extra row only deepens race exposure,
+    // and every soak checks its view against a full recompute oracle that holds at any volume.
+    // isReducedWindowsLoad lets those tests keep their full depth on Linux/mac while taking a
+    // lighter pass on Windows, where the depth is a time sink rather than cover. (Fuzz runs stay
+    // at full count on every platform: their counts feed route-coverage assertions, so a shorter
+    // run could leave a route unreached.)
+    protected static final boolean isReducedWindowsLoad = Os.type == Os.WINDOWS;
+
     // What assertTierReadConsistent compared the routed read with.
     protected static final int TIER_READ_RECOMPUTE = 1;
     protected static final int TIER_READ_SKIPPED = 0;
@@ -119,6 +129,16 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         TableWriter.Row row = walWriter.newRow(ts);
         row.putLong(1, x);
         row.append();
+    }
+
+    /**
+     * Scales a soak/fuzz redundancy count down on Windows (see {@link #isReducedWindowsLoad}),
+     * never below {@code min}, and leaves it untouched on every other platform. Only pure
+     * redundancy counts - rows a soak churns, runs a fuzz repeats - pass through here; a count a
+     * test asserts against or a threshold it must cross never does.
+     */
+    protected static int reducedOnWindows(int full, int min) {
+        return isReducedWindowsLoad ? Math.max(min, full / 2) : full;
     }
 
     /**

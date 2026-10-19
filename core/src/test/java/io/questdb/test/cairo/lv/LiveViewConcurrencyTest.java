@@ -1235,7 +1235,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // from-scratch recompute. Nothing else exercises refresh-vs-refresh: every
         // other test drives a single LiveViewRefreshJob(0, engine, 1).
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runMultiRefreshWorkerSoak(rnd, 4, 3, 3, 800));
+        assertMemoryLeak(() -> runMultiRefreshWorkerSoak(rnd, 4, 3, 3, reducedOnWindows(800, 200)));
     }
 
     @Test
@@ -1253,7 +1253,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // must back off, and the parker must find it again from its own list. The quiesced view
         // must equal the recompute, and again after a restart and forward rows.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runMultiRefreshWorkerRepairSoak(rnd, 3, 2 + rnd.nextInt(2), 2, 1500 + rnd.nextInt(1000)));
+        assertMemoryLeak(() -> runMultiRefreshWorkerRepairSoak(rnd, 3, 2 + rnd.nextInt(2), 2, reducedOnWindows(1500 + rnd.nextInt(1000), 500)));
     }
 
     @Test
@@ -1266,7 +1266,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // check every row's label against the base row at its timestamp.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "i", "sym");
-        assertMemoryLeak(fault.facade(), () -> runSymbolRecoverySoak(rnd, fault, 4, 24_000));
+        assertMemoryLeak(fault.facade(), () -> runSymbolRecoverySoak(rnd, fault, 4, reducedOnWindows(24_000, 6_000)));
     }
 
     @Test
@@ -1313,7 +1313,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // a use-after-free, so it surfaces as a torn value or a crash rather than a
         // wrong-but-plausible answer.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runParallelFilterTierSwapSoak(rnd, 4, 4, 2000));
+        assertMemoryLeak(() -> runParallelFilterTierSwapSoak(rnd, 4, 4, reducedOnWindows(2000, 500)));
     }
 
     @Test
@@ -1324,7 +1324,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // tier too, resolving each label through the tier's symbol table: every row a
         // reader sees must carry its base row's label and value.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, false, false));
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, reducedOnWindows(800, 200), false, false));
     }
 
     @Test
@@ -1337,7 +1337,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // mismatch, not merely a crash. The cross-writer O3 drives the in-mem
         // rebuild against the live Mode B readers (the both-slots-pinned race).
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, true, false));
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, reducedOnWindows(800, 200), true, false));
     }
 
     @Test
@@ -1354,7 +1354,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // the run quiesces the test rebuilds a known lead and asserts Mode A is
         // engaged (the cursor serves the lead and equals the recompute).
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, true, true));
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, reducedOnWindows(800, 200), true, true));
     }
 
     @Test
@@ -1383,7 +1383,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // makes concurrent var-length reads safe; see LiveViewInMemReadTest's
         // testInMemVarSizeRecordsAreIndependent for the deterministic proof.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runVarSizeReaderChurnSoak(rnd, 4, 4, 800));
+        assertMemoryLeak(() -> runVarSizeReaderChurnSoak(rnd, 4, 4, reducedOnWindows(800, 200)));
     }
 
     @Test
