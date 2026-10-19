@@ -363,7 +363,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     // The errno the fault's failed WAL read reports: EIO, a read error that may clear on a retry.
     // Not a lost file, which an exhausted budget would re-derive the view from, and not a breach
     // of the view's memory limit, which invalidates at once.
-    private static final int ERRNO_EIO = 5;
+    private static final int ERRNO_EIO = LiveViewMidDrainFault.ERRNO_EIO;
     // How a log line reports the WAL read the fault fails.
     private static final String EIO_READ_ERROR_RE = "error=io\\.questdb\\.cairo\\.CairoException: \\["
             + ERRNO_EIO
@@ -778,7 +778,15 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         final String[] baseDir = new String[1];
         final AtomicBoolean failTimelineOpen = new AtomicBoolean();
         final AtomicBoolean failBaseColumnOpen = new AtomicBoolean();
+        final AtomicBoolean isErrnoPending = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                // Both faults report a missing file: one no retry gets past, so the failed restore
+                // falls back to the rebuild at once.
+                return isErrnoPending.compareAndSet(true, false) ? CairoException.ERRNO_FILE_DOES_NOT_EXIST : super.errno();
+            }
+
             @Override
             public long openRO(LPSZ name) {
                 // The rebuild's first read of a base partition column - its probe, which runs
@@ -789,6 +797,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                         && !Utf8s.containsAscii(name, "wal")
                         && Utf8s.endsWithAscii(name, ".d")) {
                     failBaseColumnOpen.set(false);
+                    isErrnoPending.set(true);
                     return -1;
                 }
                 return super.openRO(name);
@@ -799,6 +808,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 // The restore's first open of the timeline, which maps its superblock.
                 if (failTimelineOpen.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
                     failTimelineOpen.set(false);
+                    isErrnoPending.set(true);
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -3799,7 +3809,15 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         final AtomicInteger walReadCountdown = new AtomicInteger(-1);
         final AtomicBoolean isTimelineOpenArmed = new AtomicBoolean();
         final AtomicBoolean isLastDayOpenArmed = new AtomicBoolean();
+        final AtomicBoolean isErrnoPending = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                // Every fault reports a missing file, so the failed restore falls back to the
+                // rebuild at once rather than retrying.
+                return isErrnoPending.compareAndSet(true, false) ? CairoException.ERRNO_FILE_DOES_NOT_EXIST : super.errno();
+            }
+
             @Override
             public long openRO(LPSZ name) {
                 final String dir = baseDir.get();
@@ -3809,6 +3827,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                         if (Utf8s.endsWithAscii(name, "created_at.d")
                                 && walReadCountdown.get() >= 0
                                 && walReadCountdown.getAndDecrement() == 0) {
+                            isErrnoPending.set(true);
                             return -1;
                         }
                     } else if (isLastDayOpenArmed.get()
@@ -3817,6 +3836,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                             && isLastDayOpenArmed.compareAndSet(true, false)) {
                         // The rebuild's scan of the applied base reaches the last day only after
                         // it appended every row of the days before.
+                        isErrnoPending.set(true);
                         return -1;
                     }
                 }
@@ -3829,6 +3849,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 if (isTimelineOpenArmed.get()
                         && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
                         && isTimelineOpenArmed.compareAndSet(true, false)) {
+                    isErrnoPending.set(true);
                     return -1;
                 }
                 return super.openRW(name, opts);

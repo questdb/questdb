@@ -79,7 +79,9 @@ public abstract class AbstractLiveViewCheckpointCompatTest extends AbstractLiveV
      * as a bare {@code assertNotNull} naming neither the {@code /lv} zip nor these tests.
      * <p>
      * The registry has to drop its instances next, because they hold the roots the
-     * unpack is about to overwrite.
+     * unpack is about to overwrite. The table id generator closes over the unpack for the
+     * same reason: it keeps {@code _tab_index.d} mapped, and Windows refuses to overwrite a
+     * mapped file. Reopened, it reads the fixture's copy, as a process opening this root would.
      * <p>
      * The catalogue has to be rebuilt as well as the name registry. A process that opens
      * this root for real hydrates {@link io.questdb.cairo.MetadataCache} from it at
@@ -97,7 +99,12 @@ public abstract class AbstractLiveViewCheckpointCompatTest extends AbstractLiveV
         );
         engine.getLiveViewRegistry().clear();
 
-        EngineMigrationTest.replaceDbContent(resourcePath);
+        engine.getTableIdGenerator().close();
+        try {
+            EngineMigrationTest.replaceDbContent(resourcePath);
+        } finally {
+            engine.getTableIdGenerator().open();
+        }
 
         // Linux fixtures can carry a 4 KiB name registry on a host with 16 KiB pages.
         // QueryAssertion cleanup recreates it at the host page size, which otherwise

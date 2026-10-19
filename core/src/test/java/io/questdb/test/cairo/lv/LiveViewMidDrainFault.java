@@ -34,6 +34,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -94,8 +95,17 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>
  * The column names above are the defaults. {@link #LiveViewMidDrainFault(String, String, String)}
  * names the timestamp, value and key columns of another schema.
+ * <p>
+ * Every open a fault fails reports a missing file, unless the fault names another errno
+ * ({@link #reportReadErrno}, {@link #armTimelineOpen(int)}, {@link #armAnchorRestoreOpen}). An
+ * open that fails without a system call leaves the thread's errno where the last failed call put
+ * it, which differs between operating systems, and the refresh job routes a failure by its errno.
  */
 final class LiveViewMidDrainFault {
+    // EIO, a read error a retry may get past, for reportReadErrno. Windows has no EIO and reads 5
+    // as ERROR_ACCESS_DENIED, which Files.isErrnoFileCannotRead() takes for a lost file, so the
+    // fault reports ERROR_READ_FAULT there.
+    static final int ERRNO_EIO = Os.isWindows() ? 30 : 5;
     // The anchor restore opens the armed fault failed.
     private final AtomicInteger anchorRestoreOpenFailures = new AtomicInteger();
     private final AtomicBoolean appliedScanArmed = new AtomicBoolean();
@@ -114,6 +124,9 @@ final class LiveViewMidDrainFault {
     private final AtomicBoolean isAnchorRestoreOpenErrnoPending = new AtomicBoolean();
     // Set by armAnchorRestoreOpenUntilDisarmed: the armed fault fails every anchor restore open, not one.
     private final AtomicBoolean isAnchorRestoreOpenPersistent = new AtomicBoolean();
+    // Set by a failed open that names no errno of its own - the applied scan's, the view symbol
+    // key file's or the view state file's - until the errno read that reports a missing file.
+    private final AtomicBoolean isMissingFileErrnoPending = new AtomicBoolean();
     // Set by a failed WAL read that reports readErrno, until the errno read that reports it.
     private final AtomicBoolean isReadErrnoPending = new AtomicBoolean();
     // Set by a failed timeline open that reports timelineOpenErrno, until the errno read that reports it.
@@ -143,8 +156,8 @@ final class LiveViewMidDrainFault {
     private volatile String baseDir;
     // The tracker the armed WAL read breaches instead of failing its open; null fails the open.
     private volatile MemoryTracker breachTracker;
-    // The errno the failed WAL read reports; 0 leaves whatever errno the thread last saw.
-    private volatile int readErrno;
+    // The errno the failed WAL read reports: a missing file unless reportReadErrno names another.
+    private volatile int readErrno = CairoException.ERRNO_FILE_DOES_NOT_EXIST;
     // The errno the failed timeline open reports.
     private volatile int timelineOpenErrno;
     // The directory of the view table whose symbol key file armViewSymbolKeyOpen fails.
@@ -318,6 +331,9 @@ final class LiveViewMidDrainFault {
                 if (isTimelineOpenErrnoPending.compareAndSet(true, false)) {
                     return timelineOpenErrno;
                 }
+                if (isMissingFileErrnoPending.compareAndSet(true, false)) {
+                    return CairoException.ERRNO_FILE_DOES_NOT_EXIST;
+                }
                 return isReadErrnoPending.compareAndSet(true, false) ? readErrno : super.errno();
             }
 
@@ -346,6 +362,7 @@ final class LiveViewMidDrainFault {
                         && appliedScanSkip.getAndDecrement() <= 0
                         && appliedScanArmed.compareAndSet(true, false)) {
                     appliedScanFired.set(true);
+                    isMissingFileErrnoPending.set(true);
                     return -1;
                 }
                 if (countdown.get() >= 0
@@ -360,7 +377,7 @@ final class LiveViewMidDrainFault {
                             breachTracker = null;
                             breach(tracker);
                         }
-                        isReadErrnoPending.set(readErrno != 0);
+                        isReadErrnoPending.set(true);
                         return -1;
                     }
                 }
@@ -372,6 +389,7 @@ final class LiveViewMidDrainFault {
                         && Utf8s.endsWithAscii(name, viewSymbolKeyFileName)
                         && isViewSymbolKeyOpenArmed.compareAndSet(true, false)) {
                     hasViewSymbolKeyOpenFired.set(true);
+                    isMissingFileErrnoPending.set(true);
                     return -1;
                 }
                 return super.openRO(name);
@@ -398,6 +416,7 @@ final class LiveViewMidDrainFault {
                         && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)
                         && isViewStateOpenArmed.compareAndSet(true, false)) {
                     hasViewStateOpenFired.set(true);
+                    isMissingFileErrnoPending.set(true);
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -442,8 +461,8 @@ final class LiveViewMidDrainFault {
     }
 
     /**
-     * Makes the failed WAL read report {@code errno}, so the fault reads as the failure it
-     * models - a lost segment file, say - rather than as whatever errno the thread last saw.
+     * Makes the failed WAL read report {@code errno} rather than a missing file, so the fault
+     * reads as the failure it models - a read error a retry may get past, say.
      */
     void reportReadErrno(int errno) {
         readErrno = errno;

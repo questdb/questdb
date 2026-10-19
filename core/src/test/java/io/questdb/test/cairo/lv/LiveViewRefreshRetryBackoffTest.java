@@ -60,7 +60,7 @@ public class LiveViewRefreshRetryBackoffTest extends AbstractLiveViewTest {
     private static final String EIGHTH_ROW_COMMIT = "INSERT INTO tx (created_at, account_id, amount) VALUES "
             + "('2026-01-02T09:50:00.000000Z', 'acct-1', 128.0)";
     private static final String EIGHTH_ROW_OUTPUT = "2026-01-02T09:50:00.000000Z\tacct-1\t172.0\t4\n";
-    private static final int ERRNO_EIO = 5;
+    private static final int ERRNO_EIO = LiveViewMidDrainFault.ERRNO_EIO;
     private static final int ERRNO_EMFILE = 24;
     private static final String[] FOUR_ROWS = {
             "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",

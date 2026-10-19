@@ -12738,7 +12738,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // failed restore scans the APPLIED base table rather than the WAL, so this fails
         // one of that scan's column opens and lands strictly after clearWindowState.
         final AtomicBoolean failRebuildScan = new AtomicBoolean(false);
+        // All three faults report a missing file, so the failed restore falls back to the
+        // rebuild at once rather than retrying. Left alone, the errno is whatever the thread's
+        // last failed call set, which differs between operating systems.
+        final AtomicBoolean isErrnoPending = new AtomicBoolean(false);
         FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return isErrnoPending.compareAndSet(true, false) ? CairoException.ERRNO_FILE_DOES_NOT_EXIST : super.errno();
+            }
+
             @Override
             public long openRO(LPSZ name) {
                 if (armBaseTsRead.get() >= 0
@@ -12750,6 +12759,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         armBaseTsRead.set(-1);
                         failRestoreRead.set(true);
                         failRebuildScan.set(true);
+                        isErrnoPending.set(true);
                         return -1;
                     }
                     armBaseTsRead.decrementAndGet();
@@ -12760,6 +12770,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         && Utf8s.containsAscii(name, baseDir[0])
                         && !Utf8s.containsAscii(name, "wal")) {
                     failRebuildScan.set(false);
+                    isErrnoPending.set(true);
                     return -1;
                 }
                 return super.openRO(name);
@@ -12769,6 +12780,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             public long openRW(LPSZ name, int opts) {
                 if (failRestoreRead.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
                     failRestoreRead.set(false);
+                    isErrnoPending.set(true);
                     return -1;
                 }
                 return super.openRW(name, opts);

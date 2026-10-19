@@ -70,6 +70,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.zip.CRC32;
 
@@ -1498,9 +1499,12 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         }
     }
 
+    // Rewrites the segment in place. Files.write() truncates the file first by default, which
+    // Windows refuses while the engine still maps the segment, so every rewrite keeps its length.
     private static void writeMetaSegment(java.nio.file.Path file, byte[] bytes) {
         try {
-            java.nio.file.Files.write(file, bytes);
+            Assert.assertEquals("a rewrite must keep the segment's length", java.nio.file.Files.size(file), bytes.length);
+            java.nio.file.Files.write(file, bytes, StandardOpenOption.WRITE);
         } catch (java.io.IOException e) {
             throw new AssertionError(e);
         }
