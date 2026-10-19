@@ -80,7 +80,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
                     }
                     assertQuery("SELECT count(q.ts) n FROM t HORIZON JOIN q q LIST (0s) AS h")
                             .withEngine(engine).withContext(context).noRandomAccess().expectSize().returns("n\n1\n");
-                }, testConfiguration(isParallel, millis, false), LOG);
+                }, testConfiguration(isParallel, millis), LOG);
             });
         }
     }
@@ -95,7 +95,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
                     for (boolean isProjection : new boolean[]{false, true}) {
                         assertCancellation(engine, context, millis, isParallel, false, isProjection, 0, 0, null, false, true);
                     }
-                }, testConfiguration(isParallel, millis, false), LOG);
+                }, testConfiguration(isParallel, millis), LOG);
             });
         }
     }
@@ -108,19 +108,14 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
                 TestUtils.execute(new TestWorkerPool(1, mode), (engine, _, context) -> {
                     createTables(engine, context);
                     // A projection collects its frames in order. The owner of an ordered frame
-                    // sequence asks the work stealing strategy only when it cannot publish a frame,
-                    // and otherwise reduces its own published tasks. With a one-slot reduce queue,
-                    // the owner cannot publish the second partition of t2 before it collects the
-                    // first frame, so it waits in the slot-gated strategy until a worker takes a
-                    // slot to reduce the first frame, which reaches the signal.
-                    engine.execute("CREATE TABLE t2 (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY", context);
-                    engine.execute("INSERT INTO t2 VALUES (256, 1), ('1970-01-02', 1)", context);
+                    // sequence asks the slot-gated strategy before it steals its own published
+                    // frame, so a worker takes a slot to reduce the frame, which reaches the signal.
                     for (boolean isProjection : new boolean[]{false, true}) {
                         for (boolean hasMasterFilter : new boolean[]{false, true}) {
                             assertCancellation(engine, context, millis, true, false, isProjection, 0, 0, mode, hasMasterFilter, false);
                         }
                     }
-                }, testConfiguration(true, millis, true), LOG);
+                }, testConfiguration(true, millis), LOG);
             });
         }
     }
@@ -138,8 +133,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
             boolean hasMasterFilter,
             boolean isTimeout
     ) throws Exception {
-        boolean hasTwoMasterFrames = isProjection && workerMode != null;
-        String sql = query(isGrouped, isProjection, slavePosition, route, hasMasterFilter, hasTwoMasterFrames);
+        String sql = query(isGrouped, isProjection, slavePosition, route, hasMasterFilter);
         String factoryName = isProjection
                 ? (isParallel ? "Async" : "") + "HorizonJoinProjectionRecordCursorFactory"
                 : (isParallel ? "Async" : "") + (slavePosition > 0 ? "Multi" : "") + "HorizonJoin" + (isGrouped ? "" : "NotKeyed") + "RecordCursorFactory";
@@ -201,8 +195,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
                     // last quote at or before each left-hand row.
                     expected = "k\tn" + (slavePosition > 0 ? "\tn2" : "") + "\n"
                             + (route == 2 ? projectionRow(slavePosition, "1970-01-01T00:00:00.000127Z") : "")
-                            + projectionRow(slavePosition, "1970-01-01T00:00:00.000255Z")
-                            + (hasTwoMasterFrames ? projectionRow(slavePosition, "1970-01-01T00:00:00.000255Z") : "");
+                            + projectionRow(slavePosition, "1970-01-01T00:00:00.000255Z");
                 } else {
                     expected = (isGrouped ? "k\t" : "") + "n" + (slavePosition > 0 ? "\tn2" : "") + "\n"
                             + (isGrouped ? "1\t" : "") + "0" + (slavePosition > 0 ? "\t" + (route == 2 ? 2 : 1) : "") + "\n";
@@ -232,7 +225,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
         return "1\t" + (slavePosition > 0 ? "\t" + unfilteredMatch : "") + "\n";
     }
 
-    private static String query(boolean isGrouped, boolean isProjection, int slavePosition, int route, boolean hasMasterFilter, boolean hasTwoMasterFrames) {
+    private static String query(boolean isGrouped, boolean isProjection, int slavePosition, int route, boolean hasMasterFilter) {
         String filtered = " HORIZON JOIN q q ON (" + (route == 0 ? "" : "t.k = q.k AND (")
                 + "q.price < 0 OR test_latched_counter()" + (route == 0 ? "" : ")") + ")";
         String unfiltered = " HORIZON JOIN q q2";
@@ -240,12 +233,12 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
                 ? "t.k, q.ts n" + (slavePosition > 0 ? ", q2.ts n2" : "")
                 : (isGrouped ? "t.k, " : "") + "count(q.ts) n" + (slavePosition > 0 ? ", count(q2.ts) n2" : "");
         return "SELECT " + columns
-                + " FROM " + (route == 2 ? "tf" : hasTwoMasterFrames ? "t2" : "t") + " t"
+                + " FROM " + (route == 2 ? "tf" : "t") + " t"
                 + (slavePosition == 2 ? unfiltered + filtered : filtered + (slavePosition == 1 ? unfiltered : ""))
                 + " LIST (0s) AS h" + (hasMasterFilter ? " WHERE t.k > 0" : "");
     }
 
-    private static DefaultTestCairoConfiguration testConfiguration(boolean isParallel, AtomicLong millis, boolean isReduceQueueSingleSlot) throws Exception {
+    private static DefaultTestCairoConfiguration testConfiguration(boolean isParallel, AtomicLong millis) throws Exception {
         SqlExecutionCircuitBreakerConfiguration breakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public boolean checkConnection() {
@@ -277,11 +270,6 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
             @Override
             public FactoryProvider getFactoryProvider() {
                 return provider;
-            }
-
-            @Override
-            public int getPageFrameReduceQueueCapacity() {
-                return isReduceQueueSingleSlot ? 1 : super.getPageFrameReduceQueueCapacity();
             }
 
             @Override
