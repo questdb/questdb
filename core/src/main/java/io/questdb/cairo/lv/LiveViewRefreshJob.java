@@ -171,7 +171,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // ApplyWal2TableJob sets it when it applies the mat view's TRUNCATE, and drainBaseWal
     // re-derives it when that invalidation never became durable.
     public static final String BASE_MAT_VIEW_REBUILT_REASON = "base materialized view was rebuilt";
-    private static final Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
     // Once sparse publication and arithmetic row positions remove both O(state) and
     // O(interval) follow-up walks, reported-density A/Bs validate a four-row effective
     // posting-index setup gate. Keep the conservative configurable price for every other

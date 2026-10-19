@@ -2681,9 +2681,9 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
     @Test
     public void testRepairRefusesAGenerationPublishedUnderTheCapture() throws Exception {
-        // The capture holds root references resolved against one generation. A cadence
-        // seal landing in between supersedes the tree they belong to, so splicing them
-        // would graft stale references onto a newer timeline.
+        // The capture holds root references resolved against one generation. A publication
+        // landing in between supersedes the tree they belong to, so splicing them would graft
+        // stale references onto a newer timeline.
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -2698,7 +2698,19 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
                                  writer.beginRepair(checkpointsDir, null, null, false)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
-                        appendAndRefresh(job, 130, 13);
+                        // A truncate above the head drops no root and writes metadata only. A
+                        // cadence seal would open the data segment id the capture holds, since
+                        // neither has published it, and Windows refuses to truncate a file the
+                        // capture still maps. Production never seals under an open capture: a
+                        // parked repair blocks its view's refresh.
+                        Assert.assertTrue(writer.publishTruncate(
+                                checkpointsDir,
+                                instance.getLiveViewToken().getTableId(),
+                                0,
+                                instance.getLifecycleIdentity(),
+                                Long.MAX_VALUE,
+                                true
+                        ).isPublished());
                         try {
                             publish(writer, capture, instance, ts(timestamp(50)), 2);
                             Assert.fail("expected a moved-generation rejection");
@@ -2710,7 +2722,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         }
                     }
                 }
-                Assert.assertEquals(HISTORY_COMMITS + 1, entryCount(instance));
+                Assert.assertEquals(HISTORY_COMMITS, entryCount(instance));
             }
         });
     }

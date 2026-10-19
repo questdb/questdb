@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -60,6 +61,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -597,6 +599,21 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         } finally {
             setCurrentMicros(savedMicros);
         }
+    }
+
+    // A stalled stdout backs the async log ring up, and a full ring drops every record that
+    // does not wait for a slot. Hosted CI agents stall it for seconds at a time, which dropped
+    // the refresh job lines tests assert through LogCapture. A guaranteed logger waits instead.
+    // Both hooks carry their own names, so a subclass overriding setUp() or tearDown() without
+    // calling super cannot skip them.
+    @Before
+    public void enableGuaranteedRefreshJobLogging() {
+        LogFactory.enableGuaranteedLogging(LiveViewRefreshJob.class);
+    }
+
+    @After
+    public void restoreRefreshJobLogging() {
+        LogFactory.disableGuaranteedLogging(LiveViewRefreshJob.class);
     }
 
     @Before

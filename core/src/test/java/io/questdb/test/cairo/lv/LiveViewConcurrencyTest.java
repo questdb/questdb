@@ -193,6 +193,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // Rewinds the readers of the SYMBOL soak must refuse before its driver stops the writers.
     private static final int SYMBOL_SOAK_REFUSALS = 3;
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
+    // How long the multi-worker soak's driver waits after a tick for a worker to finish a
+    // turn that did work. A tick no writer committed on has no turn to wait for, so the bound
+    // keeps such a tick from stalling the driver.
+    private static final long TURN_WAIT_NANOS = 2_000_000_000L;
     // Fault injection for testCreateRollbackFencesLateRefreshAndKeepsLifecycleBounded, armed for the duration of
     // that one test. Null (the default) makes the state-store wrapper below a pure pass-through, so
     // every other test in the class sees a stock engine.
@@ -1487,6 +1491,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     "ts, sym, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
+    }
+
+    private static long sumWorkedTurns(ObjList<AtomicLong> workedTurns) {
+        long sum = 0;
+        for (int i = 0, n = workedTurns.size(); i < n; i++) {
+            sum += workedTurns.getQuick(i).get();
+        }
+        return sum;
     }
 
     // Commits a late row 1us above every row of the day that holds the dataset's row a third of
@@ -3074,15 +3086,28 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // FLUSH EVERY ticks come due, once per tick of the paced writers. Keeping the
             // clock and drainWalQueue on one thread isolates the refresh-vs-refresh
             // contention (the actual subject) from driving the shared wal-apply job across
-            // many threads. The sleep gives the workers turns between the commits.
+            // many threads. Each tick then waits, bounded, until a worker has finished a turn
+            // that did work. A turn slower than the tick, as on a slow Windows runner, would
+            // otherwise always find a newer commit when it ends, re-enqueue its own notification
+            // and dequeue it again within the same run(), so one worker would take every turn of
+            // the soak and the others would only ever lose the latch.
             threads.add(new Thread(() -> {
                 try {
                     barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
                     while (isRunning.get() && errors.isEmpty()) {
+                        final long workedTurnsBefore = sumWorkedTurns(workedTurns);
                         Os.sleep(1);
                         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                         drainWalQueue();
                         refreshTicks.incrementAndGet();
+                        final long turnDeadlineNanos = System.nanoTime() + TURN_WAIT_NANOS;
+                        while (sumWorkedTurns(workedTurns) == workedTurnsBefore
+                                && isRunning.get()
+                                && errors.isEmpty()
+                                && System.nanoTime() < turnDeadlineNanos) {
+                            Os.sleep(1);
+                            drainWalQueue();
+                        }
                     }
                 } catch (Throwable th) {
                     errors.add(th);
