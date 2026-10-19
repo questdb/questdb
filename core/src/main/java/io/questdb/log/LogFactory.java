@@ -86,10 +86,13 @@ public class LogFactory implements Closeable {
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final String EMPTY_STR = "";
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
+    // loggers that getLog() hands out while getInstance() constructs the instance; init() binds them
+    private static final ObjList<DeferredLogger> constructionLoggers = new ObjList<>();
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static LogFactory INSTANCE;
     private static boolean envEnabled = true;
     private static boolean guaranteedLogging = false;
+    private static boolean isConstructingInstance;
     private static String rootDir;
     private final Clock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -141,8 +144,11 @@ public class LogFactory implements Closeable {
         if (logFactory == null) {
             return;
         }
-        logFactory.close(true);
-        INSTANCE = null;
+        try {
+            logFactory.close(true);
+        } finally {
+            releaseInstance(logFactory);
+        }
     }
 
     public static synchronized void closeInstanceWithin(long timeoutNanos) {
@@ -150,10 +156,13 @@ public class LogFactory implements Closeable {
         if (logFactory == null) {
             return;
         }
-        if (!logFactory.closeWithin(true, timeoutNanos)) {
-            throw new IllegalStateException("logging worker pool did not halt");
+        try {
+            if (!logFactory.closeWithin(true, timeoutNanos)) {
+                throw new IllegalStateException("logging worker pool did not halt");
+            }
+        } finally {
+            releaseInstance(logFactory);
         }
-        INSTANCE = null;
     }
 
     public static void configureRootDir(String rootDir) {
@@ -191,7 +200,21 @@ public class LogFactory implements Closeable {
     public static synchronized LogFactory getInstance() {
         LogFactory logFactory = INSTANCE;
         if (logFactory == null) {
-            logFactory = new LogFactory();
+            if (isConstructingInstance) {
+                // A second instance would bind every log writer a second time, so a class
+                // initializer that the constructor runs must ask for a logger, not for the instance.
+                throw new IllegalStateException("LogFactory instance requested while it is being constructed");
+            }
+            // The constructor initializes WorkerPool, whose static initializer calls getLog().
+            // While this flag is set, getLog() returns a deferred logger instead of re-entering here.
+            isConstructingInstance = true;
+            try {
+                logFactory = new LogFactory();
+            } finally {
+                isConstructingInstance = false;
+            }
+            logFactory.deferredLoggers.addAll(constructionLoggers);
+            constructionLoggers.clear();
             // Some log writers created in the later init() call may do some logging,
             // so we store the instance before the factory was fully initialized.
             // Any logging calls done on a non-initialized log factory and its loggers
@@ -208,7 +231,18 @@ public class LogFactory implements Closeable {
     }
 
     public static Log getLog(String key) {
-        return getInstance().create(key);
+        final LogFactory logFactory;
+        synchronized (LogFactory.class) {
+            if (isConstructingInstance) {
+                // getInstance() is constructing the instance on this thread, and the constructor
+                // initialized a class with a static logger, such as WorkerPool
+                final DeferredLogger log = new DeferredLogger(key);
+                constructionLoggers.add(log);
+                return log;
+            }
+            logFactory = getInstance();
+        }
+        return logFactory.create(key);
     }
 
     public static synchronized void haltInstance() {
@@ -278,27 +312,25 @@ public class LogFactory implements Closeable {
                 closed.set(false);
                 throw th;
             }
+            // A failing writer must not keep the writers after it from draining and closing, or the
+            // queues from being freed. The caller gets the first failure once all of that ran.
+            Throwable failure = null;
             for (int i = 0, n = jobs.size(); i < n; i++) {
-                LogWriter job = jobs.get(i);
-                try {
-                    if (job != null && flush) {
-                        try {
-                            // noinspection StatementWithEmptyBody
-                            while (job.run(Job.TERMINATING_STATUS)) {
-                                // Keep running the job until it returns false to log all the buffered messages
-                            }
-                        } catch (Exception th) {
-                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
-                            // Switch to the next job.
+                final LogWriter job = jobs.get(i);
+                if (job != null && flush) {
+                    try {
+                        // noinspection StatementWithEmptyBody
+                        while (job.run(Job.TERMINATING_STATUS)) {
+                            // Keep running the job until it returns false to log all the buffered messages
                         }
+                    } catch (Throwable th) {
+                        failure = foldWriterFailure(failure, th);
                     }
-                } finally {
-                    Misc.freeIfCloseable(job);
                 }
+                failure = Misc.freeIfCloseableBestEffort(failure, job);
             }
-            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-                Misc.free(scopeConfigs.getQuick(i));
-            }
+            failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, scopeConfigs);
+            CairoException.rethrowCleanupFailure(failure);
         }
         return true;
     }
@@ -353,18 +385,24 @@ public class LogFactory implements Closeable {
     @TestOnly
     public void flushJobs() {
         pauseThread();
+        Throwable failure = null;
         for (int i = 0, n = jobs.size(); i < n; i++) {
-            LogWriter job = jobs.get(i);
+            final LogWriter job = jobs.get(i);
             if (job != null) {
                 try {
                     job.drain(0);
-                } catch (Exception th) {
-                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
-                    // Switch to the next job.
+                } catch (Throwable th) {
+                    failure = foldWriterFailure(failure, th);
                 }
             }
         }
-        startThread();
+        // A failed writer must not leave the logging worker paused, or no writer would run again
+        try {
+            startThread();
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @TestOnly
@@ -458,7 +496,11 @@ public class LogFactory implements Closeable {
             for (int i = 0, n = jobs.size(); i < n; i++) {
                 loggingWorkerPool.assign(jobs.get(i));
             }
-            loggingWorkerPool.start();
+            // The logging worker reports the failures of its writers on stderr. The logger of
+            // WorkerPool writes to the queues of the global instance, which only the worker of that
+            // instance drains. critical() waits for a free slot, so that worker would block for good
+            // once such a queue fills up.
+            loggingWorkerPool.start(null);
         }
     }
 
@@ -583,6 +625,13 @@ public class LogFactory implements Closeable {
         });
     }
 
+    // Exception means the writer cannot log anymore, perhaps because the network is down or the disk
+    // is full, so the caller switches to the next writer. An Error, such as the LogError of a writer
+    // that cannot append, reaches the caller once every writer ran.
+    private static @Nullable Throwable foldWriterFailure(@Nullable Throwable failure, @NotNull Throwable th) {
+        return th instanceof Exception ? failure : Misc.foldCleanupFailure(failure, th);
+    }
+
     private static String getProperty(final Properties properties, String key) {
         if (envEnabled) {
             final String envKey = "QDB_LOG_" + key.replace('.', '_').toUpperCase();
@@ -598,6 +647,17 @@ public class LogFactory implements Closeable {
 
     private static boolean isForcedDebug() {
         return System.getProperty(DEBUG_TRIGGER) != null || System.getenv().containsKey(DEBUG_TRIGGER_ENV);
+    }
+
+    // A writer failure leaves the factory closed for good, so the next getInstance() builds a new
+    // one. A halt timeout reopens the factory, which stays the instance for the caller to retry.
+    // The monitor keeps a concurrent closeInternal() from showing a closed flag that it resets.
+    private static void releaseInstance(LogFactory logFactory) {
+        synchronized (logFactory) {
+            if (logFactory.closed.get()) {
+                INSTANCE = null;
+            }
+        }
     }
 
     private static void setGuaranteedLogging(boolean guaranteedLogging, Class<?>... classes) {
