@@ -80,6 +80,19 @@ import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_GET;
  *
  */
 public interface HttpRequestProcessor {
+    /**
+     * Authorizes the authenticated principal against whatever permission this endpoint requires.
+     * Throws {@link io.questdb.cairo.CairoException} on denial, which the connection context turns
+     * into a 403.
+     * <p>
+     * Called only when {@link #requiresAuthentication()} is true — with authentication off the
+     * security context is still {@code DenyAllSecurityContext}, and calling this would reject every
+     * anonymous request. It must not be called from {@code onRequestComplete}: an exception thrown
+     * there is caught as an internal error and the connection is dropped without any HTTP response.
+     */
+    default void authorize(SecurityContext securityContext) {
+    }
+
     // after this callback is invoked, the server will disconnect the client.
     // if a processor desires to write a goodbye letter to the client,
     // it must also send TCP FIN by invoking socket.shutdownWrite()
