@@ -57,6 +57,9 @@ public class MatViewHashJoinGroupByTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        // Mat view parallel SQL defaults to on only with 4 or more CPUs, and the fused plan requires
+        // it, so pin it to keep the plan assertions independent of the host.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, "true");
     }
 
     @Override
