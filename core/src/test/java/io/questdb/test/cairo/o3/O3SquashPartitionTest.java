@@ -43,6 +43,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -1045,6 +1046,98 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     @Test
     public void testSplitParentResplitBelowColumnTopKeepsPinnedReaderRows() throws Exception {
         assertPinnedSplitParentSurvivesColumnTopMerge(true);
+    }
+
+    @Test
+    public void testSplitParentPinnedResplitCyclesBelowColumnTopKeepColumnFileSize() throws Exception {
+        // A reader pinned before the split keeps the parent's moved rows readable, so each resplit materializes
+        // the column top nulls past the end of the parent's column files. The copy job drops that scratch once
+        // the merge is done; otherwise every pinned resplit would grow the files by the parent's size.
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
+            // the added columns get a column top of 1000 rows in 2020-02-03
+            execute("ALTER TABLE x ADD COLUMN l LONG");
+            execute("ALTER TABLE x ADD COLUMN s STRING");
+            execute("ALTER TABLE x ADD COLUMN v VARCHAR");
+            execute(
+                    """
+                            INSERT INTO x (i, ts, l, s, v)
+                            SELECT (1000 + x)::INT, '2020-02-03T20'::TIMESTAMP + (x - 1) * 1_000_000L, x,
+                                'string-value-' || x, 'varchar-value-' || x
+                            FROM long_sequence(100)
+                            """
+            );
+            // a row in the next day keeps 2020-02-03 a mid partition
+            execute("INSERT INTO x (i, ts, l, s, v) VALUES (2_000_000, '2020-02-04', 1, 'a', 'b')");
+
+            final ObjList<String> files = new ObjList<>("l", "s", "s.i", "v", "v.i");
+            final long[] sizesAfterFirstSplit = new long[files.size()];
+            final long[][] sizes = new long[6][files.size()];
+            final String expected;
+            try (
+                    RecordCursorFactory cursorFactory = select("SELECT * FROM x WHERE ts >= '2020-02-03T20'");
+                    // pins the reader before the first split, so the split cannot be squashed back into the parent
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(cursorFactory, cursor);
+                expected = sink.toString();
+
+                // the first split has no earlier split to pin, so the writer places the scratch after the data
+                execute("INSERT INTO x (i, ts) VALUES (2_999_999, '2020-02-03'::TIMESTAMP + 995 * 60_000_000L + 30_000_000L)");
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(3, reader.getPartitionCount());
+                    Assert.assertEquals(996, reader.getPartitionRowCountFromMetadata(0));
+                }
+                columnFileSizes("x", "2020-02-03", files, sizesAfterFirstSplit);
+
+                for (int cycle = 0; cycle < sizes.length; cycle++) {
+                    // a late row just below the column top: the pinned parent resplits and the scratch goes past the end of the files
+                    execute("INSERT INTO x (i, ts) VALUES (" + (3_000_000 + cycle) + ", '2020-02-03'::TIMESTAMP + " + (990 - cycle) + " * 60_000_000L + 30_000_000L)");
+                    columnFileSizes("x", "2020-02-03", files, sizes[cycle]);
+
+                    cursor.toTop();
+                    sink.clear();
+                    println(cursorFactory, cursor);
+                    TestUtils.assertEquals(expected, sink);
+                }
+                try (TableReader reader = getReader("x")) {
+                    // the last cycle splits after row 990 - (cycles - 1)
+                    Assert.assertEquals(992 - sizes.length, reader.getPartitionRowCountFromMetadata(0));
+                }
+            }
+
+            // Windows refuses to truncate a file the pinned reader has mapped, so the scratch stays there
+            if (!Os.isWindows()) {
+                for (int f = 0, n = files.size(); f < n; f++) {
+                    final String file = files.getQuick(f);
+                    // the scratch starts at the 32-byte aligned end of the file and the merge truncates it back to that
+                    Assert.assertTrue(file + ": " + sizes[0][f] + " vs " + sizesAfterFirstSplit[f], sizes[0][f] >= sizesAfterFirstSplit[f]);
+                    Assert.assertTrue(file + ": " + sizes[0][f] + " vs " + sizesAfterFirstSplit[f], sizes[0][f] - sizesAfterFirstSplit[f] < 32);
+                    for (int cycle = 1; cycle < sizes.length; cycle++) {
+                        Assert.assertEquals(file + " grows with every pinned resplit, cycle " + cycle, sizes[0][f], sizes[cycle][f]);
+                    }
+                }
+            }
+
+            // the parent's moved rows survive every resplit and the squash after the reader releases
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-02-03T20'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + (1101 + 1 + sizes.length) + "\n");
+            assertQuery("SELECT count() FROM x WHERE l IS NULL AND s IS NULL AND v IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + (1000 + 1 + sizes.length) + "\n");
+        });
     }
 
     @Test
@@ -2177,14 +2270,31 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     private long columnFileSize(String tableName, String partition, String columnName) throws NumericException {
         try (TableReader reader = getReader(tableName)) {
-            final long partitionTimestamp = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()).parseFloorLiteral(partition);
-            final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
-            final int columnIndex = reader.getMetadata().getColumnIndex(columnName);
-            final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, reader.getMetadata().getWriterIndex(columnIndex));
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(reader.getTableToken());
-                TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), PartitionBy.DAY, partitionTimestamp, reader.getTxFile().getPartitionNameTxn(partitionIndex));
-                return Files.length(TableUtils.dFile(path, columnName, columnNameTxn));
+            return columnFileSize(reader, partition, columnName);
+        }
+    }
+
+    // columnName with a ".i" suffix selects the aux file of a var-size column
+    private long columnFileSize(TableReader reader, String partition, String columnName) throws NumericException {
+        final boolean isAuxFile = columnName.endsWith(".i");
+        if (isAuxFile) {
+            columnName = columnName.substring(0, columnName.length() - 2);
+        }
+        final long partitionTimestamp = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()).parseFloorLiteral(partition);
+        final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
+        final int columnIndex = reader.getMetadata().getColumnIndex(columnName);
+        final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, reader.getMetadata().getWriterIndex(columnIndex));
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), PartitionBy.DAY, partitionTimestamp, reader.getTxFile().getPartitionNameTxn(partitionIndex));
+            return Files.length(isAuxFile ? TableUtils.iFile(path, columnName, columnNameTxn) : TableUtils.dFile(path, columnName, columnNameTxn));
+        }
+    }
+
+    private void columnFileSizes(String tableName, String partition, ObjList<String> columnNames, long[] sizes) throws NumericException {
+        try (TableReader reader = getReader(tableName)) {
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                sizes[i] = columnFileSize(reader, partition, columnNames.getQuick(i));
             }
         }
     }
