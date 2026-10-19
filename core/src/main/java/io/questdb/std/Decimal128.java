@@ -648,6 +648,10 @@ public class Decimal128 implements Sinkable, Decimal {
             if (otherScale > scale) {
                 rescale0(otherScale);
             }
+            // Keep the slow path's contract: an out-of-range operand must not pass through.
+            if (hasOverflowed()) {
+                throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
+            }
             return;
         }
 
@@ -1160,6 +1164,10 @@ public class Decimal128 implements Sinkable, Decimal {
             // Subtracting zero still widens the result to max(scale, bScale).
             if (bScale > scale) {
                 rescale0(bScale);
+            }
+            // Keep the slow path's contract: an out-of-range operand must not pass through.
+            if (hasOverflowed()) {
+                throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
             }
             return;
         }
