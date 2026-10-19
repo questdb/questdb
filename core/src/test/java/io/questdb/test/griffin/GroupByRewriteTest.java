@@ -24,7 +24,13 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class GroupByRewriteTest extends AbstractCairoTest {
@@ -301,6 +307,135 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails(49, "there is no matching function `SUM` with the argument types: (INT, BOOLEAN, INT)");
         });
+    }
+
+    @Test
+    public void testSumDeclaredOperandMatchesLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (1), (2)");
+            bindVariableService.setInt("k", 3);
+            bindVariableService.setStr("s", "3");
+            for (String operand : new String[]{"3", ":k", ":s::INT"}) {
+                final String declare = "DECLARE @v := x * " + operand + ", @s := SUM(x * " + operand + ") ";
+                assertQuery(declare + "SELECT @v AS v, SUM(@v) AS s FROM t ORDER BY v")
+                        .noLeakCheck().expectSize().returns("""
+                                v\ts
+                                3\t6
+                                6\t6
+                                """);
+                assertQuery(declare + "SELECT @v AS v, SUM(@v) AS s FROM t GROUP BY @v ORDER BY v")
+                        .noLeakCheck().expectSize().returns("""
+                                v\ts
+                                3\t6
+                                6\t6
+                                """);
+                assertQuery(declare + "SELECT SUM(@v) AS s FROM t WHERE @v > 3")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("""
+                                s
+                                6
+                                """);
+                assertQuery(declare + "SELECT SUM(@v) AS s, AVG(@v) AS a FROM t")
+                        .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("values: [sum(x),")
+                        .returns("""
+                                s\ta
+                                12\t4.0
+                                """);
+                assertQuery(declare + "SELECT @s AS a, @s AS b FROM t")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("""
+                                a\tb
+                                12\t12
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSumIntOperandMatchesLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            bindVariableService.setByte("b", (byte) 2);
+            bindVariableService.setShort("h", (short) 2);
+            bindVariableService.setInt("k", 2);
+            bindVariableService.setInt("n", -2);
+            bindVariableService.setStr("s", "2");
+            bindVariableService.setStr("m", "-2");
+            bindVariableService.setInt(0, 2);
+            String empty = """
+                    a\tb\tc\td\te\tf
+                    null\tnull\tnull\tnull\tnull\tnull
+                    """;
+            assertSumArithmetic(empty, "2", ":k", "$1");
+            execute("INSERT INTO t VALUES (null)");
+            assertSumArithmetic(empty, "2", ":k", "$1");
+
+            // Every column overflows or underflows INT when the arithmetic stays per row.
+            execute("INSERT INTO t VALUES (2_147_483_647), (-2_147_483_647), (-2_147_483_647)");
+            assertSumArithmetic("""
+                            a\tb\tc\td\te\tf
+                            -4294967294\t-4294967294\t-2147483641\t-2147483641\t-2147483653\t2147483653
+                            """,
+                    "2", "2::INT", ":b", ":h", ":k", "$1",
+                    ":s::BYTE", ":s::SHORT", ":s::INT", ":s::LONG", "(:s::SHORT)::INT"
+            );
+            bindVariableService.setInt(0, -2);
+            assertSumArithmetic("""
+                            a\tb\tc\td\te\tf
+                            4294967294\t4294967294\t-2147483653\t-2147483653\t-2147483641\t2147483641
+                            """,
+                    "-2", "-(-(-2))", "(-2)::INT", ":n", "-:k", "$1", ":m::INT", "-:s::INT"
+            );
+        });
+    }
+
+    @Test
+    public void testSumLongOperandMatchesLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG)");
+            execute("INSERT INTO t VALUES (-4_611_686_018_427_387_904), (1), (null)");
+            bindVariableService.setLong("k", 2);
+            bindVariableService.setLong("n", -2);
+            bindVariableService.setStr("s", "2");
+            bindVariableService.setStr("m", "-2");
+            // Per row, x * 2 lands on the LONG NULL sentinel; the literal rewrite still counts that row.
+            assertSumArithmetic("""
+                            a\tb\tc\td\te\tf
+                            -9223372036854775806\t-9223372036854775806\t-4611686018427387899\t-4611686018427387899\t-4611686018427387907\t4611686018427387907
+                            """,
+                    "2", ":k", ":s::LONG"
+            );
+            assertSumArithmetic("""
+                            a\tb\tc\td\te\tf
+                            9223372036854775806\t9223372036854775806\t-4611686018427387907\t-4611686018427387907\t-4611686018427387899\t4611686018427387899
+                            """,
+                    "-2", "-2L", ":n", "-:k", ":m::LONG"
+            );
+        });
+    }
+
+    @Test
+    public void testSumNonIntegerAndRowDependentOperands() throws Exception {
+        bindVariableService.setDouble("d", 1);
+        bindVariableService.setFloat("f", 1);
+        // Per-row arithmetic rounds the constant away; hoisting it would turn 0.0 into 2.0.
+        assertQuery("""
+                SELECT SUM(i + 1.0) a, SUM(i + :d) b, SUM(i + :f) c, SUM(i + 1::DOUBLE) d,
+                       SUM(i + -:d) e, SUM(i + -1::DOUBLE) f, SUM(x * y::INT) g, SUM(x * -y) h,
+                       SUM(x / 2) i, SUM(x % 7) j, SUM(x * (y - 1)) k
+                FROM t
+                """)
+                .ddl(
+                        "CREATE TABLE t (i LONG, x SHORT, y INT)",
+                        """
+                                INSERT INTO t VALUES
+                                (10_000_000_000_000_000, 30_000, 927_094),
+                                (-10_000_000_000_000_000, 1, 0)
+                                """
+                )
+                .noRandomAccess().expectSize().returns("""
+                        a\tb\tc\td\te\tf\tg\th\ti\tj\tk
+                        0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t2043016224\t-2043016224\t15000\t6\t2042986223
+                        """);
     }
 
     @Test
@@ -642,6 +777,229 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testSumOrderByOnlyStaysHidden() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (x INT, sym SYMBOL)");
+            execute("INSERT INTO g VALUES (1, 'a'), (3, 'b'), (2, 'c')");
+            bindVariableService.setInt("k", 2);
+            bindVariableService.setInt("n", -2);
+            bindVariableService.setStr("s", "2");
+            bindVariableService.setInt(0, 2);
+            final String descending = """
+                    sym
+                    b
+                    c
+                    a
+                    """;
+            final String ascending = """
+                    sym
+                    a
+                    c
+                    b
+                    """;
+            for (String operator : new String[]{"*", "+", "-"}) {
+                assertSumOrderByOnly(descending, operator, "2", ":k", "$1", "2::INT", ":s::INT", "-(-2)");
+                assertSumOrderByOnly("*".equals(operator) ? ascending : descending, operator, "-2", ":n", "-:k");
+            }
+            execute("CREATE TABLE c AS (SELECT sym FROM g GROUP BY sym ORDER BY SUM(x * :k) DESC)");
+            assertQuery("c").noLeakCheck().expectSize().returns(descending);
+
+            execute("CREATE TABLE w (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO w VALUES (1, '2024-01-01'), (1, '2024-01-02'), (2, '2024-01-03')");
+            for (String orderBy : new String[]{"row_number() OVER (ORDER BY ts) * 2", "rank() OVER (ORDER BY ts) + 1"}) {
+                assertQuery("SELECT DISTINCT x, rank() OVER (ORDER BY ts) r FROM w ORDER BY " + orderBy + " DESC")
+                        .noLeakCheck().expectSize().returns("""
+                                x\tr
+                                2\t3
+                                1\t2
+                                1\t1
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSumRebindMultiplier() throws Exception {
+        final String nulls = """
+                a\tb\tc
+                null\tnull\tnull
+                """;
+        ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok("initial null", nulls, b -> {
+            b.setInt("k", Numbers.INT_NULL);
+            b.setStr("s", null);
+        }));
+        cases.add(BindVarTuple.ok("small", """
+                a\tb\tc
+                60000\t-60000\t60000
+                """, b -> {
+            b.setInt("k", 2);
+            b.setStr("s", "2");
+        }));
+        cases.add(BindVarTuple.ok("overflow", """
+                a\tb\tc
+                27812820000\t-27812820000\t27812820000
+                """, b -> {
+            b.setInt("k", 927_094);
+            b.setStr("s", "927094");
+        }));
+        cases.add(BindVarTuple.ok("negative", """
+                a\tb\tc
+                -27812820000\t27812820000\t-27812820000
+                """, b -> {
+            b.setInt("k", -927_094);
+            b.setStr("s", "-927094");
+        }));
+        cases.add(BindVarTuple.ok("null again", nulls, b -> {
+            b.setInt("k", Numbers.INT_NULL);
+            b.setStr("s", null);
+        }));
+        assertQuery("SELECT SUM(:k * x) a, SUM(x * -:k) b, SUM(:s::INT * x) c FROM t")
+                .ddl("CREATE TABLE t (x SHORT)", "INSERT INTO t VALUES (30_000)")
+                .noRandomAccess().expectSize().assertBinds(cases);
+    }
+
+    @Test
+    public void testSumSampleByBindMatchesLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (30_000, '2024-01-01'), (30_000, '2024-01-03')");
+            bindVariableService.setStr("k", "927094");
+            bindVariableService.setStr("n", "-927094");
+            for (String operand : new String[]{"927_094", ":k::INT"}) {
+                assertQuery("SELECT SUM(" + operand + " * x) s, ts FROM t SAMPLE BY 1d")
+                        .noLeakCheck().timestamp("ts").expectSize().withPlanContaining("values: [sum(x)]").returns("""
+                                s\tts
+                                27812820000\t2024-01-01T00:00:00.000000Z
+                                27812820000\t2024-01-03T00:00:00.000000Z
+                                """);
+                // FILL keeps the per-row arithmetic so that fill values keep their meaning.
+                assertQuery("SELECT SUM(" + operand + " * x) s, ts FROM t SAMPLE BY 1d FILL(7)")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().returns("""
+                                s\tts
+                                2043016224\t2024-01-01T00:00:00.000000Z
+                                7\t2024-01-02T00:00:00.000000Z
+                                2043016224\t2024-01-03T00:00:00.000000Z
+                                """);
+            }
+            for (String operand : new String[]{"-927_094", ":n::INT"}) {
+                assertQuery("SELECT SUM(" + operand + " * x) s, ts FROM t SAMPLE BY 1d")
+                        .noLeakCheck().timestamp("ts").expectSize().withPlanContaining("values: [sum(x)]").returns("""
+                                s\tts
+                                -27812820000\t2024-01-01T00:00:00.000000Z
+                                -27812820000\t2024-01-03T00:00:00.000000Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSumShortColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '2024-01-01T00:00:00.000000Z'), ('a', '2024-01-01T01:00:00.000000Z')");
+            execute("ALTER TABLE t ADD COLUMN x SHORT");
+            execute("INSERT INTO t (k, ts, x) VALUES ('b', '2024-01-02T00:00:00.000000Z', 5)");
+            execute("CREATE TABLE n (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO n VALUES ('2024-01-01T00:00:00.000000Z'), ('2024-01-01T01:00:00.000000Z')");
+            execute("ALTER TABLE n ADD COLUMN k INT");
+            execute("ALTER TABLE n ADD COLUMN x SHORT");
+            execute("INSERT INTO n (ts, k, x) VALUES ('2024-01-02T00:00:00.000000Z', 7, 5)");
+            bindVariableService.setInt("k", 2);
+            final String select = "SELECT k, SUM(x * :k) a, SUM(x + :k) b, SUM(:k - x) c, SUM(x * -2) d, SUM(x) e FROM ";
+            assertQuery(select + "t GROUP BY k ORDER BY k")
+                    .noLeakCheck().expectSize().withPlanContaining("vectorized: true").returns("""
+                            k\ta\tb\tc\td\te
+                            a\t0\t4\t4\t0\t0
+                            b\t10\t7\t-3\t-10\t5
+                            """);
+            for (String[] agg : new String[][]{
+                    {"SUM(x * :k)", "0", "10"},
+                    {"SUM(x - :k)", "-4", "3"},
+                    {"SUM(x * -2)", "0", "-10"},
+                    {"SUM(x)", "0", "5"}
+            }) {
+                assertQuery("SELECT k, " + agg[0] + " s FROM n GROUP BY k ORDER BY k")
+                        .noLeakCheck().expectSize().withPlanContaining("vectorized: true").returns("""
+                                k\ts
+                                null\t%s
+                                7\t%s
+                                """.formatted(agg[1], agg[2]));
+            }
+        });
+    }
+
+    @Test
+    public void testSumUntypedIndexedBind() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x SHORT)");
+            execute("INSERT INTO t VALUES (30_000)");
+            // The compiler infers an untyped bind's type, so the first compilation keeps per-row arithmetic.
+            assertUntypedBind("SELECT SUM(x * $1) s FROM t", ColumnType.FLOAT, "2", """
+                    s
+                    60000.0
+                    """);
+            assertUntypedBind("SELECT $1 b, SUM(x * $1::INT) a FROM t", ColumnType.DOUBLE, "2.5", """
+                    b\ta
+                    2.5\t60000
+                    """);
+            assertUntypedBind("SELECT SUM(x - $1::SHORT) s, MIN(x * $1) m FROM t", ColumnType.DOUBLE, "2.5", """
+                    s\tm
+                    29998\t75000.0
+                    """);
+            assertUntypedBind("SELECT SUM($1::INT * x) s FROM t", ColumnType.DOUBLE, "927094", """
+                    s
+                    2043016224
+                    """);
+            // A recompilation sees the inferred type and moves the multiplication outside the aggregate.
+            assertQuery("SELECT SUM($1::INT * x) s FROM t")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("values: [sum(x)]").returns("""
+                            s
+                            27812820000
+                            """);
+            assertUntypedBind("SELECT SUM((-$1)::INT * x) s FROM t", ColumnType.DOUBLE, "927094", """
+                    s
+                    -2043016224
+                    """);
+            assertUntypedBind("SELECT SUM(x - ($1 + 0)::SHORT) s, MIN(x * $1) m FROM t", ColumnType.INT, "927094", """
+                    s\tm
+                    20410\t2043016224
+                    """);
+        });
+    }
+
+    @Test
+    public void testSumWindowJoinChain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tr (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pr (sym SYMBOL, b SHORT, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tr VALUES ('A', '2023-01-01T09:10:00.000000Z')");
+            execute("""
+                    INSERT INTO pr VALUES
+                    ('A', 1, 1, '2023-01-01T09:06:00.000000Z'),
+                    ('A', 1, 1, '2023-01-01T09:09:30.000000Z'),
+                    ('A', 1, 1, '2023-01-01T09:10:00.000000Z')
+                    """);
+            bindVariableService.setInt("k", 10);
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String operand : new String[]{"10", ":k", "-(-10)", "10::INT"}) {
+                    assertQuery("""
+                            SELECT t.ts, SUM(p.i * %1$s) s1, SUM(p.b + %1$s) s2, SUM(p1.b + %1$s) s3, SUM(p1.i - %1$s) s4
+                            FROM tr t
+                            WINDOW JOIN pr p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING EXCLUDE PREVAILING
+                            WINDOW JOIN pr p1 ON (t.sym = p1.sym) RANGE BETWEEN 5 MINUTE PRECEDING AND 5 MINUTE FOLLOWING EXCLUDE PREVAILING
+                            """.formatted(operand))
+                            .noLeakCheck().noRandomAccess().expectSize(!isParallel).timestamp("ts").returns("""
+                                    ts\ts1\ts2\ts3\ts4
+                                    2023-01-01T09:10:00.000000Z\t20\t22\t33\t-27
+                                    """);
+                }
+            }
+        });
+    }
+
     private void assertAggQuery(
             String expected,
             String query,
@@ -652,5 +1010,38 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns(expected);
+    }
+
+    private void assertSumArithmetic(String expected, String... operands) throws Exception {
+        for (String operand : operands) {
+            assertQuery("SELECT SUM(x * " + operand + ") a, SUM(" + operand + " * x) b, "
+                    + "SUM(x + " + operand + ") c, SUM(" + operand + " + x) d, "
+                    + "SUM(x - " + operand + ") e, SUM(" + operand + " - x) f FROM t")
+                    .noLeakCheck().noRandomAccess().expectSize().returns(expected);
+        }
+    }
+
+    private void assertSumOrderByOnly(String expected, String operator, String... operands) throws Exception {
+        for (String operand : operands) {
+            final String orderBy = " ORDER BY SUM(x " + operator + " " + operand + ") DESC";
+            for (String select : new String[]{
+                    "SELECT sym FROM g GROUP BY sym",
+                    "SELECT sym FROM g",
+                    "SELECT DISTINCT sym FROM g GROUP BY sym",
+                    "SELECT DISTINCT sym FROM g"
+            }) {
+                assertQuery(select + orderBy).noLeakCheck().expectSize().withPlanContaining("values: [sum(x)").returns(expected);
+            }
+        }
+    }
+
+    private void assertUntypedBind(String query, int expectedBindType, String value, String expected) throws Exception {
+        bindVariableService.clear();
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertEquals(expectedBindType, bindVariableService.getFunction(0).getType());
+            bindVariableService.setStr(0, value);
+            assertFactory(factory).withContext(sqlExecutionContext)
+                    .noRandomAccess().expectSize().returns(expected);
+        }
     }
 }
