@@ -33,6 +33,11 @@ constexpr uint8_t dedup_shuffle_index_format = 3;
 constexpr int8_t error_sort_timestamp_txn_range_overflow = -1;
 constexpr int8_t error_sort_segment_index_offset_range_overflow = -2;
 constexpr int8_t error_sort_row_count_overflow = -3;
+constexpr int8_t error_sort_plan_invalid = -4;
+
+// Item types of the WAL block sort plan built by TableWriterSegmentCopyInfo.buildSortPlan()
+constexpr int64_t sort_plan_item_copy = 0;
+constexpr int64_t sort_plan_item_sort = 1;
 
 inline int clzll(uint64_t x) {
 #if defined(__GNUC__) || defined(__clang__)
@@ -141,6 +146,19 @@ typedef struct txn_info {
     int64_t row_count;
     int64_t seg_info_index;
 } txn_info;
+
+// One item of the WAL block sort plan. Items are listed in output order and every item
+// covers a contiguous range of the sorted output. The rows of the item are the rows of the
+// transactions plan_txns[txn_lo..txn_hi), where plan_txns holds indexes into the txn_info array.
+// A copy item concatenates its transactions in the listed order, a sort item sorts the union
+// of its transactions by (timestamp, seq_txn, row).
+typedef struct sort_plan_item {
+    int64_t type;
+    int64_t txn_lo;
+    int64_t txn_hi;
+    int64_t min_ts;
+    int64_t max_ts;
+} sort_plan_item;
 
 
 template<typename T>

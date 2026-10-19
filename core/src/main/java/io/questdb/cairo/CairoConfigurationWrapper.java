@@ -1540,6 +1540,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWalApplySortPlanEnabled() {
+        return getDelegate().isWalApplySortPlanEnabled();
+    }
+
+    @Override
     public boolean isWalApplySuspendedWriteDenied() {
         return getDelegate().isWalApplySuspendedWriteDenied();
     }
