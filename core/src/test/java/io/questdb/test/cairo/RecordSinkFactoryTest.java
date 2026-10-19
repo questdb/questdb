@@ -29,9 +29,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.LoopingRecordSink;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
@@ -865,6 +867,81 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         // Symbol should default to INT (symbol index), not STRING
         Assert.assertEquals(ColumnType.INT, testRecordSink.recordedTypes.get(0));
         Assert.assertEquals(ColumnType.STRING, testRecordSink.recordedTypes.get(1));
+    }
+
+    @Test
+    public void testRecordSinkTemplateKeepsWriteFlagsForAllCopierTypes() {
+        // The template keeps the column types, filter and write flags, so every copier type
+        // (single-method, chunked and looping) writes the same key, and each call returns a new
+        // instance. The looping type covers the fallback: getInstanceClass() returns null when
+        // CairoConfiguration#getCopierType() forces the looping sink (SINK_TYPE_LOOPING), and a
+        // bare null class has nothing to build the LoopingRecordSink from.
+        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        columnTypes.add(ColumnType.SYMBOL);
+        columnTypes.add(ColumnType.SYMBOL);
+        columnTypes.add(ColumnType.STRING);
+        columnTypes.add(ColumnType.TIMESTAMP);
+
+        ListColumnFilter columnFilter = new ListColumnFilter();
+        for (int i = 0, n = columnTypes.getColumnCount(); i < n; i++) {
+            columnFilter.add(i + 1);
+        }
+
+        BitSet writeSymbolAsString = new BitSet();
+        writeSymbolAsString.set(1);
+        BitSet writeStringAsVarchar = new BitSet();
+        writeStringAsVarchar.set(2);
+        BitSet writeTimestampAsNanos = new BitSet();
+        writeTimestampAsNanos.set(3);
+
+        IntList expectedPutTypes = new IntList();
+        expectedPutTypes.add(ColumnType.INT);
+        expectedPutTypes.add(ColumnType.STRING);
+        expectedPutTypes.add(ColumnType.VARCHAR);
+        expectedPutTypes.add(ColumnType.TIMESTAMP);
+
+        final int[] copierTypes = {
+                RecordSinkFactory.SINK_TYPE_SINGLE_METHOD,
+                RecordSinkFactory.SINK_TYPE_CHUNKED,
+                RecordSinkFactory.SINK_TYPE_LOOPING
+        };
+        for (int copierType : copierTypes) {
+            CairoConfiguration copierConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCopierType() {
+                    return copierType;
+                }
+            };
+            RecordSinkTemplate template = new RecordSinkTemplate(
+                    copierConfiguration,
+                    new BytecodeAssembler(),
+                    columnTypes,
+                    columnFilter,
+                    writeSymbolAsString,
+                    writeStringAsVarchar,
+                    writeTimestampAsNanos
+            );
+            RecordSink first = template.newInstance();
+            RecordSink second = template.newInstance();
+            Assert.assertNotSame(first, second);
+            Assert.assertEquals(copierType == RecordSinkFactory.SINK_TYPE_LOOPING, first instanceof LoopingRecordSink);
+            Assert.assertSame(first.getClass(), second.getClass());
+
+            for (RecordSink sink : new RecordSink[]{first, second}) {
+                final long[] recordedTimestamp = new long[1];
+                TestRecordSink testRecordSink = new TestRecordSink() {
+                    @Override
+                    public void putTimestamp(long value) {
+                        recordedTimestamp[0] = value;
+                        super.putTimestamp(value);
+                    }
+                };
+                sink.copy(new TestRecord(), testRecordSink);
+                Assert.assertEquals("copierType=" + copierType, expectedPutTypes, testRecordSink.recordedTypes);
+                // the test record returns 1 for every timestamp, and the flag scales it to nanos
+                Assert.assertEquals("copierType=" + copierType, 1000L, recordedTimestamp[0]);
+            }
+        }
     }
 
     @NotNull

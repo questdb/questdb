@@ -167,17 +167,20 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
         // a type unlike its family's namesake would parse and fill as the namesake's value; the
         // calling factory's constructor frees what it holds on the throw
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.familyArmOf(driver, "SAMPLE BY FILL(value)");
+        final CharSequence fillValue = toFillValue(fillNode);
         // parse the fill value as the type of the column's accessor family: the fill cursor reads
         // the constant through that family's getter
         try {
             return switch (accessor) {
-                case INT -> IntConstant.newInstance(Numbers.parseInt(fillNode.token));
-                case IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillNode.token));
-                case LONG -> LongConstant.newInstance(Numbers.parseLong(fillNode.token));
-                case FLOAT -> FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));
-                case DOUBLE -> DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));
-                case SHORT -> ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));
-                case BYTE -> ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));
+                case INT -> IntConstant.newInstance(Numbers.parseInt(fillValue));
+                case IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillValue));
+                case LONG -> LongConstant.newInstance(Numbers.parseLong(fillValue));
+                case FLOAT -> FloatConstant.newInstance(Numbers.parseFloat(fillValue));
+                case DOUBLE -> DoubleConstant.newInstance(Numbers.parseDouble(fillValue));
+                case SHORT -> ShortConstant.newInstance((short) Numbers.parseInt(fillValue));
+                case BYTE -> ByteConstant.newInstance((byte) Numbers.parseInt(fillValue));
+                // A negated literal is not a quoted timestamp, so this arm reads the raw token and
+                // rejects FILL(-1) at the minus sign, as the GROUP BY path does.
                 case TIMESTAMP -> {
                     if (!Chars.isQuoted(fillNode.token)) {
                         throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token)
@@ -191,7 +194,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                         throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             };
         } catch (NumericException e) {
-            throw SqlException.position(fillNode.position).put("invalid fill value: ").put(fillNode.token);
+            throw SqlException.position(fillNode.position).put("invalid fill value: ").put(fillValue);
         }
     }
 
@@ -239,6 +242,24 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             }
         }
         return placeholderFunctions;
+    }
+
+    // The parser turns FILL(-1) into a unary minus node over the unsigned constant "1", so its
+    // token is "-". This returns the signed text "-1" for that shape, which the Numbers parsers
+    // read exactly as they read any negative literal. Numbers.parseInt() and Numbers.parseLong()
+    // reject a value outside the int or long range, but createPlaceHolderFunction() narrows a
+    // SHORT or BYTE fill value from parseInt() with a plain (short) or (byte) cast, so those two
+    // types get only the int range check: FILL(-129) on a BYTE column fills 127. Any other node
+    // keeps its own token, so FILL(-abc) still fails at the minus sign as before.
+    private static CharSequence toFillValue(ExpressionNode fillNode) {
+        if (fillNode.type == ExpressionNode.OPERATION
+                && fillNode.paramCount == 1
+                && Chars.equals(fillNode.token, '-')
+                && fillNode.rhs != null
+                && fillNode.rhs.type == ExpressionNode.CONSTANT) {
+            return "-" + fillNode.rhs.token;
+        }
+        return fillNode.token;
     }
 
     @Override
