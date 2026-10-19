@@ -1633,7 +1633,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             final int workerCount = 4;
             WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
                         sqlExecutionContext.setParallelHorizonJoinEnabled(true);
@@ -1647,6 +1647,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                         """,
                                 sqlExecutionContext
                         );
+                        // Drain quotes before copying it: with composite randomisation on, tables are WAL.
+                        randomiseCompositePartitions(engine, sqlExecutionContext);
                         engine.execute("CREATE TABLE bids AS (SELECT * FROM quotes) TIMESTAMP(ts) PARTITION BY HOUR", sqlExecutionContext);
                         engine.execute("CREATE TABLE asks AS (SELECT sym, bid + 1 ask, ts FROM quotes) TIMESTAMP(ts) PARTITION BY HOUR", sqlExecutionContext);
                         engine.execute(
@@ -1659,6 +1661,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                         """,
                                 sqlExecutionContext
                         );
+                        randomiseCompositePartitions(engine, sqlExecutionContext);
 
                         assertQuery("""
                                 SELECT t.sym, count() c, count(q.bid) m, sum(abs(q.bid - t.price)) d
@@ -1722,9 +1725,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                         m\td\te
                                         10000\t0.0\t0.0
                                         """);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
