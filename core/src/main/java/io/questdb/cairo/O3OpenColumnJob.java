@@ -1752,6 +1752,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcDataNewPartitionSize = task.getSrcDataNewPartitionSize();
         final long srcDataOldPartitionSize = task.getSrcDataOldPartitionSize();
         final long o3SplitPartitionSize = task.getO3SplitPartitionSize();
+        final boolean isTailPinned = task.isTailPinned();
 
         subSeq.done(cursor);
 
@@ -1801,7 +1802,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partitionUpdateSinkAddr,
                 columnIndex,
                 columnNameTxn,
-                task.isTailPinned()
+                isTailPinned
         );
     }
 
