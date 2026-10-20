@@ -7950,7 +7950,9 @@ public class PostingIndexWriter implements IndexWriter {
         switch (ColumnType.tagOf(colType)) {
             case ColumnType.VARCHAR -> writeVarcharValue(mem, covIdx, row);
             case ColumnType.STRING -> writeStringValue(mem, covIdx, row);
-            default -> writeBinaryLikeValue(mem, covIdx, row);
+            case ColumnType.BINARY, ColumnType.ARRAY -> writeBinaryLikeValue(mem, covIdx, row);
+            default -> throw CairoException.critical(0)
+                    .put("posting index cannot cover column of type ").put(ColumnType.nameOf(colType));
         }
     }
 
