@@ -2802,31 +2802,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * An O3 split shrinks the parent's row count but leaves the moved rows in its column files.
-     * Returns true while a reader locked in [parentNameTxn, splitNameTxn] can still read them,
+     * Returns true while a reader locked in [parentNameTxn + 1, splitNameTxn] can still read them,
      * so the parent's tail must not be written in place. Rewrites of the split move its name txn
      * forward, so the range may include readers that never saw the moved rows: a needless merge,
-     * never a missed reader. States the check cannot judge report a pinned tail.
+     * never a missed reader.
      */
     public boolean isPartitionTailPinnedByReaders(long partitionTimestamp) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0) {
-            return true;
-        }
-        if (partitionIndex + 1 >= txWriter.getPartitionCount()) {
-            return false;
-        }
-        final long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex + 1);
-        if (txWriter.getLogicalPartitionTimestamp(partitionTimestamp) != txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp)) {
-            return false;
-        }
-        final long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        final long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1) + 1;
-        if (toTxn > txWriter.getTxn()) {
-            // A split from the commit in flight: readers at the current txn still see the pre-split row count,
-            // and isRangeAvailable() would push the scoreboard max past the committed txn, stalling new readers.
-            return true;
-        }
-        return !txnScoreboard.isRangeAvailable(fromTxn, toTxn);
+        assert partitionIndex > -1 : "partition does not exist [timestamp=" + partitionTimestamp + ']';
+        return isPartitionTailPinned(partitionIndex);
     }
 
     public boolean isSymbolMapWriterCached(int columnIndex) {
@@ -5535,25 +5519,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // batching more transactions to reduce the number of expensive parquet O3 merges.
         long inOrderMinTimestamp = isLastPartitionParquet() ? Long.MAX_VALUE : txWriter.getMaxTimestamp();
         return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows(), inOrderMinTimestamp);
-    }
-
-    private boolean canSquashOverwritePartitionTail(int partitionIndex) {
-        long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        if (fromTxn < 0) {
-            fromTxn = 0;
-        }
-        long toTxn = txWriter.getTxn();
-        if (partitionIndex + 1 < txWriter.getPartitionCount()) {
-            // If the next partition is a split partition part of same logical partition
-            // for example if the partition is '2020-01-01' and the next partition is '2020-01-01T12.3'
-            // then if there are no readers between transaction range [0, 3) the partition is unlocked to append.
-            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex)) ==
-                    txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1))) {
-                toTxn = Math.max(fromTxn + 1, getPartitionNameTxn(partitionIndex + 1) + 1);
-            }
-        }
-
-        return txnScoreboard.isRangeAvailable(fromTxn, toTxn);
     }
 
     private void cancelRowAndBump() {
@@ -8440,6 +8405,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isLastPartitionParquet() {
         int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
+    }
+
+    private boolean isPartitionTailPinned(int partitionIndex) {
+        if (partitionIndex + 1 >= txWriter.getPartitionCount()) {
+            return false;
+        }
+        final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex + 1);
+        if (txWriter.getLogicalPartitionTimestamp(partitionTimestamp) != txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp)) {
+            return false;
+        }
+        // A partition named N is first visible to readers at txn N + 1, since the writer stamps
+        // the name txn before the commit bumps it. Readers in [parentNameTxn + 1, splitNameTxn]
+        // see the parent's files but not the split.
+        final long fromTxn = txWriter.getPartitionNameTxn(partitionIndex) + 1;
+        final long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1) + 1;
+        return !txnScoreboard.isRangeAvailable(fromTxn, toTxn);
     }
 
     /**
@@ -14683,7 +14665,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Move targetPartitionIndex to the first unlocked partition in the range
         int targetPartitionIndex = partitionIndexLo;
         for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
-            boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
+            boolean canOverwrite = !isPartitionTailPinned(targetPartitionIndex);
             if (canOverwrite || force) {
                 targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
                 copyTargetFrame = !canOverwrite;
