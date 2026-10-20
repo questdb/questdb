@@ -58,11 +58,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long timestampMergeIndexSize,
             long srcDataFixFd,
             long srcDataFixAddr,
-            long srcDataFixOffset,
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
-            long srcDataVarOffset,
             long srcDataVarSize,
             long srcDataLo,
             long srcDataHi,
@@ -135,8 +133,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
                             // srcDataTop is the column top offset when the merge kept the column top, so row numbers
                             // address the data past it, and 0 when the merge materialized the column top
-                            srcDataFixAddr + srcDataFixOffset - srcDataTop,
-                            srcDataVarAddr + srcDataVarOffset,
+                            srcDataFixAddr - srcDataTop,
+                            srcDataVarAddr,
                             srcOooFixAddr,
                             srcOooVarAddr,
                             dstAuxAddr + dstFixOffset,
@@ -169,8 +167,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         copyData(
                                 tableWriter.getFilesFacade(),
                                 columnType,
-                                srcDataFixAddr + srcDataFixOffset,
-                                srcDataVarAddr + srcDataVarOffset,
+                                srcDataFixAddr,
+                                srcDataVarAddr,
                                 srcDataLo,
                                 srcDataHi,
                                 dstAuxAddr + dstFixOffset,
@@ -270,11 +268,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long timestampMergeIndexSize = task.getTimestampMergeIndexSize();
         final long srcDataFixFd = task.getSrcDataFixFd();
         final long srcDataFixAddr = task.getSrcDataFixAddr();
-        final long srcDataFixOffset = task.getSrcDataFixOffset();
         final long srcDataFixSize = task.getSrcDataFixSize();
         final long srcDataVarFd = task.getSrcDataVarFd();
         final long srcDataVarAddr = task.getSrcDataVarAddr();
-        final long srcDataVarOffset = task.getSrcDataVarOffset();
         final long srcDataVarSize = task.getSrcDataVarSize();
         final long srcDataTop = task.getSrcDataTop();
         final long srcDataLo = task.getSrcDataLo();
@@ -327,11 +323,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     timestampMergeIndexSize,
                     srcDataFixFd,
                     srcDataFixAddr,
-                    srcDataFixOffset,
                     srcDataFixSize,
                     srcDataVarFd,
                     srcDataVarAddr,
-                    srcDataVarOffset,
                     srcDataVarSize,
                     srcDataLo,
                     srcDataHi,
