@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -52,6 +53,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
 public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
@@ -243,6 +245,25 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public void setPageFrameMaxRows(int maxRows) {
         pageFrameMaxRows = maxRows;
+    }
+
+    @Override
+    public boolean skipToCachedFrame(PageFrameAddressCache cache, int frameIndex) {
+        if (!reenterPartitionFrame || reenterParquetDecoder == null || hasActivePushdownFilter()
+                || cache.getFrameFormat(frameIndex) != PartitionFormat.PARQUET) {
+            return false;
+        }
+        final long rowId = cache.getRowIdOffset(frameIndex);
+        final long lo = Rows.toLocalRowID(rowId);
+        final long hi = lo + cache.getFrameSize(frameIndex);
+        if (Rows.toPartitionIndex(rowId) != reenterPartitionIndex || lo < reenterPartitionLo || hi > reenterPartitionHi) {
+            return false;
+        }
+        reenterPartitionLo = lo;
+        cachedRowGroupIndex = cache.getParquetRowGroup(frameIndex);
+        cachedRowGroupStartRow = lo - cache.getParquetRowGroupLo(frameIndex);
+        remainingRowsInInterval = reenterPartitionHi - lo;
+        return true;
     }
 
     @Override

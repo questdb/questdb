@@ -28,6 +28,7 @@ import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -92,6 +93,14 @@ public interface TablePageFrameCursor extends PageFrameCursor {
     }
 
     TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException;
+
+    /**
+     * Positions the next read at a cached Parquet page frame within the remaining current partition interval.
+     * Returns false without moving when the cursor cannot preserve that frame's bounds and subsequent iteration.
+     */
+    default boolean skipToCachedFrame(PageFrameAddressCache cache, int frameIndex) {
+        return false;
+    }
 
     /**
      * Positions the cursor at the lead frames, the way {@link #toPartition(int)} positions it

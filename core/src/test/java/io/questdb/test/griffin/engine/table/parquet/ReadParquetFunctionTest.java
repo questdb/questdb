@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -957,7 +958,60 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegatedRangePrunesOnlyNullFreeRowGroups() throws Exception {
+    public void testNegatedRangeKeepsNullSentinelValues() throws Exception {
+        assertMemoryLeak(() -> {
+            // PyArrow stores NaN and integer NULL sentinels as values; every column has null_count=0.
+            final String fixture = "null_sentinel_values.parquet";
+            try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream(
+                    "/sqllogictest/data/parquet-testing/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), is.readAllBytes());
+            }
+
+            final int previousJitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    for (String column : new String[]{"i", "l", "f", "d"}) {
+                        final String query = "SELECT p.id FROM long_sequence(2) q JOIN read_parquet('" + fixture
+                                + "') p ON q.x = p.id AND NOT (p." + column;
+                        for (String comparison : new String[]{" < 2)", " <= 1)", " > 0)", " >= 1)"}) {
+                            assertQuery(query + comparison)
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize(!parallel)
+                                    .returns("id\n1\n");
+                        }
+                        assertQuery("SELECT p.id FROM long_sequence(2) q JOIN read_parquet('" + fixture
+                                + "') p ON q.x = p.id AND NOT (2 > p." + column + ") AND p.id < 2")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize(!parallel)
+                                .returns("id\n1\n");
+
+                        ParquetRowGroupFilter.resetRowGroupsSkipped();
+                        assertQuery(query + " < 2) AND p.id > 2")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .returns("id\n");
+                        Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+                        ParquetRowGroupFilter.resetRowGroupsSkipped();
+                        assertQuery("SELECT id FROM read_parquet('" + fixture + "') WHERE " + column + " > 2")
+                                .noLeakCheck()
+                                .supportsRandomAccess(parallel)
+                                .returns("id\n");
+                        Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(previousJitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testNegatedRangeKeepsPhysicalNulls() throws Exception {
         assertMemoryLeak(() -> {
             // Rows 101-150 hold NULLs, so the second row group has them and the other 49 do not.
             execute("""
@@ -987,14 +1041,13 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     );
                 }
             }
-            // The negation keeps the 100 rows from 4901 up and the 50 NULL rows. Every row group below 4901
-            // fails it, except the one holding NULLs.
+            // read_parquet cannot distinguish these null counts from an external writer's, so it declines pruning.
             final String expected = """
                     count\tcount1
                     150\t100
                     """;
-            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('stats.parquet') WHERE NOT (val < 4901)", expected, 48);
-            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('stats.parquet') WHERE NOT (val <= 4900)", expected, 48);
+            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('stats.parquet') WHERE NOT (val < 4901)", expected, 0);
+            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('stats.parquet') WHERE NOT (val <= 4900)", expected, 0);
             assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('no_stats.parquet') WHERE NOT (val < 4901)", expected, 0);
         });
     }

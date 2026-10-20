@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A row cursor factory whose cursors emit the rows of a page frame key by key, in the key order a query requires, and
@@ -38,9 +39,9 @@ interface KeyOrderedRowCursorFactory extends RowCursorFactory {
 
     /**
      * The cursor over the rows in the page frame of the keys at {@code keyLo}, inclusive, to {@code keyHi}, exclusive,
-     * in key order.
+     * in key order. An unfiltered cursor accepts null memory so the caller can check the index before decoding.
      */
-    RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, int keyLo, int keyHi);
+    RowCursor getCursor(PageFrame pageFrame, @Nullable PageFrameMemory pageFrameMemory, int keyLo, int keyHi);
 
     /**
      * The cursor over the rows in the page frame of the keys at {@code keyLo}, inclusive, to {@code keyHi}, exclusive,

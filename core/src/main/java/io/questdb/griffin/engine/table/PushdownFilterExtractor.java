@@ -123,11 +123,14 @@ public final class PushdownFilterExtractor {
     /**
      * Reports whether a negated range comparison over this column type may drive row group pruning. Its condition
      * prunes only a row group whose null count is zero, which has to prove that no row compares as NULL. CHAR fails
-     * that: the writer stores {@code Numbers.CHAR_NULL} as an ordinary value. FLOAT and DOUBLE pass, because the
-     * infinities their null count misses compare as values in a range comparison, and NaN is counted.
+     * that: the writer stores {@code Numbers.CHAR_NULL} as an ordinary value. FLOAT and DOUBLE also fail because
+     * external writers can store NaN as an ordinary value without including it in the null count or min/max.
      */
     public static boolean isNullMatchingPushable(int columnType) {
-        return ColumnType.tagOf(columnType) != ColumnType.CHAR;
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.CHAR, ColumnType.FLOAT, ColumnType.DOUBLE -> false;
+            default -> true;
+        };
     }
 
     /**

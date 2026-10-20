@@ -3712,10 +3712,11 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
             // The negation keeps the 100 rows from 4901 up and the 50 NULL rows. Every row group below 4901
             // fails it, except the one holding NULLs.
-            for (String predicate : new String[]{"NOT (val < 4901)", "NOT (4901 > val)", "NOT (val <= 4900)", "NOT (d < 4901.0)",
+            for (String predicate : new String[]{"NOT (val < 4901)", "NOT (4901 > val)", "NOT (val <= 4900)",
                     "NOT (s < '4901')"}) {
                 assertPrunedCount(predicate, "count\n150\n", 48);
             }
+            assertPrunedCount("NOT (d < 4901.0)", "count\n150\n", 0);
             assertPrunedCount("val >= 4901", "count\n100\n", 49);
             // CHAR stores its NULL as a value the null count misses, so the 50 NULL rows must not be pruned.
             assertPrunedCount("NOT (c < 'b')", "count\n50\n", 0);

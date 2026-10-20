@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -40,6 +41,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -171,18 +173,24 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
                 final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
                 final int inFrameHi = (int) Math.min(Math.min(frameSize, remaining), Integer.MAX_VALUE);
-                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++, inFrameHi);
+                PageFrameMemory frameMemory = frame.getFormat() == PartitionFormat.PARQUET && isKeyOrderedByIndex()
+                        ? null : frameMemoryPool.navigateTo(frameCount, inFrameHi);
+                frameCount++;
                 rowCursor = Misc.free(rowCursor);
                 rowCursor = keyCount > 1 ? keyOrderedFactory.getCursor(frame, frameMemory, keyLo, keyHi)
                         : rowCursorFactory.getCursor(frame, frameMemory);
                 countReadFrame();
                 if (rowCursor.hasNext()) {
+                    if (frameMemory == null) {
+                        frameMemory = frameMemoryPool.navigateTo(frameCount - 1, inFrameHi);
+                    }
                     recordA.init(frameMemory);
                     recordA.setRowIndex(rowCursor.next());
                     rowsProducedSinceSkip++;
                     return true;
                 }
-                frame = frameCount == 1 && keyHi - keyLo == 1 && isKeyOrderedByIndex() ? nextKeyFrame(frame) : nextFrame();
+                frame = (frameCount == 1 || frame.getFormat() == PartitionFormat.PARQUET)
+                        && keyHi - keyLo == 1 && isKeyOrderedByIndex() ? nextKeyFrame(frame) : nextFrame();
             }
         } catch (NoMoreFramesException ignore) {
             isExhausted = true;
@@ -368,6 +376,23 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
     }
 
+    private int findCachedFrame(int partitionIndex, long row) {
+        final long rowId = Rows.toRowID(partitionIndex, row);
+        final boolean isBackward = isBackward();
+        int lo = frameCount;
+        int hi = frameAddressCache.getFrameCount() - 1;
+        while (lo <= hi) {
+            final int mid = (lo + hi) >>> 1;
+            final long frameRowId = frameAddressCache.getRowIdOffset(mid);
+            if (isBackward ? frameRowId + frameAddressCache.getFrameSize(mid) - 1 >= rowId : frameRowId <= rowId) {
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return hi;
+    }
+
     /**
      * The row after a skip of {@code rowIndex} rows of the key among the rows {@code rowLo} to {@code rowHi}, where it
      * has {@code count} rows, more than the skip: the index finds it, unless the key holds every row there, which places
@@ -407,12 +432,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     }
 
     /**
-     * The page frame to read after the first page frame of a single key pass when it holds no row of the key: the page
-     * frame of the first row of the key, or the first page frame of the next pass when the key has no row in the scan.
-     * The index finds that row in the rest of the partition frame of the first page frame, or else in the first of the
-     * later partition frames that holds a row of the key. The frame cursor visits those whole, without splitting them
-     * into page frames, so a pass whose key has no row reads one page frame and probes the index once per partition
-     * frame.
+     * The next page frame after an empty frame of a single key pass. Within the current interval the index finds the
+     * next row of the key, or the last frame when no key rows remain. Only the first frame can rewind to probe later
+     * intervals as whole partition frames, so an absent key reads one page frame and probes once per interval.
      */
     private @Nullable PageFrame nextKeyFrame(PageFrame frame) {
         final long restRowCount = frameCursor.getRemainingRowsInInterval();
@@ -426,9 +448,14 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             if (count > 0) {
                 return seekFrame(frame.getPartitionIndex(), keyOrderedFactory.getRow(frame, keyLo, restLo, restHi, 0));
             }
+            if (frameCount > 1) {
+                return seekFrame(frame.getPartitionIndex(), isBackward() ? restLo : restHi);
+            }
+        }
+        if (frameCount > 1) {
+            return nextFrame();
         }
         super.toTop();
-        // the first partition frame is the one of the first page frame
         frameCursor.next(Long.MAX_VALUE);
         PageFrame partitionFrame = frameCursor.next(Long.MAX_VALUE);
         if (partitionFrame == null && restRowCount == 0) {
@@ -510,11 +537,17 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
      * page frames it passes, and returns that page frame unread.
      */
     private @Nullable PageFrame seekFrame(int partitionIndex, long row) {
+        final int cachedFrameIndex = findCachedFrame(partitionIndex, row);
         PageFrame frame;
         while ((frame = frameCursor.next()) != null
                 && (frame.getPartitionIndex() != partitionIndex || row < frame.getPartitionLo() || row >= frame.getPartitionHi())) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             frameAddressCache.add(frameCount++, frame);
+            if (cachedFrameIndex > frameCount
+                    && frameCursor instanceof TablePageFrameCursor tableCursor
+                    && tableCursor.skipToCachedFrame(frameAddressCache, cachedFrameIndex)) {
+                frameCount = cachedFrameIndex;
+            }
         }
         return frame;
     }
