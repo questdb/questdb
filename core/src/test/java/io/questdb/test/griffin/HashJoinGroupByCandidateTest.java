@@ -623,11 +623,14 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     {select + "rn JOIN pn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp + rnd_double() > $2 ORDER BY 1",
                             "TIMESTAMP_NS DOUBLE", "true", "false", "2020-01-01T05", "-1"},
                     // These build the first input in join order, so the fused plan compiles the build
-                    // before the probe. A RIGHT join preserves rn, whose own WHERE clause reduces
-                    // the rows that the ordinary plan hashes, so the analysis rejects it before it
-                    // reads a clause.
+                    // before the probe. A RIGHT join preserves rn. With no WHERE clause on rn, the
+                    // analysis accepts it and leaves the bind variable in pn's own WHERE clause to the
+                    // compile of pn. When rn's own WHERE clause reduces the rows that the ordinary
+                    // plan hashes, the analysis rejects the RIGHT join before it reads a clause.
                     {select + "pn JOIN rn" + on + interval + " ORDER BY 1",
                             "TIMESTAMP_NS TIMESTAMP_NS", "true", "true", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "(SELECT * FROM pn WHERE dateadd('h', plant_id, '2020-01-01'::TIMESTAMP) < $1) pn RIGHT JOIN rn" + on
+                            + " ORDER BY 1", "TIMESTAMP", "true", "true", "2020-01-01T02"},
                     {select + "pn RIGHT JOIN rn" + on + interval + " ORDER BY 1",
                             "TIMESTAMP_NS TIMESTAMP_NS", "false", "false", "2020-01-01T05", "2020-01-02T03"},
                     // The fused compile drops the build it compiled first when either input's scan
@@ -658,9 +661,11 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     {select + "rn JOIN pn" + on + " WHERE rn.energy_kwh > pn.installed_kwp + $1 ORDER BY 1",
                             "DOUBLE", "false", "false", "20"},
                     // A LEFT join keeps its WHERE clause on pn above the join, a post-join filter that
-                    // reads pn alone, and so does a RIGHT join that builds pn. The analysis stops
-                    // deferring bind variables once it leaves rn's own WHERE clause, so it rejects $2
-                    // rather than leaving it unparsed.
+                    // reads pn alone. The analysis stops deferring bind variables once it leaves rn's
+                    // own WHERE clause, so it rejects $2 rather than leaving it unparsed. The RIGHT
+                    // join keeps the same post-join filter, but rn's own WHERE clause reduces the rows
+                    // that the ordinary plan hashes, so the analysis rejects it before it reads a
+                    // clause.
                     {select + "rn LEFT JOIN pn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp > $2 ORDER BY 1",
                             "TIMESTAMP_NS DOUBLE", "false", "false", "2020-01-01T05", "2"},
                     {select + "pn RIGHT JOIN rn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp > $2 ORDER BY 1",

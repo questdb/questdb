@@ -60,6 +60,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -461,17 +462,16 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     public void testCheapVariableSizeBuildOnFilterTakesFusedPlanWithLargerBuildTable() throws Exception {
         assertMemoryLeak(() -> {
             createVariableSizeOnFilterTables();
-            final String select = "SELECT p.k, count(*) c, count(b.id) m, sum(b.v) s";
-            // Both joins would build b, which holds 6 rows against p's 4. The RIGHT join keeps the
-            // ordinary plan, which hashes p, because its build table holds more rows than the
-            // preserved one. The LEFT join builds b.
-            final String[] froms = {
-                    " FROM p LEFT JOIN b ON p.id = b.id AND ",
-                    " FROM b RIGHT JOIN p ON p.id = b.id AND "
-            };
+            // The LEFT join builds b, which holds 6 rows against p's 4. A RIGHT join that builds the
+            // larger table keeps the ordinary plan.
+            // testRightJoinFusesOnlyWhenItsBuildTableHoldsNoMoreRows checks that size rule on the key
+            // equality alone, and
+            // testExpensiveVariableSizeBuildOnFilterNeedsProbeTableAsLargeAsBuildTable runs the
+            // RIGHT join of these tables with ON conditions.
+            final String selectFrom = "SELECT p.k, count(*) c, count(b.id) m, sum(b.v) s FROM p LEFT JOIN b ON p.id = b.id AND ";
             // Each ON condition only compares columns, constants and the text that a cast computes
             // from a fixed-size column, so it costs about as much on a build row as the hash insert
-            // it spares, and keeps the LEFT join's fused plan whatever the sizes. A comparison of two arrays
+            // it spares, and keeps the fused plan whatever the sizes. A comparison of two arrays
             // counts as one of two texts does. IS NULL and IS NOT NULL parse as a comparison with a
             // NULL constant.
             final String[][] cases = {
@@ -512,25 +512,17 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             """}
             };
             try (SqlExecutionContextImpl context = enabledContext()) {
-                for (String from : froms) {
-                    final boolean isRight = from.contains("RIGHT JOIN");
-                    for (String[] c : cases) {
-                        if (isRight) {
-                            assertQuery(select + from + c[0] + " ORDER BY k")
-                                    .withContext(context)
-                                    .noLeakCheck()
-                                    .withPlanNotContaining("Hash Join Group By")
-                                    .expectSize()
-                                    .returns(c[2]);
-                        } else {
-                            assertQuery(select + from + c[0] + " ORDER BY k")
-                                    .withContext(context)
-                                    .noLeakCheck()
-                                    .withPlanContaining("Async Hash Join Group By", c[1])
-                                    .expectSize()
-                                    .returns(c[2]);
-                        }
-                    }
+                for (String[] c : cases) {
+                    final String sql = selectFrom + c[0] + " ORDER BY k";
+                    assertQuery(sql)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .withPlanContaining("Async Hash Join Group By", c[1])
+                            .expectSize()
+                            .returns(c[2]);
+                    // The ordinary plan returns the same rows, which checks the expected rows
+                    // apart from the fused plan.
+                    assertDifferential(sql, context, true);
                 }
             }
         });
@@ -605,29 +597,20 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     // An ON condition over fixed-size columns costs about as much as the hash insert
                     // it saves, so it keeps the LEFT join's fused plan. The RIGHT join keeps the
                     // ordinary plan, because its build table holds more rows than the preserved one.
+                    final QueryAssertion fixedSizeOnAssertion = assertQuery(select + from + "b.v > 15 ORDER BY k")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .expectSize();
                     if (from.contains("RIGHT JOIN")) {
-                        assertQuery(select + from + "b.v > 15 ORDER BY k")
-                                .withContext(context)
-                                .noLeakCheck()
-                                .withPlanNotContaining("Hash Join Group By")
-                                .expectSize()
-                                .returns("""
-                                        k\tc\tm\ts
-                                        1\t2\t2\t50.0
-                                        2\t2\t1\t40.0
-                                        """);
+                        fixedSizeOnAssertion.withPlanNotContaining("Hash Join Group By");
                     } else {
-                        assertQuery(select + from + "b.v > 15 ORDER BY k")
-                                .withContext(context)
-                                .noLeakCheck()
-                                .withPlanContaining("Async Hash Join Group By", "buildOnFilter: 15<v")
-                                .expectSize()
-                                .returns("""
-                                        k\tc\tm\ts
-                                        1\t2\t2\t50.0
-                                        2\t2\t1\t40.0
-                                        """);
+                        fixedSizeOnAssertion.withPlanContaining("Async Hash Join Group By", "buildOnFilter: 15<v");
                     }
+                    fixedSizeOnAssertion.returns("""
+                            k\tc\tm\ts
+                            1\t2\t2\t50.0
+                            2\t2\t1\t40.0
+                            """);
                 }
                 // b's own WHERE clause runs on each of its rows in both plans, so it keeps the LEFT
                 // join's fused plan, and the rows are those of the ON condition that it spells. The
@@ -3740,8 +3723,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     /**
-     * p holds 4 rows, and b, the build of p's LEFT and RIGHT joins, holds 6 rows with variable-size
-     * columns, NULLs included.
+     * p holds 4 rows, and b holds 6 rows with variable-size columns, NULLs included. The fused plan
+     * of p LEFT JOIN b and of b RIGHT JOIN p builds b, so the RIGHT join keeps the ordinary plan
+     * until p holds as many rows as b.
      */
     private void createVariableSizeOnFilterTables() throws Exception {
         execute("CREATE TABLE p (id INT, k INT)");

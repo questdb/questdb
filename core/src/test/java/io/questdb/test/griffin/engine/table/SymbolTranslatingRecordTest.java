@@ -126,7 +126,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
             final boolean isHashJoinGroupByEnabled = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
             sqlExecutionContext.setParallelHashJoinGroupByEnabled(true);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // INNER and LEFT joins probe the master table, whose sym column holds 20,000 symbols.
+                // These INNER and LEFT joins probe the master table, whose sym column holds 20,000 symbols.
                 assertFusedCacheReleased(
                         compiler,
                         "SELECT count(), count(s.price), sum(s.price) FROM master m JOIN slave s ON (sym)",

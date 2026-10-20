@@ -534,26 +534,6 @@ public final class HashJoinGroupByCandidate {
         return null;
     }
 
-    /**
-     * True when a model on the input's chain, from its join model down to its table model, has a
-     * WHERE clause or a constant WHERE clause. These are the clauses that the compile of the input
-     * applies to its scan. The chain is the one that baseTable() admits. The join model's post-join
-     * WHERE clause and outer join ON condition apply after the join, so they do not count.
-     */
-    private static boolean hasInputFilter(IQueryModel input) {
-        IQueryModel current = input;
-        while (current != null) {
-            if (current.getWhereClause() != null || current.getConstWhereClause() != null) {
-                return true;
-            }
-            if (current.getTableName() != null) {
-                return false;
-            }
-            current = current.getNestedModel();
-        }
-        return false;
-    }
-
     private static boolean hasBarrier(IQueryModel model) {
         return !model.isOptimisable() || model.getSharedRefCount() > 0
                 || model.getLimitLo() != null || model.getLimitHi() != null || model.getUnionModel() != null
@@ -590,6 +570,26 @@ public final class HashJoinGroupByCandidate {
                 return values == null || (values.size() > 0
                         && !(values.size() == 1 && SqlKeywords.isNoneKeyword(values.getQuick(0).token)));
             }
+        }
+        return false;
+    }
+
+    /**
+     * True when a model on the input's chain, from its join model down to its table model, has a
+     * WHERE clause or a constant WHERE clause. These are the clauses that the compile of the input
+     * applies to its scan. The chain is the one that baseTable() admits. The join model's post-join
+     * WHERE clause and outer join ON condition apply after the join, so they do not count.
+     */
+    private static boolean hasInputFilter(IQueryModel input) {
+        IQueryModel current = input;
+        while (current != null) {
+            if (current.getWhereClause() != null || current.getConstWhereClause() != null) {
+                return true;
+            }
+            if (current.getTableName() != null) {
+                return false;
+            }
+            current = current.getNestedModel();
         }
         return false;
     }

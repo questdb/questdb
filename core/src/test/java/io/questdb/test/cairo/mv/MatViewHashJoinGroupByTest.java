@@ -156,8 +156,8 @@ public class MatViewHashJoinGroupByTest extends AbstractCairoTest {
     @Test
     public void testRightJoinBuildingBaseTableKeepsFusedPlan() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = rightJoinBuildingBaseTable(false, ORDINARY);
-            Assert.assertEquals(expected, rightJoinBuildingBaseTable(true, FUSED));
+            final String expected = rightJoinBuildingBaseTable(false);
+            Assert.assertEquals(expected, rightJoinBuildingBaseTable(true));
         });
     }
 
@@ -486,14 +486,16 @@ public class MatViewHashJoinGroupByTest extends AbstractCairoTest {
         return snapshot.toString();
     }
 
-    private String rightJoinBuildingBaseTable(boolean isFused, String expectedFactory) throws Exception {
+    private String rightJoinBuildingBaseTable(boolean isFused) throws Exception {
         setFused(isFused);
         final StringBuilder snapshot = new StringBuilder();
         createTables("INT");
-        execute("CREATE MATERIALIZED VIEW mv WITH BASE trades AS (" +
-                "SELECT timestamp_floor('1h', t.ts) ts, p.country, sum(t.qty) total, count() n, count(p.kwp) kwp_count " +
-                "FROM trades t RIGHT JOIN plants p ON p.plant_id = t.plant_id WHERE t.ts IS NOT NULL ORDER BY ts" +
-                ") PARTITION BY DAY");
+        execute("""
+                CREATE MATERIALIZED VIEW mv WITH BASE trades AS (
+                SELECT timestamp_floor('1h', t.ts) ts, p.country, sum(t.qty) total, count() n, count(p.kwp) kwp_count
+                FROM trades t RIGHT JOIN plants p ON p.plant_id = t.plant_id WHERE t.ts IS NOT NULL ORDER BY ts
+                ) PARTITION BY DAY
+                """);
         // Three trades against four plants, so the base table holds fewer rows than the dimension.
         execute("""
                 INSERT INTO trades VALUES
@@ -510,7 +512,7 @@ public class MatViewHashJoinGroupByTest extends AbstractCairoTest {
                 2024-01-01T01:00:00.000000Z\tES\t30.0\t1\t0
                 2024-01-01T02:00:00.000000Z\tFR\t50.0\t1\t1
                 """);
-        Assert.assertEquals(expectedFactory, cachedFactory());
+        Assert.assertEquals(isFused ? FUSED : ORDINARY, cachedFactory());
         dropTables();
         return snapshot.toString();
     }
@@ -521,10 +523,12 @@ public class MatViewHashJoinGroupByTest extends AbstractCairoTest {
         createTables("INT");
         // SAMPLE BY needs the timestamp of the input before the join, so the view groups by the
         // hour of the trade instead, and orders by it to give the query a designated timestamp.
-        execute("CREATE MATERIALIZED VIEW mv WITH BASE trades AS (" +
-                "SELECT timestamp_floor('1h', t.ts) ts, p.country, sum(t.qty) total, count() n, count(p.kwp) kwp_count " +
-                "FROM " + join + " ON p.plant_id = t.plant_id ORDER BY ts" +
-                ") PARTITION BY DAY");
+        execute("""
+                CREATE MATERIALIZED VIEW mv WITH BASE trades AS (
+                SELECT timestamp_floor('1h', t.ts) ts, p.country, sum(t.qty) total, count() n, count(p.kwp) kwp_count
+                FROM %s ON p.plant_id = t.plant_id ORDER BY ts
+                ) PARTITION BY DAY
+                """.formatted(join));
         // Six trades against four plants, so the dimension holds fewer rows than the base table.
         execute("""
                 INSERT INTO trades VALUES

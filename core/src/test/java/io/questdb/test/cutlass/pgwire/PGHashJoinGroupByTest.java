@@ -150,6 +150,60 @@ public class PGHashJoinGroupByTest extends BasePGTest {
             SELECT d.g, count(*) n, sum(f.v) v, sum(d.w) w
             FROM (SELECT * FROM f WHERE test_latched_counter()) f LEFT JOIN d ON f.k = d.k
             ORDER BY d.g""";
+    // Every row of f, joined to the rows of d with the symbol whose key, read as hours after
+    // 2024-01-01, falls in the bind values' range. The rows of f whose key no such row of d
+    // matches form the null group.
+    private static final String[] RIGHT_BUILD_FILTER_EXPECTED = {
+            """
+                    g[INTEGER],n[BIGINT],v[BIGINT],w[DOUBLE]
+                    null,797,400336,null
+                    0,153,75174,11067.0
+                    1,169,83538,10294.0
+                    2,186,91834,12037.0
+                    3,169,83470,11485.0
+                    4,186,91800,13245.0
+                    5,169,83402,12676.0
+                    6,186,91766,14453.0
+                    """,
+            """
+                    g[INTEGER],n[BIGINT],v[BIGINT],w[DOUBLE]
+                    null,580,290320,null
+                    0,353,176418,27174.0
+                    1,353,176980,26150.0
+                    2,369,184476,27473.0
+                    3,353,176846,26433.0
+                    4,369,184374,27772.0
+                    5,353,176712,26716.0
+                    6,370,185274,28242.0
+                    """,
+            """
+                    g[INTEGER],n[BIGINT],v[BIGINT],w[DOUBLE]
+                    null,1000,500500,null
+                    """,
+            """
+                    g[INTEGER],n[BIGINT],v[BIGINT],w[DOUBLE]
+                    null,784,391268,null
+                    0,183,92691,13835.5
+                    1,199,100443,16136.5
+                    2,183,92625,15852.5
+                    3,182,91824,15407.0
+                    4,183,92559,14894.5
+                    5,183,92757,14618.5
+                    6,183,92493,14111.5
+                    """,
+            """
+                    g[INTEGER],n[BIGINT],v[BIGINT],w[DOUBLE]
+                    null,1000,500500,null
+                    """
+    };
+    // A RIGHT join builds the table before it, here d, whose own WHERE clause holds every bind
+    // variable. f, which the RIGHT join preserves, has no WHERE clause of its own and holds more
+    // rows than d, so the query takes the fused plan. The bind values take the order of RIGHT_SQL's.
+    private static final String RIGHT_BUILD_FILTER_SQL = """
+            SELECT d.g, count(*) n, sum(f.v) v, sum(d.w) w FROM (
+                SELECT * FROM d
+                WHERE sym = ? AND dateadd('h', k, '2024-01-01'::TIMESTAMP) >= ? AND dateadd('h', k, '2024-01-01'::TIMESTAMP) < ?
+            ) d RIGHT JOIN f ON d.k = f.k ORDER BY d.g""";
     // EXPECTED, plus the rows of f whose key no row of d with the symbol matches.
     private static final String[] RIGHT_EXPECTED = {
             """
@@ -346,6 +400,14 @@ public class PGHashJoinGroupByTest extends BasePGTest {
         assertNamedStatement(SQL, PGHashJoinGroupByTest::bindUnspecified, EXPECTED, true, true);
     }
 
+    // The fused RIGHT join leaves the unspecified types to the compile of d, its build, which
+    // infers them as the ordinary plan does, and extends the rows of f that no row of d matches
+    // with NULL.
+    @Test
+    public void testNamedStatementRebindsUnspecifiedTimestampsInFusedRightJoin() throws Exception {
+        assertNamedStatement(RIGHT_BUILD_FILTER_SQL, PGHashJoinGroupByTest::bindUnspecifiedRight, RIGHT_BUILD_FILTER_EXPECTED, true, false);
+    }
+
     // A RIGHT join with a WHERE clause on its preserved input keeps the ordinary plan, which
     // infers the unspecified types and rebinds them on every execution.
     @Test
@@ -377,7 +439,8 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                 "SELECT d.g, sum(f.v + ?) v, avg(d.w * ?) w FROM f JOIN d ON f.k = d.k WHERE d.g = ? ORDER BY d.g",
                 "SELECT d.g, count(*) n FROM f LEFT JOIN d ON f.k = d.k AND d.w > ? WHERE f.v < ? ORDER BY d.g",
                 "SELECT d.g, count(*) n FROM f RIGHT JOIN d ON f.k = d.k AND f.v > ? ORDER BY d.g",
-                "SELECT d.sym, count(*) n FROM f JOIN d ON f.k = d.k WHERE f.ts IN ? AND d.sym <> ? ORDER BY d.sym"
+                "SELECT d.sym, count(*) n FROM f JOIN d ON f.k = d.k WHERE f.ts IN ? AND d.sym <> ? ORDER BY d.sym",
+                RIGHT_BUILD_FILTER_SQL
         };
         assertMemoryLeak(() -> {
             createTables();
@@ -391,11 +454,13 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                             description.append(sql).append('\n').append(describe(connection, sql)).append('\n');
                         }
                         // The described statements compile the plans that the enabled path chose:
-                        // SQL and BUILD_FIRST_SQL with their timestamps unspecified, and sqls[4]
-                        // with typed parameters. RIGHT_SQL keeps the ordinary plan either way.
+                        // SQL, BUILD_FIRST_SQL and RIGHT_BUILD_FILTER_SQL with their timestamps
+                        // unspecified, and sqls[4] with typed parameters. RIGHT_SQL keeps the
+                        // ordinary plan either way.
                         assertFused(explain(connection, SQL, PGHashJoinGroupByTest::bindUnspecified, BINDS[0]), isFused);
                         assertFused(explain(connection, BUILD_FIRST_SQL, PGHashJoinGroupByTest::bindUnspecified, BINDS[0]), isFused);
                         assertFused(explain(connection, RIGHT_SQL, PGHashJoinGroupByTest::bindUnspecifiedRight, BINDS[0]), false);
+                        assertFused(explain(connection, RIGHT_BUILD_FILTER_SQL, PGHashJoinGroupByTest::bindUnspecifiedRight, BINDS[0]), isFused);
                         assertFused(explain(connection, sqls[4], (statement, values) -> {
                             statement.setLong(1, 1);
                             statement.setDouble(2, 2.0);
@@ -447,7 +512,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
         statement.setString(3, values[2]);
     }
 
-    // RIGHT_SQL takes the symbol first.
+    // RIGHT_SQL and RIGHT_BUILD_FILTER_SQL take the symbol first.
     private static void bindUnspecifiedRight(PreparedStatement statement, String[] values) throws SQLException {
         statement.setString(1, values[2]);
         statement.setTimestamp(2, Timestamp.from(Instant.parse(values[0] + ":00Z")));
@@ -632,6 +697,13 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                             final String plan = explain(connection, sql, binder, BINDS[0]);
                             assertFused(plan, isFused && isFusedWhenEnabled);
                             Assert.assertEquals(plan, isFused && isBuildChoice, plan.contains("Hash Join Group By Build Choice"));
+                            // A fused RIGHT join reports the logical join type that NULL-extends the
+                            // rows of f that no build row matches.
+                            Assert.assertEquals(
+                                    plan,
+                                    isFused && isFusedWhenEnabled && sql.contains("RIGHT JOIN"),
+                                    plan.contains("logicalJoinType: right outer")
+                            );
                         }
                     }
                 });
