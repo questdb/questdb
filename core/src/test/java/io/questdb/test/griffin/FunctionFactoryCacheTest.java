@@ -35,10 +35,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.scan.LoadableFunctionFactory;
 import io.questdb.test.griffin.scan.ThrowingConstructorFunctionFactory;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -48,61 +47,38 @@ import java.util.Set;
 
 /**
  * The function library reaches the parser only through {@link FunctionFactoryScanner} and
- * {@link FunctionFactoryCache}, and with assertions off both skip what they cannot load, with a log
- * line as the only trace. A factory for a new type that names it with an unknown signature
- * character would vanish that way, and the function would resolve to another type's overload.
- * These tests pin that nothing is skipped and that, with assertions on (the test configuration), a
- * skip is an error.
+ * {@link FunctionFactoryCache}, and both skip what they cannot load, with a log line as the only
+ * trace. A factory for a new type that names it with an unknown signature character would vanish
+ * that way, and the function would resolve to another type's overload. These tests pin that the
+ * production scan skips nothing and that a broken factory is skipped, not fatal.
  */
 public class FunctionFactoryCacheTest extends AbstractCairoTest {
 
     @Test
-    public void testDroppedFactoryFailsFastWithAssertionsOn() throws Exception {
-        Assume.assumeTrue("assertions are off", FunctionFactoryCache.class.desiredAssertionStatus());
+    public void testBadSignatureFactoryIsSkipped() throws Exception {
         assertMemoryLeak(() -> {
             // 'y' is not a signature character
             final ArrayList<FunctionFactory> factories = new ArrayList<>();
             factories.add(factoryOf("f(y)"));
-            try {
-                new FunctionFactoryCache(configuration, factories);
-                Assert.fail();
-            } catch (AssertionError e) {
-                TestUtils.assertContains(e.getMessage(), "function factory dropped: ");
-                TestUtils.assertContains(e.getMessage(), "[signature=f(y), reason=illegal argument type: `y`]");
-            }
-        });
-    }
-
-    @Test
-    public void testNotScannedFactoryFailsFastWithAssertionsOn() throws Exception {
-        Assume.assumeTrue("assertions are off", FunctionFactoryScanner.class.desiredAssertionStatus());
-        assertMemoryLeak(() -> {
-            final ArrayList<FunctionFactory> factories = new ArrayList<>();
-            try {
-                FunctionFactoryScanner.scan(
-                        factories,
-                        ThrowingConstructorFunctionFactory.class.getPackageName(),
-                        "function_list.txt",
-                        ThrowingConstructorFunctionFactory.class,
-                        "io.questdb",
-                        null
-                );
-                Assert.fail();
-            } catch (AssertionError e) {
-                TestUtils.assertContains(e.getMessage(), "function factory not scanned: " + ThrowingConstructorFunctionFactory.class.getName());
-                TestUtils.assertContains(e.getMessage(), "error: java.lang.reflect.InvocationTargetException");
-            }
+            factories.add(factoryOf("g(I)"));
+            final FunctionFactoryCache cache = new FunctionFactoryCache(configuration, factories);
+            Assert.assertNull(cache.getOverloadList("f"));
+            Assert.assertEquals(1, cache.getOverloadList("g").size());
         });
     }
 
     @Test
     public void testScanDropsNoFactory() throws Exception {
         assertMemoryLeak(() -> {
+            // the engine's startup already filled the static cache; without this the builder returns it without scanning
+            FunctionFactoryCacheBuilder.clearCache();
+            final FunctionFactoryCacheBuilder builder = new FunctionFactoryCacheBuilder().scan(LOG);
             final Set<FunctionFactory> scanned = Collections.newSetFromMap(new IdentityHashMap<>());
-            for (FunctionFactory factory : new FunctionFactoryCacheBuilder().scan(LOG).build()) {
+            for (FunctionFactory factory : builder.build()) {
                 scanned.add(factory);
             }
             Assert.assertFalse(scanned.isEmpty());
+            Assert.assertEquals("scanner dropped: " + builder.getDroppedClassNames(), 0, builder.getDroppedClassNames().size());
 
             // the test configuration enables the test factories, so every scanned factory is admitted
             Assert.assertTrue(configuration.enableTestFactories());
@@ -117,6 +93,27 @@ public class FunctionFactoryCacheTest extends AbstractCairoTest {
             for (FunctionFactory factory : scanned) {
                 Assert.assertTrue("dropped: " + factory.getClass().getName() + " " + factory.getSignature(), cached.contains(factory));
             }
+        });
+    }
+
+    @Test
+    public void testThrowingConstructorFactoryIsSkipped() throws Exception {
+        assertMemoryLeak(() -> {
+            final ArrayList<FunctionFactory> factories = new ArrayList<>();
+            final ObjList<String> dropped = new ObjList<>();
+            FunctionFactoryScanner.scan(
+                    factories,
+                    ThrowingConstructorFunctionFactory.class.getPackageName(),
+                    "function_list.txt",
+                    ThrowingConstructorFunctionFactory.class,
+                    "io.questdb",
+                    LOG,
+                    dropped
+            );
+            Assert.assertEquals(1, factories.size());
+            Assert.assertTrue(factories.get(0) instanceof LoadableFunctionFactory);
+            Assert.assertEquals(1, dropped.size());
+            Assert.assertEquals(ThrowingConstructorFunctionFactory.class.getName(), dropped.get(0));
         });
     }
 
