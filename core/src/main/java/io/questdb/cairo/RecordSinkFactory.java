@@ -888,8 +888,10 @@ public class RecordSinkFactory {
         compileConstructor(asm, superInitMethodIndex, decimal128FieldIndex, decimal128ClassIndex, decimal128CtorIndex,
                 decimal256FieldIndex, decimal256ClassIndex, decimal256CtorIndex);
 
-        // Main copy method - just calls sub-methods
-        asm.startMethod(copyNameIndex, copySigIndex, 4, 3);
+        // Main copy method - just calls sub-methods, then copies the key functions.
+        // maxStack 5: the LONG128/UUID key-function arm holds spi, lo (2 slots), function and
+        // record before it calls getLong128Hi().
+        asm.startMethod(copyNameIndex, copySigIndex, 5, 3);
         for (int chunk = 0; chunk < numChunks; chunk++) {
             asm.aload(0);  // this
             asm.aload(1);  // record

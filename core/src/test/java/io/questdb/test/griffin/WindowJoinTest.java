@@ -42,6 +42,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -4550,6 +4551,64 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "2023-01-02T00:00:00." + tsFormat + "\t1\t10\t2\n" +
                             "2023-01-02T00:00:01." + tsFormat + "\t1\t20\t3\n" +
                             "2023-01-02T00:00:02." + tsFormat + "\t1\t30\t2\n");
+        });
+    }
+
+    @Test
+    public void testSumLong256Vectorized() throws Exception {
+        // sum(LONG256) opts into batch computation, so the WINDOW JOIN takes the vectorized
+        // plan, which materializes the slave column through GroupByColumnSink. INCLUDE PREVAILING
+        // adds the 23:58 row to the first window only: the second window starts on the 00:00 row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY"
+                    .replace("#TIMESTAMP", leftTableTimestampType.getTypeName()));
+            execute("CREATE TABLE p (sym SYMBOL, l LONG, l256 LONG256, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY"
+                    .replace("#TIMESTAMP", rightTableTimestampType.getTypeName()));
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', '2024-01-01T00:00:00.000000Z'),
+                    ('a', '2024-01-01T00:01:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO p VALUES
+                    ('a', 6, '0x04', '2023-12-31T23:58:00.000000Z'),
+                    ('a', 7, '0x01', '2024-01-01T00:00:00.000000Z'),
+                    ('a', 8, '0x02', '2024-01-01T00:00:30.000000Z')
+                    """);
+            final String tsFormat = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType())
+                    ? "000000Z" : "000000000Z";
+            final String excludePrevailing = "ts\tl\ts\n" +
+                    "2024-01-01T00:00:00." + tsFormat + "\t7\t0x01\n" +
+                    "2024-01-01T00:01:00." + tsFormat + "\t15\t0x03\n";
+            final String includePrevailing = "ts\tl\ts\n" +
+                    "2024-01-01T00:00:00." + tsFormat + "\t13\t0x05\n" +
+                    "2024-01-01T00:01:00." + tsFormat + "\t15\t0x03\n";
+            for (boolean parallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                for (String on : new String[]{"", "ON (t.sym = p.sym) "}) {
+                    final boolean keyed = !on.isEmpty();
+                    final String factory = parallel
+                            ? (keyed ? "Async Window Fast Join" : "Async Window Join")
+                            : (keyed ? "Window Fast Join" : "Window Join");
+                    for (String prevailing : new String[]{"EXCLUDE", "INCLUDE"}) {
+                        final String query = "SELECT t.ts, sum(p.l) l, sum(p.l256) s FROM t WINDOW JOIN p " + on +
+                                "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW " + prevailing + " PREVAILING";
+                        final String expected = "EXCLUDE".equals(prevailing) ? excludePrevailing : includePrevailing;
+                        final QueryAssertion assertion = assertQuery(query)
+                                .timestamp("ts")
+                                .noRandomAccess();
+                        if (parallel || keyed) {
+                            assertion.withPlanContaining(factory, "vectorized: true");
+                        } else {
+                            assertion.withPlanContaining(factory);
+                        }
+                        if (!parallel) {
+                            assertion.expectSize();
+                        }
+                        assertion.returns(expected);
+                    }
+                }
+            }
         });
     }
 

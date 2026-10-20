@@ -792,6 +792,29 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4Null() throws Exception {
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("ip", ColumnType.IPv4)
+                .col("n", ColumnType.INT)
+                .timestamp();
+        AbstractCairoTest.create(model);
+        assertThat(
+                """
+                        ip\tn\ttimestamp
+                        \t1\t1970-01-01T00:00:01.000000Z
+                        1.1.1.1\t2\t1970-01-01T00:00:02.000000Z
+                        2.2.2.2\t3\t1970-01-01T00:00:03.000000Z
+                        """,
+                """
+                        x ip=,n=1i 1000000000
+                        x ip="1.1.1.1",n=2i 2000000000
+                        x ip="2.2.2.2",n=3i 3000000000
+                        """,
+                "x"
+        );
+    }
+
+    @Test
     public void testInvalidTableName() throws Exception {
         String lines = """
                 ..\\/db,a=b event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
