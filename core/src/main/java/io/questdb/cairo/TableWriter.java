@@ -10535,6 +10535,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 );
                             }
                         } catch (Throwable e) {
+                            // counts any throwable, not only a CairoException, so the commit skips the
+                            // partition update of the columns that never ran; appendLastPartition()
+                            // failures have bumped already, a second bump is harmless
+                            o3BumpErrorCount(CairoException.isCairoOomError(e));
                             final int delta = columnsPublished - liveColumnCount;
                             if (delta < 0 && columnCounter.addAndGet(delta) == 0) {
                                 o3ClockDownPartitionUpdateCount();

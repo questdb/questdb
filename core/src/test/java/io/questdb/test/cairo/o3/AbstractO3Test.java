@@ -83,6 +83,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static boolean mixedIOEnabledFFDefault;
     protected static int o3ColumnMemorySize = -1;
     protected static int o3MemMaxPages = -1;
+    protected static int o3OpenColumnQueueCapacity = -1;
     protected static long partitionO3SplitThreshold = -1;
     protected final Rnd rnd;
     protected final TestTimestampType timestampType;
@@ -128,6 +129,7 @@ public class AbstractO3Test extends AbstractTest {
         dataAppendPageSize = -1;
         o3ColumnMemorySize = -1;
         o3MemMaxPages = -1;
+        o3OpenColumnQueueCapacity = -1;
         partitionO3SplitThreshold = -1;
         cairoCommitLatency = 30_000_000;
         super.tearDown();
@@ -387,6 +389,11 @@ public class AbstractO3Test extends AbstractTest {
                     @Override
                     public int getO3MemMaxPages() {
                         return o3MemMaxPages > 0 ? o3MemMaxPages : super.getO3MemMaxPages();
+                    }
+
+                    @Override
+                    public int getO3OpenColumnQueueCapacity() {
+                        return o3OpenColumnQueueCapacity > -1 ? o3OpenColumnQueueCapacity : super.getO3OpenColumnQueueCapacity();
                     }
 
                     @Override
