@@ -81,9 +81,11 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     private boolean handleSocketOperation(long id) {
         // find row in pending for two reasons:
         // 1. find payload
-        // 2. remove row from pending, remaining rows will be timed out
+        // 2. mark the row for removal from pending, which runSerially() completes after
+        //    handling all the polled events; remaining rows will be timed out
         final int row = pending.binarySearch(id, OPM_ID);
-        if (row < 0) {
+        // a marked row belongs to an event that was already handled
+        if (row < 0 || pending.isMarked(row)) {
             LOG.critical().$("internal error: kqueue returned unexpected id [id=").$(id).I$();
             return false;
         }
@@ -105,13 +107,13 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             keventWriter.done();
             // publish the operation and we're done
             publishOperation(requestedOp, context);
-            pending.deleteRow(row);
+            pending.markDeleted(row);
             return true;
         } else {
             // that's not the requested operation, but something wanted by the socket
             if (context.getSocket().tlsIO(tlsIOFlags(readyForRead, readyForWrite)) < 0) {
                 doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
-                pending.deleteRow(row);
+                pending.markDeleted(row);
                 return true;
             }
             rearmKqueue(context, id, requestedOp);
@@ -304,10 +306,13 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 // since we may register multiple times
                 if (handleSocketOperation(id)) {
                     useful = true;
-                    watermark--;
                 }
             }
         }
+
+        // remove the rows of all the handled events in one pass; every marked row lies below the
+        // watermark, so the watermark drops by the number of rows removed
+        watermark -= pending.deleteMarked();
 
         // process rows over watermark (new connections)
         if (watermark < pending.size()) {
