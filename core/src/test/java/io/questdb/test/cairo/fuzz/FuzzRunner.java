@@ -842,9 +842,6 @@ public class FuzzRunner {
         this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
     }
 
-    // A reader must return the same rows for as long as it holds its txn. Takes a snapshot when the reader has none.
-    // Records each native partition's size, its first row, a sample of rows seeded by the txn, and its tail,
-    // where in-place appends write. It skips parquet partitions because the test record reads native columns only.
     private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
@@ -1138,6 +1135,7 @@ public class FuzzRunner {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, false, checkNoSuspendedTablesRef);
     }
 
+    // A reader must return the same rows for as long as it holds its txn. Takes a snapshot when the reader has none.
     private void checkReaderSnapshot(TableReader reader) {
         final ReaderSnapshot snapshot = readerSnapshots.get(reader);
         if (snapshot == null || snapshot.txn() != reader.getTxn() || !snapshot.dirName().equals(reader.getTableToken().getDirName())) {
@@ -1461,12 +1459,6 @@ public class FuzzRunner {
         return openWithRetries(() -> getReader(tableName), true, isCancelled, OPEN_RETRY_TIMEOUT_MILLIS);
     }
 
-    /**
-     * Picks an index type clause for fuzz table creation. Returns either
-     * an empty string (BITMAP — the default), or one of the POSTING
-     * variants. Uses {@link SharedRandom} so the choice tracks the existing
-     * fuzz seed.
-     */
     private String printReaderRows(TableReader reader, LongList rowIds) {
         final StringSink rows = new StringSink();
         final TestTableReaderRecord record = new TestTableReaderRecord();
@@ -1486,6 +1478,12 @@ public class FuzzRunner {
         return rows.toString();
     }
 
+    /**
+     * Picks an index type clause for fuzz table creation. Returns either
+     * an empty string (BITMAP — the default), or one of the POSTING
+     * variants. Uses {@link SharedRandom} so the choice tracks the existing
+     * fuzz seed.
+     */
     private String randomIndexTypeClause() {
         Rnd rnd = SharedRandom.RANDOM.get();
         if (rnd == null) {
@@ -1624,6 +1622,8 @@ public class FuzzRunner {
         }
     }
 
+    // Records each native partition's size, its first row, a sample of rows seeded by the txn, and its tail,
+    // where in-place appends write. It skips parquet partitions because the test record reads native columns only.
     private void snapshotReader(@Nullable TableReader reader) {
         if (reader == null || !reader.isActive()) {
             return;
