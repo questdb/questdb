@@ -9388,10 +9388,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Row limit of one WAL apply transaction block. With {@code cairo.wal.apply.block.size} set: that size in rows,
+     * Row limit of one WAL apply transaction block. With {@code cairo.wal.apply.block.size} positive: that size in rows,
      * or the limit {@link #growWalBlockRows()} grew it to; the block's memory budget may still end it earlier, see
-     * {@link WalBlockBudgetImpl}. Either way capped at {@code cairo.wal.apply.block.max.rows}. Unset: the lag row
-     * limit, as it always was.
+     * {@link WalBlockBudgetImpl}. Either way capped at {@code cairo.wal.apply.block.max.rows}. At 0: the lag row
+     * limit.
      */
     private long getWalMaxBlockRows() {
         final long blockSize = configuration.getWalApplyBlockSize();

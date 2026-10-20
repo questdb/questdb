@@ -508,7 +508,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(200, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
         Assert.assertEquals(25, configuration.getCairoConfiguration().getWalApplyBlockMemoryPercent());
         Assert.assertEquals(configuration.getWalApplyPoolConfiguration().getWorkerCount(), configuration.getCairoConfiguration().getWalApplyWorkerCount());
-        Assert.assertEquals(0, configuration.getCairoConfiguration().getWalApplyBlockSize());
+        Assert.assertEquals(75 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getWalApplyBlockSize());
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getWalApplyBlockMaxRows());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());

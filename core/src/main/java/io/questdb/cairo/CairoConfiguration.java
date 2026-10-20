@@ -1188,10 +1188,10 @@ public interface CairoConfiguration {
     VolumeDefinitions getVolumeDefinitions();
 
     /**
-     * Hard cap, in rows, of one WAL apply transaction block while {@code cairo.wal.apply.block.size} is set: caps
-     * both the starting row limit and its growth. At most 2 billion, which keeps block row counts and the look-ahead
-     * txn estimates derived from them within int range. Has no effect while {@code cairo.wal.apply.block.size} is
-     * unset.
+     * Hard cap, in rows, of one WAL apply transaction block while {@code cairo.wal.apply.block.size} is positive:
+     * caps both the starting row limit and its growth. At most 2 billion, which keeps block row counts and the
+     * look-ahead txn estimates derived from them within int range. Has no effect while
+     * {@code cairo.wal.apply.block.size} is 0.
      */
     long getWalApplyBlockMaxRows();
 
@@ -1203,17 +1203,21 @@ public interface CairoConfiguration {
      * copies again) and page cache (the block's staging plus the existing rows copied again, read and written).
      * The existing rows copied again are estimated from the partitions the block's transactions reach, times a
      * copy ratio learned per table for merge-append partitions and for classic O3 merges. No RSS limit: no growth. Has
-     * no effect while {@code cairo.wal.apply.block.size} is unset.
+     * no effect while {@code cairo.wal.apply.block.size} is 0.
      */
     int getWalApplyBlockMemoryPercent();
 
     /**
-     * Starting size, in bytes, of one WAL apply transaction block. The writer divides it by the table's
-     * average record size to get the block's row limit. {@code 0} means unset: the block row limit then comes
-     * from {@code cairo.wal.max.lag.size} and {@code cairo.wal.squash.uncommitted.rows.multiplier} x the
-     * table's max uncommitted rows, as before. When set, it replaces both, and the row limit doubles after
-     * every block it cut short, while the block fits {@link #getWalApplyBlockMemoryPercent()}. Blocks can still
-     * be smaller: they end at the last pending transaction and at transactions that
+     * Starting size, in bytes, of one WAL apply transaction block, 75 MiB by default. The writer divides it by the
+     * table's average record size to get the block's starting row limit. {@code 0} disables adaptive blocks: the
+     * block row limit then comes from {@code cairo.wal.max.lag.size} and
+     * {@code cairo.wal.squash.uncommitted.rows.multiplier} x the table's max uncommitted rows. When positive, it
+     * replaces both for the block row limit (the lag row count still bounds the look-ahead and the in-memory lag).
+     * Rows up to the starting size are always applied without a memory check; past it, a block ends early when it
+     * no longer fits {@link #getWalApplyBlockMemoryPercent()}. The row limit doubles after every block that the
+     * row limit itself cut short, while there is a memory budget; without an RSS limit or at a memory percent of
+     * 0 it stays at the starting size. The grown limit is per table writer and resets when the writer reopens.
+     * Blocks can still be smaller: they end at the last pending transaction and at transactions that
      * force a full commit. The look-ahead txn count starts at {@code cairo.wal.apply.look.ahead.txn.count} and
      * adapts to one block's worth of transactions, and the table time quota does not stop the look-ahead
      * before it has loaded one block of the transactions visible when it started.

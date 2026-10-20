@@ -82,7 +82,7 @@ public class WalTxnDetails implements QuietCloseable {
     private final LongList transactionMeta = new LongList();
     private final WalEventReader walEventReader;
     WalTxnDetailsSlice txnSlice = new WalTxnDetailsSlice();
-    // Row count of one WAL apply block when cairo.wal.apply.block.size is set, 0 otherwise.
+    // Row count of one WAL apply block when cairo.wal.apply.block.size is positive, 0 otherwise.
     // The look-ahead loads at least this many rows - past the deadline only from the txns visible
     // when the read started - and sizes lookaheadTxnCount to this many rows.
     private long blockLookaheadRows;
@@ -94,7 +94,7 @@ public class WalTxnDetails implements QuietCloseable {
     private boolean isLastBlockCutByRowLimit;
     // How many txns to load in the first batch of a look-ahead read, and how few loaded txns left over
     // make the apply job read more. Starts from cairo.wal.apply.look.ahead.txn.count; with
-    // cairo.wal.apply.block.size set, every read re-sizes it to one block's worth of txns.
+    // cairo.wal.apply.block.size positive, every read re-sizes it to one block's worth of txns.
     private int lookaheadTxnCount;
     private long startSeqTxn = 0;
     // Stores all symbol metadata for the stored transactions.
@@ -984,7 +984,7 @@ public class WalTxnDetails implements QuietCloseable {
     }
 
     /**
-     * With {@code cairo.wal.apply.block.size} set, sizes the look-ahead txn count to one block: block rows
+     * With {@code cairo.wal.apply.block.size} positive, sizes the look-ahead txn count to one block: block rows
      * (block size / record size) over the average rows per txn of the loaded, not yet applied txns, rounded
      * up. Keeps the previous count when nothing with rows is loaded.
      */

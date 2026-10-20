@@ -43,9 +43,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Covers {@code cairo.wal.apply.block.size} and {@code cairo.wal.apply.block.memory.percent}: unset, the WAL apply
- * block keeps its old row limit (lag size and squash multiplier x max uncommitted rows); set, the block starts at
- * that size and grows within the memory percentage of the RSS limit.
+ * Covers {@code cairo.wal.apply.block.size} and {@code cairo.wal.apply.block.memory.percent}: at 0, the WAL apply
+ * block keeps its old row limit (lag size and squash multiplier x max uncommitted rows); positive (the default), the
+ * block starts at that size and grows within the memory percentage of the RSS limit.
  */
 public class WalApplyBlockSizeTest extends AbstractCairoTest {
     // (ts TIMESTAMP, x LONG): 16 bytes per row, both estimated and measured
@@ -186,6 +186,29 @@ public class WalApplyBlockSizeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDefaultIgnoresSquashMultiplier() throws Exception {
+        // Enabled by default: 75 MiB fits all 100 txns in one block, the squash multiplier does not cut it.
+        setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
+        assertCommits(1, 20);
+    }
+
+    @Test
+    public void testDisabledUsesLagSize() throws Exception {
+        // 10 txns worth of lag size; block size 0 falls back to it, like before the setting existed.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 0);
+        setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 10L * ROWS_PER_TXN * RECORD_SIZE);
+        assertCommits(10, 1_000);
+    }
+
+    @Test
+    public void testDisabledUsesSquashMultiplier() throws Exception {
+        // 1 x 20 max uncommitted rows: blocks of 2 txns.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 0);
+        setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
+        assertCommits(50, 20);
+    }
+
+    @Test
     public void testFitsWalBlockBudget() {
         // 100 rows of 16 B, nothing copied: staging 100 x (48 + 16) = 6,400, merge index 100 x 16 = 1,600
         Assert.assertTrue(TableWriter.fitsWalBlockBudget(100, 0, 16, 8_000));
@@ -210,6 +233,18 @@ public class WalApplyBlockSizeTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 40 * Numbers.SIZE_1GB);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, 2_000_000_000L);
         assertLookaheadReturnsPastDeadline(true);
+    }
+
+    @Test
+    public void testLookaheadTxnCountDisabled() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 0);
+        assertMemoryLeak(() -> {
+            final TableToken tableToken = createTable();
+            insertTxn(10);
+            try (TableWriter writer = loadWalTxnDetails(tableToken)) {
+                Assert.assertEquals(configuration.getWalApplyLookAheadTransactionCount(), writer.getWalTnxDetails().getLookaheadTxnCount());
+            }
+        });
     }
 
     @Test
@@ -255,17 +290,6 @@ public class WalApplyBlockSizeTest extends AbstractCairoTest {
             execute("ALTER TABLE t ADD COLUMN y INT");
             try (TableWriter writer = loadWalTxnDetails(tableToken)) {
                 // Only a 0-row txn loaded: no rows-per-txn stats, the configured count stays
-                Assert.assertEquals(configuration.getWalApplyLookAheadTransactionCount(), writer.getWalTnxDetails().getLookaheadTxnCount());
-            }
-        });
-    }
-
-    @Test
-    public void testLookaheadTxnCountUnset() throws Exception {
-        assertMemoryLeak(() -> {
-            final TableToken tableToken = createTable();
-            insertTxn(10);
-            try (TableWriter writer = loadWalTxnDetails(tableToken)) {
                 Assert.assertEquals(configuration.getWalApplyLookAheadTransactionCount(), writer.getWalTnxDetails().getLookaheadTxnCount());
             }
         });
@@ -356,7 +380,7 @@ public class WalApplyBlockSizeTest extends AbstractCairoTest {
 
     @Test
     public void testSetIgnoresSquashMultiplier() throws Exception {
-        // Unset, the same table applies in blocks of 2 txns, see testUnsetUsesSquashMultiplier.
+        // At 0, the same table applies in blocks of 2 txns, see testDisabledUsesSquashMultiplier.
         setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1024 * 1024);
         assertCommits(1, 20);
@@ -368,20 +392,6 @@ public class WalApplyBlockSizeTest extends AbstractCairoTest {
         // the block does not grow.
         setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 10L * ROWS_PER_TXN * RECORD_SIZE);
         assertCommits(10, 1_000);
-    }
-
-    @Test
-    public void testUnsetUsesLagSize() throws Exception {
-        // 10 txns worth of lag size; unset block size falls back to it, like before the setting existed.
-        setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 10L * ROWS_PER_TXN * RECORD_SIZE);
-        assertCommits(10, 1_000);
-    }
-
-    @Test
-    public void testUnsetUsesSquashMultiplier() throws Exception {
-        // 1 x 20 max uncommitted rows: blocks of 2 txns.
-        setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
-        assertCommits(50, 20);
     }
 
     private void assertCommits(int expectedCommits, int maxUncommittedRows) throws Exception {

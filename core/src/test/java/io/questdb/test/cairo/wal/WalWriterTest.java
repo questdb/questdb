@@ -3223,6 +3223,8 @@ public class WalWriterTest extends AbstractCairoTest {
         final int batchSize = 3;
         final int totalTxns = 20;
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, batchSize);
+        // An adaptive block would make the look-ahead load a whole block past the deadline
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 0);
 
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

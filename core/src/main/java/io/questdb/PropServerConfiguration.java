@@ -1110,7 +1110,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
         this.walApplyTableTimeQuota = getMillis(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 200);
-        this.walApplyBlockSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 0, 0);
+        this.walApplyBlockSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 75 * Numbers.SIZE_1MB, 0);
         this.walApplyBlockMemoryPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_MEMORY_PERCENT, 25);
         this.walApplyBlockMaxRows = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, 100_000_000L);
         if (walApplyBlockMaxRows < 1 || walApplyBlockMaxRows > MAX_WAL_APPLY_BLOCK_MAX_ROWS) {

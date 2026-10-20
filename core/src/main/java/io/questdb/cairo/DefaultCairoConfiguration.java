@@ -1688,7 +1688,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWalApplyBlockSize() {
-        return 0;
+        return 75 * Numbers.SIZE_1MB;
     }
 
     @Override
