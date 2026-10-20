@@ -56,6 +56,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -67,6 +68,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -2133,6 +2135,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     // next row, so a gap row reads the latest source row while it is still current.
     private static final class SampleBySourceFillCursor extends SampleByFillCursor {
         private long gapLimit = Long.MIN_VALUE;
+        private boolean isDirectPrev;
         // The fill reads the bucket of the next source row as it moves to a row,
         // which leaves the source row readable for the gap rows before the next one.
         private SampleByFillNoneNotKeyedRecordCursor source;
@@ -2160,6 +2163,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public boolean hasNext() {
+            if (isDirectPrev) {
+                return source.hasNextWithPrev();
+            }
             final long bucketTimestamp = currentBucketTimestamp;
             if (bucketTimestamp < gapLimit) {
                 setGapRow(bucketTimestamp);
@@ -2172,6 +2178,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         public void toTop() {
             super.toTop();
             gapLimit = Long.MIN_VALUE;
+            isDirectPrev = false;
             pendingTs = Numbers.LONG_NULL;
         }
 
@@ -2189,6 +2196,19 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 source = (SampleByFillNoneNotKeyedRecordCursor) sampleBySource;
                 if (!hasPendingRow) {
                     pendingTs = Numbers.LONG_NULL;
+                }
+                if (isSourceRecord
+                        && CommonUtils.isSubDayUnit(source.samplingIntervalUnit)
+                        && source.timezoneNameFunc == StrConstant.NULL
+                        && source.offsetFunc == StrConstant.NULL
+                        && source.sampleFromFunc == source.timestampDriver.getTimestampConstantNull()
+                        && source.sampleToFunc == source.timestampDriver.getTimestampConstantNull()
+                        && hasPendingRow
+                        && currentBucketTimestamp == pendingTs
+                        && currentBucketTimestamp < maxTimestamp) {
+                    source.nextRowAndPeek();
+                    isDirectPrev = true;
+                    return true;
                 }
                 updateGapLimit();
                 return hasNext();

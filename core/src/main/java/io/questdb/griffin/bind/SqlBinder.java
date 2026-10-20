@@ -542,7 +542,9 @@ public final class SqlBinder implements Mutable {
         }
 
         clearCursorColumns();
-        if (ctx.hasAggregation(model, source) || isHorizonJoin || model.isDistinct() && !hasWindows && aggregateBinder.isDistinctRewritten(model, source)) {
+        if (ctx.hasAggregation(model, source) || isHorizonJoin
+                || model.isDistinct() && !hasWindows && aggregateBinder.isDistinctRewritten(model, source)
+                && !windowBinder.hasProjectionReferences(model, sourcePlan.getOutput())) {
             if (!hasWindows && !isHorizonJoin && collectCursorColumns(model)) {
                 input = bindCursorColumns(input, sourceAlias(source), model.getModelPosition(), executionContext);
             }
@@ -570,8 +572,8 @@ public final class SqlBinder implements Mutable {
             project.markImplied();
         }
         bindScope.sourceProjectionIndexes.setAll(sourcePlan.getOutput().getColumnCount(), -1);
-        final OutputSchema referenceScope = hasWindows ? windowReferenceScope(model, sourcePlan.getOutput())
-                : windowBinder.hasProjectionReferences(model, sourcePlan.getOutput()) ? projectionReferenceScope(sourcePlan.getOutput()) : null;
+        final OutputSchema referenceScope = hasWindows ? windowReferenceScope(model, sourcePlan.getOutput(), sourceAlias(source))
+                : windowBinder.hasProjectionReferences(model, sourcePlan.getOutput()) ? projectionReferenceScope(sourcePlan.getOutput(), sourceAlias(source)) : null;
         // Qualified sources can hold distinct columns of one name. A virtual projection names a
         // plain column after its translating alias, which an earlier function argument may take.
         final BindScope.TranslatingAliases translating = !hasWindows && referenceScope == null
@@ -986,9 +988,14 @@ public final class SqlBinder implements Mutable {
         return merged;
     }
 
-    private OutputSchema projectionReferenceScope(OutputSchema source) {
+    private OutputSchema projectionReferenceScope(OutputSchema source, CharSequence sourceAlias) {
         final OutputSchema referenceScope = ctx.scope().referenceScope;
         referenceScope.copyFrom(source);
+        if (!source.hasColumnQualifiers() && sourceAlias != null) {
+            for (int i = 0, n = source.getColumnCount(); i < n; i++) {
+                referenceScope.setColumnName(i, source.getColumnName(i), sourceAlias);
+            }
+        }
         return referenceScope;
     }
 
@@ -1141,8 +1148,8 @@ public final class SqlBinder implements Mutable {
         }
     }
 
-    private OutputSchema windowReferenceScope(QueryModel model, OutputSchema source) {
-        return windowBinder.hasWindowProjectionReferences(model, source) ? projectionReferenceScope(ctx.windowBindingScope(source)) : null;
+    private OutputSchema windowReferenceScope(QueryModel model, OutputSchema source, CharSequence sourceAlias) {
+        return windowBinder.hasWindowProjectionReferences(model, source) ? projectionReferenceScope(ctx.windowBindingScope(source), sourceAlias) : null;
     }
 
     static boolean isReferenced(ProjectPlan project, int columnId) {
@@ -1328,6 +1335,7 @@ public final class SqlBinder implements Mutable {
             ctx.addProjection(project, ctx.planNodes.columns.next().of(referenceScope.getColumnId(index), referenceScope.getColumnType(index), expression.position),
                     null, column.getAlias() != null ? column.getAlias() : expression.token, true);
             bindScope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
+            exposeProjectionReference(referenceScope, project, column.getName(), output);
             return -1;
         }
         final int index = aliasIndex >= 0 ? aliasIndex : FunctionBinder.checkColumn(expression, foundIndex, bindingScope, alias);

@@ -111,6 +111,21 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
         setNullValue();
     }
 
+    boolean hasNextWithPrev() {
+        if (baseRecord == null || localEpoch == Numbers.LONG_NULL) {
+            return false;
+        }
+        final long next = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
+        if (next < localEpoch) {
+            sampleLocalEpoch = nextSampleLocalEpoch = next;
+            return true;
+        }
+        if (localEpoch < next) {
+            throw SampleByFillGrid.dataRowBeforeBucket(localEpoch, next);
+        }
+        return next < Long.MAX_VALUE && notKeyedLoop(value);
+    }
+
     @Override
     protected boolean aggregateNullTimestampRows() {
         return notKeyedNullLoop(value);

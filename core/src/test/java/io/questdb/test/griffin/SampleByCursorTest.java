@@ -39,6 +39,78 @@ import org.junit.Test;
 
 public class SampleByCursorTest extends AbstractCairoTest {
     @Test
+    public void testSparsePrevFirstObservationBothPrecisions() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int precision = 0; precision < 2; precision++) {
+                final String type = precision == 0 ? "TIMESTAMP" : "TIMESTAMP_NS";
+                final String table = "sparse_prev_" + precision;
+                execute("CREATE TABLE " + table + " (v DOUBLE, ts " + type + ") TIMESTAMP(ts)");
+                execute("INSERT INTO " + table + " VALUES"
+                        + "(2.0,'1970-01-01T00:00:03'),(4.0,'1970-01-01T00:00:07'),"
+                        + "(NULL,'1970-01-01T00:00:38'),(6.0,'1970-01-01T00:01:20'),"
+                        + "(8.0,'1970-01-01T00:01:25'),(10.0,'1970-01-01T00:01:54')");
+                final String sql = "SELECT ts,avg(v) a FROM " + table
+                        + " SAMPLE BY 10s FILL(PREV) ALIGN TO FIRST OBSERVATION";
+                final String expected = """
+                        ts	a
+                        1970-01-01T00:00:03.000000Z	3.0
+                        1970-01-01T00:00:13.000000Z	3.0
+                        1970-01-01T00:00:23.000000Z	3.0
+                        1970-01-01T00:00:33.000000Z	null
+                        1970-01-01T00:00:43.000000Z	null
+                        1970-01-01T00:00:53.000000Z	null
+                        1970-01-01T00:01:03.000000Z	null
+                        1970-01-01T00:01:13.000000Z	6.0
+                        1970-01-01T00:01:23.000000Z	8.0
+                        1970-01-01T00:01:33.000000Z	8.0
+                        1970-01-01T00:01:43.000000Z	8.0
+                        1970-01-01T00:01:53.000000Z	10.0
+                        """;
+                assertQuery(sql).noLeakCheck().timestamp("ts").noRandomAccess()
+                        .returns(precision == 0 ? expected : expected.replace(".000000Z", ".000000000Z"));
+                assertQuery("SELECT sum(a) FROM (" + sql + ")").noLeakCheck().noRandomAccess().expectSize().returns("sum\n49.0\n");
+                assertQuery(sql.replace(" SAMPLE BY ", " WHERE v < 0 SAMPLE BY "))
+                        .noLeakCheck().timestamp("ts").noRandomAccess().returns("ts\ta\n");
+            }
+        });
+    }
+
+    @Test
+    public void testPrevFirstObservationTimestampBoundaries() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int precision = 0; precision < 2; precision++) {
+                final String type = precision == 0 ? "TIMESTAMP" : "TIMESTAMP_NS";
+                final String unit = precision == 0 ? "U" : "n";
+                final String sample = " SAMPLE BY 10" + unit + " FILL(PREV) ALIGN TO FIRST OBSERVATION";
+                assertQuery("SELECT ts::long t, a FROM (SELECT ts,avg(v) a FROM "
+                        + "((SELECT (9_223_372_036_854_775_807L - (3-x)*10)::" + type
+                        + " ts,x::double v FROM long_sequence(3) ORDER BY ts) TIMESTAMP(ts))" + sample + ")")
+                        .noLeakCheck().noRandomAccess().returns("""
+                                t	a
+                                9223372036854775787	1.0
+                                9223372036854775797	2.0
+                                """);
+                assertQuery("SELECT ts::long t, a FROM (SELECT ts,avg(v) a FROM "
+                        + "((SELECT 9_223_372_036_854_775_806L::" + type
+                        + " ts,1.0 v FROM long_sequence(1)) TIMESTAMP(ts))" + sample + ")")
+                        .noLeakCheck().noRandomAccess().returns("t\ta\n9223372036854775806\t1.0\n");
+                assertQuery("SELECT ts::long t, a FROM (SELECT ts,avg(v) a FROM "
+                        + "((SELECT 9_223_372_036_854_775_807L::" + type
+                        + " ts,1.0 v FROM long_sequence(1)) TIMESTAMP(ts))" + sample + ")")
+                        .noLeakCheck().noRandomAccess().returns("t\ta\n");
+                assertQuery("SELECT ts,avg(v) a FROM ((SELECT "
+                        + "(CASE WHEN x = 1 THEN -2L ELSE 9_223_372_036_854_775_806L END)::" + type
+                        + " ts,1.0 v FROM long_sequence(2) ORDER BY ts) TIMESTAMP(ts))"
+                        + " SAMPLE BY " + (precision == 0 ? "2000000000h" : "2000000h") + " FILL(PREV) ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck().failsWith("data row timestamp 4046744073709551614 precedes next bucket 7199999999999999998");
+                assertQuery("SELECT ts,avg(v) a FROM ((SELECT NULL::" + type
+                        + " ts,1.0 v FROM long_sequence(1)) TIMESTAMP(ts))" + sample)
+                        .noLeakCheck().failsWith("SAMPLE BY designated timestamp cannot be NULL");
+            }
+        });
+    }
+
+    @Test
     public void testFirstObservationFillModesBothPrecisions() throws Exception {
         assertMemoryLeak(() -> {
             {

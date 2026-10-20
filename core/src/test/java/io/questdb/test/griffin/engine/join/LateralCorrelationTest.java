@@ -71,6 +71,157 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAggregateProjectionAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("""
+                    SELECT m.a AS outer_a, l.*
+                    FROM (SELECT 100 AS a, 200 AS b, 300 AS c) m
+                    CROSS JOIN LATERAL (
+                        SELECT x AS a, a+1 AS b, count() AS n FROM long_sequence(2)
+                    ) l ORDER BY 2
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            outer_a\ta\tb\tn
+                            100\t1\t2\t1
+                            100\t2\t3\t1
+                            """);
+            assertQuery("SELECT x AS a, a+1 AS b, count() AS n FROM long_sequence(2) ORDER BY a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tn
+                            1\t2\t1
+                            2\t3\t1
+                            """);
+            assertQuery("SELECT s.x AS a, a+s.x AS b, count() AS n FROM long_sequence(2) s ORDER BY a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tn
+                            1\t2\t1
+                            2\t4\t1
+                            """);
+            assertQuery("""
+                    SELECT m.a AS outer_a, l.*
+                    FROM (SELECT 100 AS a, 200 AS b, 300 AS c) m
+                    CROSS JOIN LATERAL (
+                        SELECT DISTINCT x AS a, a+1 AS b, count() AS n FROM long_sequence(2)
+                    ) l ORDER BY 2
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            outer_a\ta\tb\tn
+                            100\t1\t2\t1
+                            100\t2\t3\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testAggregateProjectionAliasesInOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("""
+                    SELECT DISTINCT x AS a, a+1 AS b, count() AS n
+                    FROM long_sequence(2) ORDER BY a+2 DESC
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tn
+                            2\t3\t1
+                            1\t2\t1
+                            """);
+            assertQuery("""
+                    SELECT l.* FROM (SELECT 100 AS a) m
+                    CROSS JOIN LATERAL (
+                        SELECT x AS a, count()+1 AS n FROM long_sequence(2)
+                        ORDER BY a+1 DESC LIMIT 1
+                    ) l
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tn
+                            2\t2
+                            """);
+            assertQuery("""
+                    SELECT x AS a, count()+1 AS n
+                    FROM (SELECT x, 3-x AS a FROM long_sequence(2)) ORDER BY a+1
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tn
+                            2\t2
+                            1\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testAggregateProjectionAliasesPreserveNullsAndSourcePrecedence() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alias_values (x LONG)");
+            execute("INSERT INTO alias_values VALUES (1), (1), (2), (NULL), (NULL)");
+            assertQuery("""
+                    SELECT l.* FROM (SELECT 100 AS a) m
+                    CROSS JOIN LATERAL (
+                        SELECT DISTINCT x AS a, a+1 AS b, coalesce(a, 99) AS c, m.a+1 AS outer_a, count() AS n
+                        FROM alias_values
+                    ) l ORDER BY a
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc\touter_a\tn
+                            null\tnull\t99\t101\t2
+                            1\t2\t1\t101\t2
+                            2\t3\t2\t101\t1
+                            """);
+            execute("ALTER TABLE alias_values ADD COLUMN a LONG");
+            execute("INSERT INTO alias_values VALUES (3, 30)");
+            assertQuery("""
+                    SELECT l.* FROM (SELECT 100 AS a) m
+                    CROSS JOIN LATERAL (
+                        SELECT x AS a, a+1 AS b, m.a+1 AS outer_a, count() AS n FROM alias_values
+                    ) l ORDER BY a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\touter_a\tn
+                            null\tnull\t101\t2
+                            1\tnull\t101\t2
+                            2\tnull\t101\t1
+                            3\t31\t101\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testAggregateProjectionAliasesPreserveValidation() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("SELECT x AS a, sum(a) FROM long_sequence(2)", 19, "Invalid column: a");
+            assertException("SELECT count() AS a, a+1 AS b FROM long_sequence(2)", 21, "Invalid column: a");
+            assertException("SELECT x+1 AS a, a+1 AS b, count() FROM long_sequence(2)", 17, "Invalid column: a");
+            assertException("SELECT s.x AS a, s.a+1 AS b, count() FROM long_sequence(2) s", 17, "Invalid column: s.a");
+            assertException(
+                    "SELECT x AS a, a+1 AS b, count() FROM long_sequence(2) GROUP BY x",
+                    15,
+                    "Invalid column: a"
+            );
+            assertException(
+                    "SELECT x AS a, x+1 AS b, count() FROM long_sequence(2) GROUP BY x+1",
+                    7,
+                    "column must appear in GROUP BY clause or aggregate function"
+            );
+        });
+    }
+
+    @Test
     public void testAsofAndLtJoinOverCorrelatedSlave() throws Exception {
         assertMemoryLeak(() -> {
             createTemporalJoinTables();
@@ -681,6 +832,75 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             1\t10
                             2\t15
                             3\t11
+                            """);
+        });
+    }
+
+    @Test
+    public void testDistinctProjectionAliases() throws Exception {
+        allowFunctionMemoization();
+        assertMemoryLeak(() -> {
+            assertQuery("""
+                    SELECT m.a, l.a AS la, l.b FROM (SELECT 100 AS a) m
+                    CROSS JOIN LATERAL (
+                        SELECT DISTINCT x AS a, a+1 AS b FROM long_sequence(2)
+                    ) l ORDER BY la
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tla\tb
+                            100\t1\t2
+                            100\t2\t3
+                            """);
+            execute("CREATE TABLE alias_values (x LONG)");
+            execute("INSERT INTO alias_values VALUES (1), (1), (2), (NULL), (NULL)");
+            assertQuery("""
+                    SELECT m.a, l.a AS la, l.b, l.c, l.d FROM (SELECT 100 AS a, 200 AS b) m
+                    CROSS JOIN LATERAL (
+                        SELECT DISTINCT x AS a, a AS b, b+1 AS c, c+1 AS d FROM alias_values
+                    ) l ORDER BY la
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tla\tb\tc\td
+                            100\tnull\tnull\tnull\tnull
+                            100\t1\t1\t2\t3
+                            100\t2\t2\t3\t4
+                            """);
+            assertQuery("""
+                    SELECT DISTINCT x AS a, a AS b, b+1 AS c FROM alias_values
+                    ORDER BY c+1 DESC LIMIT 2
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc
+                            2\t2\t3
+                            1\t1\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testDistinctProjectionAliasesPreserveSourcePrecedence() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alias_values (x LONG, a LONG)");
+            execute("INSERT INTO alias_values VALUES (1, 10), (1, 10), (2, NULL), (NULL, 30)");
+            assertQuery("""
+                    SELECT m.a, l.a AS la, l.b, l.c, l.outer_a FROM (SELECT 100 AS a, 200 AS b) m
+                    CROSS JOIN LATERAL (
+                        SELECT DISTINCT x AS a, a AS b, b+1 AS c, m.a+1 AS outer_a FROM alias_values
+                    ) l ORDER BY la
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tla\tb\tc\touter_a
+                            100\tnull\t30\t31\t101
+                            100\t1\t10\t11\t101
+                            100\t2\tnull\tnull\t101
                             """);
         });
     }
@@ -4287,6 +4507,105 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             2\t80
                             3\t50
                             3\t60
+                            """);
+        });
+    }
+
+    @Test
+    public void testRenamedProjectionAliasChain() throws Exception {
+        allowFunctionMemoization();
+        assertMemoryLeak(() -> {
+            assertQuery("""
+                    SELECT m.b, l.a, l.b AS lb, l.c FROM (SELECT 100 AS b) m
+                    CROSS JOIN LATERAL (
+                        SELECT x AS a, a AS b, b+1 AS c FROM (SELECT 1 AS x)
+                    ) l
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            b\ta\tlb\tc
+                            100\t1\t1\t2
+                            """);
+            execute("CREATE TABLE alias_values (x LONG)");
+            execute("INSERT INTO alias_values VALUES (1), (2), (NULL)");
+            assertQuery("""
+                    SELECT m.b, l.a, l.b AS lb, l.c, l.d FROM (SELECT 100 AS b, 200 AS c) m
+                    CROSS JOIN LATERAL (
+                        SELECT x AS a, a AS b, b AS c, c+1 AS d FROM alias_values
+                    ) l ORDER BY l.a
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\ta\tlb\tc\td
+                            100\tnull\tnull\tnull\tnull
+                            100\t1\t1\t1\t2
+                            100\t2\t2\t2\t3
+                            """);
+            assertQuery("SELECT x AS a, a AS b, b AS c, c AS d, d+1 AS e FROM alias_values ORDER BY a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc\td\te
+                            null\tnull\tnull\tnull\tnull
+                            1\t1\t1\t1\t2
+                            2\t2\t2\t2\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testRenamedProjectionAliasesPreserveSourcePrecedence() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alias_values (x LONG, b LONG)");
+            execute("INSERT INTO alias_values VALUES (1, 10), (2, NULL), (NULL, 30)");
+            assertQuery("""
+                    SELECT m.b, l.a, l.b AS lb, l.c, l.d FROM (SELECT 100 AS b) m
+                    CROSS JOIN LATERAL (
+                        SELECT x AS a, a AS b, b+1 AS c, m.b+1 AS d FROM alias_values
+                    ) l ORDER BY l.a
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\ta\tlb\tc\td
+                            100\tnull\tnull\t31\t101
+                            100\t1\t1\t11\t101
+                            100\t2\t2\tnull\t101
+                            """);
+        });
+    }
+
+    @Test
+    public void testRenamedProjectionAliasesPreserveSourceQualification() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("SELECT s.x AS a,a AS b,s.b+1 AS c FROM long_sequence(2) s", 23, "Invalid column: s.b");
+            assertException(
+                    "SELECT o.b,l.* FROM (SELECT 100 AS b) o CROSS JOIN LATERAL " +
+                            "(SELECT s.x AS a,a AS b,s.b+1 AS c FROM long_sequence(2) s) l",
+                    83,
+                    "Invalid column: s.b"
+            );
+            assertQuery("SELECT s.x AS a, a AS b, b+s.x AS c FROM long_sequence(2) s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc
+                            1\t1\t2
+                            2\t2\t4
+                            """);
+            assertQuery("""
+                    SELECT s.x AS a, a AS b, b+s.x AS c, row_number() OVER () AS rn
+                    FROM long_sequence(2) s ORDER BY a
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc\trn
+                            1\t1\t2\t1
+                            2\t2\t4\t2
                             """);
         });
     }

@@ -242,7 +242,8 @@ final class AggregateBinder implements Mutable {
         if (!isDuplicateAllowed && findGroupingExpression(expression, source, aggregate) >= 0) {
             return;
         }
-        final OutputSchema bindingScope = aggregate.getChild() instanceof WindowPlan ? ctx.windowBindingScope(input) : input;
+        final OutputSchema bindingScope = aggregate.getChild() instanceof WindowPlan ? ctx.windowBindingScope(input)
+                : expression.type != ExpressionNode.LITERAL && scope.referenceScope.getColumnCount() > 0 ? scope.referenceScope : input;
         final BoundExpression bound;
         if (expression.type == ExpressionNode.LITERAL && !ctx.functionBinder.isOuterColumn(expression, bindingScope, sourceAlias(source))) {
             final int index = ctx.bindColumnIndex(expression, bindingScope, source);
@@ -983,6 +984,13 @@ final class AggregateBinder implements Mutable {
                 }
             }
         }
+        if (expression.type == ExpressionNode.LITERAL && ctx.scope().referenceScope.getColumnCount() > 0) {
+            final OutputSchema referenceScope = ctx.scope().referenceScope;
+            final int index = FunctionBinder.findColumn(expression, referenceScope, sourceAlias(source));
+            if (index >= 0 && LogicalPlans.groupingColumnIndex(aggregate, referenceScope.getColumnId(index)) >= 0) {
+                return true;
+            }
+        }
         if (findGroupingExpression(expression, source, aggregate) >= 0) {
             return true;
         }
@@ -1452,6 +1460,7 @@ final class AggregateBinder implements Mutable {
         aggregate.setSampleByBucket(sampleByBucket != null);
         aggregate.setDirectTableInput(hasDirectTableInput(source));
         aggregate.setKeySpellingKept(input instanceof HorizonJoinPlan ? hasHorizonOuterProjection(model) : groupBy.size() > 0);
+        scope.referenceScope.clear();
         if (sampleBy != null) {
             collectSampleByCursorGrouping(model, source, sampleBy, executionContext);
         } else if (sampleByBucket != null) {
@@ -1476,7 +1485,24 @@ final class AggregateBinder implements Mutable {
             }
         } else {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                collectGroupingExpressions(scope.aggregateSelectExpressions.getQuick(i), model, source, aggregate, executionContext);
+                final ExpressionNode expression = scope.aggregateSelectExpressions.getQuick(i);
+                collectGroupingExpressions(expression, model, source, aggregate, executionContext);
+                if (scope.isImplicitAggregation && selectExpressions == null && expression.type == ExpressionNode.LITERAL && !expression.isWildcard()) {
+                    final OutputSchema schema = input.getOutput();
+                    final CharSequence name = model.getBottomUpColumns().getQuick(i).getName();
+                    final int index = FunctionBinder.findColumn(expression, schema, sourceAlias(source));
+                    if (index >= 0 && getColumnIndexQuiet(schema, name) < 0 && getColumnIndexQuiet(scope.referenceScope, name) < 0) {
+                        if (scope.referenceScope.getColumnCount() == 0) {
+                            scope.referenceScope.copyFrom(schema);
+                            if (!schema.hasColumnQualifiers() && sourceAlias(source) != null) {
+                                for (int k = 0, count = schema.getColumnCount(); k < count; k++) {
+                                    scope.referenceScope.setColumnName(k, schema.getColumnName(k), sourceAlias(source));
+                                }
+                            }
+                        }
+                        scope.referenceScope.addColumnAs(schema, index, schema.getColumnId(index), GenericLexer.unquote(name), true);
+                    }
+                }
             }
         }
         // ORDER expressions act as SELECT expressions during grouping
@@ -1512,6 +1538,7 @@ final class AggregateBinder implements Mutable {
                 }
             }
         }
+        scope.referenceScope.clear();
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             collectAggregateNodes(scope.aggregateSelectExpressions.getQuick(i), !hasSampleByFill);
         }
