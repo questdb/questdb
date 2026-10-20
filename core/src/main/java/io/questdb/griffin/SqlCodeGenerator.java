@@ -567,11 +567,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    @TestOnly
-    public static int[][] actualUnionCastMatrix() {
-        return UNION_CAST_MATRIX;
-    }
-
     public static int[][] expectedUnionCastMatrix() {
         final int[][] expected = new int[MAX_TAG + 1][MAX_TAG + 1];
         for (int typeA = 0; typeA <= MAX_TAG; typeA++) {

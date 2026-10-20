@@ -95,10 +95,17 @@ public class ColumnConversionSoundnessTest extends AbstractCairoTest {
                     failures.put(fromDdl).put(" -> ").put(toDdl).put(": column type is ").put(ColumnType.nameOf(columnType)).put('\n');
                 }
             }
-            // read the converted column back: a converter that wrote garbage sizes fails here
+            // read every converted cell back: a converter that wrote garbage offsets or sizes
+            // throws here, into the catch below; the row count guards the conversion commit
             printSql("SELECT x FROM t");
-            if (sink.length() == 0) {
-                failures.put(fromDdl).put(" -> ").put(toDdl).put(": no rows read back\n");
+            int rows = -1; // minus the header line
+            for (int i = 0, n = sink.length(); i < n; i++) {
+                if (sink.charAt(i) == '\n') {
+                    rows++;
+                }
+            }
+            if (rows != 2) {
+                failures.put(fromDdl).put(" -> ").put(toDdl).put(": read back ").put(rows).put(" rows, expected 2\n");
             }
         } catch (Throwable e) {
             failures.put(fromDdl).put(" -> ").put(toDdl).put(": ").put(e.getMessage()).put('\n');
