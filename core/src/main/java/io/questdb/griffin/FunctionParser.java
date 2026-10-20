@@ -1492,65 +1492,76 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     @Nullable
     private Function createImplicitCastOrNull(int position, Function function, int toType) throws SqlException {
-        int fromType = function.getType();
-        switch (fromType) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
+        final int fromType = function.getType();
+        final Function cast = switch (ColumnTypeTag.of(fromType)) {
+            case STRING, SYMBOL -> {
                 if (toType == ColumnType.UUID) {
-                    return new CastStrToUuidFunctionFactory.Func(function);
+                    yield new CastStrToUuidFunctionFactory.Func(function);
                 } else if (ColumnType.isTimestamp(toType)) {
-                    return new CastStrToTimestampFunctionFactory.Func(function, toType);
+                    yield new CastStrToTimestampFunctionFactory.Func(function, toType);
                 } else if (ColumnType.isArray(toType)) {
                     assert ColumnType.decodeArrayElementType(toType) == ColumnType.DOUBLE;
-                    return new CastStrToDoubleArrayFunctionFactory.Func(function, toType);
+                    yield new CastStrToDoubleArrayFunctionFactory.Func(function, toType);
                 } else if (ColumnType.isGeoHash(toType)) {
-                    return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
+                    yield CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
                 } else if (ColumnType.isDecimal(toType)) {
-                    return CastStrToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
+                    yield CastStrToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
                 }
-                break;
-            case ColumnType.VARCHAR:
+                yield null;
+            }
+            case VARCHAR -> {
                 if (toType == ColumnType.UUID) {
-                    return new CastVarcharToUuidFunctionFactory.Func(function);
+                    yield new CastVarcharToUuidFunctionFactory.Func(function);
                 } else if (ColumnType.isTimestamp(toType)) {
-                    return new CastVarcharToTimestampFunctionFactory.Func(function, toType);
+                    yield new CastVarcharToTimestampFunctionFactory.Func(function, toType);
                 } else if (ColumnType.isGeoHash(toType)) {
-                    return CastVarcharToGeoHashFunctionFactory.newInstance(position, toType, function);
+                    yield CastVarcharToGeoHashFunctionFactory.newInstance(position, toType, function);
                 } else if (ColumnType.isDecimal(toType)) {
-                    return CastVarcharToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
+                    yield CastVarcharToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
                 }
-                break;
-            case ColumnType.UUID:
+                yield null;
+            }
+            case UUID -> {
                 if (toType == ColumnType.STRING) {
-                    return new CastUuidToStrFunctionFactory.Func(function);
+                    yield new CastUuidToStrFunctionFactory.Func(function);
                 } else if (toType == ColumnType.VARCHAR) {
-                    return new CastUuidToVarcharFunctionFactory.Func(function);
+                    yield new CastUuidToVarcharFunctionFactory.Func(function);
                 }
-                break;
-            case ColumnType.CHAR:
+                yield null;
+            }
+            case CHAR -> {
                 if (toType == ColumnType.SYMBOL) {
-                    return new CastCharToSymbolFunctionFactory.Func(function);
+                    yield new CastCharToSymbolFunctionFactory.Func(function);
                 } else if (ColumnType.isDecimal(toType)) {
-                    return CastStrToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
+                    yield CastStrToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
                 }
-                break;
-            case ColumnType.IPv4:
+                yield null;
+            }
+            case IPv4 -> {
                 if (toType == ColumnType.STRING) {
-                    return new CastIPv4ToStrFunctionFactory.Func(function);
+                    yield new CastIPv4ToStrFunctionFactory.Func(function);
                 }
                 if (toType == ColumnType.VARCHAR) {
-                    return new CastIPv4ToVarcharFunctionFactory.Func(function);
+                    yield new CastIPv4ToVarcharFunctionFactory.Func(function);
                 }
-                break;
-            default:
-                if (ColumnType.isGeoHash(fromType)) {
-                    int fromGeoBits = ColumnType.getGeoHashBits(fromType);
-                    int toGeoBits = ColumnType.getGeoHashBits(toType);
-                    if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
-                        return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, toType, fromType);
-                    }
+                yield null;
+            }
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> {
+                int fromGeoBits = ColumnType.getGeoHashBits(fromType);
+                int toGeoBits = ColumnType.getGeoHashBits(toType);
+                if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
+                    yield CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, toType, fromType);
                 }
-                break;
+                yield null;
+            }
+            // a source tag with no implicit cast of its own; a DECIMAL target is handled below
+            case UNDEFINED, BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, BINARY, CURSOR,
+                 VAR_ARG, RECORD, GEOHASH, LONG128, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL,
+                 UNKNOWN -> null;
+        };
+        if (cast != null) {
+            return cast;
         }
         if (ColumnType.isDecimal(toType)) {
             return DecimalUtil.getImplicitCastFunction(function, position, toType, sqlExecutionContext);
