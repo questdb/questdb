@@ -2028,6 +2028,124 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueKeepsCompatibleLiteralConversions() throws Exception {
+        // This previously worked on master. The missing cast wrapper must not cause
+        // us to reject valid byte/short, symbol, IPv4, string or float fills.
+        final String ddl = "CREATE TABLE t_fv_compatible (" +
+                "b BYTE, s SHORT, sym SYMBOL, ip IPv4, v STRING, f FLOAT, ts TIMESTAMP) " +
+                "TIMESTAMP(ts) PARTITION BY DAY";
+        final String insert = "INSERT INTO t_fv_compatible VALUES " +
+                "(10, 20, 'orig', '10.0.0.1', 'base', 1.0, '2024-01-01T00:00:00.000000Z'), " +
+                "(10, 20, 'orig', '10.0.0.1', 'base', 3.0, '2024-01-01T02:00:00.000000Z')";
+        assertQuery("SELECT ts, first(b) AS b FROM t_fv_compatible SAMPLE BY 1h FILL(1)")
+                .ddl(ddl, insert)
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tb
+                        2024-01-01T00:00:00.000000Z\t10
+                        2024-01-01T01:00:00.000000Z\t1
+                        2024-01-01T02:00:00.000000Z\t10
+                        """);
+        assertQuery("SELECT ts, first(s) AS s FROM t_fv_compatible SAMPLE BY 1h FILL(300)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\ts
+                        2024-01-01T00:00:00.000000Z\t20
+                        2024-01-01T01:00:00.000000Z\t300
+                        2024-01-01T02:00:00.000000Z\t20
+                        """);
+        assertQuery("SELECT ts, first(sym) AS sym FROM t_fv_compatible SAMPLE BY 1h FILL('abc')")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tsym
+                        2024-01-01T00:00:00.000000Z\torig
+                        2024-01-01T01:00:00.000000Z\tabc
+                        2024-01-01T02:00:00.000000Z\torig
+                        """);
+        assertQuery("SELECT ts, first(ip) AS ip FROM t_fv_compatible SAMPLE BY 1h FILL('1.2.3.4')")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tip
+                        2024-01-01T00:00:00.000000Z\t10.0.0.1
+                        2024-01-01T01:00:00.000000Z\t1.2.3.4
+                        2024-01-01T02:00:00.000000Z\t10.0.0.1
+                        """);
+        assertQuery("SELECT ts, first(v) AS v FROM t_fv_compatible SAMPLE BY 1h FILL('a')")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tv
+                        2024-01-01T00:00:00.000000Z\tbase
+                        2024-01-01T01:00:00.000000Z\ta
+                        2024-01-01T02:00:00.000000Z\tbase
+                        """);
+        assertQuery("SELECT ts, first(f) AS f FROM t_fv_compatible SAMPLE BY 1h FILL(1.5)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tf
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-01-01T01:00:00.000000Z\t1.5
+                        2024-01-01T02:00:00.000000Z\t3.0
+                        """);
+    }
+
+    @Test
+    public void testFillValueNarrowsDoubleToLongInsteadOfThrowingAtRuntime() throws Exception {
+        // DOUBLE -> LONG has no cast factory. Fold the constant before FillRecord.getLong().
+        assertQuery("SELECT ts, count() AS c FROM t_fv_double_long SAMPLE BY 1h FILL(1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_double_long (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_double_long VALUES (1, '2024-01-01T00:00:00.000000Z'), " +
+                                "(3, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tc
+                        2024-01-01T00:00:00.000000Z\t1
+                        2024-01-01T01:00:00.000000Z\t1
+                        2024-01-01T02:00:00.000000Z\t1
+                        """);
+    }
+
+    @Test
+    public void testFillValueRejectsOutOfRangeNarrowing() throws Exception {
+        final String ddl = "CREATE TABLE t_fv_overflow (b BYTE, s SHORT, ts TIMESTAMP) " +
+                "TIMESTAMP(ts) PARTITION BY DAY";
+        final String byteSql = "SELECT ts, first(b) FROM t_fv_overflow SAMPLE BY 1h FILL(300)";
+        final String shortSql = "SELECT ts, first(s) FROM t_fv_overflow SAMPLE BY 1h FILL(70000)";
+        assertQuery(byteSql)
+                .ddl(ddl)
+                .fails(byteSql.indexOf("300"), "inconvertible value: 300 [INT -> BYTE]");
+        assertQuery(shortSql)
+                .fails(shortSql.indexOf("70000"), "inconvertible value: 70000 [INT -> SHORT]");
+    }
+
+    @Test
+    public void testFillValueBroadcastNarrowsPerAggregateType() throws Exception {
+        // A single DOUBLE literal is used for both LONG and FLOAT output columns.
+        assertQuery("SELECT ts, count() AS c, first(f) AS f FROM t_fv_broadcast SAMPLE BY 1h FILL(1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_broadcast (f FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_broadcast VALUES (1.0, '2024-01-01T00:00:00.000000Z'), " +
+                                "(3.0, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tc\tf
+                        2024-01-01T00:00:00.000000Z\t1\t1.0
+                        2024-01-01T01:00:00.000000Z\t1\t1.5
+                        2024-01-01T02:00:00.000000Z\t1\t3.0
+                        """);
+    }
+
+    @Test
     public void testFillValueRejectedForArrayAggregate() throws Exception {
         // first(array) returns DOUBLE[]. FirstArrayGroupByFunction omits
         // SAMPLE_BY_FILL_VALUE from getSampleByFlags(), so the GroupByUtils
