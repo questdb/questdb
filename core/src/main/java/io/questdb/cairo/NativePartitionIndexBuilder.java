@@ -24,8 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -42,14 +45,14 @@ import io.questdb.std.str.Path;
  * compaction REWRITE or a whole logical partition MERGE copied off a {@link TableReader} snapshot - so the swap that
  * publishes the directory stays metadata-only and the writer re-indexes nothing.
  * <p>
- * The copy itself already indexes every indexed column as it appends, but a POSTING index comes out of it as a run of
- * generations with no covered values. This does what the writer's swap-time reseal used to do, on the caller's
- * thread: it rebuilds each POSTING index from the column's data file into one dense chain entry and, for a COVERING
- * index, writes the covered values into its sidecars. BITMAP indexes need nothing more.
+ * The copy indexes BITMAP columns as it appends, which is all they need, and leaves POSTING columns unindexed - see
+ * {@link io.questdb.cairo.frm.Frame#setDeferPostingIndexing}. This does what the writer's swap-time reseal used to do,
+ * on the caller's thread: it creates each POSTING index's files, builds the index from the column's data file into
+ * one dense chain entry and, for a COVERING index, writes the covered values into its sidecars.
  * <p>
  * The chain entries are tagged with the table txn the caller built off. Nothing can read the directory before the
- * swap publishes it at a later txn, and the untagged generations the copy left behind carry txn 0, so the tag keeps
- * the chain non-decreasing and is never above the txn writer-open recovery checks it against. Not thread-safe.
+ * swap publishes it at a later txn, so the tag is never above the txn writer-open recovery checks it against.
+ * Not thread-safe.
  */
 final class NativePartitionIndexBuilder implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(NativePartitionIndexBuilder.class);
@@ -62,6 +65,7 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
     private final LongList coveredSizes = new LongList();
     private final LongList coveredTops = new LongList();
     private final IntList coveredTypes = new IntList();
+    private final MemoryMAR ddlMem;
     private final FilesFacade ff;
     private final PostingSupersededFileRemover supersededFileRemover;
     private SymbolColumnIndexer indexer;
@@ -70,11 +74,12 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
     NativePartitionIndexBuilder(CairoConfiguration configuration, FilesFacade ff) {
         this.configuration = configuration;
         this.ff = ff;
+        this.ddlMem = Vm.getPMARInstance(configuration);
         this.supersededFileRemover = new PostingSupersededFileRemover(ff);
     }
 
     /**
-     * Finishes every POSTING index of the native partition in {@code partitionDir}.
+     * Creates and builds every POSTING index of the native partition in {@code partitionDir}.
      *
      * @param partitionDir       the staging directory the copy filled; trimmed back on return
      * @param metadata           the metadata the copy was built under
@@ -102,6 +107,16 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
                     continue;
                 }
                 final int writerIndex = metadata.getWriterIndex(i);
+                // Every POSTING column, as the copy would have: one with no rows in this directory is published
+                // with an empty index.
+                createIndexFiles(
+                        partitionDir,
+                        dirLen,
+                        metadata.getColumnName(i),
+                        columnVersions.getColumnNameTxn(partitionTimestamp, writerIndex),
+                        metadata.getColumnIndexType(i),
+                        metadata.getIndexValueBlockCapacity(i)
+                );
                 final long columnTop = columnTop(columnTops, columnVersions, partitionTimestamp, writerIndex);
                 // As the writer's reseal: a column with no rows in this directory has nothing to index.
                 if (columnTop < 0 || columnTop >= partitionRowCount) {
@@ -129,6 +144,7 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
     public void close() {
         indexer = Misc.free(indexer);
         indexerType = -1;
+        ddlMem.close();
     }
 
     private static long columnTop(ColumnTopRecorder columnTops, ColumnVersionReader columnVersions, long partitionTimestamp, int writerIndex) {
@@ -180,9 +196,7 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
             // After configureWriter: its of() resets the pending tag.
             writer.setNextTxnAtSeal(tableTxn);
             indexer.mergeTentativeIntoActiveIfAny();
-            // Rebuild the chain from the column's data file into one dense entry, which supersedes every generation
-            // the copy appended.
-            writer.discardForRebuild();
+            // Index the column's data file into one dense chain entry.
             final long dataFd = TableUtils.openRO(ff, TableUtils.dFile(partitionDir.trimTo(dirLen), columnName, columnNameTxn), LOG);
             try {
                 indexer.index(ff, dataFd, columnTop, partitionRowCount);
@@ -225,6 +239,30 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
             partitionDir.trimTo(dirLen);
         }
         supersededFileRemover.remove(partitionDir, dirLen, columnName, columnNameTxn);
+    }
+
+    private void createIndexFiles(
+            Path partitionDir,
+            int dirLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            byte indexType,
+            int indexValueBlockCapacity
+    ) {
+        try {
+            IndexFactory.keyFileName(indexType, partitionDir.trimTo(dirLen), columnName, columnNameTxn);
+            try {
+                ddlMem.smallFile(ff, partitionDir.$(), MemoryTag.MMAP_TABLE_WRITER);
+                IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
+            } finally {
+                ddlMem.close();
+            }
+            if (!ff.touch(IndexFactory.valueFileName(indexType, partitionDir.trimTo(dirLen), columnName, columnNameTxn, 0L))) {
+                throw CairoException.critical(ff.errno()).put("could not create index [name=").put(partitionDir).put(']');
+            }
+        } finally {
+            partitionDir.trimTo(dirLen);
+        }
     }
 
     /**

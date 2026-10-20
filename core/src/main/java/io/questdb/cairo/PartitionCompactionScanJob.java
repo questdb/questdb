@@ -458,6 +458,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
             TableUtils.createDirsOrFail(ff, other, configuration.getMkDirMode());
             targetFrame = frameFactory.openRW(other, partitionTimestamp, reader.getMetadata(), cvr, columnTops, 0);
+            // The index build below creates and builds every POSTING index off the column files the copy writes.
+            targetFrame.setDeferPostingIndexing(true);
 
             final int tableRootLen = path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).size();
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
@@ -623,6 +625,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
             TableUtils.createDirsOrFail(ff, other, configuration.getMkDirMode());
             targetFrame = frameFactory.openRW(other, logicalPartitionTimestamp, reader.getMetadata(), cvr, columnTops, 0);
+            // The index build below creates and builds every POSTING index off the column files the copy writes.
+            targetFrame.setDeferPostingIndexing(true);
             // Every folder below appends to the same column files: open each once for the whole merge, and grow it
             // once per source folder ahead of that folder's appends.
             targetFrame.setKeepColumnsOpen(true);

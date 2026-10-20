@@ -109,6 +109,8 @@ public class FrameImpl implements Frame {
     // When set, a COVERING posting-indexed column is opened as a plain column, so the frame writes its data but adds no
     // index entries.
     private boolean deferCoveredIndexing = false;
+    // When set, every posting-indexed column is opened as a plain column - see Frame#setDeferPostingIndexing.
+    private boolean deferPostingIndexing = false;
     private ColumnVersionReader crv;
     private RecycleBin<FrameImpl> frameRecycleBin;
     private int frameType;
@@ -192,6 +194,7 @@ public class FrameImpl implements Frame {
         // Scoped to the open that set it: this frame goes back to the recycle bin below, and the next
         // open gets it as a frame that indexes every column, whatever the previous one asked for.
         this.deferCoveredIndexing = false;
+        this.deferPostingIndexing = false;
         if (frameRecycleBin != null && !frameRecycleBin.isClosed()) {
             frameRecycleBin.put(this);
         } else {
@@ -214,6 +217,11 @@ public class FrameImpl implements Frame {
     @Override
     public void setDeferCoveredIndexing(boolean deferCoveredIndexing) {
         this.deferCoveredIndexing = deferCoveredIndexing;
+    }
+
+    @Override
+    public void setDeferPostingIndexing(boolean deferPostingIndexing) {
+        this.deferPostingIndexing = deferPostingIndexing;
     }
 
     @Override
@@ -974,6 +982,10 @@ public class FrameImpl implements Frame {
                 // plain column and no index writer is opened at all.
                 indexBlockCapacity = 0;
             }
+        }
+        if (deferPostingIndexing && isIndexed && IndexType.isPosting(indexType)) {
+            // As above: the plain column, and no index writer.
+            indexBlockCapacity = 0;
         }
         long columnTop = resolveColumnTop(columnIndex);
         // Keyed by the writer index, see resolveColumnTop.

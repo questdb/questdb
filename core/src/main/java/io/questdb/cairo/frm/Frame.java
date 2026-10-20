@@ -66,6 +66,14 @@ public interface Frame extends Closeable {
     }
 
     /**
+     * When set, every POSTING-indexed column is opened as a plain column, so the frame writes its data but opens no
+     * index writer for it: the caller builds those indexes off the data files afterwards. Scoped to the open that
+     * set it.
+     */
+    default void setDeferPostingIndexing(boolean deferPostingIndexing) {
+    }
+
+    /**
      * How many of this frame's rows are LIVE - rows something still points at - as opposed to
      * {@link #getRowCount()}, which is where the next append writes. The two differ only for a COMPOSITE
      * partition, whose pieces have moved off part of its extent and left dead rows behind.
