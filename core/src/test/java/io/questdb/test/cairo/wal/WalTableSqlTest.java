@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -2027,6 +2028,31 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalBlockApplyManySmallTxnsWideTimestampRangeMicros() throws Exception {
+        // 300 txns need 2 bytes, 10 years in micros (> 2^48) need 7 bytes: 2 + 7 > 8
+        testWalBlockApplyManySmallTxnsWideTimestampRange(
+                "TIMESTAMP",
+                MicrosTimestampDriver.floor("2016-01-01"),
+                MicrosTimestampDriver.floor("2026-01-01"),
+                Micros.MILLI_MICROS,
+                "300\t2016-01-01T00:00:00.001000Z\t2026-01-01T00:00:00.298000Z\t44850\n"
+        );
+    }
+
+    @Test
+    public void testWalBlockApplyManySmallTxnsWideTimestampRangeNanos() throws Exception {
+        // 300 txns need 2 bytes, 4 days in nanos (> 2^48) need 7 bytes: 2 + 7 > 8.
+        // The same spread in micros needs only 5 bytes and sorts fine.
+        testWalBlockApplyManySmallTxnsWideTimestampRange(
+                "TIMESTAMP_NS",
+                NanosTimestampDriver.floor("2026-01-01"),
+                NanosTimestampDriver.floor("2026-01-05"),
+                1_000_000L,
+                "300\t2026-01-01T00:00:00.001000000Z\t2026-01-05T00:00:00.298000000Z\t44850\n"
+        );
+    }
+
+    @Test
     public void testWhenApplyJobTerminatesEarlierLagCommitted() throws Exception {
         AtomicBoolean isTerminating = new AtomicBoolean();
         Job.WorkerContext runStatus = new Job.WorkerContext() {
@@ -2301,6 +2327,51 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     asdf\t123\tasdff\t222\ttrue\t1.2.3\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-01T03:25:21.312321Z
                     """
             );
+        });
+    }
+
+    private void testWalBlockApplyManySmallTxnsWideTimestampRange(
+            String timestampType,
+            long lateTs,
+            long newTs,
+            long tsStep,
+            String expectedSummary
+    ) throws Exception {
+        // Reproduces https://github.com/questdb/questdb/issues/7989
+        // A backlog of tiny O3 transactions with a wide timestamp spread used to
+        // build a WAL block whose radix sort key (timestamp offset + txn index)
+        // did not fit 64 bits. The sort failed with
+        // error_sort_timestamp_txn_range_overflow and TableWriter fell back to
+        // 1-by-1 apply. The test disables that fallback, so a block apply
+        // failure suspends the table instead of being silently retried.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
+            final int txnCount = 300;
+            execute("CREATE TABLE t (v LONG, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("t");
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < txnCount; i++) {
+                    // alternate between fresh rows and late rows
+                    long ts = ((i & 1) == 0 ? newTs : lateTs) + i * tsStep;
+                    TableWriter.Row row = walWriter.newRow(ts);
+                    row.putLong(0, i);
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "WAL block apply failed and suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+            assertQuery("SELECT count(), min(ts), max(ts), sum(v) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tmin\tmax\tsum\n" + expectedSummary);
         });
     }
 }

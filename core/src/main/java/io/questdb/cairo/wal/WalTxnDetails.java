@@ -151,8 +151,31 @@ public class WalTxnDetails implements QuietCloseable {
         return walEventCursor;
     }
 
+    /**
+     * Mirrors the sort key capacity check in <code>radixSortManySegmentsIndexAsc</code>
+     * (<code>ooo.cpp</code>). The radix sort packs the timestamp offset from <code>minTs</code>
+     * and the txn index into one 64-bit key, so the bytes needed for both must not exceed 8.
+     * Timestamps are in the table's native unit, so a nanosecond table reaches the limit
+     * with a 1000x narrower time spread than a microsecond one.
+     *
+     * @param minTs    minimum timestamp across the block
+     * @param maxTs    maximum timestamp across the block
+     * @param txnCount number of transactions in the block
+     * @return true when the block cannot be sorted as a whole
+     */
+    public static boolean isTxnBlockSortKeyOverflow(long minTs, long maxTs, long txnCount) {
+        // range_bytes(max_ts - min_ts + 1) + range_bytes(txn_count) > 8
+        return rangeBytes(maxTs - minTs) + rangeBytes(txnCount - 1) > Long.BYTES;
+    }
+
     public static byte walTxnTypeOf(long walTxnTypeAndFlags) {
         return (byte) Numbers.decodeHighInt(walTxnTypeAndFlags);
+    }
+
+    // Bytes needed to store values in [0, maxValue], maxValue treated as unsigned.
+    // Same as range_bytes(maxValue + 1) in ooo.h.
+    private static int rangeBytes(long maxValue) {
+        return (Long.SIZE - Long.numberOfLeadingZeros(maxValue) + 7) >> 3;
     }
 
     /**
@@ -275,9 +298,22 @@ public class WalTxnDetails implements QuietCloseable {
         boolean allInOrder = getMinTimestamp(seqTxn) >= inOrderMinTimestamp && getTxnInOrder(seqTxn);
         long minTs = Long.MAX_VALUE;
         long maxTs = Long.MIN_VALUE;
+        // Timestamp spread of the whole block, used to keep the block sortable
+        long blockMinTs = getMinTimestamp(seqTxn);
+        long blockMaxTs = getMaxTimestamp(seqTxn);
 
         if (getCommitToTimestamp(seqTxn) != FORCE_FULL_COMMIT && getDedupMode(seqTxn) != WAL_DEDUP_MODE_REPLACE_RANGE) {
             for (long nextTxn = seqTxn + 1; nextTxn <= lastSeqTxn; nextTxn++) {
+                long nextBlockMinTs = Math.min(blockMinTs, getMinTimestamp(nextTxn));
+                long nextBlockMaxTs = Math.max(blockMaxTs, getMaxTimestamp(nextTxn));
+                if (isTxnBlockSortKeyOverflow(nextBlockMinTs, nextBlockMaxTs, blockSize + 1)) {
+                    // Adding this txn makes the block impossible to sort in one go,
+                    // it would fail and fall back to 1-by-1 apply
+                    break;
+                }
+                blockMinTs = nextBlockMinTs;
+                blockMaxTs = nextBlockMaxTs;
+
                 long currentWalSegment = getWalSegment(nextTxn);
                 if (allInOrder) {
                     if (currentWalSegment != lastWalSegment) {

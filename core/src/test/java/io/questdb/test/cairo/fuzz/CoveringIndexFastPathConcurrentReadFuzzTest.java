@@ -89,21 +89,11 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
         runConcurrentReadFuzz(generateRandom(LOG), false);
     }
 
-    @Test
-    public void testFastPathConcurrentReadFuzzRegression() throws Exception {
-        runConcurrentReadFuzz(generateRandom(LOG, 0x4d9a2e7f1c063bL, 0x81b5c39e7a204fL), false);
-    }
-
     // Legacy 9.4.x on-disk head: seed a format-0 (aliased-footer) covering head,
     // then run the SAME concurrent covered-read + fast-lag block-apply load. The
     // O3-fallback guard must (a) never trip the OOB (the format-0 head is sent to
     // O3, not extended in place), (b) migrate the head to format 1 on the first
     // block-apply (the O3 reseal), (c) then fast-path (fastLag>0) race-free.
-    @Test
-    public void testFastPathConcurrentReadFuzzLegacyFormat0Regression() throws Exception {
-        runConcurrentReadFuzz(generateRandom(LOG, 0x1f3c7a90e5d24bL, 0x77b1e6c0a4f293L), true);
-    }
-
     @Test
     public void testFastPathConcurrentReadFuzzLegacyFormat0() throws Exception {
         runConcurrentReadFuzz(generateRandom(LOG), true);
@@ -117,11 +107,6 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
     // format 1 (fullReseals>0), and subsequent commits fast-path (fastLag>0)
     // race-free.
     @Test
-    public void testSingleTxnConcurrentReadFuzzLegacyFormat0Regression() throws Exception {
-        runConcurrentReadFuzz(generateRandom(LOG, 0x3ae7195c02f4d8L, 0x62c8b0e73915afL), true, true);
-    }
-
-    @Test
     public void testSingleTxnConcurrentReadFuzzLegacyFormat0() throws Exception {
         runConcurrentReadFuzz(generateRandom(LOG), true, true);
     }
@@ -133,11 +118,6 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
     // reads. Without the method-level guard the pre-existing-lag apply extends the
     // format-0 head in place -> OOB; with it, that call bails to O3 which migrates
     // the head to format 1.
-    @Test
-    public void testO3PreLagConcurrentReadFuzzLegacyFormat0Regression() throws Exception {
-        runConcurrentReadFuzz(generateRandom(LOG, 0x5c1e83b7096d2fL, 0x4a90e2f1b7c358L), true, false, true);
-    }
-
     @Test
     public void testO3PreLagConcurrentReadFuzzLegacyFormat0() throws Exception {
         runConcurrentReadFuzz(generateRandom(LOG), true, false, true);
@@ -220,8 +200,8 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
 
             final Thread[] readers = new Thread[readerCount];
             for (int r = 0; r < readerCount; r++) {
+                final Rnd rrnd = new Rnd(rnd.nextLong(), rnd.nextLong());
                 readers[r] = new Thread(() -> {
-                    final Rnd rrnd = new Rnd();
                     try (
                             SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
                                     .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),

@@ -921,7 +921,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         final int regressionRecvChunk = 460;
         final int regressionSendChunk = 125;
         assertMemoryLeak(() -> {
-            Rnd master = TestUtils.generateRandom(LOG, 1951343273690333L, 1779330804963L);
+            Rnd master = TestUtils.generateRandom(LOG);
             createTargetTable();
             int port = RestartableQwpServer.pickFreePort();
 

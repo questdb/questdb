@@ -25,10 +25,12 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -639,6 +641,62 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         );
         setFuzzProperties(rnd);
         runFuzz(rnd, getTestName(), 1);
+    }
+
+    @Test
+    public void testWalWriteManySmallTxnsWideTimestampRange() throws Exception {
+        // A backlog of hundreds of tiny O3 transactions spread over a wide timestamp range.
+        // WAL apply sorts a transaction block by a 64-bit key made of the timestamp offset
+        // and the txn index. With more than 256 txns the index takes 2 bytes, so a block
+        // spanning more than 2^48 timestamp units does not fit the key: ~3.3 days
+        // in nanos, ~8.9 years in micros. See https://github.com/questdb/questdb/issues/7989
+        // The test pins nanos: in micros it needs thousands of DAY partitions and runs too long.
+        Rnd rnd = generateRandom(LOG);
+        fuzzer.setTimestampType(ColumnType.TIMESTAMP_NANO);
+        setTestParams(rnd);
+
+        // Inserts only: replace commits, structural changes and partition operations
+        // end a transaction block, and the test needs blocks of hundreds of transactions
+        setFuzzProbabilities(
+                0.05,
+                0.1,
+                0.1,
+                0.05,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0.01,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+        );
+
+        // 2^48 nanos is ~3.26 days
+        final int overflowSpanDays = (int) ((1L << 48) / Nanos.DAY_NANOS) + 1;
+        final int transactionCount = 300 + rnd.nextInt(700);
+        setFuzzCounts(
+                true,
+                transactionCount * (1 + rnd.nextInt(3)),
+                transactionCount,
+                10,
+                10,
+                10,
+                10,
+                overflowSpanDays + rnd.nextInt(10)
+        );
+        setFuzzProperties(rnd);
+        // Load the whole backlog into one block. Short apply quota truncates loading of
+        // transaction details and splits the backlog into small blocks.
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
+        runFuzz(rnd);
     }
 
     @Test

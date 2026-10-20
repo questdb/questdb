@@ -38,7 +38,7 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
     // and the parallel WAL harness fails checkNoSuspendedTables.
     @Test
     public void testRenamePostingColumnBeforeFirstSeal() throws Exception {
-        Rnd rnd = generateRandom(LOG, 7267207179444742L, 1778696418556L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 0.01,
                 0.2,

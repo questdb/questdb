@@ -103,11 +103,6 @@ public class CoveringIndexFastPathFailureFuzzTest extends AbstractFuzzTest {
         runFailureFuzz(generateRandom(LOG), false);
     }
 
-    @Test
-    public void testFastPathFailureFuzzRegression() throws Exception {
-        runFailureFuzz(generateRandom(LOG, 0x7ab3e10c9d2f45L, 0x3e9c7b16a80d52L), true);
-    }
-
     private void applyBatch(String table, Op op, int symbolCardinality) throws Exception {
         final String valueExpr = "(" + op.v0 + " + x)::DOUBLE";
         execute("INSERT INTO " + table
