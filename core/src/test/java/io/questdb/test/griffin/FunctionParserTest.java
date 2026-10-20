@@ -1138,8 +1138,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testFunctionFactoryNullSignature() {
-        // the cache drops the factory and logs; with assertions on, as in tests, it fails instead
-        Assume.assumeTrue("assertions are off", FunctionFactoryCache.class.desiredAssertionStatus());
         functions.add(new FunctionFactory() {
             @Override
             public String getSignature() {
@@ -1151,13 +1149,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 return new IntConstant(0);
             }
         });
-        try {
-            createFunctionParser();
-            fail();
-        } catch (AssertionError e) {
-            TestUtils.assertContains(e.getMessage(), "function factory dropped: ");
-            TestUtils.assertContains(e.getMessage(), "[signature=null, reason=NULL signature]");
-        }
+        FunctionParser parser = createFunctionParser();
+        assertEquals(0, parser.getFunctionFactoryCache().getFunctionCount());
     }
 
     @Test
@@ -2090,43 +2083,43 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testSignatureBeginsWithDigit() {
-        assertSignatureFailure("1x()", "name must not start with digit");
+    public void testSignatureBeginsWithDigit() throws SqlException {
+        assertSignatureFailure("1x()");
     }
 
     @Test
-    public void testSignatureEmptyFunctionName() {
-        assertSignatureFailure("(B)", "empty function name");
+    public void testSignatureEmptyFunctionName() throws SqlException {
+        assertSignatureFailure("(B)");
     }
 
     @Test
-    public void testSignatureIllegalArgumentType() {
-        assertSignatureFailure("x(By)", "illegal argument type: `y`");
+    public void testSignatureIllegalArgumentType() throws SqlException {
+        assertSignatureFailure("x(By)");
     }
 
     @Test
-    public void testSignatureIllegalCharacter() {
-        assertSignatureFailure("x'x()", "invalid character: '");
+    public void testSignatureIllegalCharacter() throws SqlException {
+        assertSignatureFailure("x'x()");
     }
 
     @Test
-    public void testSignatureIllegalName1() {
-        assertSignatureFailure("/*()", "invalid function name character: /*()");
+    public void testSignatureIllegalName1() throws SqlException {
+        assertSignatureFailure("/*()");
     }
 
     @Test
-    public void testSignatureIllegalName2() {
-        assertSignatureFailure("--()", "invalid function name character: --()");
+    public void testSignatureIllegalName2() throws SqlException {
+        assertSignatureFailure("--()");
     }
 
     @Test
-    public void testSignatureMissingCloseBrace() {
-        assertSignatureFailure("a(", "close brace expected");
+    public void testSignatureMissingCloseBrace() throws SqlException {
+        assertSignatureFailure("a(");
     }
 
     @Test
-    public void testSignatureMissingOpenBrace() {
-        assertSignatureFailure("x", "open brace expected");
+    public void testSignatureMissingOpenBrace() throws SqlException {
+        assertSignatureFailure("x");
     }
 
     @Test
@@ -2651,9 +2644,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         }
     }
 
-    private void assertSignatureFailure(String signature, String expectedReason) {
-        // the cache drops the factory and logs; with assertions on, as in tests, it fails instead
-        Assume.assumeTrue("assertions are off", FunctionFactoryCache.class.desiredAssertionStatus());
+    private void assertSignatureFailure(String signature) throws SqlException {
         functions.add(new OrFunctionFactory());
         functions.add(new FunctionFactory() {
             @Override
@@ -2667,13 +2658,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         functions.add(new NotFunctionFactory());
-        try {
-            createFunctionParser();
-            fail();
-        } catch (AssertionError e) {
-            TestUtils.assertContains(e.getMessage(), "function factory dropped: ");
-            TestUtils.assertContains(e.getMessage(), "[signature=" + signature + ", reason=" + expectedReason + "]");
-        }
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("b", ColumnType.BOOLEAN));
+        FunctionParser functionParser = createFunctionParser();
+        assertNotNull(parseFunction("a or not b", metadata, functionParser));
+        assertEquals(2, functionParser.getFunctionFactoryCache().getFunctionCount());
     }
 
     @NotNull

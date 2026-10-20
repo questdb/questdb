@@ -175,7 +175,7 @@ public class FunctionFactoryScanner {
                     System.out.println("error loading function: " + className + ", error: " + e);
                     e.printStackTrace(System.out);
                 }
-                // Skip the factory, as master always did; FunctionFactoryCacheTest asserts the production scan drops nothing.
+                // skip the factory; FunctionFactoryCacheTest asserts the production scan drops nothing
                 droppedClassNames.add(className.toString());
             }
         }
