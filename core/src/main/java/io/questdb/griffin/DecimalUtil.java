@@ -320,6 +320,9 @@ public final class DecimalUtil {
                 decimal.ofLong(v, 0);
                 break;
             }
+            default:
+                throw CairoException.critical(0)
+                        .put("cannot load decimal from column type: ").put(ColumnType.nameOf(fromType));
         }
     }
 

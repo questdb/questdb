@@ -520,7 +520,8 @@ public class DecimalUtilTest extends AbstractCairoTest {
         // Coverage of DecimalUtil.load: every value type the decimal code admits, through
         // getTypePrecisionScale() or getImplicitCastType(), has a load arm. The value source
         // answers 7 through every getter, so a type load reads comes out as 7 at the type's scale;
-        // a type with no arm leaves the target untouched. The list pins the types load reads.
+        // a type with no arm is refused and leaves the target untouched. The list pins the types
+        // load reads.
         final StringSink loaded = new StringSink();
         final StringSink missing = new StringSink();
         for (int t = 0; t < QueryEngineTypeFactsTest.TYPES.length; t++) {
@@ -546,8 +547,14 @@ public class DecimalUtilTest extends AbstractCairoTest {
                     }
             );
             decimal256.ofLong(-12_345, 3);
-            DecimalUtil.load(decimal256, decimal128, seven, null, type);
-            final boolean isLoaded = decimal256.compareTo(Decimal256.fromLong(-12_345, 3)) != 0;
+            boolean isLoaded;
+            try {
+                DecimalUtil.load(decimal256, decimal128, seven, null, type);
+                isLoaded = decimal256.compareTo(Decimal256.fromLong(-12_345, 3)) != 0;
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot load decimal from column type: ");
+                isLoaded = false;
+            }
             if (isLoaded) {
                 loaded.put(QueryEngineTypeFactsTest.LABELS[t]).put('=').put(decimal256.toString()).put('\n');
             }
