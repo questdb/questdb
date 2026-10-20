@@ -158,12 +158,13 @@ site of `places.tsv`, a `pg_oid` that names no constant, or a new wire kind whos
   that a refused value names the type the variable holds; or it refuses the definition with an error
   naming the type, which the COPY bind path then reports.
 - **Exhaustive switches.** javac lists every switch expression over `ColumnTypeTag` with no default
-  arm (the type driver lookup, the five pair switches: ALTER COLUMN TYPE fixed to fixed, fixed
+  arm (the type driver lookup; the five pair switches: ALTER COLUMN TYPE fixed to fixed, fixed
   to var-size and var-size to fixed, the UNION cast, the CASE cast; the implicit cast's source
-  switch; and the DECIMAL window functions avg, first_value, last_value, max/min and nth_value),
-  and every switch expression over a type driver value (`NullPolicy`, `WireKind`, the accessor
-  family as in `getTimestampType`, the tier) for a new value; rustc every match over the Rust tag enum with no catch-all arm; the C++ compiler the enum
-  switches where `-Wswitch` is an error. javac does not check a switch statement, even over an enum:
+  switch; the empty-frame switches of the DECIMAL window functions avg, first_value, last_value,
+  max/min and nth_value), and every switch expression over a type driver value (`NullPolicy`,
+  `WireKind`, the accessor family as in `getTimestampType`, the tier) for a new value; rustc every
+  match over the Rust tag enum with no catch-all arm; the C++ compiler the enum switches where
+  `-Wswitch` is an error. javac does not check a switch statement, even over an enum:
   the audit tells the two apart. The UNION cast's cell of the type with itself is reached too: once
   one column of a branch needs a cast, `generateCastFunctions` casts every column of that branch.
 - **Values the type driver supplies.** A type that shares a value with an existing type (its
