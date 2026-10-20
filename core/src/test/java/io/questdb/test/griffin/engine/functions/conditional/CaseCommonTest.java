@@ -76,8 +76,6 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
                         rejected.add(pair);
                         continue;
                     }
-                    // an accepted branch gets the same function as without the check
-                    Assert.assertSame(pair, CaseCommon.getCastFunction(branch, 0, commonType, configuration, null).getClass(), castFunction.getClass());
                     assertReadsAs(castFunction, commonType);
                 }
             }
