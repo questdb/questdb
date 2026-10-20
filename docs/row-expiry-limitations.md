@@ -491,10 +491,12 @@ the view's metadata version is still 0.
   the rebase restores the policy: `TableWriter` writes a fresh minor-version
   field with every DDL. Wherever `REBASE WAL` is documented, it needs an operator
   note saying so.
-- **Follow-up:** when `cloneTableDirForRebase()` resets the metadata version, it
-  should rewrite the minor-version field with
-  `TableUtils.calculateMetaFormatMinorVersionField(0, columnCount)`. That fixes
-  TTL as well.
+- **Follow-up:** [questdb/questdb#7536](https://github.com/questdb/questdb/issues/7536).
+  `cloneTableDirForRebase()` and the conversion to WAL in `TableConverter` should
+  rewrite only the checksum after they reset the metadata version, and keep the
+  file's saved minor version. Writing the latest minor version instead would
+  claim sections that an older `_meta` lacks. The fix restores TTL and the other
+  settings as well.
 
 ### WAL apply does not re-check a structural policy
 
