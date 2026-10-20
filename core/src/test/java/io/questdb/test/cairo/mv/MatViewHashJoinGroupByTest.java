@@ -148,6 +148,33 @@ public class MatViewHashJoinGroupByTest extends AbstractCairoTest {
         });
     }
 
+    // The base table is the input before RIGHT JOIN, the one that the fused plan builds, and a
+    // refresh step narrows its scan, which only shrinks the build. The dimension, which the join
+    // preserves, holds at least as many rows as the base table, so the view takes the fused plan.
+    // The filter on the trade's timestamp, after the join, drops the plants that no trade of the
+    // step matches, which would carry no timestamp.
+    @Test
+    public void testRightJoinBuildingBaseTableKeepsFusedPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = rightJoinBuildingBaseTable(false, ORDINARY);
+            Assert.assertEquals(expected, rightJoinBuildingBaseTable(true, FUSED));
+        });
+    }
+
+    // The base table is the input after RIGHT JOIN, the one the join preserves, and a refresh step
+    // scans only the base rows it covers. The ordinary plan hashes those rows, while the fused plan
+    // would build every row of the dimension, so the view keeps the ordinary plan although the
+    // dimension holds fewer rows than the base table. The LEFT spelling of the same join builds the
+    // dimension in both plans and stays fused.
+    @Test
+    public void testRightJoinPreservingBaseTableKeepsOrdinaryPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = rightJoinPreservingBaseTable(false, "plants p RIGHT JOIN trades t", ORDINARY);
+            Assert.assertEquals(expected, rightJoinPreservingBaseTable(true, "trades t LEFT JOIN plants p", FUSED));
+            Assert.assertEquals(expected, rightJoinPreservingBaseTable(true, "plants p RIGHT JOIN trades t", ORDINARY));
+        });
+    }
+
     // Takes the factory that the last refresh cached in the view state and describes it. The next
     // refresh compiles the view again. The factory's plan is not printed: the ordinary hash join
     // prints its join condition from the compiler's lexer, which later compiles have overwritten.
@@ -455,6 +482,70 @@ public class MatViewHashJoinGroupByTest extends AbstractCairoTest {
                         2024-01-01T06:00:00.000000Z\tIT\t18.0\t4\t10.0
                         """);
         Assert.assertEquals(isFused ? PRIMARY : ORDINARY, cachedFactory());
+        dropTables();
+        return snapshot.toString();
+    }
+
+    private String rightJoinBuildingBaseTable(boolean isFused, String expectedFactory) throws Exception {
+        setFused(isFused);
+        final StringBuilder snapshot = new StringBuilder();
+        createTables("INT");
+        execute("CREATE MATERIALIZED VIEW mv WITH BASE trades AS (" +
+                "SELECT timestamp_floor('1h', t.ts) ts, p.country, sum(t.qty) total, count() n, count(p.kwp) kwp_count " +
+                "FROM trades t RIGHT JOIN plants p ON p.plant_id = t.plant_id WHERE t.ts IS NOT NULL ORDER BY ts" +
+                ") PARTITION BY DAY");
+        // Three trades against four plants, so the base table holds fewer rows than the dimension.
+        execute("""
+                INSERT INTO trades VALUES
+                (1, 10, '2024-01-01T00:10'), (2, 20, '2024-01-01T00:20'), (3, 30, '2024-01-01T01:10')
+                """);
+        snapshot(snapshot);
+        // The next refresh step scans the one new trade, whose NULL key joins the FR plant.
+        execute("INSERT INTO trades VALUES (null, 50, '2024-01-01T02:20')");
+        snapshot(snapshot);
+        assertView("""
+                ts\tcountry\ttotal\tn\tkwp_count
+                2024-01-01T00:00:00.000000Z\tES\t10.0\t1\t1
+                2024-01-01T00:00:00.000000Z\tIT\t20.0\t1\t1
+                2024-01-01T01:00:00.000000Z\tES\t30.0\t1\t0
+                2024-01-01T02:00:00.000000Z\tFR\t50.0\t1\t1
+                """);
+        Assert.assertEquals(expectedFactory, cachedFactory());
+        dropTables();
+        return snapshot.toString();
+    }
+
+    private String rightJoinPreservingBaseTable(boolean isFused, String join, String expectedFactory) throws Exception {
+        setFused(isFused);
+        final StringBuilder snapshot = new StringBuilder();
+        createTables("INT");
+        // SAMPLE BY needs the timestamp of the input before the join, so the view groups by the
+        // hour of the trade instead, and orders by it to give the query a designated timestamp.
+        execute("CREATE MATERIALIZED VIEW mv WITH BASE trades AS (" +
+                "SELECT timestamp_floor('1h', t.ts) ts, p.country, sum(t.qty) total, count() n, count(p.kwp) kwp_count " +
+                "FROM " + join + " ON p.plant_id = t.plant_id ORDER BY ts" +
+                ") PARTITION BY DAY");
+        // Six trades against four plants, so the dimension holds fewer rows than the base table.
+        execute("""
+                INSERT INTO trades VALUES
+                (1, 10, '2024-01-01T00:10'), (2, 20, '2024-01-01T00:20'), (3, 30, '2024-01-01T01:10'),
+                (5, 40, '2024-01-01T02:10'), (null, 50, '2024-01-01T02:20'), (1, 60, '2024-01-01T02:30')
+                """);
+        snapshot(snapshot);
+        // The next refresh step scans the one new trade, fewer rows than the four plants.
+        execute("INSERT INTO trades VALUES (2, 7, '2024-01-01T03:10')");
+        snapshot(snapshot);
+        assertView("""
+                ts\tcountry\ttotal\tn\tkwp_count
+                2024-01-01T00:00:00.000000Z\tES\t10.0\t1\t1
+                2024-01-01T00:00:00.000000Z\tIT\t20.0\t1\t1
+                2024-01-01T01:00:00.000000Z\tES\t30.0\t1\t0
+                2024-01-01T02:00:00.000000Z\t\t40.0\t1\t0
+                2024-01-01T02:00:00.000000Z\tES\t60.0\t1\t1
+                2024-01-01T02:00:00.000000Z\tFR\t50.0\t1\t1
+                2024-01-01T03:00:00.000000Z\tIT\t7.0\t1\t1
+                """);
+        Assert.assertEquals(expectedFactory, cachedFactory());
         dropTables();
         return snapshot.toString();
     }

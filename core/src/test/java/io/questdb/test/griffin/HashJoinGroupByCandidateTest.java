@@ -623,11 +623,13 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     {select + "rn JOIN pn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp + rnd_double() > $2 ORDER BY 1",
                             "TIMESTAMP_NS DOUBLE", "true", "false", "2020-01-01T05", "-1"},
                     // These build the first input in join order, so the fused plan compiles the build
-                    // before the probe.
+                    // before the probe. A RIGHT join preserves rn, whose own WHERE clause reduces
+                    // the rows that the ordinary plan hashes, so the analysis rejects it before it
+                    // reads a clause.
                     {select + "pn JOIN rn" + on + interval + " ORDER BY 1",
                             "TIMESTAMP_NS TIMESTAMP_NS", "true", "true", "2020-01-01T05", "2020-01-02T03"},
                     {select + "pn RIGHT JOIN rn" + on + interval + " ORDER BY 1",
-                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "true", "2020-01-01T05", "2020-01-02T03"},
+                            "TIMESTAMP_NS TIMESTAMP_NS", "false", "false", "2020-01-01T05", "2020-01-02T03"},
                     // The fused compile drops the build it compiled first when either input's scan
                     // filter does not qualify. In the second query the build, pn, keeps a JIT-compiled
                     // scan filter, so assertMemoryLeak() fails unless the fused compile frees the build
@@ -644,7 +646,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     {select + "(SELECT * FROM pn WHERE dateadd('h', plant_id, '2020-01-01'::TIMESTAMP) < $1) pn JOIN rn" + on
                             + " WHERE rn.reading_ts >= $1 ORDER BY 1", "TIMESTAMP", "true", "true", "2020-01-01T05"},
                     {select + "(SELECT * FROM pn WHERE dateadd('h', plant_id, '2020-01-01'::TIMESTAMP) < $1) pn RIGHT JOIN rn" + on
-                            + " WHERE rn.reading_ts >= $1 ORDER BY 1", "TIMESTAMP", "true", "true", "2020-01-01T05"},
+                            + " WHERE rn.reading_ts >= $1 ORDER BY 1", "TIMESTAMP", "false", "false", "2020-01-01T05"},
                     {select + "(SELECT * FROM pn WHERE length($1) > 0) pn JOIN rn" + on + " WHERE rn.energy_kwh > $1 ORDER BY 1",
                             "STRING", "true", "true", "20"},
                     // The fused plan parses an aggregate, a post-join filter and an ON condition in an
@@ -808,37 +810,38 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 // runs it only on the pairs whose keys match, so a build table with more rows than
                 // the probe table keeps the ordinary plan for an expensive condition. Any other
                 // condition costs about as much as the hash insert it spares, so it stays a
-                // candidate.
+                // candidate of the LEFT join. The RIGHT join, whose build table holds more rows
+                // than the preserved one, is no candidate whatever its condition.
+                final boolean isRight = from == froms[1];
                 for (String condition : expensiveConditions) {
                     assertCandidate(from + condition, false);
                 }
                 for (String condition : cheapConditions) {
-                    assertCandidate(from + condition, true);
+                    assertCandidate(from + condition, !isRight);
                 }
                 for (String condition : fixedSizeConditions) {
-                    assertCandidate(from + condition, true);
+                    assertCandidate(from + condition, !isRight);
                 }
             }
-            // Such a candidate does not presize its key table, and the check of its condition
-            // reads none of the condition's columns as a payload.
+            // Such a candidate of the LEFT join does not presize its key table, and the check of
+            // its condition reads none of the condition's columns as a payload.
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (String from : froms) {
-                    for (String condition : fixedSizeConditions) {
-                        final HashJoinGroupByCandidate candidate = candidate(compiler, from + condition);
-                        Assert.assertNotNull(condition, candidate);
-                        Assert.assertNotNull(condition, candidate.getBuildOnFilter());
-                        Assert.assertFalse(condition, candidate.isKeyCapacityPresized());
-                        Assert.assertEquals(condition, 0, candidate.getRequiredBuildColumns().size());
-                    }
+                for (String condition : fixedSizeConditions) {
+                    final HashJoinGroupByCandidate candidate = candidate(compiler, froms[0] + condition);
+                    Assert.assertNotNull(condition, candidate);
+                    Assert.assertNotNull(condition, candidate.getBuildOnFilter());
+                    Assert.assertFalse(condition, candidate.isKeyCapacityPresized());
+                    Assert.assertEquals(condition, 0, candidate.getRequiredBuildColumns().size());
                 }
             }
             // The build scan's own WHERE clause runs on each build row in both plans, and an INNER
             // join has no ON condition on the build: the optimizer moves the conjunct into the WHERE
-            // clause of p, which the INNER join probes, as the smaller r builds.
+            // clause of p, which the INNER join probes, as the smaller r builds. The RIGHT join
+            // stays no candidate while its build table holds more rows than the preserved one.
             assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM r LEFT JOIN (SELECT * FROM p WHERE name ~ 'x') p "
                     + "ON r.plant_id = p.plant_id", true);
             assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM (SELECT * FROM p WHERE name ~ 'x') p "
-                    + "RIGHT JOIN r ON r.plant_id = p.plant_id", true);
+                    + "RIGHT JOIN r ON r.plant_id = p.plant_id", false);
             assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM r JOIN p ON r.plant_id = p.plant_id AND p.name ~ 'x'", true);
             // With as many rows in the probe table as in the build table, each expensive condition
             // is a candidate, which presizes its key table and reads none of its columns as a
@@ -855,6 +858,9 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     }
                 }
             }
+            // With as many rows in both tables, the RIGHT join over a filtered build is a candidate too.
+            assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM (SELECT * FROM p WHERE name ~ 'x') p "
+                    + "RIGHT JOIN r ON r.plant_id = p.plant_id", true);
         });
     }
 

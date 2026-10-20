@@ -44,10 +44,11 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
  */
 public class HashJoinGroupByJitFilterTest extends AbstractCairoTest {
     private static final String INTERPRETED = "Async Hash Join Group By";
+    // A RIGHT join keeps the ordinary plan for a filter on its preserved input, the probe, which
+    // reduces the rows that the ordinary plan hashes, so no RIGHT join takes a probe filter.
     private static final String[] JOINS = {
             " FROM r JOIN p ON r.plant_id = p.plant_id",
-            " FROM r LEFT JOIN p ON r.plant_id = p.plant_id",
-            " FROM p RIGHT JOIN r ON r.plant_id = p.plant_id"
+            " FROM r LEFT JOIN p ON r.plant_id = p.plant_id"
     };
     private static final String JIT = "Async JIT Hash Join Group By";
     private static final String KEYED_SELECT = "SELECT p.country, count(*) pairs, sum(r.energy_kwh) energy";

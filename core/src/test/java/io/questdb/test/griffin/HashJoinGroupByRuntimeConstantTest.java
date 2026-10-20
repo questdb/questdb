@@ -259,27 +259,32 @@ public class HashJoinGroupByRuntimeConstantTest extends AbstractCairoTest {
     public void testRuntimeConstantGateOverEitherInput() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // Each row holds the FROM clause, and whether the gate is over the input that builds.
-            // The joins take no interval, so table sizes fix the build: p, the smaller table, for the
-            // INNER join, and the side that the outer join NULL-extends otherwise.
+            // Each row holds the FROM clause, whether the gate is over the input that builds, and
+            // whether the query takes the fused plan. The joins take no interval, so table sizes fix
+            // the build: p, the smaller table, for the INNER join, and the side that the outer join
+            // NULL-extends otherwise. A RIGHT join keeps the ordinary plan for a gate over r, which
+            // it preserves, since the gate is a WHERE clause of r's own, which reduces the rows that
+            // the ordinary plan hashes.
             final Object[][] froms = {
-                    {" FROM r JOIN (SELECT * FROM p WHERE $1 = 1) p ON r.plant_id = p.plant_id", true},
-                    {" FROM (SELECT * FROM r WHERE $1 = 1) r JOIN p ON r.plant_id = p.plant_id", false},
-                    {" FROM r LEFT JOIN (SELECT * FROM p WHERE $1 = 1) p ON r.plant_id = p.plant_id", true},
-                    {" FROM (SELECT * FROM r WHERE $1 = 1) r LEFT JOIN p ON r.plant_id = p.plant_id", false},
-                    {" FROM (SELECT * FROM p WHERE $1 = 1) p RIGHT JOIN r ON r.plant_id = p.plant_id", true},
-                    {" FROM p RIGHT JOIN (SELECT * FROM r WHERE $1 = 1) r ON r.plant_id = p.plant_id", false},
-                    {" FROM (SELECT * FROM r WHERE $1 = 1) r LEFT JOIN (SELECT * FROM p WHERE $1 = 1) p ON r.plant_id = p.plant_id", true}
+                    {" FROM r JOIN (SELECT * FROM p WHERE $1 = 1) p ON r.plant_id = p.plant_id", true, true},
+                    {" FROM (SELECT * FROM r WHERE $1 = 1) r JOIN p ON r.plant_id = p.plant_id", false, true},
+                    {" FROM r LEFT JOIN (SELECT * FROM p WHERE $1 = 1) p ON r.plant_id = p.plant_id", true, true},
+                    {" FROM (SELECT * FROM r WHERE $1 = 1) r LEFT JOIN p ON r.plant_id = p.plant_id", false, true},
+                    {" FROM (SELECT * FROM p WHERE $1 = 1) p RIGHT JOIN r ON r.plant_id = p.plant_id", true, true},
+                    {" FROM p RIGHT JOIN (SELECT * FROM r WHERE $1 = 1) r ON r.plant_id = p.plant_id", false, false},
+                    {" FROM (SELECT * FROM r WHERE $1 = 1) r LEFT JOIN (SELECT * FROM p WHERE $1 = 1) p ON r.plant_id = p.plant_id", true, true}
             };
             try (SqlExecutionContextImpl context = bindingContext()) {
                 for (Object[] from : froms) {
                     final boolean isBuildGated = (boolean) from[1];
+                    final boolean isFused = (boolean) from[2];
                     for (String select : new String[]{KEYED, "SELECT count(*) n, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity"}) {
                         final String sql = select + from[0] + (select.equals(KEYED) ? " ORDER BY country" : "");
                         bindVariableService.clear();
                         bindVariableService.setInt(0, 1);
                         try (RecordCursorFactory factory = engine.select(sql, context)) {
-                            final String plan = assertFusedPlan(sql, factory, context);
+                            final String plan = plan(factory, context);
+                            Assert.assertEquals(sql + '\n' + plan, isFused, plan.contains("Hash Join Group By"));
                             Assert.assertTrue(sql + '\n' + plan, plan.contains("Filter filter: $0::int=1"));
                             for (int value : new int[]{1, 2, 1, Numbers.INT_NULL, 1}) {
                                 bindVariableService.setInt(0, value);

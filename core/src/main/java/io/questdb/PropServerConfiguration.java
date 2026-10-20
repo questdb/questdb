@@ -592,7 +592,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlParallelHashJoinGroupByPayloadCopyMaxSize;
     private final double sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio;
     private final double sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
-    private final long sqlParallelHashJoinGroupByRightJoinMaxBuildSize;
     private final boolean sqlParallelHorizonJoinEnabled;
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
@@ -2523,7 +2522,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio < 0 || !Double.isFinite(sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio)) {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO.getPropertyPath() + " has to be a non-negative real number.");
             }
-            this.sqlParallelHashJoinGroupByRightJoinMaxBuildSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 256 * Numbers.SIZE_1MB, 0);
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelHorizonJoinEnabled
                     && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
@@ -5410,11 +5408,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio() {
             return sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
-        }
-
-        @Override
-        public long getSqlParallelHashJoinGroupByRightJoinMaxBuildSize() {
-            return sqlParallelHashJoinGroupByRightJoinMaxBuildSize;
         }
 
         @Override

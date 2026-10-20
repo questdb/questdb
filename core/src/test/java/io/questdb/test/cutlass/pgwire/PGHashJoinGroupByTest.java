@@ -201,6 +201,8 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                     """
     };
     // A RIGHT join builds the table before it, here d with its own WHERE clause, and probes f.
+    // The WHERE clause on f, which the RIGHT join preserves, reduces the rows that the ordinary
+    // plan hashes, so the query keeps the ordinary plan.
     private static final String RIGHT_SQL = """
             SELECT d.g, count(*) n, sum(f.v) v, sum(d.w) w FROM (SELECT * FROM d WHERE sym = ?) d RIGHT JOIN f ON d.k = f.k
             WHERE f.ts >= ? AND f.ts < ? ORDER BY d.g""";
@@ -324,6 +326,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                     statement.setString(3, values[2]);
                 },
                 EXPECTED,
+                true,
                 true
         );
     }
@@ -332,7 +335,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
     // variables and compiles both orientations of the INNER join.
     @Test
     public void testNamedStatementRebindsTypedTimestamps() throws Exception {
-        assertNamedStatement(SQL, PGHashJoinGroupByTest::bindTyped, EXPECTED, true);
+        assertNamedStatement(SQL, PGHashJoinGroupByTest::bindTyped, EXPECTED, true, true);
     }
 
     // setTimestamp() leaves the parameter type unspecified, since pgjdbc cannot tell TIMESTAMP
@@ -340,13 +343,14 @@ public class PGHashJoinGroupByTest extends BasePGTest {
     // leaves their types to the compile of each input, which infers them as the ordinary plan does.
     @Test
     public void testNamedStatementRebindsUnspecifiedTimestamps() throws Exception {
-        assertNamedStatement(SQL, PGHashJoinGroupByTest::bindUnspecified, EXPECTED, true);
+        assertNamedStatement(SQL, PGHashJoinGroupByTest::bindUnspecified, EXPECTED, true, true);
     }
 
-    // A RIGHT join always builds the input that comes first in join order, and keeps one orientation.
+    // A RIGHT join with a WHERE clause on its preserved input keeps the ordinary plan, which
+    // infers the unspecified types and rebinds them on every execution.
     @Test
     public void testNamedStatementRebindsUnspecifiedTimestampsInRightJoin() throws Exception {
-        assertNamedStatement(RIGHT_SQL, PGHashJoinGroupByTest::bindUnspecifiedRight, RIGHT_EXPECTED, false);
+        assertNamedStatement(RIGHT_SQL, PGHashJoinGroupByTest::bindUnspecifiedRight, RIGHT_EXPECTED, false, false);
     }
 
     // The analysis accepts an INNER join that builds d, the input that comes first in join order,
@@ -356,7 +360,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
     // variable that both inputs read.
     @Test
     public void testNamedStatementRebindsUnspecifiedTimestampsWhenBuildComesFirst() throws Exception {
-        assertNamedStatement(BUILD_FIRST_SQL, PGHashJoinGroupByTest::bindUnspecified, EXPECTED, true);
+        assertNamedStatement(BUILD_FIRST_SQL, PGHashJoinGroupByTest::bindUnspecified, EXPECTED, true, true);
     }
 
     // Describe compiles the statement with every parameter type unspecified. The fused analysis
@@ -387,11 +391,11 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                             description.append(sql).append('\n').append(describe(connection, sql)).append('\n');
                         }
                         // The described statements compile the plans that the enabled path chose:
-                        // SQL, BUILD_FIRST_SQL and RIGHT_SQL with their timestamps unspecified, and
-                        // sqls[4] with typed parameters.
+                        // SQL and BUILD_FIRST_SQL with their timestamps unspecified, and sqls[4]
+                        // with typed parameters. RIGHT_SQL keeps the ordinary plan either way.
                         assertFused(explain(connection, SQL, PGHashJoinGroupByTest::bindUnspecified, BINDS[0]), isFused);
                         assertFused(explain(connection, BUILD_FIRST_SQL, PGHashJoinGroupByTest::bindUnspecified, BINDS[0]), isFused);
-                        assertFused(explain(connection, RIGHT_SQL, PGHashJoinGroupByTest::bindUnspecifiedRight, BINDS[0]), isFused);
+                        assertFused(explain(connection, RIGHT_SQL, PGHashJoinGroupByTest::bindUnspecifiedRight, BINDS[0]), false);
                         assertFused(explain(connection, sqls[4], (statement, values) -> {
                             statement.setLong(1, 1);
                             statement.setDouble(2, 2.0);
@@ -599,7 +603,13 @@ public class PGHashJoinGroupByTest extends BasePGTest {
         });
     }
 
-    private void assertNamedStatement(String sql, Binder binder, String[] expected, boolean isBuildChoice) throws Exception {
+    private void assertNamedStatement(
+            String sql,
+            Binder binder,
+            String[] expected,
+            boolean isFusedWhenEnabled,
+            boolean isBuildChoice
+    ) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             for (boolean isFused : new boolean[]{true, false}) {
@@ -620,7 +630,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                                 }
                             }
                             final String plan = explain(connection, sql, binder, BINDS[0]);
-                            assertFused(plan, isFused);
+                            assertFused(plan, isFused && isFusedWhenEnabled);
                             Assert.assertEquals(plan, isFused && isBuildChoice, plan.contains("Hash Join Group By Build Choice"));
                         }
                     }

@@ -44,6 +44,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDifferential;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.choice;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.findChoice;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.ordinary;
@@ -307,9 +308,11 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
                 String interval = " WHERE r.reading_ts >= '2020-01-01' AND r.reading_ts < '2020-01-01T04:00'";
                 // No interval on either input: the table sizes fix the build.
                 assertChoice(SCALAR + " FROM r JOIN p ON r.plant_id = p.plant_id WHERE r.energy_kwh < 5", context, false, -1);
-                // Outer joins fix the build whatever the intervals select.
+                // Outer joins fix the build whatever the intervals select. A RIGHT join keeps the
+                // ordinary plan for an interval on r, which it preserves, since the interval reduces
+                // the rows that the ordinary plan hashes.
                 assertChoice(SCALAR + " FROM r LEFT JOIN p ON r.plant_id = p.plant_id" + interval, context, false, -1);
-                assertChoice(SCALAR + " FROM p RIGHT JOIN r ON r.plant_id = p.plant_id" + interval, context, false, -1);
+                assertDifferential(SCALAR + " FROM p RIGHT JOIN r ON r.plant_id = p.plant_id" + interval, context, false);
                 // A VARCHAR column reaches the aggregate only from the probe, so r cannot be the build.
                 assertChoice("SELECT count(r.label) labels, count(*) n FROM r JOIN p ON r.plant_id = p.plant_id" + interval,
                         context, false, -1);

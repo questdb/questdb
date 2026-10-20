@@ -124,14 +124,20 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         String sql = SELECT + JOINS[j] + " where r.reading_ts >= '2020-01-01'"
                                 + " and r.reading_ts < '2021-01-01' and r.energy_kwh > 10"
                                 + " and p.country in ('ES','IT') order by country, yr, mo limit 3";
-                        assertDifferential(sql, context, true);
-                        assertDifferential(sql.replace(SELECT, SCALAR_SELECT).replace(" order by country, yr, mo", " order by energy"), context, true);
+                        // The RIGHT join's filters and interval on r reduce the rows that the
+                        // ordinary plan hashes, so the RIGHT join keeps the ordinary plan.
+                        final boolean isFused = j < 2;
+                        assertDifferential(sql, context, isFused);
+                        assertDifferential(sql.replace(SELECT, SCALAR_SELECT).replace(" order by country, yr, mo", " order by energy"), context, isFused);
+                        if (!isFused) {
+                            continue;
+                        }
                         try (RecordCursorFactory factory = engine.select(sql, context)) {
                             String plan = plan(factory, context);
                             Assert.assertTrue(plan, plan.contains("Interval forward scan on: r"));
                             Assert.assertTrue(plan, plan.contains("buildStrategy: shared"));
                             Assert.assertTrue(plan, plan.contains("physicalJoinType: " + (j == 0 ? "inner" : "left outer")));
-                            Assert.assertTrue(plan, plan.contains("inputSwapped: " + (j == 2)));
+                            Assert.assertTrue(plan, plan.contains("inputSwapped: false"));
                             Assert.assertTrue(plan, plan.contains("probeFilter:"));
                             if (j > 0) {
                                 Assert.assertTrue(plan, plan.contains("postJoinFilter:"));
@@ -160,12 +166,15 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 assertBuild("r join p", "p", false, 5, context);
                 assertBuild("p join r", "r", false, 5, context);
                 execute("INSERT INTO p VALUES (3, 'FR', 13), (4, 'DE', 17)");
-                // p has 7 rows and r has 5. INNER builds r in either order, and the outer joins
-                // keep building the table that does not preserve its rows, whatever its size.
+                // p has 7 rows and r has 5. INNER builds r in either order, and a LEFT join keeps
+                // building the table after it, whatever its size. A RIGHT join builds the table
+                // before it only when that table holds no more rows than the preserved one, and
+                // otherwise keeps the ordinary plan.
                 assertBuild("r join p", "r", true, 5, context);
                 assertBuild("p join r", "r", false, 5, context);
                 assertBuild("r left join p", "p", false, 7, context);
-                assertBuild("p right join r", "p", true, 7, context);
+                assertDifferential(SELECT + " from p right join r on r.plant_id=p.plant_id order by country, yr, mo", context, false);
+                assertDifferential(SCALAR_SELECT + " from p right join r on r.plant_id=p.plant_id", context, false);
                 assertBuild("p left join r", "r", false, 5, context);
                 assertBuild("r right join p", "r", true, 5, context);
                 execute("INSERT INTO r VALUES (4, '2021-02-01', 60, 600), (5, '2021-03-01', 70, 700), (NULL, '2021-04-01', 80, NULL)");
@@ -173,7 +182,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 assertBuild("r join p", "p", false, 7, context);
                 assertBuild("p join r", "p", true, 7, context);
                 assertBuild("p left join r", "r", false, 8, context);
-                assertBuild("r right join p", "r", true, 8, context);
+                assertDifferential(SELECT + " from r right join p on r.plant_id=p.plant_id order by country, yr, mo", context, false);
+                assertDifferential(SCALAR_SELECT + " from r right join p on r.plant_id=p.plant_id", context, false);
+                assertBuild("p right join r", "p", true, 7, context);
                 assertQuery("SELECT count(*) pairs, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity"
                         + " FROM p JOIN r ON r.plant_id = p.plant_id")
                         .withContext(context)
@@ -330,6 +341,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     "SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.k = pb.k",
                     "SELECT count(*) n, sum(pb.v) v FROM pb RIGHT JOIN pa ON pa.k = pb.k"
             }) {
+                final boolean isRight = sql.contains("RIGHT JOIN");
                 execute("TRUNCATE TABLE pb");
                 execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(500)");
                 try (SqlExecutionContextImpl context = enabledContext()) {
@@ -344,6 +356,10 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             Assert.assertTrue(cursor.hasNext());
                             Assert.assertEquals(sql, 4_096 * 8 + 2_000 * 16, fused(factory).getAtom().getFrozenBuild().getSizeInBytes());
                         }
+                        // A new compile of the RIGHT join keeps the ordinary plan, which hashes pa, once
+                        // pb, the table before the join, holds more rows than pa. The LEFT join keeps
+                        // building pb.
+                        assertDifferential(sql, context, !isRight);
                         execute("INSERT INTO pb VALUES (1, 1)");
                         try {
                             builtRows(factory, context);
@@ -354,8 +370,13 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                         }
                     }
-                    // A new compile lets the key table grow to the ten keys.
-                    assertBuildSize(sql, 2_001, 10, 64 * 8 + 2_001 * 16, context);
+                    if (isRight) {
+                        // The new compile keeps the ordinary plan.
+                        assertDifferential(sql, context, false);
+                    } else {
+                        // A new compile lets the key table grow to the ten keys.
+                        assertBuildSize(sql, 2_001, 10, 64 * 8 + 2_001 * 16, context);
+                    }
                 }
             }
         });
@@ -441,14 +462,16 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createVariableSizeOnFilterTables();
             final String select = "SELECT p.k, count(*) c, count(b.id) m, sum(b.v) s";
-            // Both joins build b, which holds 6 rows against p's 4.
+            // Both joins would build b, which holds 6 rows against p's 4. The RIGHT join keeps the
+            // ordinary plan, which hashes p, because its build table holds more rows than the
+            // preserved one. The LEFT join builds b.
             final String[] froms = {
                     " FROM p LEFT JOIN b ON p.id = b.id AND ",
                     " FROM b RIGHT JOIN p ON p.id = b.id AND "
             };
             // Each ON condition only compares columns, constants and the text that a cast computes
             // from a fixed-size column, so it costs about as much on a build row as the hash insert
-            // it spares, and keeps the fused plan whatever the sizes. A comparison of two arrays
+            // it spares, and keeps the LEFT join's fused plan whatever the sizes. A comparison of two arrays
             // counts as one of two texts does. IS NULL and IS NOT NULL parse as a comparison with a
             // NULL constant.
             final String[][] cases = {
@@ -490,13 +513,23 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             };
             try (SqlExecutionContextImpl context = enabledContext()) {
                 for (String from : froms) {
+                    final boolean isRight = from.contains("RIGHT JOIN");
                     for (String[] c : cases) {
-                        assertQuery(select + from + c[0] + " ORDER BY k")
-                                .withContext(context)
-                                .noLeakCheck()
-                                .withPlanContaining("Async Hash Join Group By", c[1])
-                                .expectSize()
-                                .returns(c[2]);
+                        if (isRight) {
+                            assertQuery(select + from + c[0] + " ORDER BY k")
+                                    .withContext(context)
+                                    .noLeakCheck()
+                                    .withPlanNotContaining("Hash Join Group By")
+                                    .expectSize()
+                                    .returns(c[2]);
+                        } else {
+                            assertQuery(select + from + c[0] + " ORDER BY k")
+                                    .withContext(context)
+                                    .noLeakCheck()
+                                    .withPlanContaining("Async Hash Join Group By", c[1])
+                                    .expectSize()
+                                    .returns(c[2]);
+                        }
                     }
                 }
             }
@@ -570,35 +603,65 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                     2\t2\t0\tnull
                                     """);
                     // An ON condition over fixed-size columns costs about as much as the hash insert
-                    // it saves, so it keeps the fused plan.
-                    assertQuery(select + from + "b.v > 15 ORDER BY k")
-                            .withContext(context)
-                            .noLeakCheck()
-                            .withPlanContaining("Async Hash Join Group By", "buildOnFilter: 15<v")
-                            .expectSize()
-                            .returns("""
-                                    k\tc\tm\ts
-                                    1\t2\t2\t50.0
-                                    2\t2\t1\t40.0
-                                    """);
+                    // it saves, so it keeps the LEFT join's fused plan. The RIGHT join keeps the
+                    // ordinary plan, because its build table holds more rows than the preserved one.
+                    if (from.contains("RIGHT JOIN")) {
+                        assertQuery(select + from + "b.v > 15 ORDER BY k")
+                                .withContext(context)
+                                .noLeakCheck()
+                                .withPlanNotContaining("Hash Join Group By")
+                                .expectSize()
+                                .returns("""
+                                        k\tc\tm\ts
+                                        1\t2\t2\t50.0
+                                        2\t2\t1\t40.0
+                                        """);
+                    } else {
+                        assertQuery(select + from + "b.v > 15 ORDER BY k")
+                                .withContext(context)
+                                .noLeakCheck()
+                                .withPlanContaining("Async Hash Join Group By", "buildOnFilter: 15<v")
+                                .expectSize()
+                                .returns("""
+                                        k\tc\tm\ts
+                                        1\t2\t2\t50.0
+                                        2\t2\t1\t40.0
+                                        """);
+                    }
                 }
-                // b's own WHERE clause runs on each of its rows in both plans, so it keeps the fused
-                // plan, and the rows are those of the ON condition that it spells.
+                // b's own WHERE clause runs on each of its rows in both plans, so it keeps the LEFT
+                // join's fused plan, and the rows are those of the ON condition that it spells. The
+                // RIGHT join keeps the ordinary plan while b holds more rows than p.
                 final String filteredB = "(SELECT * FROM b WHERE vc ~ 'x') b";
-                for (String from : new String[]{
-                        " FROM p LEFT JOIN " + filteredB + " ON p.id = b.id",
-                        " FROM " + filteredB + " RIGHT JOIN p ON p.id = b.id"
-                }) {
-                    assertQuery(select + from + " ORDER BY k")
-                            .withContext(context)
-                            .noLeakCheck()
-                            .withPlanContaining("Async Hash Join Group By", "buildFilter: vc ~ x")
-                            .expectSize()
-                            .returns(regexRows);
-                }
+                final String leftFilteredB = " FROM p LEFT JOIN " + filteredB + " ON p.id = b.id";
+                final String rightFilteredB = " FROM " + filteredB + " RIGHT JOIN p ON p.id = b.id";
+                assertQuery(select + leftFilteredB + " ORDER BY k")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .withPlanContaining("Async Hash Join Group By", "buildFilter: vc ~ x")
+                        .expectSize()
+                        .returns(regexRows);
+                assertQuery(select + rightFilteredB + " ORDER BY k")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .withPlanNotContaining("Hash Join Group By")
+                        .expectSize()
+                        .returns(regexRows);
                 // p holds as many rows as b now, so the fused plan runs the ON condition on no more
-                // rows than the probe holds, and the query takes it.
+                // rows than the probe holds, and the query takes it. The RIGHT join takes the fused
+                // plan with b's own WHERE clause as well.
                 execute("INSERT INTO p VALUES (7, 3), (8, 3)");
+                assertQuery(select + rightFilteredB + " ORDER BY k")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .withPlanContaining("Async Hash Join Group By", "buildFilter: vc ~ x")
+                        .expectSize()
+                        .returns("""
+                                k\tc\tm\ts
+                                1\t2\t2\t40.0
+                                2\t2\t0\tnull
+                                3\t2\t0\tnull
+                                """);
                 for (String from : froms) {
                     assertQuery(select + from + "b.vc ~ 'x' ORDER BY k")
                             .withContext(context)
@@ -639,7 +702,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 // that used to build r keeps the ordinary plan as well.
                 assertDifferential(select + " FROM r JOIN p ON r.id = p.id WHERE r.s = 'a'", context, false);
                 assertDifferential(select + " FROM p JOIN r ON r.id = p.id WHERE r.s = 'a'", context, false);
-                // RIGHT builds r whatever the sizes.
+                // RIGHT builds r once p holds as many rows.
+                execute("INSERT INTO p VALUES (3, 128, 'c', '2020-01-06')");
                 assertDifferential(select + " FROM r RIGHT JOIN p ON r.id = p.id", context, true);
             }
         });
@@ -654,10 +718,13 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     String probe = "(select energy_kwh e, reading_ts ts, plant_id id, irradiance_wm2 irr from r" + where + ") a";
                     String build = "(select installed_kwp cap, plant_id id, country c from p where installed_kwp > 0) b";
                     for (String join : new String[]{probe + " join " + build, probe + " left join " + build, build + " right join " + probe}) {
+                        // The RIGHT join preserves a, whose WHERE clause reduces the rows that the
+                        // ordinary plan hashes, so the RIGHT join keeps the ordinary plan then.
+                        final boolean isFused = where.isEmpty() || !join.contains(" right join ");
                         assertDifferential("select b.c, year(a.ts) yr, sum(a.e) energy, avg(a.irr) irradiance, sum(b.cap) capacity from "
-                                + join + " on a.id=b.id group by b.c, year(a.ts) order by b.c, yr", context, true);
+                                + join + " on a.id=b.id group by b.c, year(a.ts) order by b.c, yr", context, isFused);
                         assertDifferential("select sum(a.e) energy, avg(a.irr) irradiance, count(b.c) countries, sum(b.cap) capacity from "
-                                + join + " on a.id=b.id", context, true);
+                                + join + " on a.id=b.id", context, isFused);
                     }
                 }
             }
@@ -681,7 +748,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     insert into r values
                         ('1', '2020-01-01', 10, 100, '1', '1'), ('3', '2020-01-02', 30, 300, '3', '3'),
                         ('1', '2020-01-03', 20, 200, '1', '1'), ('2', '2020-02-01', 40, null, '2', '2'),
-                        (null, '2021-01-01', 50, 500, null, null)
+                        (null, '2021-01-01', 50, 500, null, null), ('1', '2021-02-01', 60, 600, '1', '1')
                     """);
             try (SqlExecutionContextImpl context = enabledContext()) {
                 for (int j = 0; j < JOINS.length; j++) {
@@ -695,8 +762,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     try (RecordCursorFactory factory = engine.select(sql, context)) {
                         String plan = plan(factory, context);
                         Assert.assertTrue(plan, plan.contains("symbolKeyJoin: true"));
-                        // p has one row more than r, so the INNER join builds r, as RIGHT does.
-                        Assert.assertTrue(plan, plan.contains("inputSwapped: " + (j != 1)));
+                        // p and r hold 6 rows each, so the INNER join keeps the join order and builds
+                        // p, as LEFT does. RIGHT builds p, the table before it.
+                        Assert.assertTrue(plan, plan.contains("inputSwapped: " + (j == 2)));
                     }
                     // Mixed text keys reconcile to STRING or VARCHAR and stage that text into the
                     // build's map, which selects the same rows the symbol translation selects.
@@ -1555,8 +1623,10 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             createTables();
             try (SqlExecutionContextImpl context = enabledContext()) {
                 for (String join : JOINS) {
+                    // A filter on r, which the RIGHT join preserves, would keep the ordinary plan.
+                    final String where = join == JOINS[2] ? "" : " where r.energy_kwh > 10";
                     for (String projection : new String[]{SELECT, SCALAR_SELECT}) {
-                        String sql = projection + join + " where r.energy_kwh > 10"
+                        String sql = projection + join + where
                                 + (projection.equals(SELECT) ? " order by country,yr,mo" : "");
                         try (RecordCursorFactory factory = engine.select(sql, context)) {
                             AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
@@ -1583,11 +1653,12 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     public void testLargerBuildStillSelectsShared() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // INNER builds the smaller r; LEFT and RIGHT keep building the larger p.
+            // INNER builds the smaller r, and LEFT keeps building the larger p. RIGHT would build
+            // p as well, so it keeps the ordinary plan, which hashes r.
             execute("insert into p select x::int, 'ES', 2.0 from long_sequence(100003)");
             try (SqlExecutionContextImpl context = enabledContext()) {
                 for (String join : JOINS) {
-                    assertDifferential(SELECT + join + " order by country, yr, mo", context, true);
+                    assertDifferential(SELECT + join + " order by country, yr, mo", context, join != JOINS[2]);
                 }
             }
         });
@@ -1626,8 +1697,12 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         context.setParallelHashJoinGroupByEnabled(true);
                         context.changePageFrameSizes(1, 1);
                         for (String join : joins) {
-                            assertDifferential("select " + aggregates + join + where, context, true);
-                            assertDifferential("select a.id, " + aggregates + join + where + " order by a.id", context, true);
+                            // The RIGHT join keeps the ordinary plan when its build b holds more rows
+                            // than the preserved a, or when a filter on a reduces the rows that the
+                            // ordinary plan hashes.
+                            final boolean isFused = join != joins[2] || (scenario != 4 && scenario != 6);
+                            assertDifferential("select " + aggregates + join + where, context, isFused);
+                            assertDifferential("select a.id, " + aggregates + join + where + " order by a.id", context, isFused);
                         }
                     }
                 }
@@ -1636,70 +1711,270 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRightJoinBuildSizeBound() throws Exception {
+    public void testRightJoinOfLargerTableStaysUnderTheQueryMemoryLimit() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(256 * Numbers.SIZE_1MB, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
-            Assert.assertEquals(256 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
-            createTables();
-            // r and p have 5 rows each. A build row is an 8-byte link plus, when the build has payload
-            // columns, the 8-byte id of its row: 16 bytes whatever the number and width of the payload
-            // columns, 8 without any. The key column is not a payload column.
-            final String narrow = "SELECT count(*) n, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity FROM ";
-            final String wide = "SELECT count(*) n, sum(r.energy_kwh) energy, sum(r.irradiance_wm2) irradiance,"
-                    + " sum(p.installed_kwp) capacity FROM ";
-            final String keysOnly = "SELECT count(*) n, sum(p.installed_kwp) capacity FROM ";
-            final String on = " ON r.plant_id = p.plant_id";
-            final String[] joins = {"r RIGHT JOIN p", "p RIGHT JOIN r", "r LEFT JOIN p", "p LEFT JOIN r"};
+            // big holds 200_000 rows over the ten keys of tiny, which holds an eleventh key that big
+            // lacks. The ordinary plan hashes tiny and streams big in about 0.3 MiB, while a build of
+            // big takes 3.2 MiB of row heap alone.
+            execute("CREATE TABLE big (id INT, v LONG)");
+            execute("CREATE TABLE tiny (id INT, cat SYMBOL)");
+            execute("INSERT INTO big SELECT (x % 10 + 1)::INT, x FROM long_sequence(200_000)");
+            execute("INSERT INTO tiny SELECT x::INT, 'c' || (x % 3) FROM long_sequence(11)");
+            final String sql = """
+                    SELECT tiny.cat, count() c, sum(big.v) s
+                    FROM big RIGHT JOIN tiny ON big.id = tiny.id
+                    GROUP BY tiny.cat
+                    ORDER BY tiny.cat
+                    """;
+            final String expected = """
+                    cat\tc\ts
+                    c0\t60000\t6000000000
+                    c1\t80000\t8000160000
+                    c2\t60001\t5999940000
+                    """;
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, Numbers.SIZE_1MB);
             try (SqlExecutionContextImpl context = enabledContext()) {
-                // Every build with payload columns takes 80 bytes, narrow or wide, so a bound of 80
-                // fuses every spelling.
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 80);
-                for (String join : joins) {
-                    assertDifferential(narrow + join + on, context, true);
-                    assertDifferential(wide + join + on, context, true);
-                }
-                // A build of r without payload columns stores links alone: 40 bytes. One byte less
-                // keeps the RIGHT join that builds r on the ordinary plan, and the LEFT joins, which
-                // take no bound, still fuse.
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 39);
-                assertDifferential(keysOnly + joins[0] + on, context, false);
-                assertDifferential(keysOnly + joins[3] + on, context, true);
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 40);
-                assertDifferential(keysOnly + joins[0] + on, context, true);
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 80);
-                // A factory compiled under the bound asks the caches to compile the query again once
-                // the table outgrows it, rather than build the larger table.
-                try (RecordCursorFactory factory = engine.select(narrow + joins[0] + on, context)) {
+                context.setParallelHashJoinGroupByEnabled(false);
+                assertQuery(sql)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Hash Right Outer Join Light")
+                        .returns(expected);
+                // big holds more rows than tiny, so the RIGHT join keeps the ordinary plan.
+                context.setParallelHashJoinGroupByEnabled(true);
+                assertQuery(sql)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Hash Right Outer Join Light")
+                        .withPlanNotContaining("Hash Join Group By")
+                        .returns(expected);
+            } finally {
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testCachedRightJoinRecompileKeepsTheBuildUnderTheMemoryLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            // big starts with 10 rows and tiny has 11, so the RIGHT join fuses and builds big. Once
+            // big has 200_010 rows, a build of big takes over 3 MiB and the ordinary plan, which
+            // hashes tiny, about 0.3 MiB.
+            execute("CREATE TABLE big (id INT, v LONG)");
+            execute("CREATE TABLE tiny (id INT, cat SYMBOL)");
+            execute("INSERT INTO big SELECT x::INT, 0 FROM long_sequence(10)");
+            execute("INSERT INTO tiny SELECT x::INT, 'c' || (x % 3) FROM long_sequence(11)");
+            final String sql = """
+                    SELECT tiny.cat, count() c, sum(big.v) s
+                    FROM big RIGHT JOIN tiny ON big.id = tiny.id
+                    GROUP BY tiny.cat
+                    ORDER BY tiny.cat
+                    """;
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                RecordCursorFactory factory = engine.select(sql, context);
+                try {
                     Assert.assertTrue(plan(factory, context).contains("Async Hash Join Group By"));
-                    Assert.assertEquals(5, builtRows(factory, context));
-                    execute("INSERT INTO r VALUES (1, '2021-02-01', 60, 600)");
-                    try {
-                        builtRows(factory, context);
-                        Assert.fail("a factory whose RIGHT join build outgrew the bound must ask for a recompile");
-                    } catch (TableReferenceOutOfDateException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "[table=r]");
-                        Assert.assertNull(context.getMemoryTracker());
-                        Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    Assert.assertEquals(10, builtRows(factory, context));
+                    execute("INSERT INTO big SELECT (x % 10 + 1)::INT, x FROM long_sequence(200_000)");
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, Numbers.SIZE_1MB);
+                    // The HTTP and PG query caches run a cached factory this way: when the factory
+                    // throws TableReferenceOutOfDateException, the cache closes it and compiles the
+                    // query again.
+                    int recompileCount = 0;
+                    while (true) {
+                        try {
+                            assertFactory(factory).withContext(context).expectSize().returns("""
+                                    cat\tc\ts
+                                    c0\t60003\t6000000000
+                                    c1\t80004\t8000160000
+                                    c2\t60004\t5999940000
+                                    """);
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            Assert.assertEquals(0, recompileCount++);
+                            factory = Misc.free(factory);
+                            factory = engine.select(sql, context);
+                        }
                     }
+                    // big outgrew twice the rows of tiny, and the new compile keeps the ordinary plan,
+                    // which hashes tiny.
+                    Assert.assertEquals(1, recompileCount);
+                    final String recompiledPlan = plan(factory, context);
+                    Assert.assertTrue(recompiledPlan, recompiledPlan.contains("Hash Right Outer Join Light"));
+                    Assert.assertFalse(recompiledPlan, recompiledPlan.contains("Hash Join Group By"));
+                } finally {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                    Misc.free(factory);
                 }
-                // A new compile reads the new size: 6 rows take 96 bytes.
-                assertDifferential(narrow + joins[0] + on, context, false);
-                // The bound counts the table's rows, not the rows that a filter leaves in the build.
-                assertDifferential(narrow + joins[0] + on + " AND r.energy_kwh > 100", context, false);
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 96);
-                assertDifferential(narrow + joins[0] + on + " AND r.energy_kwh > 100", context, true);
-                // One byte short of the 5-row build of p: the RIGHT join keeps the ordinary plan
-                // and the LEFT join that builds p still fuses.
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 79);
-                assertDifferential(narrow + joins[1] + on, context, false);
-                assertDifferential(narrow + joins[2] + on, context, true);
-                assertDifferential(narrow + joins[3] + on, context, true);
-                // A bound of zero fuses a RIGHT join only over an empty build table.
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 0);
-                execute("CREATE TABLE e (plant_id INT, installed_kwp DOUBLE)");
-                assertDifferential("SELECT count(*) n, sum(r.energy_kwh) energy, sum(e.installed_kwp) capacity"
-                        + " FROM e RIGHT JOIN r ON r.plant_id = e.plant_id", context, true);
-                assertDifferential(narrow + joins[1] + on, context, false);
+            }
+        });
+    }
+
+    @Test
+    public void testRightJoinFusesOnlyWhenItsBuildTableHoldsNoMoreRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // a, the table before the RIGHT JOIN, is the fused plan's build. b, the table after it,
+            // is the table that the ordinary plan hashes.
+            execute("CREATE TABLE a (k SYMBOL, v LONG)");
+            execute("CREATE TABLE b (k SYMBOL, v LONG)");
+            execute("INSERT INTO a VALUES ('x', 1), ('y', 2), ('q', 3)");
+            execute("INSERT INTO b VALUES ('x', 10), ('y', 20), ('y', 30), ('z', 40)");
+            final String select = "SELECT b.k bk, count(*) c, sum(a.v) s, sum(b.v) t";
+            final String right = select + " FROM a RIGHT JOIN b ON a.k = b.k GROUP BY b.k ORDER BY bk";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // a holds 3 rows and b 4.
+                assertQuery(right)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Hash Join Group By", "logicalJoinType: right outer")
+                        .returns("""
+                                bk\tc\ts\tt
+                                x\t1\t1\t10
+                                y\t2\t4\t50
+                                z\t1\tnull\t40
+                                """);
+                // Equal sizes keep the fused plan.
+                execute("INSERT INTO a VALUES ('y', 5)");
+                final String expected = """
+                        bk\tc\ts\tt
+                        x\t1\t1\t10
+                        y\t4\t14\t100
+                        z\t1\tnull\t40
+                        """;
+                assertQuery(right)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Hash Join Group By", "logicalJoinType: right outer")
+                        .returns(expected);
+                // a holds 5 rows and b 4. The LEFT spelling builds a whatever its size, and INNER
+                // builds the smaller b.
+                execute("INSERT INTO a VALUES ('w', 7)");
+                assertQuery(select + " FROM b LEFT JOIN a ON a.k = b.k GROUP BY b.k ORDER BY bk")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Hash Join Group By", "logicalJoinType: left outer")
+                        .returns(expected);
+                assertQuery(select + " FROM a JOIN b ON a.k = b.k GROUP BY b.k ORDER BY bk")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Hash Join Group By", "logicalJoinType: inner", "inputSwapped: false")
+                        .returns("""
+                                bk\tc\ts\tt
+                                x\t1\t1\t10
+                                y\t4\t14\t100
+                                """);
+                // The RIGHT join keeps the ordinary plan, which hashes b.
+                assertQuery(right)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Hash Right Outer Join Light")
+                        .withPlanNotContaining("Hash Join Group By")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testRightJoinWithFilterOnPreservedInputKeepsOrdinaryPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            // a, the build, holds 3 rows and b, the preserved input, 5.
+            execute("CREATE TABLE a (k SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (k SYMBOL, v LONG, w LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO a VALUES ('x', 1, '2024-01-01'), ('y', 2, '2024-01-02'), ('q', 3, '2024-01-03')");
+            execute("""
+                    INSERT INTO b VALUES
+                        ('x', 1, 1, '2024-01-01'),
+                        ('y', 2, 3, '2024-01-02'),
+                        ('y', 3, 3, '2024-01-02T12:00'),
+                        ('z', 4, 0, '2024-01-03'),
+                        ('w', 5, 5, '2024-01-04')
+                    """);
+            final String select = "SELECT b.k bk, count(*) c, sum(a.v) s FROM ";
+            final String right = "a RIGHT JOIN b ON a.k = b.k";
+            final String groupBy = " GROUP BY b.k ORDER BY bk";
+            // The ordinary plan filters b in its own scan before it hashes b, so the fused plan,
+            // which builds all of a, would not be certain to build fewer rows.
+            final String[] ordinaryQueries = {
+                    select + right + " WHERE b.v > 1" + groupBy,
+                    // An interval, and one that a runtime constant bounds.
+                    select + right + " WHERE b.ts IN '2024-01-02'" + groupBy,
+                    select + right + " WHERE b.ts > dateadd('y', -100, now())" + groupBy,
+                    // A bind variable.
+                    select + right + " WHERE b.v > $1" + groupBy,
+                    // Equalities of two columns of b, and of a column of b and a constant.
+                    select + right + " WHERE b.v = b.w" + groupBy,
+                    select + right + " WHERE b.k = 'x'" + groupBy,
+                    // The optimizer derives b.k = 'x' from the join key and filters b's scan with it.
+                    select + right + " WHERE a.k = 'x'" + groupBy,
+                    // A filter of the sub-query that b is, and an outer query's filter that the
+                    // optimizer moves into b's scan.
+                    select + "a RIGHT JOIN (SELECT * FROM b WHERE v > 1) b ON a.k = b.k" + groupBy,
+                    "SELECT k, count(*) c, sum(av) s FROM (SELECT b.k, a.v av, b.v bv FROM " + right + ") WHERE bv > 1 GROUP BY k ORDER BY k",
+                    // A filter two sub-queries below the join.
+                    select + "a RIGHT JOIN (SELECT k, v FROM (SELECT * FROM b WHERE v > 1)) b ON a.k = b.k" + groupBy,
+                    // Filters of the sub-query that b is that read no column of b: a runtime constant
+                    // and a bind variable can each empty b's scan.
+                    select + "a RIGHT JOIN (SELECT * FROM b WHERE now() > '2020-01-01') b ON a.k = b.k" + groupBy,
+                    select + "a RIGHT JOIN (SELECT * FROM b WHERE $1 = 1) b ON a.k = b.k" + groupBy
+            };
+            // Filters that leave b's scan whole keep the fused plan: the build's own filters, the ON
+            // condition on a alone and the filters after the join.
+            final String[] fusedQueries = {
+                    select + right + groupBy,
+                    select + right + " WHERE a.v > 1" + groupBy,
+                    select + right + " WHERE a.v IS NULL" + groupBy,
+                    select + right + " AND a.v > 1" + groupBy,
+                    select + right + " AND a.k = 'x'" + groupBy,
+                    select + "(SELECT * FROM a WHERE v > 1) a RIGHT JOIN b ON a.k = b.k" + groupBy,
+                    "SELECT k, count(*) c, sum(av) s FROM (SELECT b.k, a.v av, b.v bv FROM " + right + ") WHERE av > 1 GROUP BY k ORDER BY k",
+                    // The LEFT and INNER spellings take a filter on b, their probe, into the probe scan.
+                    select + "b LEFT JOIN a ON a.k = b.k WHERE b.v > 1" + groupBy,
+                    select + "a JOIN b ON a.k = b.k WHERE b.v > 1" + groupBy
+            };
+            // These keep the ordinary plan whatever the table sizes: an ON condition on b alone,
+            // and a filter after the join that reads both inputs.
+            final String[] alwaysOrdinaryQueries = {
+                    select + right + " AND b.v > 1" + groupBy,
+                    select + right + " WHERE a.v + b.v > 2" + groupBy
+            };
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
+                bindVariableService.setLong(0, 1);
+                for (String sql : fusedQueries) {
+                    assertDifferential(sql, context, true);
+                }
+                for (String sql : alwaysOrdinaryQueries) {
+                    assertDifferential(sql, context, false);
+                }
+                assertQuery(select + right + " WHERE a.v > 1" + groupBy)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Hash Join Group By", "logicalJoinType: right outer", "postJoinFilter: 1<a.v")
+                        .returns("""
+                                bk\tc\ts
+                                y\t2\t4
+                                """);
+                for (String sql : ordinaryQueries) {
+                    assertDifferential(sql, context, false);
+                }
+                assertQuery(select + right + " WHERE b.ts IN '2024-01-02'" + groupBy)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Hash Right Outer Join Light", "Interval forward scan on: b")
+                        .withPlanNotContaining("Hash Join Group By")
+                        .returns("""
+                                bk\tc\ts
+                                y\t2\t4
+                                """);
             }
         });
     }
@@ -2611,7 +2886,10 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // Each spelling evaluates b's conjuncts in b's scan, in written order, and stops at the
             // first false one; the fused plan's probe filter is that scan's filter. Each row holds a
             // WHERE clause, optionally followed by GROUP BY, and the fused plan's probe filter, or
-            // null where the fused analysis must keep the ordinary plan.
+            // null where the fused analysis must keep the ordinary plan. Every row puts a conjunct
+            // into b's scan, and the RIGHT spelling preserves b, so a filter on b reduces the rows
+            // that its ordinary plan hashes, and the RIGHT spelling keeps the ordinary plan for
+            // every row.
             final String[][] wheres = {
                     {"b.c1 > 5 AND " + cast, "(5<c1 and " + castFilter + ")"},
                     {cast + " AND b.c1 > 5", "(" + castFilter + " and 5<c1)"},
@@ -2637,7 +2915,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // evaluated runtime constants would pick the ordinary plan or fail. a.v > 0 keeps a
             // conjunct that reads a column in the filter after an outer join, so that filter is not
             // a runtime constant alone, which the ordinary plan turns into a gate over the join. An
-            // INNER join pushes a.v > 0 into a's scan, so these rows skip the INNER spelling.
+            // INNER join pushes a.v > 0 into a's scan, so these rows skip the INNER spelling. Each
+            // row's filter is that of the LEFT spelling: the RIGHT spelling keeps the ordinary plan
+            // for the conjunct on b.
             final String[][] runtimeConstantWheres = {
                     {"a.v > 0 AND now() > '1970-01-02' AND " + cast, castFilter},
                     {"a.v > 0 AND $1 = 1 AND b.c1 > 0", "0<c1"}
@@ -2677,8 +2957,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             + " WHERE $1 = 1 AND 0.62::DECIMAL(2, 2) >= c0::DECIMAL(4, 2)", null},
                     // A filter that also reads a column is not a runtime constant, so it keeps the
                     // fused plan: a.v > 0 reads the NULL-extended input, which an outer join keeps
-                    // above the join.
-                    {select + froms[0] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, castFilter},
+                    // above the join. The RIGHT spelling pushes the cast into the scan of b, which
+                    // it preserves, so it keeps the ordinary plan.
+                    {select + froms[0] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, null},
                     {select + froms[1] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, castFilter},
                     {"SELECT count(*), count(v) FROM (SELECT b.k, a.v" + froms[1] + " WHERE " + cast + " AND $1 = 1) WHERE v > 0", castFilter}
             };
@@ -2692,13 +2973,13 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     context.setJitMode(jit);
                     for (String[] where : wheres) {
                         for (String from : froms) {
-                            assertOutcome("SELECT count(*), count(a.v)" + from + " WHERE " + where[0], where[1], context);
+                            assertOutcome("SELECT count(*), count(a.v)" + from + " WHERE " + where[0], from == froms[0] ? null : where[1], context);
                         }
                     }
                     for (String[] where : runtimeConstantWheres) {
                         // The RIGHT and LEFT spellings.
                         for (int i = 0; i < 2; i++) {
-                            assertOutcome("SELECT count(*), count(a.v)" + froms[i] + " WHERE " + where[0], where[1], context);
+                            assertOutcome("SELECT count(*), count(a.v)" + froms[i] + " WHERE " + where[0], i == 0 ? null : where[1], context);
                         }
                     }
                     for (String[] query : gatedQueries) {
@@ -2927,7 +3208,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     "SELECT count(*), count(v) FROM (SELECT b.k, a.v, b.c0 + 1000 d%s) WHERE d > 1000"
             };
             // The optimizer moves a conjunct that names only plain columns below the projection, so
-            // it stays fused, with the probe filter that follows each query.
+            // it stays fused, with the probe filter that follows each query. The RIGHT spelling
+            // preserves b, so the conjunct on b keeps its ordinary plan.
             final String[][] fusedQueries = {
                     {"SELECT count(*), count(v) FROM (SELECT b.k, a.v, b.c0 x%s) WHERE x > 1000", "1000<c0"},
                     {"SELECT count(*), count(v) FROM (SELECT b.k, a.v, b.c0 + 1000 c0, b.c1%s) WHERE c1 > 0", "0<c1"}
@@ -2946,7 +3228,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             assertOutcome(query.formatted(from), null, context);
                         }
                         for (String[] query : fusedQueries) {
-                            assertOutcome(query[0].formatted(from), query[1], context);
+                            assertOutcome(query[0].formatted(from), from == froms[0] ? null : query[1], context);
                         }
                         for (String query : unfiltered) {
                             assertDifferential(query.formatted(from), context, true);
@@ -3027,7 +3309,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // interval extraction, and keeps the conjuncts on a above the join. Both plans of both
             // spellings then evaluate each conjunct on the same rows in the same order: a.v > 100 does
             // not spare a row of b the cast, and the interval does. Each row holds a query, with %s
-            // for the FROM clause, and the fused plan's probe filter, or null for the ordinary plan.
+            // for the FROM clause, and the LEFT spelling's fused probe filter, or null for the
+            // ordinary plan. The filter on b reduces the rows that the RIGHT spelling's ordinary
+            // plan hashes, so the RIGHT spelling keeps the ordinary plan for every query.
             final String[][] queries = {
                     {"SELECT count(*), count(a.v)%s WHERE a.v > 100 AND " + cast, castFilter},
                     {"SELECT count(*), count(a.v)%s WHERE " + cast + " AND a.v > 100", castFilter},
@@ -3047,7 +3331,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     for (String[] query : queries) {
                         final String rightSql = query[0].formatted(right);
                         final String leftSql = query[0].formatted(left);
-                        assertOutcome(rightSql, query[1], context);
+                        assertOutcome(rightSql, null, context);
                         assertOutcome(leftSql, query[1], context);
                         context.setParallelHashJoinGroupByEnabled(false);
                         try (
@@ -3060,9 +3344,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         }
                     }
                 }
-                // The fused plan of the RIGHT spelling scans b's interval with the cast as its probe
+                // The fused plan of the LEFT spelling scans b's interval with the cast as its probe
                 // filter, as the ordinary plan of either spelling does.
-                assertQuery("SELECT count(*), count(a.v)" + right + " WHERE " + cast + " AND " + interval)
+                assertQuery("SELECT count(*), count(a.v)" + left + " WHERE " + cast + " AND " + interval)
                         .withContext(context)
                         .noLeakCheck()
                         .withPlanContaining("probeFilter: " + castFilter)

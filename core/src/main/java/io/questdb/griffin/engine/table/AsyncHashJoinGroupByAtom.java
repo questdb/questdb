@@ -137,8 +137,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final boolean isParallelBuildCapable;
     // The INT layout's lone SYMBOL pair, whose probe keys the reducer translates per row.
     private final boolean isSymbolKey;
-    // The RIGHT join bound in build table rows, Long.MAX_VALUE for the joins without one.
-    private final long maxBuildTableRows;
     // The build input's row count, before any filter, from which the build runs on the workers.
     private final long parallelBuildMinRows;
     private final PerWorkerLocks perWorkerLocks;
@@ -224,7 +222,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         this.isKeyStaged = metadata.isKeyStaged();
         this.isSymbolKey = metadata.isSymbolKey();
         this.isKeyCapacityPresized = metadata.isKeyCapacityPresized();
-        this.maxBuildTableRows = metadata.getMaxBuildTableRows();
         // An outer join counts a probe row without a match too, which no key's row count covers.
         this.isCountOnly = !isOuter && isPairCount(functions);
         this.countValueIndex = isCountOnly ? functions.getGroupByFunctions(-1).getQuick(0).getValueIndex() : -1;
@@ -958,8 +955,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
      * the build runs it on every build row, and so does one that passes a STRING, VARCHAR, BINARY
      * or ARRAY value that it computes from a build column to anything but a comparison, so the
      * new compile also returns such a query to the ordinary plan.</li>
-     * <li>A RIGHT join keeps the ordinary plan when its build table holds more rows than the bound
-     * allows, and an execution holds the build table to the same bound.</li>
+     * <li>A RIGHT join takes the fused plan only under the presize condition, so the first rule
+     * returns it to the ordinary plan once its build table holds more than twice the preserved
+     * table's rows. A reused factory keeps building the larger table while it holds between one
+     * and two times the preserved table's rows.</li>
      * </ul>
      * A new compile reads the same sizes and passes this check, so a recompile repeats only when
      * the tables change again in between. An input that is not a table scan offers no reader, and
@@ -980,7 +979,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
         final long buildRows = buildReader.size();
         // Row counts stay far below 2^62, so twice the probe rows cannot overflow.
-        if (buildRows > maxBuildTableRows || (isKeyCapacityPresized && buildRows > 2 * probeReader.size())) {
+        if (isKeyCapacityPresized && buildRows > 2 * probeReader.size()) {
             throw TableReferenceOutOfDateException.of(buildReader.getTableToken());
         }
     }

@@ -117,8 +117,9 @@ public class HashJoinGroupByPushdownTest extends AbstractCairoTest {
     @Test
     public void testInnerJoinOnConjunctReachesRightJoinPreservedSideThroughSubQuery() throws Exception {
         // An ON conjunct that reads only a sub-query moves into the sub-query as a WHERE predicate,
-        // with innerPredicate cleared, so inside it the RIGHT join admits the predicate below itself.
-        // The fused plan runs it as the probe filter over b; the ordinary plan runs it in b's scan.
+        // with innerPredicate cleared, so inside it the RIGHT join admits the predicate below itself
+        // and runs it in b's scan. The filter reduces the rows that the ordinary plan hashes, so the
+        // fused analysis keeps the ordinary plan, and both settings plan alike.
         assertMemoryLeak(() -> {
             createTables();
             final String sql = """
@@ -133,19 +134,17 @@ public class HashJoinGroupByPushdownTest extends AbstractCairoTest {
                     3\t1\t3000
                     4\t1\t4000
                     """;
-            assertQuery(sql)
-                    .noLeakCheck()
-                    .withPlanContaining("Hash Join Group By", "logicalJoinType: right outer", "probeFilter: 0<x")
-                    .returns(expected);
-            sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
-            try {
-                assertQuery(sql)
-                        .noLeakCheck()
-                        .withPlanContaining("Hash Right Outer Join Light", "filter: 0<x")
-                        .withPlanNotContaining("Hash Join Group By", "Filter filter: 0<")
-                        .returns(expected);
-            } finally {
-                sqlExecutionContext.setParallelHashJoinGroupByEnabled(true);
+            for (boolean isFusedEnabled : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(isFusedEnabled);
+                try {
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .withPlanContaining("Hash Right Outer Join Light", "filter: 0<x")
+                            .withPlanNotContaining("Hash Join Group By", "Filter filter: 0<")
+                            .returns(expected);
+                } finally {
+                    sqlExecutionContext.setParallelHashJoinGroupByEnabled(true);
+                }
             }
         });
     }

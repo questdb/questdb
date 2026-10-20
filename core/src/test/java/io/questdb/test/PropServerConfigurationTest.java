@@ -316,7 +316,6 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
-        Assert.assertEquals(256 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
         Assert.assertEquals(300_000, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByBuildParallelMinRows());
         Assert.assertEquals(32_768, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByBuildRowsPerPartition());
         Assert.assertEquals(128 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
@@ -2271,20 +2270,6 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio", "1.5");
         properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.parallel.min.probe.ratio", "NaN");
         assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO);
-    }
-
-    @Test
-    public void testParallelHashJoinGroupByRightJoinMaxBuildSize() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("cairo.sql.parallel.hash.join.groupby.right.join.max.build.size", "8M");
-        Assert.assertEquals(8 * Numbers.SIZE_1MB, newPropServerConfiguration(properties).getCairoConfiguration()
-                .getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
-        Map<String, String> env = new HashMap<>();
-        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE", "0");
-        Assert.assertEquals(0, newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
-                .getCairoConfiguration().getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
-        properties.setProperty("cairo.sql.parallel.hash.join.groupby.right.join.max.build.size", "-1");
-        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE);
     }
 
     @Test

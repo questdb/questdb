@@ -1493,9 +1493,13 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             frameRows = 2;
             for (boolean isSharded : new boolean[]{false, true}) {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, isSharded ? 1 : Integer.MAX_VALUE);
-                for (String join : new String[]{INNER, OUTER, " from p right join r on r.plant_id=p.plant_id"}) {
-                    String probeSql = "r where reading_ts >= '2020-01-01' and reading_ts < '2025-01-01'";
-                    String predicate = " where r.reading_ts >= '2020-01-01' and r.reading_ts < '2025-01-01'";
+                final String right = " from p right join r on r.plant_id=p.plant_id";
+                for (String join : new String[]{INNER, OUTER, right}) {
+                    // A RIGHT join keeps the ordinary plan for an interval on r, which it preserves,
+                    // so its fused plan probes all of r.
+                    final boolean isRight = join.equals(right);
+                    String probeSql = isRight ? "r" : "r where reading_ts >= '2020-01-01' and reading_ts < '2025-01-01'";
+                    String predicate = isRight ? "" : " where r.reading_ts >= '2020-01-01' and r.reading_ts < '2025-01-01'";
                     String buildSql = "p";
                     if (join.equals(INNER)) {
                         predicate += " and p.country in ('ES','IT')";

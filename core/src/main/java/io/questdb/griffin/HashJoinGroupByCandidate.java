@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.groupby.HashJoinGroupByAggregates;
-import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -69,7 +68,6 @@ public final class HashJoinGroupByCandidate {
     private final IQueryModel joinModel;
     private final HashJoinGroupByKeys keys;
     private final int logicalJoinType;
-    private final long maxBuildTableRows;
     private final ExpressionNode resolvedBuildOnFilter;
     private final IntList requiredBuildColumns;
     private final ObjList<QueryColumn> resolvedColumns;
@@ -80,8 +78,7 @@ public final class HashJoinGroupByCandidate {
             Analyzer analyzer,
             HashJoinGroupByKeys keys,
             boolean isInputSwapped,
-            boolean isKeyCapacityPresized,
-            long maxBuildTableRows
+            boolean isKeyCapacityPresized
     ) {
         this.inputColumns = analyzer.inputColumns;
         this.resolvedBuildOnFilter = analyzer.resolvedBuildOnFilter;
@@ -94,7 +91,6 @@ public final class HashJoinGroupByCandidate {
         this.keys = keys;
         this.isInputSwapped = isInputSwapped;
         this.isKeyCapacityPresized = isKeyCapacityPresized;
-        this.maxBuildTableRows = maxBuildTableRows;
         this.buildOnFilter = analyzer.buildOnFilter;
         this.joinModel = analyzer.join;
         this.logicalJoinType = analyzer.joinType;
@@ -124,14 +120,6 @@ public final class HashJoinGroupByCandidate {
         return logicalJoinType;
     }
 
-    /**
-     * The most rows the build table may hold before the planner would keep the ordinary plan:
-     * the RIGHT join bound in rows, and Long.MAX_VALUE for the joins that take no bound.
-     */
-    public long getMaxBuildTableRows() {
-        return maxBuildTableRows;
-    }
-
     public int getPhysicalJoinType() {
         return logicalJoinType == IQueryModel.JOIN_INNER ? IQueryModel.JOIN_INNER : IQueryModel.JOIN_LEFT_OUTER;
     }
@@ -149,8 +137,9 @@ public final class HashJoinGroupByCandidate {
     }
 
     /**
-     * True when the build is the first input in join order: every RIGHT join, and an INNER join whose first table is smaller.
-     * The planner then compiles the build before the probe, as the ordinary plan compiles the first input first.
+     * True when the build is the first input in join order: a RIGHT join, which qualifies only when that table holds no
+     * more rows than the preserved one, and an INNER join whose first table is smaller. The planner then compiles the
+     * build before the probe, as the ordinary plan compiles the first input first.
      */
     public boolean isInputSwapped() {
         return isInputSwapped;
@@ -159,13 +148,17 @@ public final class HashJoinGroupByCandidate {
     /**
      * True when the build table has no more rows than the probe table, so that an execution that
      * knows its build's row count may size the key table by it. A build table with more rows is
-     * the shape of a fact table built for its dimension - {@code dim LEFT JOIN fact},
-     * {@code fact RIGHT JOIN dim} - whose join key repeats, and a key table sized by its rows
-     * would hold mostly empty slots. The sizes are those at compile time, as for the build side,
-     * and an execution that finds the build table grown past twice the probe table throws
-     * {@link io.questdb.cairo.sql.TableReferenceOutOfDateException}, on which the holder of the
-     * factory compiles the query again. An execution whose context tolerates row count changes
-     * keeps the compile-time choice; see {@link io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom}.
+     * the shape of a fact table built for its dimension, as in {@code dim LEFT JOIN fact}, whose
+     * join key repeats, and a key table sized by its rows would hold mostly empty slots. A RIGHT
+     * join qualifies for the fused plan only when this holds, its preserved input has no filter
+     * of its own, its execution context does not narrow the preserved table's scan and its build
+     * is not a live view, so every fused RIGHT join presizes; see analyse(). The sizes are those
+     * at compile time, as for the build side, and an execution that finds the build table grown
+     * past twice the probe table throws {@link io.questdb.cairo.sql.TableReferenceOutOfDateException},
+     * on which the holder of the factory compiles the query again. A reused RIGHT join factory
+     * therefore keeps building the table before the join while that table holds between one and
+     * two times the rows of the preserved table. An execution whose context tolerates row count
+     * changes keeps the compile-time choice; see {@link io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom}.
      * An outer join's ON condition on the build alone that reads a build column outside
      * {@link #isSupportedValueType(int)}, and does more than compare columns, constants and bind
      * variables, qualifies only where this holds, and so does one that passes a STRING, VARCHAR,
@@ -359,6 +352,41 @@ public final class HashJoinGroupByCandidate {
                 }
                 buildIndex = buildIndex == order.getQuick(0) ? order.getQuick(1) : order.getQuick(0);
             }
+            final TableReader buildReader = buildIndex == 0 ? leftReader : rightReader;
+            final TableReader probeReader = buildIndex == 0 ? rightReader : leftReader;
+            final long buildRows = buildReader.size();
+            final long probeRows = probeReader.size();
+            // A RIGHT join builds the table before it, while the ordinary plan hashes the table after
+            // it, the preserved one, and streams the other. The fused plan qualifies only when it is
+            // certain at compile time that its build holds no more rows than the ordinary plan
+            // hashes. The ordinary plan hashes the preserved table after its own filters, and after
+            // the interval that its execution context imposes, so the planner keeps the ordinary
+            // plan when:
+            // (a) the build table holds more rows than the preserved table, by their unfiltered
+            //     counts;
+            // (b) a model on the preserved input's chain has a WHERE clause or a constant WHERE
+            //     clause: a filter of the input's own, or a conjunct that the optimiser pushes into
+            //     its scan; see hasInputFilter();
+            // (c) the execution context narrows the preserved table's scan, as a materialized view
+            //     refresh narrows its base table's scan to the refresh interval;
+            // (d) the build is a live view, which serves its table's rows plus the rows it has not
+            //     flushed yet, so its table's row count understates the build.
+            // Filters on the build only shrink the build, and an ON condition or a post-join WHERE
+            // clause removes no hashed row, so neither disqualifies. The rules over-reject where the
+            // analysis cannot see the compiled scans: a WHERE clause that the scan's compile folds
+            // away, such as x = x or a constant TRUE; a materialized view self-join on its base
+            // table, which narrows both scans alike; a full or initial refresh of a materialized
+            // view whose base table is the preserved one, which covers the whole table; and a
+            // live view that serves only its table's rows. Each keeps the ordinary plan and costs
+            // only the fused plan's speedup. An execution whose build table has grown past twice
+            // the preserved table asks for a recompile; see isKeyCapacityPresized().
+            if (joinType == IQueryModel.JOIN_RIGHT_OUTER
+                    && (buildRows > probeRows
+                    || hasInputFilter(join.getJoinModels().getQuick(1 - buildIndex))
+                    || executionContext.isOverriddenIntrinsics(probeReader.getTableToken())
+                    || buildReader.getTableToken().isLiveView())) {
+                return null;
+            }
             Analyzer analyzer = new Analyzer(join, joinType, buildIndex,
                     leftReader.getMetadata(), rightReader.getMetadata(), parser, executionContext);
             final HashJoinGroupByKeys keys = analyzer.resolveKeys(joinContext);
@@ -403,28 +431,6 @@ public final class HashJoinGroupByCandidate {
             if (analyzer.hasUndefinedBindVariable) {
                 return null;
             }
-            // A RIGHT join builds the table before it whatever its size, so the build's row heap
-            // holds every row of that table before the workers start probing, at getBuildRowSize()
-            // bytes a row: a link, plus the row's id when the build has payload columns. The ordinary
-            // plan hashes the preserved table instead and streams this one. With the parallel build,
-            // the fused plan ran faster than the ordinary plan at every measured size, up to 10
-            // million build rows, so the bound caps the heap's memory rather than marking where the
-            // fused plan turns slower, and its default covers the measured sizes. The unfiltered row
-            // count bounds the heap for every bind value, as it bounds the INNER build in
-            // selectBuildIndex(), and each execution holds the table to the bound unless its context
-            // tolerates row count changes. LEFT joins take no bound: their ordinary plan chains every
-            // row of the same table, and the fused plan stayed faster.
-            final long buildRows = buildIndex == 0 ? leftReader.size() : rightReader.size();
-            long maxBuildTableRows = Long.MAX_VALUE;
-            if (joinType == IQueryModel.JOIN_RIGHT_OUTER) {
-                final long maxBuildSize = executionContext.getCairoEngine().getConfiguration()
-                        .getSqlParallelHashJoinGroupByRightJoinMaxBuildSize();
-                maxBuildTableRows = maxBuildSize / analyzer.getBuildRowSize();
-                if (buildRows > maxBuildTableRows) {
-                    return null;
-                }
-            }
-            final long probeRows = buildIndex == 0 ? rightReader.size() : leftReader.size();
             final boolean isKeyCapacityPresized = buildRows <= probeRows;
             // The fused plan runs an ON condition on the build alone over every build row, and the
             // ordinary plan only over the pairs whose keys match, at most one per probe row when the
@@ -468,8 +474,7 @@ public final class HashJoinGroupByCandidate {
             if (!isKeyCapacityPresized && analyzer.isExpensiveBuildOnFilter()) {
                 return null;
             }
-            return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0), isKeyCapacityPresized,
-                    maxBuildTableRows);
+            return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0), isKeyCapacityPresized);
         } catch (SqlException e) {
             // The ordinary plan reports errors in its own compile order, and only its interval extraction
             // and generateFilter() compile optimiser-internal nodes such as and_offset. A failed
@@ -527,6 +532,26 @@ public final class HashJoinGroupByCandidate {
             current = current.getNestedModel();
         }
         return null;
+    }
+
+    /**
+     * True when a model on the input's chain, from its join model down to its table model, has a
+     * WHERE clause or a constant WHERE clause. These are the clauses that the compile of the input
+     * applies to its scan. The chain is the one that baseTable() admits. The join model's post-join
+     * WHERE clause and outer join ON condition apply after the join, so they do not count.
+     */
+    private static boolean hasInputFilter(IQueryModel input) {
+        IQueryModel current = input;
+        while (current != null) {
+            if (current.getWhereClause() != null || current.getConstWhereClause() != null) {
+                return true;
+            }
+            if (current.getTableName() != null) {
+                return false;
+            }
+            current = current.getNestedModel();
+        }
+        return false;
     }
 
     private static boolean hasBarrier(IQueryModel model) {
@@ -662,9 +687,11 @@ public final class HashJoinGroupByCandidate {
      * the compile: an execution that finds the build table holding more than twice the rows of the
      * probe table throws {@link io.questdb.cairo.sql.TableReferenceOutOfDateException}, on which the
      * holder of the factory compiles the query again. The new compile of an INNER join builds the
-     * other table. An outer join keeps its build table, and the new compile stops presizing the key
-     * table by the build's rows. An execution whose context tolerates row count changes, such as a
-     * queued export, keeps the compile-time build and throws nothing.
+     * other table. A LEFT join keeps its build table, and the new compile stops presizing the key
+     * table by the build's rows. A RIGHT join keeps the ordinary plan in the new compile, because
+     * analyse() admits a RIGHT join only when its build table holds no more rows than the
+     * preserved one. An execution whose context tolerates row count changes, such as a queued
+     * export, keeps the compile-time build and throws nothing.
      */
     private static int selectBuildIndex(int joinType, IntList order, long leftSize, long rightSize) {
         final int first = order.getQuick(0);
@@ -911,13 +938,6 @@ public final class HashJoinGroupByCandidate {
                 requiredBuildColumns.add(columnIndexes.getQuick(index));
             }
             return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, metadata.getColumnName(index), 0, position);
-        }
-
-        /**
-         * Row heap bytes of one build row: a link, plus a row id when any build column is required.
-         */
-        private long getBuildRowSize() {
-            return FrozenHashJoinBuild.getRowSize(requiredBuildColumns.size() > 0);
         }
 
         /**

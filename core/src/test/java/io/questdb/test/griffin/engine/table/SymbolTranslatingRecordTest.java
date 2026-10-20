@@ -145,11 +145,22 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                                 """,
                         MASTER_SYMBOL_COUNT
                 );
-                // A RIGHT join swaps the inputs and probes the slave table, whose sym column holds 10,000 symbols.
+                // A RIGHT join builds the table before it, here slave, and probes the table after it, here
+                // master. It takes the fused plan only when its build table holds no more rows than its probe table.
                 // FULL joins stay on the hash join factories, which testHashJoinsReleaseCachesOnCursorClose() covers.
                 assertFusedCacheReleased(
                         compiler,
-                        "SELECT count(), count(m.val), sum(s.price) FROM master m RIGHT JOIN slave s ON (sym)",
+                        "SELECT count(), count(s.price), sum(s.price) FROM slave s RIGHT JOIN master m ON (sym)",
+                        """
+                                count\tcount1\tsum
+                                20000\t10000\t4.9995E7
+                                """,
+                        MASTER_SYMBOL_COUNT
+                );
+                // This LEFT join builds master and probes slave, whose sym column holds 10,000 symbols.
+                assertFusedCacheReleased(
+                        compiler,
+                        "SELECT count(), count(m.val), sum(s.price) FROM slave s LEFT JOIN master m ON (sym)",
                         """
                                 count\tcount1\tsum
                                 10000\t10000\t4.9995E7

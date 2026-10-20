@@ -209,12 +209,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // and ran) whose pivot must have used the fused hash join GROUP BY. Without it a planner that
     // stops selecting the fused plan leaves the axis comparing the ordinary plan with itself while
     // the run stays green. The share is well below 100% because the generator sends a minority of
-    // its queries through features the fused planner refuses; see HashJoinGroupByClause. Eight
-    // 5_000-query runs, each on its own random schema, measured 58% to 66% over 148 to 186
-    // completed comparisons, and ten default runs 57% to 76% over 30 to 41. At the smallest guarded
-    // sample of MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR comparisons and a 50% share, a run falls below
-    // this floor with a probability of about 5e-4.
-    private static final int MIN_FUSED_SELECTED_PCT = 20;
+    // its queries through features the fused planner refuses, and a RIGHT join takes the fused plan
+    // only under the conditions that HashJoinGroupByClause describes. Eight 5_000-query runs, each on
+    // its own random schema, measured 42% to 52% over 159 to 187 completed comparisons, 46% over
+    // all of them, and ten default runs 32% to 62% over 23 to 39. At the smallest guarded sample of
+    // MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (25) comparisons and a 46% share, a run falls below this
+    // floor (3 or fewer fused) with an exact binomial probability of about 3.4e-4; the integer step
+    // makes 27 comparisons the worst guarded sample, at about 6.7e-4. A planner that stops fusing
+    // (a 0% share) fails every guarded run.
+    private static final int MIN_FUSED_SELECTED_PCT = 15;
     // Differential queries a run needs before runFuzz asserts that a shape it could draw generated
     // at least one query. The rarest such shape takes ~4% of the differential queries, so at this
     // sample size an all-miss run sits below 1e-8; under it a zero is small-sample noise and

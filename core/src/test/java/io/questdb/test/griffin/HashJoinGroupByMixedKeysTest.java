@@ -161,7 +161,8 @@ public class HashJoinGroupByMixedKeysTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ea (k INT, str STRING, vc VARCHAR, sym SYMBOL, v DOUBLE, t TIMESTAMP) TIMESTAMP(t) PARTITION BY DAY");
             execute("CREATE TABLE eb (k INT, str STRING, vc VARCHAR, sym SYMBOL, v DOUBLE, t TIMESTAMP) TIMESTAMP(t) PARTITION BY DAY");
-            // ea holds more rows than eb, so JOIN builds eb, as LEFT JOIN does.
+            // ea and eb hold 7 rows each, so JOIN keeps the join order and builds eb, as LEFT JOIN
+            // does, and RIGHT JOIN builds ea, the table before it.
             execute("""
                     INSERT INTO ea VALUES
                         (1, '', '', '', 1.0, '2020-01-01T00:00:00Z'),
@@ -180,7 +181,8 @@ public class HashJoinGroupByMixedKeysTest extends AbstractCairoTest {
                         (3, '', '', ' ', 30.0, '2020-01-01T02:00:00Z'),
                         (4, '', '', '', 40.0, '2020-01-02T00:00:00Z'),
                         (5, ' ', NULL, '', 50.0, '2020-01-02T01:00:00Z'),
-                        (6, NULL, ' ', NULL, 60.0, '2020-01-02T02:00:00Z')
+                        (6, NULL, ' ', NULL, 60.0, '2020-01-02T02:00:00Z'),
+                        (7, 'q', 'q', 'q', 70.0, '2020-01-03T00:00:00Z')
                     """);
             // An empty STRING matches the empty VARCHARs of eb 3 and 4, never a NULL, and a space
             // matches only a space. NULL keys match each other, as they do in the ordinary hash join.
@@ -249,7 +251,9 @@ public class HashJoinGroupByMixedKeysTest extends AbstractCairoTest {
                         " FROM r JOIN p ON r.k = p.k",
                         // The probe filter keeps no row of the preserved input.
                         " FROM r LEFT JOIN p ON r.k = p.k WHERE r.i < 0",
-                        " FROM r RIGHT JOIN p ON r.k = p.k WHERE p.i < 0",
+                        // The post-join filter keeps no row, since every row of r is NULL-extended.
+                        // A filter on p, the preserved input, would keep the ordinary plan.
+                        " FROM r RIGHT JOIN p ON r.k = p.k WHERE r.i > 0",
                 };
                 final ObjHashSet<Class<?>> fusedClasses = new ObjHashSet<>();
                 try (SqlExecutionContextImpl context = context(db, 4)) {
@@ -335,13 +339,14 @@ public class HashJoinGroupByMixedKeysTest extends AbstractCairoTest {
                 // tb misses some of ta's keys and holds keys that ta lacks.
                 db.execute("INSERT INTO tb SELECT (x % 60)::INT, " + text("x + 3", 250, "VARCHAR") + ", " + text("x", 150, "STRING")
                         + ", x * 0.5, timestamp_sequence('2020-01-01', 90_000_000) FROM long_sequence(400)", ctx);
-                // The build keeps no text payload, so the text keys come from the probe: ta for JOIN
-                // and LEFT JOIN, where tb is the smaller input, and tb for RIGHT JOIN.
+                // The build keeps no text payload, so the text keys come from the probe, ta: JOIN and
+                // LEFT JOIN build tb, the smaller input, and so does RIGHT JOIN, which builds the
+                // input before it.
                 final String[] queries = {
                         "SELECT ta.vc, count(*) n, sum(tb.v) bv FROM ta JOIN tb ON ta.k = tb.k ORDER BY ta.vc",
                         "SELECT ta.str, count(*) n, sum(tb.v) bv FROM ta JOIN tb ON ta.k = tb.k ORDER BY ta.str",
                         "SELECT ta.str, ta.vc, tb.k, count(*) n, avg(ta.v) pv FROM ta LEFT JOIN tb ON ta.k = tb.k ORDER BY ta.str, ta.vc, tb.k",
-                        "SELECT tb.vc, tb.str, count(*) n, sum(ta.v) pv, count(ta.k) pk FROM ta RIGHT JOIN tb ON ta.k = tb.k ORDER BY tb.vc, tb.str",
+                        "SELECT ta.vc, ta.str, count(*) n, sum(tb.v) bv, count(tb.k) bk FROM tb RIGHT JOIN ta ON ta.k = tb.k ORDER BY ta.vc, ta.str",
                         "SELECT concat(ta.vc, '|', tb.k) joined, count(*) n FROM ta JOIN tb ON ta.k = tb.k ORDER BY joined",
                         "SELECT tb.k, ta.str, count(*) n, sum(ta.v + tb.v) s FROM ta JOIN tb ON ta.k = tb.k ORDER BY tb.k, ta.str",
                         // A VARCHAR join key that also groups, so the staged key and the group share bytes.
@@ -653,7 +658,8 @@ public class HashJoinGroupByMixedKeysTest extends AbstractCairoTest {
         }
         // Small overlapping domains with NULLs give both sides duplicate keys, shared keys, keys
         // the other side lacks and NULL keys. kb writes its SYMBOL texts in the reverse order, so
-        // equal texts take different keys in the two tables. kb holds fewer rows than ka.
+        // equal texts take different keys in the two tables. ka and kb hold as many rows, so that
+        // a RIGHT join takes the fused plan in either order.
         for (String name : new String[]{"ka", "kb"}) {
             final boolean isReversed = name.equals("kb");
             execute("INSERT INTO " + name + " (i, l, ts, tn, sym, str, vc, v, t)"
@@ -661,7 +667,7 @@ public class HashJoinGroupByMixedKeysTest extends AbstractCairoTest {
                     + " rnd_int(0, 2, 1)::LONG::TIMESTAMP::TIMESTAMP_NS, "
                     + (isReversed ? "rnd_symbol('c', 'b', 'a', NULL)" : "rnd_symbol('a', 'b', NULL)")
                     + ", rnd_str('a', 'b', 'c', NULL), rnd_varchar('a', 'b', NULL), x * 0.25,"
-                    + " timestamp_sequence('2020-01-01', 3_600_000_000) FROM long_sequence(" + (isReversed ? 40 : 64) + ")");
+                    + " timestamp_sequence('2020-01-01', 3_600_000_000) FROM long_sequence(64)");
         }
     }
 

@@ -79,7 +79,11 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * ordinary plan when the build table holds more rows than the probe table and the predicate
  * either reads a variable-size column of the build and does more than compare columns, constants
  * and bind variables, or passes a STRING, VARCHAR, BINARY or ARRAY value that it computes from a
- * build column to anything but a comparison.
+ * build column to anything but a comparison. A RIGHT join takes the fused plan only when its build
+ * table, the one before the join, holds no more rows than the preserved one after it, and the
+ * preserved input has no filter of its own: a projection's filter, or a single-side WHERE
+ * predicate that the optimiser pushes into its scan. The generator does not steer around this
+ * rule, and QueryRunner compares the results either way.
  * The rest of the queries reach the features the fused planner has to turn down, each of which keeps the ordinary plan
  * in both arms of the fused axis: a constant WHERE conjunct, SAMPLE BY with FILL, a
  * {@code LIMIT} sub-query, {@code LATEST ON} on a table input, a cross-input WHERE predicate, an ON predicate over the preserved side

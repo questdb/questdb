@@ -1300,11 +1300,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getSqlParallelHashJoinGroupByRightJoinMaxBuildSize() {
-        return getDelegate().getSqlParallelHashJoinGroupByRightJoinMaxBuildSize();
-    }
-
-    @Override
     public long getSqlParallelWorkStealingSpinTimeout() {
         return getDelegate().getSqlParallelWorkStealingSpinTimeout();
     }
