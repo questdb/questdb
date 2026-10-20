@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -36,6 +37,7 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1803,6 +1805,99 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampMicrosTextBoundInLastNanosMicro() throws Exception {
+        // Text from 2262-04-11T23:47:16.854775808Z to ...999Z lies past the end of TIMESTAMP_NS but inside
+        // the micro 2262-04-11T23:47:16.854775Z. Compared with micros values, the Java filter floors it to
+        // that micro, as the JIT and the interval scan of the designated timestamp do.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, m TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('mid', '2020-01-03T00:00:00.000000Z', '2020-01-03T00:00:00.000000Z'),
+                    ('775', '2262-04-11T23:47:16.854775Z', '2262-04-11T23:47:16.854775Z'),
+                    ('776', '2262-04-11T23:47:16.854776Z', '2262-04-11T23:47:16.854776Z')
+                    """);
+            final String bound = "'2262-04-11T23:47:16.854775900Z'";
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelFilterEnabled((mode & 1) != 0);
+                sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                assertBound("m < " + bound, "mid\n");
+                assertBound("m <= " + bound, "mid\n775\n");
+                assertBound("m > " + bound, "776\n");
+                assertBound("m >= " + bound, "775\n776\n");
+                assertBound("m = " + bound, "775\n");
+                assertBound("m != " + bound, "mid\n776\n");
+                assertBound("m BETWEEN '2262-01-01' AND " + bound, "775\n");
+                assertBound("ts > " + bound, "776\n");
+                assertBound("ts <= " + bound, "mid\n775\n");
+                assertBound("(ts > " + bound + " OR k = 'zz')", "776\n");
+                assertBound("(ts <= " + bound + " OR k = 'zz')", "mid\n775\n");
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNsBindVariableOutsideRange() throws Exception {
+        // A bind variable past either end of the TIMESTAMP_NS range compares as the same text does as a
+        // literal: = and IN match nothing, != matches every row, and a bound of the designated timestamp
+        // counts as before or after every row. The functions read the value once per execution.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, v TIMESTAMP_NS, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('min', '1677-09-21T00:12:43.145224193Z', '2020-01-01'),
+                    ('max', '2262-04-11T23:47:16.854775807Z', '2020-01-02'),
+                    ('mid', '2020-01-03T00:00:00Z', '2020-01-03'),
+                    ('nul', NULL, '2020-01-04')
+                    """);
+            final String all = "min\nmax\nmid\nnul\n";
+            final String[] texts = {"1000-01-01", "1677-09-21T00:12:43.145224192Z", "9999-12-31", "2262-04-11T23:47:16.854775808Z"};
+            final long[] micros = {
+                    MicrosTimestampDriver.INSTANCE.parseFloorLiteral("1000-01-01"),
+                    MicrosTimestampDriver.INSTANCE.parseFloorLiteral("9999-12-31")
+            };
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelFilterEnabled((mode & 1) != 0);
+                sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                // STRING, VARCHAR, then TIMESTAMP (micros) bind variables
+                for (int i = 0; i < 2 * texts.length + micros.length; i++) {
+                    final boolean isAbove;
+                    bindVariableService.clear();
+                    if (i < texts.length) {
+                        bindVariableService.setStr(0, texts[i]);
+                        isAbove = i >= 2;
+                    } else if (i < 2 * texts.length) {
+                        bindVariableService.setVarchar(0, new Utf8String(texts[i - texts.length]));
+                        isAbove = i - texts.length >= 2;
+                    } else {
+                        bindVariableService.setTimestamp(0, micros[i - 2 * texts.length]);
+                        isAbove = i - 2 * texts.length >= 1;
+                    }
+                    assertBound("v = $1", "");
+                    assertBound("v != $1", all);
+                    assertBound("v IN ($1, '2020-01-03T00:00:00Z')", "mid\n");
+                    assertBound("v NOT IN ($1, '2020-01-03T00:00:00Z')", "min\nmax\nnul\n");
+                    assertBound("ts = $1", "");
+                    assertBound("ts != $1", all);
+                    assertBound("ts IN ($1, '2020-01-03T00:00:00Z')", "mid\n");
+                    assertBound("ts < $1", isAbove ? all : "");
+                    assertBound("ts <= $1", isAbove ? all : "");
+                    assertBound("ts > $1", isAbove ? "" : all);
+                    assertBound("ts >= $1", isAbove ? "" : all);
+                }
+            }
+
+            // A range comparison with a text bind variable on a non-designated column reads the text per row
+            // and fails instead of clamping it.
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "9999-12-31");
+            assertQuery("SELECT k FROM x WHERE v < $1")
+                    .noLeakCheck()
+                    .failsWith("inconvertible value: `9999-12-31` [STRING -> TIMESTAMP_NS]");
+        });
+    }
+
+    @Test
     public void testTimestampNsTextBoundInYear2262() throws Exception {
         // TIMESTAMP_NS ends at 2262-04-11T23:47:16.854775807Z. A text bound in 2262 with
         // sub-microsecond digits must keep them in the Java filter as well as in the JIT.
@@ -1933,6 +2028,63 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     assertBound("ts BETWEEN " + lo + " AND " + lo, "");
                     // the designated bound inside a filter that the JIT can compile
                     assertBound("(ts < " + hi + " OR k = 'mid') AND v > " + lo, "min\nmax\nmid\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNsTextIntervalOutsideRange() throws Exception {
+        // A single-item IN reads its text as an interval (the whole day for '9999-12-31'). An interval wholly
+        // past either end of the TIMESTAMP_NS range matches no value, as the same text does in a list of
+        // several items. Row 'wrp' holds the value that '9999-12-31' used to wrap around to.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, v TIMESTAMP_NS, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('min', '1677-09-21T00:12:43.145224193Z', '2020-01-01'),
+                    ('max', '2262-04-11T23:47:16.854775807Z', '2020-01-02'),
+                    ('mid', '2020-01-03T00:00:00Z', '2020-01-03'),
+                    ('nul', NULL, '2020-01-04'),
+                    ('wrp', -4_852_202_631_933_722_624, '2020-01-05')
+                    """);
+            final String all = "min\nmax\nmid\nnul\nwrp\n";
+            final String[] texts = {
+                    "1000-01-01", "1677-01-01", "1677-09-20", "1677-09-21T00:12:43.145224192Z",
+                    "9999-12-31", "2262-04-12", "2262-04-11T23:47:16.854775808Z", "2263-01-01T00:00:00.000000001Z"
+            };
+            for (int mode = 0; mode < 4; mode++) {
+                final boolean isParallel = (mode & 1) != 0;
+                final boolean isJit = (mode & 2) != 0;
+                sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                sqlExecutionContext.setJitMode(isJit ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                // the JIT leaves an interval past the range to the Java filter
+                try (RecordCursorFactory factory = select("SELECT k FROM x WHERE v IN ('9999-12-31')")) {
+                    Assert.assertFalse(factory.usesCompiledFilter());
+                }
+                try (RecordCursorFactory factory = select("SELECT k FROM x WHERE v IN ('2262-04-11T23:47:16.854775807Z')")) {
+                    Assert.assertEquals(isParallel && isJit, factory.usesCompiledFilter());
+                }
+                assertBound("v IN ('2262-04-11T23:47:16.854775807Z')", "max\n");
+                assertBound("v IN ('2020-01-03')", "mid\n");
+
+                for (String text : texts) {
+                    final String literal = "'" + text + "'";
+                    assertBound("v IN (" + literal + ")", "");
+                    assertBound("v IN " + literal, "");
+                    assertBound("v NOT IN (" + literal + ")", all);
+                    assertBound("ts IN (" + literal + ")", "");
+                    assertBound("ts NOT IN (" + literal + ")", all);
+                    assertBound("(ts IN (" + literal + ") OR k = 'zz')", "");
+                    assertBound("(ts NOT IN (" + literal + ") OR k = 'zz')", all);
+
+                    bindVariableService.clear();
+                    bindVariableService.setStr(0, text);
+                    assertBound("v IN ($1)", "");
+                    assertBound("v NOT IN ($1)", all);
+                    assertBound("ts IN ($1)", "");
+                    assertBound("ts NOT IN ($1)", all);
+                    bindVariableService.clear();
                 }
             }
         });

@@ -225,6 +225,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
+        final int side = timestampDriver.compareIntervalToRange(seq, lo, lim);
+        if (side != 0) {
+            final long timestamp = endOfRange(side);
+            intersect(timestamp, timestamp);
+            return;
+        }
+
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
         // compileTickExpr() validates the expression at compile time and returns
@@ -601,6 +608,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
+        final int side = timestampDriver.compareIntervalToRange(seq, lo, lim);
+        if (side != 0) {
+            final long timestamp = endOfRange(side);
+            subtractInterval(timestamp, timestamp);
+            return;
+        }
+
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
         if (containsDateVariable(seq, lo, lim)) {
@@ -668,6 +682,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         if (isEmptySet()) {
+            return;
+        }
+
+        final int side = timestampDriver.compareIntervalToRange(seq, lo, lim);
+        if (side != 0) {
+            final long timestamp = endOfRange(side);
+            union(timestamp, timestamp);
             return;
         }
 
@@ -791,6 +812,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
         }
         return false;
+    }
+
+    // A designated timestamp never takes either end of the range, so the end next to an interval past
+    // the range (see TimestampDriver.compareIntervalToRange()) matches no row, as the interval does.
+    private static long endOfRange(int side) {
+        return side > 0 ? Long.MAX_VALUE : Long.MIN_VALUE + 1;
     }
 
     private static long subtractSaturating(long value, long offset) {

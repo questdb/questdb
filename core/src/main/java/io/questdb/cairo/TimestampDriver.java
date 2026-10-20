@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -41,6 +42,7 @@ import io.questdb.std.datetime.TimeZoneRuleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -139,6 +141,43 @@ public interface TimestampDriver {
      * @return -1 when the text is a timestamp before the range, 1 when after it, 0 otherwise
      */
     default int compareToRange(CharSequence str, int lo, int hi) {
+        return 0;
+    }
+
+    /**
+     * Places the value of a constant or runtime-constant function, such as a bind variable, against the range
+     * of this type once converting it to this type has failed: text that the parser of this type rejects, or a
+     * timestamp of another precision. SQL comparisons use it to treat such a bound as before or after every value.
+     *
+     * @return -1 when the value lies before the range, 1 when after it, 0 otherwise
+     */
+    default int compareToRange(Function func) {
+        switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.STRING, ColumnType.SYMBOL -> {
+                final CharSequence str = func.getStrA(null);
+                return str != null ? compareToRange(str, 0, str.length()) : 0;
+            }
+            case ColumnType.VARCHAR -> {
+                final Utf8Sequence str = func.getVarcharA(null);
+                return str != null && Utf8s.isAscii(str) ? compareToRange(str.asAsciiCharSequence(), 0, str.size()) : 0;
+            }
+            case ColumnType.TIMESTAMP -> {
+                return compareToRange(func.getTimestamp(null), func.getType());
+            }
+            default -> {
+                return 0;
+            }
+        }
+    }
+
+    /**
+     * Places a single timestamp text, read as the interval it names (the whole day for '9999-12-31'), against
+     * the range of this type. A single-item IN uses it: an interval wholly past the range matches no value.
+     *
+     * @return -1 when the whole interval lies before the range, 1 when after it, 0 otherwise: the interval
+     * is inside the range or partly inside it, or the text is a tick expression or not a timestamp
+     */
+    default int compareIntervalToRange(CharSequence str, int lo, int hi) {
         return 0;
     }
 

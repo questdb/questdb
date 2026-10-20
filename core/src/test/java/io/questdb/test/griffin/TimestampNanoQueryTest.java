@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -837,21 +836,19 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     (2, '1677-09-21T00:12:43.145224193Z', '1970-01-02'),
                     (3, '2262-04-11 23:47:16.854z', '1970-01-03')
                     """);
-            for (String text : new String[]{
-                    "'2262-04-11T23:47:16.854775808Z'",
-                    "'2262-12-31'",
-                    "'9999-12-31T00:00:00Z'::VARCHAR",
-                    "'1677-09-21T00:12:43.145224192Z'",
-                    "'0001-01-01'",
-                    "'2262-12-31 UTC'",
-                    "'9999-12-31 00:00:00.0Z'::VARCHAR"
-            }) {
-                try {
-                    execute("INSERT INTO tango VALUES (4, " + text + ", '1970-01-04')");
-                    Assert.fail("Expected an error for " + text);
-                } catch (ImplicitCastException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-                }
+            final String[][] texts = {
+                    {"'2262-04-11T23:47:16.854775808Z'", "`2262-04-11T23:47:16.854775808Z` [STRING"},
+                    {"'2262-12-31'", "`2262-12-31` [STRING"},
+                    {"'9999-12-31T00:00:00Z'::VARCHAR", "`9999-12-31T00:00:00Z` [VARCHAR"},
+                    {"'1677-09-21T00:12:43.145224192Z'", "`1677-09-21T00:12:43.145224192Z` [STRING"},
+                    {"'0001-01-01'", "`0001-01-01` [STRING"},
+                    {"'2262-12-31 UTC'", "`2262-12-31 UTC` [STRING"},
+                    {"'9999-12-31 00:00:00.0Z'::VARCHAR", "`9999-12-31 00:00:00.0Z` [VARCHAR"}
+            };
+            for (String[] text : texts) {
+                assertQuery("INSERT INTO tango VALUES (4, " + text[0] + ", '1970-01-04')")
+                        .noLeakCheck()
+                        .fails(0, "inconvertible value: " + text[1] + " -> TIMESTAMP_NS]");
             }
             assertQuery("SELECT id, v::LONG v FROM tango")
                     .expectSize()

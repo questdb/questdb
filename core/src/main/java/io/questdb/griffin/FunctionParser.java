@@ -725,7 +725,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     // Text past the end of the TIMESTAMP_NS range but inside its last micro floors to that micro, which
     // TIMESTAMP_NS holds. One micro more keeps the constant past the end, so a comparison with a
-    // TIMESTAMP_NS value treats it as after every value.
+    // TIMESTAMP_NS value treats it as after every value. A comparison with micros values only keeps
+    // the floor, as the JIT and the interval scan do.
     private static long ceilPastNanosEnd(long micros, CharSequence timestampStr) {
         if (micros == Long.MAX_VALUE / Nanos.MICRO_NANOS) {
             try {
@@ -735,6 +736,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         return micros;
+    }
+
+    private static boolean hasTimestampNanoArg(ObjList<Function> args, int skipIndex) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            if (i != skipIndex && ColumnType.isTimestampNano(args.getQuick(i).getType())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static long parseDate(CharSequence str, int position) throws SqlException {
@@ -1491,7 +1501,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // Adaptive precision: prefer nano if the string has nanosecond precision
                     int adaptiveType = getAdaptiveTimestampType(timestampStr, sigArgType);
                     long timestamp = parseTimestamp(adaptiveType, timestampStr, position);
-                    if (ColumnType.isTimestampMicro(adaptiveType)) {
+                    if (ColumnType.isTimestampMicro(adaptiveType) && hasTimestampNanoArg(args, k)) {
                         timestamp = ceilPastNanosEnd(timestamp, timestampStr);
                     }
                     args.set(k, TimestampConstant.newInstance(timestamp, adaptiveType));

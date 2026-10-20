@@ -35,7 +35,9 @@ import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.WeekTimestampNanosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
+import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -98,6 +100,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorYYYY, NanosFormatUtils.YEAR_FORMAT);
     // Start of 1677 in nanos, wrapped around the long range like the sum of the parts of a 1677 text
     private static final long YEAR_1677_WRAPPED_NANOS = Nanos.yearNanos(1678, false) - 365 * Nanos.DAY_NANOS;
+    private static final FiberLocal<LongList> tlIntervalBeforeRange = new FiberLocal<>(LongList::new);
 
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
     private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = (addr, sink, unused1, unused2) -> append(addr, sink);
@@ -239,6 +242,28 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public long ceilYYYY(long timestamp) {
         return Nanos.ceilYYYY(timestamp);
+    }
+
+    @Override
+    public int compareIntervalToRange(CharSequence str, int lo, int hi) {
+        try {
+            parseFloor(str, lo, hi);
+            // the interval starts inside the range
+            return 0;
+        } catch (NumericException ignore) {
+        }
+        try {
+            final long micros = MicrosTimestampDriver.INSTANCE.parseFloor(str, lo, hi);
+            if (micros >= Long.MAX_VALUE / Nanos.MICRO_NANOS) {
+                // the interval starts past the end of the range
+                return 1;
+            }
+            if (micros < Long.MIN_VALUE / Nanos.MICRO_NANOS && isIntervalBeforeRange(str, lo, hi)) {
+                return -1;
+            }
+        } catch (NumericException ignore) {
+        }
+        return 0;
     }
 
     @Override
@@ -1775,6 +1800,21 @@ public class NanosTimestampDriver implements TimestampDriver {
             }
         }
         throw NumericException.instance();
+    }
+
+    // Tells whether text that starts before the range also ends before it.
+    private static boolean isIntervalBeforeRange(CharSequence str, int lo, int hi) {
+        final LongList interval = tlIntervalBeforeRange.get();
+        interval.clear();
+        try {
+            // the micros parser does not overflow in 1677
+            MicrosTimestampDriver.INSTANCE.parseInterval(str, lo, hi, IntervalOperation.INTERSECT, interval);
+        } catch (NumericException e) {
+            // the tick parser reads text that is not an interval, such as text with a time zone, as a point
+            return true;
+        }
+        // the last micro of the interval lies before the micro that holds the start of the range
+        return IntervalUtils.decodeIntervalHi(interval, 0) < Long.MIN_VALUE / Nanos.MICRO_NANOS - 1;
     }
 
     private static long partitionCeilDD(long nanos) {

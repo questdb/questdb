@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -4816,9 +4817,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence token = predicateContext.inOperationNode.rhs.token;
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
+        final TimestampDriver driver = ColumnType.getTimestampDriver(predicateContext.columnType);
+        if (intervalEx != null && driver.compareIntervalToRange(intervalEx, 0, intervalEx.length()) != 0) {
+            // the Java filter matches no value for an interval past the range of the column type
+            throw SqlException.position(position).put("interval outside the range of the column type: ").put(intervalEx);
+        }
         final LongList intervals = predicateContext.inIntervals;
         IntervalUtils.parseTickExprAndIntersect(
-                ColumnType.getTimestampDriver(predicateContext.columnType),
+                driver,
                 executionContext.getCairoEngine().getConfiguration(),
                 intervalEx,
                 intervals,

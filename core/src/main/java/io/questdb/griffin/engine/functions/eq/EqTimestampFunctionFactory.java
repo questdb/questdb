@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -36,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqTimestampFunctionFactory implements FunctionFactory {
@@ -112,7 +114,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
             if (left.isConstant()) {
                 long leftValue = left.getTimestamp(null);
                 if (right.isRuntimeConstant()) {
-                    return new LeftConstRightRunTimeConstFunc(left, right, leftValue);
+                    return new LeftConstRightRunTimeConstFunc(left, right, ColumnType.getTimestampDriver(timestampType), leftValue);
                 }
                 return new LeftConstFunc(left, right, leftValue);
             }
@@ -120,7 +122,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
                 if (right.isRuntimeConstant()) {
                     return new MatchedBothRunTimeConstFunc(left, right);
                 }
-                return new MatchedLeftRunTimeConstFunc(left, right);
+                return new MatchedLeftRunTimeConstFunc(left, right, ColumnType.getTimestampDriver(timestampType));
             }
             return new Func(left, right);
         }
@@ -137,7 +139,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
             }
             long leftValue = targetDriver.from(left.getTimestamp(null), leftType);
             if (right.isRuntimeConstant()) {
-                return new LeftConstRightRunTimeConstFunc(left, right, leftValue);
+                return new LeftConstRightRunTimeConstFunc(left, right, targetDriver, leftValue);
             }
             return new LeftConstFunc(left, right, leftValue);
         }
@@ -184,28 +186,30 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class LeftConstRightRunTimeConstFunc extends AbstractEqBinaryFunction {
+    private static class LeftConstRightRunTimeConstFunc extends RunTimeConstFunc {
+        private final TimestampDriver driver;
         private final long leftValue;
         private long rightValue;
 
-        public LeftConstRightRunTimeConstFunc(Function left, Function right, long leftValue) {
+        public LeftConstRightRunTimeConstFunc(Function left, Function right, TimestampDriver driver, long leftValue) {
             super(left, right);
+            this.driver = driver;
             this.leftValue = leftValue;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftValue == rightValue);
+            return negated != (!isPastRange && leftValue == rightValue);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            rightValue = right.getTimestamp(null);
+            rightValue = readRunTimeConst(right, driver, driver.getTimestampType());
         }
     }
 
-    private static class LeftConvertBothRunTimeConstFunc extends AbstractEqBinaryFunction {
+    private static class LeftConvertBothRunTimeConstFunc extends RunTimeConstFunc {
         private final TimestampDriver driver;
         private final int fromTimestampType;
         private long leftValue;
@@ -219,14 +223,14 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftValue == rightValue);
+            return negated != (!isPastRange && leftValue == rightValue);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            leftValue = driver.from(left.getTimestamp(null), fromTimestampType);
-            rightValue = right.getTimestamp(null);
+            leftValue = readRunTimeConst(left, driver, fromTimestampType);
+            rightValue = readRunTimeConst(right, driver, driver.getTimestampType());
         }
     }
 
@@ -246,7 +250,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class LeftConvertLeftRunTimeConstRightConstFunc extends AbstractEqBinaryFunction {
+    private static class LeftConvertLeftRunTimeConstRightConstFunc extends RunTimeConstFunc {
         private final TimestampDriver driver;
         private final int fromTimestampType;
         private final long rightValue;
@@ -261,13 +265,13 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftValue == rightValue);
+            return negated != (!isPastRange && leftValue == rightValue);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            leftValue = driver.from(left.getTimestamp(null), fromTimestampType);
+            leftValue = readRunTimeConst(left, driver, fromTimestampType);
         }
     }
 
@@ -289,7 +293,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class LeftConvertRightRunTimeConstFunc extends AbstractEqBinaryFunction {
+    private static class LeftConvertRightRunTimeConstFunc extends RunTimeConstFunc {
         private final TimestampDriver driver;
         private final int fromTimestampType;
         private long rightValue;
@@ -302,17 +306,17 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (driver.from(left.getTimestamp(rec), fromTimestampType) == rightValue);
+            return negated != (driver.from(left.getTimestamp(rec), fromTimestampType) == rightValue & !isPastRange);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            rightValue = right.getTimestamp(null);
+            rightValue = readRunTimeConst(right, driver, driver.getTimestampType());
         }
     }
 
-    private static class LeftRunTimeConstFunc extends AbstractEqBinaryFunction {
+    private static class LeftRunTimeConstFunc extends RunTimeConstFunc {
         private final TimestampDriver driver;
         private final int fromTimestampType;
         private long value;
@@ -325,13 +329,13 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (value == right.getTimestamp(rec));
+            return negated != (value == right.getTimestamp(rec) & !isPastRange);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            value = driver.from(left.getTimestamp(null), fromTimestampType);
+            value = readRunTimeConst(left, driver, fromTimestampType);
         }
     }
 
@@ -356,22 +360,53 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class MatchedLeftRunTimeConstFunc extends AbstractEqBinaryFunction {
+    private static class MatchedLeftRunTimeConstFunc extends RunTimeConstFunc {
+        private final TimestampDriver driver;
         private long value;
 
-        public MatchedLeftRunTimeConstFunc(Function left, Function right) {
+        public MatchedLeftRunTimeConstFunc(Function left, Function right, TimestampDriver driver) {
             super(left, right);
+            this.driver = driver;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (value == right.getTimestamp(rec));
+            return negated != (value == right.getTimestamp(rec) & !isPastRange);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            value = left.getTimestamp(null);
+            value = readRunTimeConst(left, driver, driver.getTimestampType());
+        }
+    }
+
+    // Reads its runtime-constant sides, such as bind variables, once per execution. A side past the range
+    // of the comparison's timestamp type, such as text '9999-12-31' compared with a TIMESTAMP_NS column,
+    // equals no value of that type, as a constant past the range does.
+    private static abstract class RunTimeConstFunc extends AbstractEqBinaryFunction {
+        protected boolean isPastRange;
+
+        protected RunTimeConstFunc(Function left, Function right) {
+            super(left, right);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            isPastRange = false;
+        }
+
+        protected long readRunTimeConst(Function func, TimestampDriver driver, int fromTimestampType) {
+            try {
+                return driver.from(func.getTimestamp(null), fromTimestampType);
+            } catch (ImplicitCastException e) {
+                if (driver.compareToRange(func) == 0) {
+                    throw e;
+                }
+                isPastRange = true;
+                return Numbers.LONG_NULL;
+            }
         }
     }
 }
