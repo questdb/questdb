@@ -6368,7 +6368,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolNullFlag,
             int columnIndex
     ) {
-        MapWriter.createSymbolMapFiles(ff, ddlMem, path.trimTo(pathSize), name, columnNameTxn, symbolCapacity, symbolCacheFlag);
+        MapWriter.createSymbolMapFiles(ff, ddlMem, path.trimTo(pathSize), name, columnNameTxn, symbolCapacity, symbolCacheFlag, configuration.getCommitMode());
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
                 path.trimTo(pathSize),
@@ -9332,6 +9332,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
                             txWriter.setPartitionParquetGeneratedByRawIndex(partitionIndexRaw, true);
                             txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
+                            // The Rust updater zeros every column_top in the parquet metadata in
+                            // update mode as well (update.rs end()), and merged row groups carry
+                            // real data below the old top. Zero ALL column tops, like the rewrite
+                            // branch does, so a stale full top (e.g. a column added after the
+                            // partition was written) does not hide the merged values from
+                            // CONVERT TO NATIVE or from the dedup merge.
+                            zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
                             // Native mutate: stamp the apply seqTxn; non-WAL stamps 0 (the cleared
