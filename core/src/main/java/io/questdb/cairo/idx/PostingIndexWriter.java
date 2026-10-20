@@ -4239,22 +4239,37 @@ public class PostingIndexWriter implements IndexWriter {
                 ? TableUtils.iFile(p, colName, colNameTxn)
                 : TableUtils.dFile(p, colName, colNameTxn);
         long fd = ff.openRO(fileName);
-        if (fd >= 0) {
-            try {
-                long fileSize = ff.length(fd);
-                if (fileSize > 0) {
-                    long mapped = ff.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-                    if (mapped == FilesFacade.MAP_FAILED) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not mmap covered column [file=").put(fileName)
-                                .put(", size=").put(fileSize).put(']');
-                    }
-                    addrs[idx] = mapped;
-                    sizes[idx] = fileSize;
-                }
-            } finally {
-                ff.close(fd); // mmap keeps data accessible after FD close
+        if (fd < 0) {
+            final int errno = ff.errno();
+            // A covered column whose top spans the whole partition has no file here, and every row reads
+            // as NULL from the top. Any other open failure must fail the write: leaving the mapping at 0
+            // would publish NULL covered values for rows the column holds.
+            if (!ff.exists(fileName)) {
+                return;
             }
+            // Reset the lazy read maps, or ensureCoveredColumnReadMaps() would early-return on arrays
+            // with this slot at 0 and the next covered read on this writer would resolve to NULL.
+            unmapCoveredColumnReads();
+            throw CairoException.critical(errno).put("could not open covered column [file=").put(fileName).put(']');
+        }
+        try {
+            long fileSize = ff.length(fd);
+            if (fileSize > 0) {
+                long mapped = ff.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                if (mapped == FilesFacade.MAP_FAILED) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not mmap covered column [file=").put(fileName)
+                            .put(", size=").put(fileSize).put(']');
+                }
+                addrs[idx] = mapped;
+                sizes[idx] = fileSize;
+            }
+        } catch (Throwable th) {
+            // same reset as for the failed open above
+            unmapCoveredColumnReads();
+            throw th;
+        } finally {
+            ff.close(fd); // mmap keeps data accessible after FD close
         }
     }
 

@@ -101,6 +101,12 @@ public class BitmapIndexWriter implements IndexWriter {
      */
     public void add(int key, long value) {
         assert key > -1 : "key must be positive integer: " + key;
+        // Raise the max value before the value lands, so it never trails a stored value. rollbackConditionally
+        // trusts it to tell whether rows at or above the append offset are indexed: had an add loop failed before
+        // its caller's setMaxValue, the retry would see the old max value and index the same rows a second time.
+        if (value > keyMem.getLong(MAX_VALUE_OFFSET)) {
+            keyMem.putLong(MAX_VALUE_OFFSET, value);
+        }
         final long offset = BitmapIndexUtils.getKeyEntryOffset(key);
         if (key < keyCount) {
             // when key exists we have possible outcomes in regard to the values

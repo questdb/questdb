@@ -6670,10 +6670,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * longer holds any composite partition. The caller runs this AFTER the {@code _txn} commit that cleared
      * the last composite flag, so the version never claims plain data while {@code _txn} still points at a
      * composite piece. Reads the in-memory count, never scans.
+     * <p>
+     * Best effort: the {@code _txn} commit is already durable, so a failure here must not surface as a failed
+     * commit or skip the caller's post-commit steps. The cached version follows whatever reached {@code _meta}:
+     * a failure before the write leaves both conservatively high, and the next commit tries again.
      */
     private void maybeDowngradeStorageVersion() {
         if (compositePartitionCount == 0 && metadata.getStorageVersion() > ColumnType.VERSION) {
-            writeStorageVersionToMeta(ColumnType.VERSION);
+            try {
+                writeStorageVersionToMeta(ColumnType.VERSION);
+            } catch (Throwable th) {
+                LOG.critical().$("could not downgrade storage version in _meta [table=")
+                        .$(tableToken)
+                        .$(", error=").$(th)
+                        .I$();
+            }
         }
     }
 
@@ -6837,20 +6848,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Replaces the storage version int in {@code _meta} at {@link TableUtils#META_OFFSET_VERSION} in place and
-     * fsyncs it, then updates the cached {@link TableWriterMetadata#getStorageVersion()}. A direct, single-field
+     * fsyncs it, updating the cached {@link TableWriterMetadata#getStorageVersion()} as soon as the write lands.
+     * The cache tracks what {@code _meta} reads, not what is durable: were it to stay behind after a failed fsync,
+     * the next composite commit would skip the upgrade and publish over a plain {@code _meta}. A direct, single-field
      * write: the composite/plain transition happens during a data commit or a compaction, not a metadata DDL,
      * so there is no full meta rewrite to fold this into.
      */
     private void writeStorageVersionToMeta(int version) {
-        final long fd = openRW(ff, path.trimTo(pathSize).concat(META_FILE_NAME).$(), LOG, configuration.getWriterFileOpenOpts());
+        // The open sits inside the trim too: a failed open must not leave the writer's path pointing at _meta,
+        // or every partition path the writer builds next would land under it.
         try {
-            TableUtils.writeIntOrFail(ff, fd, META_OFFSET_VERSION, version, tempMem16b, path);
-            ff.fsync(fd);
+            final long fd = openRW(ff, path.trimTo(pathSize).concat(META_FILE_NAME).$(), LOG, configuration.getWriterFileOpenOpts());
+            try {
+                TableUtils.writeIntOrFail(ff, fd, META_OFFSET_VERSION, version, tempMem16b, path);
+                metadata.setStorageVersion(version);
+                ff.fsync(fd);
+            } finally {
+                ff.close(fd);
+            }
         } finally {
-            ff.close(fd);
             path.trimTo(pathSize);
         }
-        metadata.setStorageVersion(version);
         LOG.info().$("storage version updated in _meta [table=").$(tableToken)
                 .$(", version=").$(version).I$();
     }
@@ -16508,6 +16526,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // rename _meta.swp to _meta
         renameSwapMetaToMeta();
+
+        // The rewrite stamped storageVersionForCurrentState(), which can differ from the cached version when a
+        // post-commit downgrade failed or the writer opened over a crash that skipped it. A stale high cache would
+        // let the next commit that creates a composite partition skip the upgrade over a plain-version _meta.
+        metadata.setStorageVersion(storageVersionForCurrentState());
     }
 
     private int rewriteMetadata(TableWriterMetadata metadata) {

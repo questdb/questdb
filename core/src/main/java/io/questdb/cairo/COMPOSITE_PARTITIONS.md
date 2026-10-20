@@ -296,10 +296,14 @@ file rows   0                                        1070
 
 ## Leaving WAL
 
-A table converted to non-WAL (`ALTER TABLE ... SET TYPE BYPASS WAL`) is expected to be either
-converted back to WAL or squashed (`ALTER TABLE ... SQUASH PARTITIONS`) before the conversion, so that it
-holds no composite partition while it is non-WAL. Converting a table that still holds composite partitions
-and writing to it as non-WAL is not supported.
+Converting a table that still holds composite partitions to non-WAL and writing to it is not supported. To
+take a table out of WAL, first make every partition plain:
+
+1. Disable merge-append (`cairo.o3.partition.merge.append.enabled=false`), so WAL apply founds no new
+   composite partition.
+2. Squash the table's partitions (`ALTER TABLE ... SQUASH PARTITIONS`), which folds every composite
+   partition to plain.
+3. Convert the table (`ALTER TABLE ... SET TYPE BYPASS WAL`).
 
 The reason: a non-WAL writer appends in-order rows in place through `columns[]`, which a composite last
 partition keeps closed. `TableWriter.foldCompositePartitionsWhenMergeAppendDisabled` folds only the
