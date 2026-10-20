@@ -441,12 +441,20 @@ public final class ColumnType {
      * for numeric types where the caller should determine the timestamp type
      */
     public static int getTimestampType(int type) {
-        return switch (tagOf(type)) {
+        // A later type shares its namesake's accessor, so a DATE or text look-alike gets the
+        // namesake's unit. Fetch the answer once per column or argument, not per row.
+        final TypeDriver driver = findTypeDriver(type);
+        if (driver == null) {
+            // a pseudo tag (NULL, UNDEFINED, CURSOR, ...) or a number that is no tag
+            return UNDEFINED;
+        }
+        return switch (driver.getAccessor()) {
             case TIMESTAMP -> type;
-            case VARCHAR, VARCHAR_SLICE, STRING, SYMBOL -> TIMESTAMP_NANO;
+            case VARCHAR, STRING, SYMBOL -> TIMESTAMP_NANO;
             case DATE -> TIMESTAMP_MICRO;
-            // Long, Int etc.
-            default -> UNDEFINED;
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG,
+                 BINARY, UUID, LONG128, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                 INTERVAL -> UNDEFINED;
         };
     }
 

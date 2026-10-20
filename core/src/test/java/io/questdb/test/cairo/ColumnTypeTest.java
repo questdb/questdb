@@ -33,6 +33,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -375,6 +376,77 @@ public class ColumnTypeTest {
         Assert.assertSame(
                 ColumnType.getDriver(ColumnType.VARCHAR),
                 ColumnType.getDriver(ColumnType.VARCHAR_SLICE)
+        );
+    }
+
+    @Test
+    public void testGetTimestampTypeIsPinnedPerTag() {
+        // getTimestampType answers, per tag, the unit a timestamp read from a value of that type is
+        // in: TIMESTAMP keeps its own unit, text parses to nanos, DATE is micros, and everything
+        // else is UNDEFINED ("already in the target unit"). The table is literal so a change to the
+        // answer for any existing tag shows up as a diff, whatever the implementation does.
+        final StringSink actual = new StringSink();
+        for (int tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            actual.put(tag).put('=').put(ColumnType.getTimestampType(tag)).put('\n');
+        }
+        actual.put("TIMESTAMP_MICRO=").put(ColumnType.getTimestampType(ColumnType.TIMESTAMP_MICRO)).put('\n');
+        actual.put("TIMESTAMP_NANO=").put(ColumnType.getTimestampType(ColumnType.TIMESTAMP_NANO)).put('\n');
+        actual.put("VARCHAR_SLICE=").put(ColumnType.getTimestampType(ColumnType.VARCHAR_SLICE)).put('\n');
+        actual.put("GEOHASH(5b)=").put(ColumnType.getTimestampType(ColumnType.getGeoHashTypeWithBits(5))).put('\n');
+        actual.put("DECIMAL(18,3)=").put(ColumnType.getTimestampType(ColumnType.getDecimalType(18, 3))).put('\n');
+        actual.put("-1=").put(ColumnType.getTimestampType(-1)).put('\n');
+        TestUtils.assertEquals(
+                """
+                        0=0
+                        1=0
+                        2=0
+                        3=0
+                        4=0
+                        5=0
+                        6=0
+                        7=8
+                        8=8
+                        9=0
+                        10=0
+                        11=262152
+                        12=262152
+                        13=0
+                        14=0
+                        15=0
+                        16=0
+                        17=0
+                        18=0
+                        19=0
+                        20=0
+                        21=0
+                        22=0
+                        23=0
+                        24=0
+                        25=0
+                        26=262152
+                        27=0
+                        28=0
+                        29=0
+                        30=0
+                        31=0
+                        32=0
+                        33=0
+                        34=0
+                        35=0
+                        36=0
+                        37=0
+                        38=0
+                        39=0
+                        40=262152
+                        41=0
+                        TIMESTAMP_MICRO=8
+                        TIMESTAMP_NANO=262152
+                        VARCHAR_SLICE=262152
+                        GEOHASH(5b)=0
+                        DECIMAL(18,3)=0
+                        -1=0
+                        """,
+                actual
         );
     }
 
