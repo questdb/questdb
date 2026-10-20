@@ -1803,6 +1803,142 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampNsTextBoundInYear2262() throws Exception {
+        // TIMESTAMP_NS ends at 2262-04-11T23:47:16.854775807Z. A text bound in 2262 with
+        // sub-microsecond digits must keep them in the Java filter as well as in the JIT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, v TIMESTAMP_NS, m TIMESTAMP, d DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('max', '2262-04-11T23:47:16.854775807Z', '2262-04-11T23:47:16.854775Z', '2262-04-11T23:47:16.854Z', '1970-01-01T00:00:00.000000Z'),
+                    ('mid', '2262-01-01T00:00:00.000000123Z', '2262-01-01T00:00:00.000000Z', '2262-01-01T00:00:00.000Z', '1970-01-01T00:00:01.000000Z'),
+                    ('one', '1970-01-01T00:00:00.000000001Z', '1970-01-01T00:00:00.000001Z', '1970-01-01T00:00:00.001Z', '1970-01-01T00:00:02.000000Z')
+                    """);
+
+            final String eqMax = "SELECT k FROM x WHERE v = '2262-04-11T23:47:16.854775807Z'";
+            for (int mode = 0; mode < 4; mode++) {
+                final boolean isParallel = (mode & 1) != 0;
+                final boolean isJit = (mode & 2) != 0;
+                sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                sqlExecutionContext.setJitMode(isJit ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                try (RecordCursorFactory factory = select(eqMax)) {
+                    Assert.assertEquals(isParallel && isJit, factory.usesCompiledFilter());
+                }
+
+                assertQuery(eqMax).noLeakCheck().returns("k\nmax\n");
+                assertQuery("SELECT k FROM x WHERE v = '2262-01-01T00:00:00.000000123Z'")
+                        .noLeakCheck().returns("k\nmid\n");
+                assertQuery("SELECT k FROM x WHERE v > '2262-01-01T00:00:00.000000200Z'")
+                        .noLeakCheck().returns("k\nmax\n");
+                assertQuery("SELECT k FROM x WHERE v >= '2262-01-01T00:00:00.000000123Z'")
+                        .noLeakCheck().returns("k\nmax\nmid\n");
+                assertQuery("SELECT k FROM x WHERE v < '2262-04-11T23:47:16.854775807Z'")
+                        .noLeakCheck().returns("k\nmid\none\n");
+                assertQuery("SELECT k FROM x WHERE v <= '2262-01-01T00:00:00.000000122Z'")
+                        .noLeakCheck().returns("k\none\n");
+                assertQuery("SELECT k FROM x WHERE v IN ('2262-04-11T23:47:16.854775807Z', '2262-01-01T00:00:00.000000123Z')")
+                        .noLeakCheck().returns("k\nmax\nmid\n");
+                assertQuery("SELECT k FROM x WHERE v BETWEEN '2262-04-11T23:47:16.854775807Z' AND '2262-04-11T23:47:16.854775807Z'")
+                        .noLeakCheck().returns("k\nmax\n");
+                assertQuery("SELECT k FROM x WHERE v BETWEEN '2262-01-01T00:00:00.000000123Z' AND '2262-01-01T00:00:00.000000124Z'")
+                        .noLeakCheck().returns("k\nmid\n");
+                assertQuery("SELECT k FROM x WHERE v = '2262-04-11T23:47:16.854775Z'")
+                        .noLeakCheck().returns("k\n");
+
+                // micros and date columns compared with 2262 literals
+                assertQuery("SELECT k FROM x WHERE m = '2262-04-11T23:47:16.854775Z'")
+                        .noLeakCheck().returns("k\nmax\n");
+                assertQuery("SELECT k FROM x WHERE m > '2262-01-01T00:00:00.000000123Z'")
+                        .noLeakCheck().returns("k\nmax\n");
+                assertQuery("SELECT k FROM x WHERE m <= '2262-04-11T23:47:16.854775807Z'")
+                        .noLeakCheck().returns("k\nmax\nmid\none\n");
+                assertQuery("SELECT k FROM x WHERE m BETWEEN '2262-01-01T00:00:00Z' AND '2262-04-11T23:47:16.854775807Z'")
+                        .noLeakCheck().returns("k\nmax\nmid\n");
+                assertQuery("SELECT k FROM x WHERE d = '2262-04-11T23:47:16.854775807Z'")
+                        .noLeakCheck().returns("k\nmax\n");
+                assertQuery("SELECT k FROM x WHERE d < '2262-04-11T23:47:16.854775807Z'")
+                        .noLeakCheck().returns("k\nmid\none\n");
+                assertQuery("SELECT k FROM x WHERE d BETWEEN '2262-01-01T00:00:00.000000123Z' AND '2262-04-11T23:47:16.854775807Z'")
+                        .noLeakCheck().returns("k\nmax\nmid\n");
+
+                // past the end of TIMESTAMP_NS: after every value, in every mode (the JIT used to
+                // compare with a wrapped-around constant, the Java filter failed)
+                assertQuery("SELECT k FROM x WHERE v < '2262-12-31T00:00:00.000000001Z'")
+                        .noLeakCheck().returns("k\nmax\nmid\none\n");
+                assertQuery("SELECT k FROM x WHERE v < '2262-12-31'")
+                        .noLeakCheck().returns("k\nmax\nmid\none\n");
+                assertQuery("SELECT k FROM x WHERE v = '2262-04-11T23:47:16.854775808Z'")
+                        .noLeakCheck().returns("k\n");
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNsTextBoundOutsideRange() throws Exception {
+        // TIMESTAMP_NS holds 1677-09-21T00:12:43.145224193Z to 2262-04-11T23:47:16.854775807Z. A text
+        // bound past either end is before or after every value, on the designated timestamp as on any
+        // other column, with the JIT on or off.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, v TIMESTAMP_NS, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('min', '1677-09-21T00:12:43.145224193Z', '2020-01-01'),
+                    ('max', '2262-04-11T23:47:16.854775807Z', '2020-01-02'),
+                    ('mid', '2020-01-03T00:00:00Z', '2020-01-03'),
+                    ('nul', NULL, '2020-01-04')
+                    """);
+            final String[] below = {"'1000-01-01'", "'1677-09-21T00:12:43.145224192Z'", "'1677-09-21T00:12:43.145224Z'"};
+            final String[] above = {"'9999-12-31'", "'2262-04-11T23:47:16.854775808Z'", "'2263-01-01T00:00:00.000000001Z'"};
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelFilterEnabled((mode & 1) != 0);
+                sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                for (int i = 0; i < below.length; i++) {
+                    final String lo = below[i];
+                    final String hi = above[i];
+                    // v holds both ends of the range and a NULL, ts is the designated timestamp
+                    assertBound("v > " + lo, "min\nmax\nmid\n");
+                    assertBound("v >= " + lo, "min\nmax\nmid\n");
+                    assertBound("v < " + lo, "");
+                    assertBound("v <= " + lo, "");
+                    assertBound("v < " + hi, "min\nmax\nmid\n");
+                    assertBound("v <= " + hi, "min\nmax\nmid\n");
+                    assertBound("v > " + hi, "");
+                    assertBound("v >= " + hi, "");
+                    assertBound("v = " + hi, "");
+                    assertBound("v = " + lo, "");
+                    assertBound("v != " + hi, "min\nmax\nmid\nnul\n");
+                    assertBound("v IN (" + hi + ", '2020-01-03T00:00:00Z', " + lo + ")", "mid\n");
+                    assertBound("v NOT IN (" + hi + ", " + lo + ")", "min\nmax\nmid\nnul\n");
+                    assertBound("v BETWEEN " + lo + " AND " + hi, "min\nmax\nmid\n");
+                    assertBound("v BETWEEN " + hi + " AND '2020-01-03T00:00:00Z'", "max\nmid\n");
+                    assertBound("v BETWEEN " + lo + " AND '2020-01-03T00:00:00Z'", "min\nmid\n");
+                    assertBound("v BETWEEN " + hi + " AND " + hi, "");
+                    assertBound("v BETWEEN " + lo + " AND " + lo, "");
+
+                    assertBound("ts > " + lo, "min\nmax\nmid\nnul\n");
+                    assertBound("ts >= " + lo, "min\nmax\nmid\nnul\n");
+                    assertBound("ts < " + lo, "");
+                    assertBound("ts <= " + lo, "");
+                    assertBound("ts < " + hi, "min\nmax\nmid\nnul\n");
+                    assertBound("ts <= " + hi, "min\nmax\nmid\nnul\n");
+                    assertBound("ts > " + hi, "");
+                    assertBound("ts >= " + hi, "");
+                    assertBound("ts = " + hi, "");
+                    assertBound("ts = " + lo, "");
+                    assertBound("ts IN (" + hi + ", '2020-01-03T00:00:00Z', " + lo + ")", "mid\n");
+                    assertBound("ts BETWEEN " + lo + " AND " + hi, "min\nmax\nmid\nnul\n");
+                    assertBound("ts BETWEEN " + hi + " AND '2020-01-03T00:00:00Z'", "mid\nnul\n");
+                    assertBound("ts BETWEEN " + lo + " AND '2020-01-02T00:00:00Z'", "min\nmax\n");
+                    assertBound("ts BETWEEN " + hi + " AND " + hi, "");
+                    assertBound("ts BETWEEN " + lo + " AND " + lo, "");
+                    // the designated bound inside a filter that the JIT can compile
+                    assertBound("(ts < " + hi + " OR k = 'mid') AND v > " + lo, "min\nmax\nmid\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1913,6 +2049,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .returns(expected);
             assertSqlRunWithJit(query);
         });
+    }
+
+    private void assertBound(String predicate, String expectedKeys) throws Exception {
+        // a designated timestamp bound turns into an interval scan, which knows its size
+        assertQuery("SELECT k FROM x WHERE " + predicate).noLeakCheck().sizeMayVary().returns("k\n" + expectedKeys);
     }
 
     private void assertSymbolFilter(String filter, String expected) throws Exception {

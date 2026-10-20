@@ -84,12 +84,16 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         if (left.isConstant() && right.isConstant()) {
             long leftVal = left.getTimestamp(null);
             long rightVal = right.getTimestamp(null);
-            if (leftType != rightType) {
-                leftVal = ColumnType.getTimestampDriver(timestampType).from(leftVal, leftType);
+            boolean isEqual;
+            if (leftType == rightType) {
+                isEqual = leftVal == rightVal;
+            } else {
+                final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+                isEqual = driver.compareToRange(leftVal, leftType) == 0 && driver.from(leftVal, leftType) == rightVal;
             }
             Misc.free(left);
             Misc.free(right);
-            return BooleanConstant.of(leftVal == rightVal);
+            return BooleanConstant.of(isEqual);
         }
 
         if (leftType == rightType) {
@@ -125,6 +129,12 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         // is known ahead of time so the cast / precision conversion is not repeated.
         TimestampDriver targetDriver = ColumnType.getTimestampDriver(timestampType);
         if (left.isConstant()) {
+            if (targetDriver.compareToRange(left.getTimestamp(null), leftType) != 0) {
+                // the constant lies past the range of the right side's type: no value equals it
+                Misc.free(left);
+                Misc.free(right);
+                return BooleanConstant.FALSE;
+            }
             long leftValue = targetDriver.from(left.getTimestamp(null), leftType);
             if (right.isRuntimeConstant()) {
                 return new LeftConstRightRunTimeConstFunc(left, right, leftValue);

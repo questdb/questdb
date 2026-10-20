@@ -315,7 +315,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int intersectDividerIndex = staticIntervals.size();
         long timestamp;
         try {
-            timestamp = timestampDriver.parseFloor(seq, lo, lim);
+            timestamp = timestampDriver.parseFloorSaturated(seq, lo, lim);
         } catch (NumericException e) {
             try {
                 timestamp = Numbers.parseLong(seq);

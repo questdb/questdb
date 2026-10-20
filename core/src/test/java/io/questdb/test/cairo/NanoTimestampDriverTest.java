@@ -29,12 +29,15 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
 public class NanoTimestampDriverTest extends AbstractCairoTest {
@@ -171,5 +174,151 @@ public class NanoTimestampDriverTest extends AbstractCairoTest {
         Assert.assertEquals(1577836800100000000L, driver.implicitCast("2020-01-01T00:00:00.1Z", ColumnType.STRING));
         Assert.assertEquals(1577836800120000000L, driver.implicitCast("2020-01-01T00:00:00.12Z", ColumnType.STRING));
         Assert.assertEquals(1577836800123000000L, driver.implicitCast("2020-01-01T00:00:00.123Z", ColumnType.STRING));
+    }
+
+    @Test
+    public void testImplicitCastOutsideRange() {
+        // the parser used to wrap these around the long range, and INSERT stored the wrapped value
+        for (String text : new String[]{"2262-12-31T00:00:00Z", "9999-12-31T00:00:00Z", "0001-01-01T00:00:00Z"}) {
+            try {
+                driver.implicitCast(text, ColumnType.STRING);
+                Assert.fail("Expected ImplicitCastException for " + text);
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+            try {
+                driver.implicitCastVarchar(new Utf8String(text));
+                Assert.fail("Expected ImplicitCastException for " + text);
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+        }
+    }
+
+    @Test
+    public void testImplicitCastPGDateRange() {
+        // the ISO parser rejects these texts, so implicitCast() falls back to the PG date formats,
+        // which parse millis and used to wrap around the long range when scaled to nanos
+        assertImplicitCastPGDate(epochNanos("2262-04-11T00:00:00Z"), "2262-04-11 UTC");
+        assertImplicitCastPGDate(epochNanos("1677-09-22T00:00:00Z"), "1677-09-22 UTC");
+        assertImplicitCastPGDate(epochNanos("2262-04-11T23:47:16Z"), "2262-04-11 23:47:16z");
+        assertImplicitCastPGDate(epochNanos("1677-09-21T00:12:44Z"), "1677-09-21 00:12:44z");
+        assertImplicitCastPGDate(epochNanos("2262-04-11T23:47:16.854Z"), "2262-04-11 23:47:16.854z");
+        assertImplicitCastPGDate(epochNanos("1677-09-21T00:12:43.146Z"), "1677-09-21 00:12:43.146z");
+
+        assertImplicitCastPGDateFails("2262-04-12 UTC");
+        assertImplicitCastPGDateFails("1677-09-21 UTC");
+        assertImplicitCastPGDateFails("2262-04-11 23:47:17z");
+        assertImplicitCastPGDateFails("1677-09-21 00:12:43z");
+        assertImplicitCastPGDateFails("2262-04-11 23:47:16.855z");
+        assertImplicitCastPGDateFails("1677-09-21 00:12:43.145z");
+        assertImplicitCastPGDateFails("9999-12-31 UTC");
+        assertImplicitCastPGDateFails("9999-12-31 00:00:00.0Z");
+        assertImplicitCastPGDateFails("0001-01-01 00:00:00z");
+    }
+
+    @Test
+    public void testParseFloorRange() throws NumericException {
+        // TIMESTAMP_NS holds Long.MIN_VALUE + 1 (1677-09-21T00:12:43.145224193Z) to
+        // Long.MAX_VALUE (2262-04-11T23:47:16.854775807Z); Long.MIN_VALUE is NULL
+        assertParseFloor(Long.MAX_VALUE, "2262-04-11T23:47:16.854775807Z");
+        assertParseFloor(Long.MAX_VALUE - 1, "2262-04-11T23:47:16.854775806Z");
+        assertParseFloor(Long.MAX_VALUE, "2262-04-12T00:47:16.854775807+01:00");
+        assertParseFloor(Long.MIN_VALUE + 1, "1677-09-21T00:12:43.145224193Z");
+        assertParseFloor(Long.MIN_VALUE + 2, "1677-09-21T00:12:43.145224194Z");
+        assertParseFloor(Long.MIN_VALUE + 1, "1677-09-20T23:12:43.145224193-01:00");
+        assertParseFloor(epochNanos("2262-01-01T00:00:00Z"), "2262");
+        assertParseFloor(epochNanos("2262-01-01T00:00:00Z"), "2262-01-01");
+        assertParseFloor(epochNanos("2262-04-11T00:00:00Z"), "2262-04-11");
+        assertParseFloor(epochNanos("2262-01-01T00:00:00.000000123Z"), "2262-01-01T00:00:00.000000123Z");
+        assertParseFloor(epochNanos("1677-09-22T00:00:00Z"), "1677-09-22");
+        assertParseFloor(epochNanos("1677-12-31T00:00:00Z"), "1677-12-31");
+        assertParseFloor(epochNanos("1677-12-31T23:59:59.999999999Z"), "1677-12-31T23:59:59.999999999Z");
+        assertParseFloor(epochNanos("1677-12-31T22:00:00Z"), "1678-01-01T00:00:00+02:00");
+        assertParseFloor(epochNanos("2262-01-01T01:00:00Z"), "2261-12-31T23:00:00-02:00");
+        // ISO week: 2262-W15 starts on Monday 2262-04-07, 1677-W38 on Monday 1677-09-20
+        assertParseFloor(epochNanos("2262-04-07T00:00:00Z"), "2262-W15-1");
+        assertParseFloor(Long.MAX_VALUE, "2262-W15-5T23:47:16.854775807");
+        assertParseFloor(Long.MIN_VALUE + 1, "1677-W38-2T00:12:43.145224193");
+        assertParseFloor(epochNanos("1677-09-27T00:00:00Z"), "1677-W39-1");
+
+        assertParseFloorFails("2262-04-11T23:47:16.854775808Z");
+        assertParseFloorFails("2262-04-11T23:47:17Z");
+        assertParseFloorFails("2262-04-12");
+        assertParseFloorFails("2262-12-31");
+        assertParseFloorFails("2262-12-31T23:59:59.999999999Z");
+        assertParseFloorFails("2262-04-11T23:47:16.854775807-00:01");
+        assertParseFloorFails("2263");
+        assertParseFloorFails("2263-01-01T00:00:00Z");
+        assertParseFloorFails("9999-12-31T23:59:59.999999999Z");
+        // would be Long.MIN_VALUE, the NULL sentinel
+        assertParseFloorFails("1677-09-21T00:12:43.145224192Z");
+        assertParseFloorFails("1677-09-21T00:12:43.145224191Z");
+        assertParseFloorFails("1677-09-21T00:12:43.145224193+00:01");
+        assertParseFloorFails("1677-09-21");
+        assertParseFloorFails("1677-01-01");
+        assertParseFloorFails("1677");
+        assertParseFloorFails("1676-12-31T23:59:59.999999999Z");
+        assertParseFloorFails("1000-01-01");
+        assertParseFloorFails("0001-01-01T00:00:00Z");
+        assertParseFloorFails("2262-W15-5T23:47:16.854775808");
+        assertParseFloorFails("2262-W16-1");
+        assertParseFloorFails("2262-W52");
+        assertParseFloorFails("1677-W38-2T00:12:43.145224192");
+        assertParseFloorFails("1677-W38-1");
+        assertParseFloorFails("1677-W01");
+    }
+
+    private static long epochNanos(String isoInstant) {
+        final Instant instant = Instant.parse(isoInstant);
+        long seconds = instant.getEpochSecond();
+        long nanos = instant.getNano();
+        if (seconds < 0 && nanos > 0) {
+            // keeps seconds * 1e9 inside the long range at the lower end
+            seconds++;
+            nanos -= 1_000_000_000L;
+        }
+        return Math.addExact(Math.multiplyExact(seconds, 1_000_000_000L), nanos);
+    }
+
+    private void assertImplicitCastPGDate(long expected, String text) {
+        assertParseFloorFails(text);
+        Assert.assertEquals(text, expected, driver.implicitCast(text, ColumnType.STRING));
+        Assert.assertEquals(text, expected, driver.implicitCastVarchar(new Utf8String(text)));
+    }
+
+    private void assertImplicitCastPGDateFails(String text) {
+        assertParseFloorFails(text);
+        try {
+            driver.implicitCast(text, ColumnType.STRING);
+            Assert.fail("Expected ImplicitCastException for " + text);
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+        }
+        try {
+            driver.implicitCastVarchar(new Utf8String(text));
+            Assert.fail("Expected ImplicitCastException for " + text);
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+        }
+    }
+
+    private void assertParseFloor(long expected, String text) throws NumericException {
+        Assert.assertEquals(text, expected, driver.parseFloorLiteral(text));
+        Assert.assertEquals(text, expected, driver.parseFloorLiteral(new Utf8String(text)));
+        Assert.assertEquals(text, expected, driver.parseQuotedLiteral("'" + text + "'"));
+    }
+
+    private void assertParseFloorFails(String text) {
+        try {
+            driver.parseFloorLiteral(text);
+            Assert.fail("Expected NumericException for " + text);
+        } catch (NumericException expected) {
+        }
+        try {
+            driver.parseFloorLiteral(new Utf8String(text));
+            Assert.fail("Expected NumericException for " + text);
+        } catch (NumericException expected) {
+        }
     }
 }

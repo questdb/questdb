@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -821,6 +822,60 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     .timestamp("nano_ts")
                     .expectSize()
                     .returns(expected);
+        });
+    }
+
+    @Test
+    public void testTextOutsideRange() throws Exception {
+        // TIMESTAMP_NS holds 1677-09-21T00:12:43.145224193Z to 2262-04-11T23:47:16.854775807Z;
+        // text outside that range used to wrap around the long range into an unrelated value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango(id INT, v TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tango VALUES
+                    (1, '2262-04-11T23:47:16.854775807Z', '1970-01-01'),
+                    (2, '1677-09-21T00:12:43.145224193Z', '1970-01-02'),
+                    (3, '2262-04-11 23:47:16.854z', '1970-01-03')
+                    """);
+            for (String text : new String[]{
+                    "'2262-04-11T23:47:16.854775808Z'",
+                    "'2262-12-31'",
+                    "'9999-12-31T00:00:00Z'::VARCHAR",
+                    "'1677-09-21T00:12:43.145224192Z'",
+                    "'0001-01-01'",
+                    "'2262-12-31 UTC'",
+                    "'9999-12-31 00:00:00.0Z'::VARCHAR"
+            }) {
+                try {
+                    execute("INSERT INTO tango VALUES (4, " + text + ", '1970-01-04')");
+                    Assert.fail("Expected an error for " + text);
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            assertQuery("SELECT id, v::LONG v FROM tango")
+                    .expectSize()
+                    .returns("""
+                            id\tv
+                            1\t9223372036854775807
+                            2\t-9223372036854775807
+                            3\t9223372036854000000
+                            """);
+
+            assertQuery("""
+                    SELECT
+                        '2262-04-11T23:47:16.854775808Z'::TIMESTAMP_NS a,
+                        '2262-12-31'::TIMESTAMP_NS b,
+                        '9999-12-31'::VARCHAR::TIMESTAMP_NS c,
+                        '1677-09-21T00:12:43.145224192Z'::TIMESTAMP_NS d,
+                        '0001-01-01'::TIMESTAMP_NS e,
+                        '2262-04-11T23:47:16.854775807Z'::TIMESTAMP_NS f
+                    """)
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc\td\te\tf
+                            \t\t\t\t\t2262-04-11T23:47:16.854775807Z
+                            """);
         });
     }
 
