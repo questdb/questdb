@@ -181,6 +181,11 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             // go backwards through per-frame symbol indexes, until we find a match or exhaust the search space
             long rowMax = Rows.toLocalRowID(slaveRecB.getRowId());
             int frameIndex = slaveTimeFrame.getFrameIndex();
+            // Last slave timestamp that scales to <= masterTimestamp, e.g. master 1500ns -> slave 1us.
+            // It caps source-row hits like rowMax caps physical hits; scaleTimestamp() saturates at MAX.
+            final long slaveTimestampHi = slaveTimestampScale == 1 || masterTimestamp == Long.MAX_VALUE
+                    ? masterTimestamp
+                    : Math.floorDiv(masterTimestamp, slaveTimestampScale);
             for (; ; ) {
                 final IndexReader indexReader = slaveTimeFrameCursor.getIndexReaderForCurrentFrame(
                         slaveSymbolColumnIndex,
@@ -195,7 +200,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                         symbolKey,
                         null,
                         slaveTimeFrame.getTimestampLo(),
-                        slaveTimeFrame.getTimestampHi() - 1
+                        Math.min(slaveTimeFrame.getTimestampHi() - 1, slaveTimestampHi)
                 );
                 if (sourceCursor != null) {
                     try (sourceCursor) {
