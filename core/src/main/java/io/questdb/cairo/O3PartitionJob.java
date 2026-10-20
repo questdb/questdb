@@ -3130,12 +3130,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long timestampMergeIndexAddr = 0;
         long timestampMergeIndexSize = 0;
         final TableRecordMetadata metadata = tableWriter.getMetadata();
-        if (mergeType == O3_BLOCK_MERGE) {
-            long mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
-            long tempIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
-            assert tempIndexSize > 0; // avoid SIGSEGV
+        try {
+            if (mergeType == O3_BLOCK_MERGE) {
+                long mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
+                long tempIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
+                assert tempIndexSize > 0; // avoid SIGSEGV
 
-            try {
                 if (tableWriter.isCommitPlainInsert()) {
                     timestampMergeIndexSize = tempIndexSize;
 
@@ -3311,47 +3311,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else {
                     throw new IllegalStateException("commit mode not supported");
                 }
-            } catch (Throwable e) {
-                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
-                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                        .$(", e=").$(e)
-                        .I$();
-
-                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                O3CopyJob.closeColumnIdleQuick(
-                        0,
-                        0,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter
-                );
-                throw e;
             }
-        }
 
-        if (openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
-            // An in-place append writes from srcDataMax into the partition's existing files. A reader sees rows
-            // past srcDataMax only if the partition shrank without a new version, as an O3 split does.
-            try {
+            if (openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
+                // An in-place append writes from srcDataMax into the partition's existing files. A reader sees rows
+                // past srcDataMax only if the partition shrank without a new version, as an O3 split does.
                 tableWriter.notifyPartitionAppend(oldPartitionTimestamp, srcNameTxn, srcDataMax);
-            } catch (Throwable e) {
-                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
-                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                        .$(", e=").$(e)
-                        .I$();
-                O3CopyJob.closeColumnIdleQuick(
-                        timestampMergeIndexAddr,
-                        timestampMergeIndexSize,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter
-                );
-                throw e;
             }
+        } catch (Throwable e) {
+            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", e=").$(e)
+                    .I$();
+            O3CopyJob.closeColumnIdleQuick(
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter
+            );
+            throw e;
         }
 
         tableWriter.addPhysicallyWrittenRows(
