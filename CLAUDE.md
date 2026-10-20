@@ -158,7 +158,7 @@ offending character, not the start of the expression.
 - PR descriptions must use a level-headed, analytical tone. Present both
   positive and negative effects of the PR with equal weight — don't cherry-pick
   good results, don't sell it, don't use superlatives or bold emphasis on
-  numbers. Point out regressions and tradeoffs as prominently as improvements.
+  numbers. State regressions and breaking changes plainly.
 - PRs that fix a GitHub issue must reference it with `Fixes #NNN` at the top of
   the PR body.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
@@ -166,8 +166,15 @@ offending character, not the start of the expression.
 - When committing, always include a full long-form description in the commit
   message body (not just the title). Lines in the description can be longer than
   in the commit title: up to 72 characters.
-- In PR test plans, use plain bullet points (`-`), not check marks or
-  checkboxes.
+- Keep PR bodies short. One short paragraph per fix: the symptom the user
+  sees, the cause, the change. State breaking changes and real regressions in
+  one sentence each. Leave out "Trade-offs" when there are none.
+- No test plan section in the PR body. The tests are the test plan.
+- No investigation output in the PR body: no probe results, no "fails without
+  the fix" evidence, no lists of covered shapes or configs, no "Not changed"
+  lists.
+- When new commits land, rewrite the PR body under these rules. Never append
+  to it.
 - Always add GitHub labels consistent with the PR title (e.g., a `perf(sql):` PR
   should get "SQL" and "Performance" labels).
 - Common PR labels: `Bug`, `CI`, `Compatibility`, `Core`, `Documentation`,
