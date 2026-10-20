@@ -119,7 +119,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         for (int i = 2; i < n; i += 2) {
             args.setQuick(
                     i,
-                    CaseCommon.getCastFunction(
+                    CaseCommon.getCastToCommonTypeFunction(
                             args.getQuick(i),
                             argPositions.getQuick(i),
                             returnType,
@@ -131,7 +131,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
         // don't forget to cast the else branch function
         if (elseBranch != null) {
-            elseBranch = CaseCommon.getCastFunction(
+            elseBranch = CaseCommon.getCastToCommonTypeFunction(
                     elseBranch,
                     elseBranchPosition,
                     returnType,
