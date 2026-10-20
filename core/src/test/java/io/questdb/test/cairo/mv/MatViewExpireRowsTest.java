@@ -50,9 +50,13 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.mp.Job;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -63,6 +67,8 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -3268,6 +3274,51 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testViewExecutionModelRecordsCreateViewDependencies() throws Exception {
+        // A view definition stored outside CREATE VIEW - the dependent-view refresh after a policy change,
+        // and Enterprise's in-place replacement of a system view - must grant the view the authority CREATE
+        // VIEW grants. Each shape below records something that only one of the parsed and optimised models
+        // shows: the "*" wildcard, the column a policy's read filter adds, and columns an aliased join
+        // reads inside a CTE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t (k SYMBOL, x INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+            final String[] viewSqls = {
+                    "SELECT * FROM t",
+                    "SELECT k FROM mv",
+                    """
+                    WITH
+                      latest AS (
+                        SELECT ts, k, status FROM (
+                          SELECT e.ts, l.k, e.status FROM t e JOIN mv l ON (k)
+                        ) LATEST ON ts PARTITION BY k
+                      )
+                    SELECT k FROM latest WHERE status = 'A'
+                    """
+            };
+            final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+            for (int i = 0; i < viewSqls.length; i++) {
+                final String viewName = "v" + i;
+                execute("CREATE VIEW " + viewName + " AS (" + viewSqls[i] + ")");
+                final TableToken viewToken = engine.verifyTableName(viewName);
+                final String created = sortedDependencies(engine.getViewGraph().getViewDefinition(viewToken).getDependencies());
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    final ExecutionModel model = compiler.generateViewExecutionModel(viewSqls[i], sqlExecutionContext, dependencies);
+                    Misc.free(SqlUtil.generateFactory(compiler, model, sqlExecutionContext));
+                }
+                assertEquals(viewSqls[i], created, sortedDependencies(dependencies));
+            }
+            // the "*" of v0 lets the view cover columns added to t later; v1 and v2 read mv through the
+            // policy's synthetic "SELECT * FROM mv WHERE ...", which adds the policy column v
+            assertDependencies("v0", "{t=[*, k, status, ts, x]}");
+            assertDependencies("v1", "{mv=[*, k, v]}");
+            assertDependencies("v2", "{mv=[*, k, v], t=[k, status, ts]}");
+        });
+    }
+
     private void assertExpireClause(String expected) throws Exception {
         assertQuery("SELECT expire_clause FROM materialized_views() WHERE view_name = 'mv'")
                 .noLeakCheck()
@@ -3528,6 +3579,28 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 applyThread.join(30_000);
             }
         });
+    }
+
+    private static void assertDependencies(String viewName, String expected) {
+        final TableToken viewToken = engine.verifyTableName(viewName);
+        assertEquals(viewName, expected, sortedDependencies(engine.getViewGraph().getViewDefinition(viewToken).getDependencies()));
+    }
+
+    private static String sortedDependencies(LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
+        final TreeMap<String, TreeSet<String>> sorted = new TreeMap<>();
+        final ObjList<CharSequence> tables = dependencies.keys();
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            final TreeSet<String> columns = new TreeSet<>();
+            final LowerCaseCharSequenceHashSet columnSet = dependencies.get(tables.getQuick(i));
+            for (int j = 0, m = columnSet.getKeyCount(); j < m; j++) {
+                final CharSequence column = columnSet.getKey(j);
+                if (column != null) {
+                    columns.add(column.toString());
+                }
+            }
+            sorted.put(tables.getQuick(i).toString(), columns);
+        }
+        return sorted.toString();
     }
 
     private void runCleanup(String viewName) throws Exception {

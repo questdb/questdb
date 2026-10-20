@@ -703,7 +703,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
         clear();
         lexer.of(sqlText);
-        return compileExecutionModel(executionContext, false);
+        return compileExecutionModel(executionContext, false, null);
     }
 
     @Override
@@ -744,6 +744,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         // Through generateSelectOneShot(), so that a subclass's wrapping of a plan covers this one.
         return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
+    }
+
+    @Override
+    public ExecutionModel generateViewExecutionModel(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> outDependencies
+    ) throws SqlException {
+        clear();
+        lexer.of(viewSql);
+        return compileExecutionModel(executionContext, false, outDependencies);
     }
 
     @Override
@@ -4151,10 +4162,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
-        return compileExecutionModel(executionContext, true);
+        return compileExecutionModel(executionContext, true, null);
     }
 
-    private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
+    // viewDependencies, when not null, receives the tables and columns a SELECT reads, as
+    // optimiseViewQuery() collects them for a view definition.
+    private ExecutionModel compileExecutionModel(
+            SqlExecutionContext executionContext,
+            boolean generateCompileViewEvents,
+            @Nullable LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> viewDependencies
+    ) throws SqlException {
         // Re-parse and re-optimise here when a racing EXPIRE ROWS change invalidates the parser's policy
         // decision. Ordinary compilation owns this retry. Materializing compilation entered in REJECT mode
         // propagates the signal to its outer CREATE or refresh guard so one event cannot consume two budgets.
@@ -4165,6 +4182,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             ExecutionModel model = null;
             try {
                 model = parser.parse(lexer, executionContext, this);
+                if (viewDependencies != null && model.getModelType() == ExecutionModel.QUERY) {
+                    return optimiseViewQuery((IQueryModel) model, executionContext, viewDependencies);
+                }
                 if (model.getModelType() != ExecutionModel.EXPLAIN) {
                     return compileExecutionModel0(executionContext, model);
                 } else {
@@ -5583,20 +5603,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (executionModel.getModelType() != ExecutionModel.QUERY) {
                         throw SqlException.$(startPos, "SELECT query expected");
                     }
-                    // Collect view dependencies from both the raw and the optimised model. The raw,
-                    // pre-optimisation model keeps a "SELECT *" over a base table as a "*" wildcard
-                    // dependency (optimise() expands it into a concrete column list), and that wildcard
-                    // is what lets the view keep covering columns added to the base table after the view
-                    // was created - the view-as-security-boundary contract in Enterprise. The optimised
-                    // model contributes the concrete columns the query actually references, including the
-                    // ones introduced by the row-expiry read filter, which the raw model hides behind its
-                    // synthetic sub-query. optimise() mutates the model in place, so collect the raw
-                    // references before it runs and accumulate the optimised references afterwards.
-                    dependencies.clear();
-                    SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) executionModel, dependencies);
-                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                    queryModel = optimiseViewQuery((IQueryModel) executionModel, executionContext, dependencies);
                     createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
-                    SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
 
                     final Runnable barrier = viewFactoryGenerationBarrier;
                     if (barrier != null) {
@@ -6919,6 +6927,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //  ALTER TABLE ... CONVERT PARTITION ... TO PARQUET statements. When automatic partition conversion
     //  to Parquet is supported in the future, we will need a different mechanism (e.g., table-level
     //  configuration or metadata) to specify bloom filter columns and FPP.
+    // Optimises the parsed SELECT of a view and collects the tables and columns it reads into
+    // dependencies, the set a view definition records. The parsed model keeps a "SELECT *" over a base
+    // table as a "*" wildcard, which optimise() expands into the columns the table has now; the wildcard
+    // is what lets the view keep covering columns added to the base table later, the view-as-security-
+    // boundary contract in Enterprise. The optimised model adds the columns the query reads that the
+    // parsed model does not name, such as those of a row-expiry read filter, which the parsed model hides
+    // behind its synthetic sub-query. optimise() changes the model in place, so the parsed references
+    // are collected before it runs.
+    private IQueryModel optimiseViewQuery(
+            IQueryModel parsedModel,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) throws SqlException {
+        dependencies.clear();
+        SqlUtil.collectTableAndColumnReferences(engine, parsedModel, dependencies);
+        final IQueryModel queryModel = optimiser.optimise(parsedModel, executionContext, this);
+        SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
+        return queryModel;
+    }
+
     private void parseConvertToParquetWithClause(
             AlterOperationBuilder alterOperationBuilder,
             TableRecordMetadata tableMetadata
@@ -7123,10 +7151,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // than replace it. Stays null on the retry path, where nothing is in flight.
                 Throwable failure = null;
                 try {
-                    executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+                    // the same dependencies CREATE VIEW records, which the definition it replaces holds
+                    executionModel = compiler.generateViewExecutionModel(viewSql, executionContext, dependencies);
                     final IQueryModel queryModel = executionModel.getQueryModel();
-                    dependencies.clear();
-                    SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
                     engine.getViewGraph().validateNoCycle(viewToken, queryModel);
                     try (RecordCursorFactory factory = compiler.generateSelectWithRetries(
                             queryModel,
