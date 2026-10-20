@@ -598,7 +598,11 @@ final class AggregateBinder implements Mutable {
             return;
         }
         if (expression.type == ExpressionNode.LITERAL) {
-            throw orderNotSelected(expression);
+            final OutputSchema bindingScope = aggregate.getChild() instanceof WindowPlan
+                    ? ctx.windowBindingScope(aggregate.getChild().getOutput()) : aggregate.getChild().getOutput();
+            if (!ctx.functionBinder.isOuterColumn(expression, bindingScope, sourceAlias(source))) {
+                throw orderNotSelected(expression);
+            }
         }
         if (expression.paramCount < 3) {
             collectAggregateOrderSubstitutions(expression.lhs, source, aggregate, project, visibleCount);
@@ -1357,7 +1361,11 @@ final class AggregateBinder implements Mutable {
             return true;
         }
         if (expression.type == ExpressionNode.LITERAL) {
-            throw SqlException.$(expression.position, "column must appear in GROUP BY clause or aggregate function");
+            final OutputSchema bindingScope = aggregate.getChild() instanceof WindowPlan
+                    ? ctx.windowBindingScope(aggregate.getChild().getOutput()) : aggregate.getChild().getOutput();
+            if (!ctx.functionBinder.isOuterColumn(expression, bindingScope, sourceAlias(source))) {
+                throw SqlException.$(expression.position, "column must appear in GROUP BY clause or aggregate function");
+            }
         }
         return false;
     }

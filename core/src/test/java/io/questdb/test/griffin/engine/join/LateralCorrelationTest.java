@@ -1267,6 +1267,188 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByLocalColumnShadowsOuterReference() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (id INT, k INT)");
+            execute("CREATE TABLE inner_t (k INT, x INT)");
+
+            final String qualified = """
+                    SELECT * FROM outer_t o CROSS JOIN LATERAL (
+                        SELECT i.k v, count() n FROM inner_t i WHERE i.k = o.k GROUP BY i.x
+                    ) d
+                    """;
+            assertQuery(qualified).noLeakCheck().fails(qualified.indexOf("i.k"), "column must appear in GROUP BY clause or aggregate function");
+            final String unqualified = """
+                    SELECT * FROM outer_t o CROSS JOIN LATERAL (
+                        SELECT k v, count() n FROM inner_t i WHERE i.k = o.k GROUP BY i.x
+                    ) d
+                    """;
+            assertQuery(unqualified).noLeakCheck().fails(unqualified.indexOf("k v"), "column must appear in GROUP BY clause or aggregate function");
+            final String shadowedAlias = """
+                    SELECT * FROM outer_t o CROSS JOIN LATERAL (
+                        SELECT o.k v, count() n FROM inner_t o GROUP BY o.x
+                    ) d
+                    """;
+            assertQuery(shadowedAlias).noLeakCheck().fails(shadowedAlias.indexOf("o.k"), "column must appear in GROUP BY clause or aggregate function");
+            assertQuery("SELECT i.k, count() FROM inner_t i GROUP BY i.x")
+                    .noLeakCheck()
+                    .fails(7, "column must appear in GROUP BY clause or aggregate function");
+        });
+    }
+
+    @Test
+    public void testGroupByOrderByLocalColumnShadowsOuterReference() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (id INT, k INT)");
+            execute("CREATE TABLE inner_t (k INT, x INT)");
+            final String query = """
+                    SELECT * FROM outer_t o CROSS JOIN LATERAL (
+                        SELECT count() n FROM inner_t i WHERE i.k = o.k GROUP BY i.x ORDER BY %s
+                    ) d
+                    """;
+            final String qualified = query.formatted("i.k");
+            assertQuery(qualified).noLeakCheck().fails(qualified.lastIndexOf("i.k"), "ORDER BY expressions must appear in select list. Invalid column: i.k");
+            final String unqualified = query.formatted("k");
+            assertQuery(unqualified).noLeakCheck().fails(unqualified.lastIndexOf("k"), "ORDER BY expressions must appear in select list. Invalid column: k");
+            final String unknown = query.formatted("o.missing");
+            assertQuery(unknown).noLeakCheck().fails(unknown.indexOf("o.missing"), "Invalid table name or alias");
+            final String shadowedAlias = """
+                    SELECT * FROM outer_t o CROSS JOIN LATERAL (
+                        SELECT count() n FROM inner_t o GROUP BY o.x ORDER BY o.k
+                    ) d
+                    """;
+            assertQuery(shadowedAlias).noLeakCheck().fails(shadowedAlias.indexOf("o.k"), "ORDER BY expressions must appear in select list. Invalid column: o.k");
+        });
+    }
+
+    @Test
+    public void testGroupByOrderByOuterExpressionLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (id INT, k INT)");
+            execute("INSERT INTO outer_t VALUES (-1, 1), (1, 1)");
+            execute("CREATE TABLE inner_t (k INT, x INT)");
+            execute("INSERT INTO inner_t VALUES (1, 10), (1, 10), (1, 20)");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.id, d.n FROM outer_t o CROSS JOIN LATERAL (
+                            SELECT count() + 0 n FROM inner_t i WHERE i.k = o.k
+                            GROUP BY i.x ORDER BY i.x * id LIMIT 1
+                        ) d ORDER BY o.id
+                        """)
+                        .noLeakCheck()
+                        .expectSize(isFullFat)
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                id\tn
+                                -1\t1
+                                1\t2
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByOrderByOuterReference() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (id INT, k INT)");
+            execute("INSERT INTO outer_t VALUES (1, 1), (2, 2), (3, NULL), (4, 3), (5, 1)");
+            execute("CREATE TABLE inner_t (k INT, x INT)");
+            execute("INSERT INTO inner_t VALUES (1, 10), (1, 20), (2, NULL), (NULL, 30)");
+            final String query = """
+                    SELECT o.id, d.n FROM outer_t o CROSS JOIN LATERAL (
+                        SELECT count() n FROM inner_t i WHERE i.k = o.k GROUP BY i.x ORDER BY %s
+                    ) d ORDER BY o.id, d.n
+                    """;
+            final String expected = """
+                    id\tn
+                    1\t1
+                    1\t1
+                    2\t1
+                    3\t1
+                    5\t1
+                    5\t1
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery(query.formatted("o.k")).noLeakCheck().fullFatJoins(isFullFat).expectSize(isFullFat).returns(expected);
+                assertQuery(query.formatted("o.k + 1")).noLeakCheck().fullFatJoins(isFullFat).expectSize(isFullFat).returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByOuterExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (id INT, k INT)");
+            execute("INSERT INTO outer_t VALUES (1, 1), (2, 2), (3, NULL), (4, 3), (5, 1)");
+            execute("CREATE TABLE inner_t (k INT, x INT)");
+            execute("INSERT INTO inner_t VALUES (1, 10), (1, 20), (2, NULL), (NULL, 30)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.id, d.v, d.next, d.mixed, d.outer_id, d.n
+                        FROM outer_t o
+                        LEFT JOIN LATERAL (
+                            SELECT o.k v, o.k + 1 next, coalesce(i.x, o.k) mixed, id outer_id, count() n
+                            FROM inner_t i
+                            WHERE i.k = o.k
+                            GROUP BY i.x
+                            ORDER BY o.k
+                        ) d ON true
+                        ORDER BY o.id, d.mixed
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                id\tv\tnext\tmixed\touter_id\tn
+                                1\t1\t2\t10\t1\t1
+                                1\t1\t2\t20\t1\t1
+                                2\t2\t3\t2\t2\t1
+                                3\tnull\tnull\t30\t3\t1
+                                4\tnull\tnull\tnull\tnull\tnull
+                                5\t1\t2\t10\t5\t1
+                                5\t1\t2\t20\t5\t1
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByOuterReference() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (id INT, k INT)");
+            execute("INSERT INTO outer_t VALUES (1, 1), (2, 2), (3, NULL), (4, 3), (5, 1)");
+            execute("CREATE TABLE inner_t (k INT, x INT)");
+            execute("INSERT INTO inner_t VALUES (1, 10), (1, 20), (2, NULL), (NULL, 30)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.id, d.v, d.n
+                        FROM outer_t o
+                        CROSS JOIN LATERAL (
+                            SELECT o.k v, count() n
+                            FROM inner_t i
+                            WHERE i.k = o.k
+                            GROUP BY i.x
+                        ) d
+                        ORDER BY o.id, d.v, d.n
+                        """)
+                        .noLeakCheck()
+                        .expectSize(isFullFat)
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                id\tv\tn
+                                1\t1\t1
+                                1\t1\t1
+                                2\t2\t1
+                                3\tnull\t1
+                                5\t1\t1
+                                5\t1\t1
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testGroupByOverJoinedCorrelatedSubQuery() throws Exception {
         // #7728
         assertMemoryLeak(() -> {

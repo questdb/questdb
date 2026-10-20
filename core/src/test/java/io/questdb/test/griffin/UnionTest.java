@@ -1973,12 +1973,12 @@ public class UnionTest extends AbstractCairoTest {
             execute("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
             execute("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
 
-            assertQuery("select typeof(s), s, sum(val) from (x1 union all x2)")
+            assertQuery("select typeof(s), s, sum(val) from (x1 union all x2) order by s")
                     .expectSize()
                     .returns("""
                             typeof\ts\tsum
-                            SYMBOL\tb\t9.711630235623893
                             SYMBOL\ta\t4.567523321042871
+                            SYMBOL\tb\t9.711630235623893
                             SYMBOL\tc\t6.077503835152431
                             """);
         });
