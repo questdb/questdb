@@ -27,9 +27,7 @@ The body you post is **the most recent `review-pr` report in this conversation**
 - If no review report exists in this conversation, STOP and tell the user to run
   `/skill:review-pr` first — do not fabricate a review.
 - Do not shorten or rewrite the review; post it verbatim. You only prepend the
-  author mention and leave out each Adjacent draft about a crash or hang that
-  hostile input triggers, which CLAUDE.md keeps out of public view; tell the
-  user you did.
+  author mention.
 
 ## Step 1: Detect the PR
 
@@ -59,7 +57,7 @@ break shell quoting). The first line must mention the author:
 ```
 @<AUTHOR>
 
-<the full verbatim review-pr report, minus the drafts Step 0 leaves out>
+<the full verbatim review-pr report>
 ```
 
 ## Step 3: Post the rejection

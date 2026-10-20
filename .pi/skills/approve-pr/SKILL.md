@@ -28,10 +28,7 @@ approve — tell the user the PR does not meet the bar and suggest `reject-pr`.
 
 - If no review report exists in this conversation, STOP and tell the user to run
   `/skill:review-pr` first — do not approve unreviewed code.
-- Post the review verbatim; do not shorten or rewrite it. The one exception:
-  leave out each Adjacent draft about a crash or hang that hostile input
-  triggers, which CLAUDE.md keeps out of public view, and tell the user you
-  did.
+- Post the review verbatim; do not shorten or rewrite it.
 
 ## Step 1: Detect the PR
 
@@ -55,8 +52,7 @@ then proceed.
 
 Write the review body to `/tmp/approve-pr-$PR.md` using the `write` tool (never
 inline it into a shell command — reviews contain backticks, quotes, and `$` that
-break shell quoting). The body is the full verbatim `review-pr` report, minus
-the drafts Step 0 leaves out.
+break shell quoting). The body is the full verbatim `review-pr` report.
 
 ## Step 3: Post the approval
 
