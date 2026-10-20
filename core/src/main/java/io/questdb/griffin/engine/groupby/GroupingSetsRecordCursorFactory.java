@@ -298,6 +298,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
         private final RecordSink mapSink;
         private final ObjList<IntList> nulledColumnsPerSet;
         private final ObjList<NullingRecord> nullingRecords;
+        private final int keyColumnCount;
         private final int setCount;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int currentSetIndex;
@@ -324,6 +325,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                 this.mapSink = mapSink;
                 this.nulledColumnsPerSet = nulledColumnsPerSet;
                 this.setCount = setCount;
+                this.keyColumnCount = keyTypes.getColumnCount();
 
                 // One map per grouping set. Maps start with a small initial
                 // capacity and grow lazily during the scan, so the upfront
@@ -470,6 +472,21 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                 }
                 rowId++;
+            }
+            for (int s = 0; s < setCount; s++) {
+                final Map dataMap = dataMaps.getQuick(s);
+                if (dataMap.size() == 0 && nulledColumnsPerSet.getQuick(s).size() == keyColumnCount) {
+                    final MapKey key = dataMap.withKey();
+                    mapSink.copy(nullingRecords.getQuick(s), key);
+                    final MapValue value = key.createValue();
+                    if (value.isNew()) {
+                        groupByFunctionsUpdater.updateEmpty(value);
+                        updateGroupingFunctions(s);
+                        for (int i = 0, n = groupingFunctions.size(); i < n; i++) {
+                            groupingFunctions.getQuick(i).computeFirst(value, nullingRecords.getQuick(s), rowId);
+                        }
+                    }
+                }
             }
             // Start iteration from first map
             currentSetIndex = 0;

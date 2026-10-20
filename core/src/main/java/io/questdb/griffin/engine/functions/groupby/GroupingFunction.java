@@ -79,6 +79,12 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
     }
 
     @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        // Both maps belong to the same grouping set, so they contain the same
+        // precomputed GROUPING value. Keep the destination value unchanged.
+    }
+
+    @Override
     public int getInt(Record rec) {
         return rec.getInt(valueIndex);
     }
@@ -145,6 +151,11 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, Numbers.INT_NULL);
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return true;
     }
 
     @Override

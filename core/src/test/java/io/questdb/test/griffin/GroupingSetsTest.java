@@ -30,6 +30,54 @@ import org.junit.Test;
 public class GroupingSetsTest extends AbstractCairoTest {
 
     @Test
+    public void testAsyncGroupingSets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            sqlExecutionContext.setParallelGroupByEnabled(true);
+            String query = "SELECT a, b, GROUPING_ID(a, b) AS gid, SUM(v) FROM t GROUP BY GROUPING SETS ((a, b), (a), ()) ORDER BY gid, a, b";
+            assertQuery(query)
+                    .withContext(sqlExecutionContext)
+                    .assertsPlanContaining("Async Group By");
+            assertQuery(query)
+                    .withContext(sqlExecutionContext)
+                    .expectSize()
+                    .returns("a\tb\tgid\tSUM\nnull\tnull\t3\tnull\n");
+            execute("INSERT INTO t VALUES (1, 10, 3), (1, 20, 4), (2, 10, 5)");
+            assertQuery(query)
+                    .withContext(sqlExecutionContext)
+                    .assertsPlanContaining("Async Group By");
+            assertQuery(query)
+                    .withContext(sqlExecutionContext)
+                    .expectSize()
+                    .returns("a\tb\tgid\tSUM\n"
+                            + "1\t10\t0\t3.0\n"
+                            + "1\t20\t0\t4.0\n"
+                            + "2\t10\t0\t5.0\n"
+                            + "1\tnull\t1\t7.0\n"
+                            + "2\tnull\t1\t5.0\n"
+                            + "null\tnull\t3\t12.0\n");
+        });
+    }
+
+    @Test
+    public void testAsyncGroupingSetsMultipleFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT (x % 4)::INT, (x % 7)::INT, x, ((x - 1) / 700 * 86400000000L)::TIMESTAMP FROM long_sequence(2_800)");
+            sqlExecutionContext.setParallelGroupByEnabled(true);
+            String groupedQuery = "SELECT a, b, GROUPING_ID(a, b) AS gid, SUM(x) AS n FROM t GROUP BY GROUPING SETS ((a, b), (a), ())";
+            assertQuery(groupedQuery)
+                    .withContext(sqlExecutionContext)
+                    .assertsPlanContaining("Async Group By");
+            assertQuery("SELECT COUNT() AS group_count, SUM(n) AS row_count FROM (" + groupedQuery + ")")
+                    .withContext(sqlExecutionContext)
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("group_count\trow_count\n33\t11764200\n");
+        });
+    }
+
+    @Test
     public void testCompositeGroupByCube() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -617,9 +665,9 @@ public class GroupingSetsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT, y DOUBLE)");
 
-            // Empty table should produce no rows, even for the grand total
+            // Empty table produces the grand-total row for the empty grouping set.
             assertGroupingSetsQuery(
-                    "x\tSUM\n",
+                    "x\tSUM\nnull\tnull\n",
                     "SELECT x, SUM(y) FROM t GROUP BY ROLLUP(x)"
             );
         });
@@ -1326,12 +1374,36 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyInputGroupingSetGrandTotal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            String query = "SELECT a, b, GROUPING_ID(a, b) AS gid, COUNT(*) AS n, SUM(v) AS s "
+                    + "FROM t GROUP BY GROUPING SETS ((a, b), ()) ORDER BY gid, a, b";
+            String expected = "a\tb\tgid\tn\ts\nnull\tnull\t3\t0\tnull\n";
+
+            assertQuery(query)
+                    .expectSize()
+                    .returns(expected);
+
+            sqlExecutionContext.setParallelGroupByEnabled(true);
+            assertQuery(query)
+                    .withContext(sqlExecutionContext)
+                    .assertsPlanContaining("Async Group By");
+            assertQuery(query)
+                    .withContext(sqlExecutionContext)
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testEmptyTableRollup() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, v DOUBLE)");
-            // Empty table produces no rows (map is empty, no data to aggregate)
+            // Empty table produces the grand-total row for the empty grouping set.
             assertGroupingSetsQuery(
-                    "a\tSUM\n",
+                    "a\tSUM\nnull\tnull\n",
                     "SELECT a, SUM(v) FROM t GROUP BY ROLLUP(a)"
             );
         });
@@ -1342,7 +1414,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
             assertGroupingSetsQuery(
-                    "a\tb\tSUM\n",
+                    "a\tb\tSUM\nnull\tnull\tnull\n",
                     "SELECT a, b, SUM(v) FROM t GROUP BY CUBE(a, b)"
             );
         });
@@ -1444,7 +1516,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     "c6 INT, c7 INT, c8 INT, c9 INT, c10 INT, " +
                     "c11 INT, c12 INT, v INT)");
             assertGroupingSetsQuery(
-                    "c1\tSUM\n",
+                    "c1\tSUM\nnull\tnull\n",
                     "SELECT c1, SUM(v) FROM cube12" +
                             " GROUP BY CUBE(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12)"
             );

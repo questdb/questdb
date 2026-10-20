@@ -287,6 +287,7 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupingSetsRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
@@ -10540,17 +10541,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata baseMetadata = factory.getMetadata();
 
             boolean enableParallelGroupBy = executionContext.isParallelGroupByEnabled();
-            // GROUPING SETS always uses the single-threaded GroupingSetsRecordCursorFactory.
-            // Rosti and async parallel paths do not support multiple key configurations.
-            if (model.hasGroupingSets()) {
-                enableParallelGroupBy = false;
-            }
             // The vectorized (Rosti) group-by runs SIMD over raw page addresses with no
             // type-cast guard and no row-wise fallback, so it cannot read a column decoded
             // in its pre-conversion source type. Let the guarded Async group-by handle those.
             boolean canVectorize = !factory.hasParquetConvertedColumns(executionContext);
             // Inspect model for possibility of vector aggregate intrinsics.
-            if (canVectorize && enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, baseMetadata, hourIndex)) {
+            if (!model.hasGroupingSets() && canVectorize && enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, baseMetadata, hourIndex)) {
                 // Create baseMetadata from everything we've gathered.
                 GenericRecordMetadata meta = new GenericRecordMetadata();
 
@@ -10729,7 +10725,82 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
             if (
+                    model.hasGroupingSets()
+                            && enableParallelGroupBy
+                            && keyTypes.getColumnCount() > 0
+                            && keyTypes.getColumnCount() <= 31
+                            && executionContext.getSharedQueryWorkerCount() > 0
+                            && model.getGroupingSets().size() <= 256 / (executionContext.getSharedQueryWorkerCount() + 1)
+                            && factory.supportsPageFrameCursor()
+                            && SqlUtil.isParallelismSupported(keyFunctions)
+                            && GroupByUtils.isParallelismSupported(groupByFunctions)
+            ) {
+                final WorkerFunctionLists workerFunctions = compilePerWorkerInnerProjectionFunctions(
+                        executionContext,
+                        model.getColumns(),
+                        innerProjectionFunctions,
+                        executionContext.getSharedQueryWorkerCount(),
+                        baseMetadata,
+                        projectionFunctionFlags
+                );
+                if (workerFunctions != null) {
+                    perWorkerGroupByFunctions = workerFunctions.getGroupByFunctions();
+                    perWorkerKeyFunctions = workerFunctions.getKeyFunctions();
+                    IntList keyColumnIndices = new IntList();
+                    for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+                        keyColumnIndices.add(listColumnFilterA.getColumnIndexFactored(i));
+                    }
+
+                    IntList fillKeyColumnPositions = new IntList();
+                    int tsIdx = outerProjectionMetadata.getTimestampIndex();
+                    for (int i = 0, n = projectionFunctionFlags.size(); i < n; i++) {
+                        if (projectionFunctionFlags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_COLUMN && i != tsIdx) {
+                            fillKeyColumnPositions.add(i);
+                        } else if (projectionFunctionFlags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
+                                && outerProjectionFunctions.getQuick(i) instanceof GroupingFunction) {
+                            fillKeyColumnPositions.add(i);
+                        }
+                    }
+
+                    final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
+                    final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
+                    final ObjList<Function> keyFunctions0 = keyFunctions;
+                    final ObjList<ObjList<Function>> perWorkerKeyFunctions0 = perWorkerKeyFunctions;
+                    final ObjList<Function> recordFunctions0 = outerProjectionFunctions;
+                    innerProjectionFunctions = null;
+                    outerProjectionFunctions = null;
+                    perWorkerGroupByFunctions = null;
+                    perWorkerKeyFunctions = null;
+
+                    return generateFill(
+                            model,
+                            new AsyncGroupingSetsRecordCursorFactory(
+                                    executionContext.getCairoEngine(),
+                                    asm,
+                                    configuration,
+                                    executionContext.getMessageBus(),
+                                    factory,
+                                    outerProjectionMetadata,
+                                    listColumnFilterA,
+                                    keyTypes,
+                                    valueTypes,
+                                    groupByFunctions0,
+                                    perWorkerGroupByFunctions0,
+                                    keyFunctions0,
+                                    perWorkerKeyFunctions0,
+                                    recordFunctions0,
+                                    model.getGroupingSets(),
+                                    keyColumnIndices,
+                                    executionContext.getSharedQueryWorkerCount()
+                            ),
+                            executionContext,
+                            fillKeyColumnPositions
+                    );
+                }
+            }
+            if (
                     enableParallelGroupBy
+                            && !model.hasGroupingSets()
                             && SqlUtil.isParallelismSupported(keyFunctions)
                             && GroupByUtils.isParallelismSupported(groupByFunctions)
             ) {
