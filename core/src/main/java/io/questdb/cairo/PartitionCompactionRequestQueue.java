@@ -30,14 +30,17 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Os;
 
 /**
- * Bounded, lossy queue of requests to fold one logical partition into a single plain folder, served by
- * {@link PartitionCompactionScanJob} ahead of its own sweep. Any thread may {@link #tryRequest} - the enterprise
- * storage policy does, for a split or composite partition it cannot convert to parquet as it stands - and a full
- * queue refuses rather than blocks. Requests are not de-duplicated: a requester that wants the fold keeps asking
+ * Bounded, lossy queue of requests to fold one logical partition into a single plain folder, to convert it into a
+ * single parquet folder, or to build a parquet copy of it beside its native files, served by
+ * {@link PartitionCompactionScanJob} ahead of its own sweep. Any thread may make one - the enterprise storage policy
+ * does - and a full queue refuses rather than blocks. Requests are not de-duplicated: a requester that wants the fold keeps asking
  * until it sees it, and the job ignores a request whose logical partition is already plain or already has a swap
  * in flight.
  */
 public class PartitionCompactionRequestQueue {
+    public static final int KIND_FOLD = 0;
+    public static final int KIND_PARQUET_CONVERSION = 1;
+    public static final int KIND_PARQUET_GENERATION = 2;
     private final MPSequence pubSeq;
     private final RingQueue<Request> queue;
     private final SCSequence subSeq;
@@ -73,9 +76,9 @@ public class PartitionCompactionRequestQueue {
             return false;
         }
         final Request request = queue.get(cursor);
-        sink.of(request.tableToken, request.logicalPartitionTimestamp);
+        sink.of(request.tableToken, request.logicalPartitionTimestamp, request.kind);
         // Not kept alive by a consumed slot.
-        request.of(null, Long.MIN_VALUE);
+        request.of(null, Long.MIN_VALUE, KIND_FOLD);
         subSeq.done(cursor);
         return true;
     }
@@ -86,6 +89,31 @@ public class PartitionCompactionRequestQueue {
      * @return false when the queue is full and the request was not taken
      */
     public boolean tryRequest(TableToken tableToken, long logicalPartitionTimestamp) {
+        return tryRequest(tableToken, logicalPartitionTimestamp, KIND_FOLD);
+    }
+
+    /**
+     * Asks for the logical partition at {@code logicalPartitionTimestamp} - whatever its folders, plain or composite,
+     * main directory or splits - to be converted into one parquet folder in a single pass.
+     *
+     * @return false when the queue is full and the request was not taken
+     */
+    public boolean tryRequestParquetConversion(TableToken tableToken, long logicalPartitionTimestamp) {
+        return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_CONVERSION);
+    }
+
+    /**
+     * Asks for a parquet copy of the logical partition at {@code logicalPartitionTimestamp} to be built and installed
+     * beside its native files, the partition staying native - what cold storage uploads a native partition from. A
+     * logical partition that is not one plain folder is folded first, and the requester asks again.
+     *
+     * @return false when the queue is full and the request was not taken
+     */
+    public boolean tryRequestParquetGeneration(TableToken tableToken, long logicalPartitionTimestamp) {
+        return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_GENERATION);
+    }
+
+    private boolean tryRequest(TableToken tableToken, long logicalPartitionTimestamp, int kind) {
         long cursor;
         while ((cursor = pubSeq.next()) == -2) {
             Os.pause();
@@ -93,14 +121,22 @@ public class PartitionCompactionRequestQueue {
         if (cursor < 0) {
             return false;
         }
-        queue.get(cursor).of(tableToken, logicalPartitionTimestamp);
+        queue.get(cursor).of(tableToken, logicalPartitionTimestamp, kind);
         pubSeq.done(cursor);
         return true;
     }
 
     public static class Request {
+        private int kind = KIND_FOLD;
         private long logicalPartitionTimestamp = Long.MIN_VALUE;
         private TableToken tableToken;
+
+        /**
+         * One of {@link #KIND_FOLD}, {@link #KIND_PARQUET_CONVERSION}, {@link #KIND_PARQUET_GENERATION}.
+         */
+        public int getKind() {
+            return kind;
+        }
 
         public long getLogicalPartitionTimestamp() {
             return logicalPartitionTimestamp;
@@ -110,9 +146,10 @@ public class PartitionCompactionRequestQueue {
             return tableToken;
         }
 
-        void of(TableToken tableToken, long logicalPartitionTimestamp) {
+        void of(TableToken tableToken, long logicalPartitionTimestamp, int kind) {
             this.tableToken = tableToken;
             this.logicalPartitionTimestamp = logicalPartitionTimestamp;
+            this.kind = kind;
         }
     }
 }

@@ -3,6 +3,7 @@ use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_write::file::{
     ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
 };
+use crate::parquet_write::frames::{FrameAccumulator, PartitionFrameWriter};
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
 use qdb_core::col_type::ColumnType;
@@ -753,7 +754,7 @@ fn take_partition_updater_fds(
     }
 }
 
-fn build_column_infos_from_partition<'a>(
+pub(crate) fn build_column_infos_from_partition<'a>(
     partition: &'a crate::parquet_write::schema::Partition,
     schema_columns: &[parquet2::metadata::ColumnDescriptor],
     sorting_columns: Option<&[parquet2::metadata::SortingColumn]>,
@@ -1062,18 +1063,11 @@ pub struct StreamingParquetWriter {
     chunked_writer: ChunkedWriter<BufferWriter>,
     additional_data: Vec<KeyValue>,
 
-    // Fields for accumulating partitions across multiple writeChunk calls
-    row_group_size: usize,
-    pending_partitions: Vec<Partition>,
-    first_partition_start: usize,
-    accumulated_rows: usize,
-    // Cumulative count of rows that have been fully written to row groups.
-    // Used by Java to determine when partition memory can be safely released.
-    rows_written_to_row_groups: usize,
-    // Keep RowGroupBuffers alive while partitions reference their data.
-    // Used by writeStreamingParquetChunkFromRowGroup to hold decoded parquet data.
-    // Index corresponds to pending_partitions: Some(_) for FromRowGroup, None for writeChunk.
-    pending_row_group_buffers: Vec<Option<crate::parquet_read::RowGroupBuffers>>,
+    // Frames not written to a row group yet. A frame decoded from a parquet row group
+    // carries the RowGroupBuffers its columns point into (writeStreamingParquetChunkFromRowGroup);
+    // a frame of caller memory carries none (writeChunk). The accumulator also counts the rows
+    // written to row groups, which Java uses to decide when frame memory can be released.
+    frames: FrameAccumulator<Option<crate::parquet_read::RowGroupBuffers>>,
 }
 
 #[no_mangle]
@@ -1188,12 +1182,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             current_buffer,
             chunked_writer,
             additional_data,
-            row_group_size: effective_row_group_size,
-            pending_partitions: Vec::new(),
-            first_partition_start: 0,
-            accumulated_rows: 0,
-            rows_written_to_row_groups: 0,
-            pending_row_group_buffers: Vec::new(),
+            frames: FrameAccumulator::new(effective_row_group_size),
         })
     };
 
@@ -1233,9 +1222,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 columns: encoder.partition.columns.clone(),
             };
             update_partition_data(&mut new_partition, col_data_ptr, row_count)?;
-            encoder.pending_partitions.push(new_partition);
-            encoder.pending_row_group_buffers.push(None);
-            encoder.accumulated_rows += row_count;
+            encoder.frames.push(new_partition, None);
         }
         flush_pending_partitions(encoder)
     };
@@ -1251,12 +1238,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 }
 
 fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResult<*const u8> {
-    if encoder.accumulated_rows >= encoder.row_group_size {
+    if encoder.frames.has_full_row_group() {
         // SAFETY: Truncating to zero is always valid.
         unsafe {
             encoder.current_buffer.set_len(0);
         }
-        write_pending_row_group(encoder)?;
+        encoder
+            .frames
+            .write_row_group(&mut encoder.chunked_writer)?;
         // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
         debug_assert!(
             encoder.current_buffer.len() >= 16,
@@ -1265,86 +1254,11 @@ fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResu
         let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         encoder.current_buffer[8..16]
-            .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
+            .copy_from_slice(&(encoder.frames.rows_written_to_row_groups() as u64).to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
     } else {
         Ok(std::ptr::null())
     }
-}
-
-fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResult<()> {
-    let row_group_size = encoder.row_group_size;
-    let first_start = encoder.first_partition_start;
-    let mut rows_needed = row_group_size;
-    let mut last_partition_idx = 0;
-    let mut last_partition_end = 0;
-
-    for (idx, partition) in encoder.pending_partitions.iter().enumerate() {
-        let partition_rows = partition.columns[0].row_count;
-        let available_rows = if idx == 0 {
-            partition_rows.saturating_sub(first_start)
-        } else {
-            partition_rows
-        };
-
-        if available_rows >= rows_needed {
-            last_partition_idx = idx;
-            last_partition_end = if idx == 0 {
-                first_start + rows_needed
-            } else {
-                rows_needed
-            };
-            break;
-        } else {
-            rows_needed -= available_rows;
-            last_partition_idx = idx;
-            last_partition_end = partition_rows;
-        }
-    }
-
-    let partitions: Vec<&Partition> = encoder.pending_partitions[..=last_partition_idx]
-        .iter()
-        .collect();
-    encoder.chunked_writer.write_row_group_from_partitions(
-        &partitions,
-        first_start,
-        last_partition_end,
-    )?;
-
-    // Track rows written to row groups (always row_group_size for intermediate flushes)
-    encoder.rows_written_to_row_groups += row_group_size;
-
-    let last_partition_rows = encoder.pending_partitions[last_partition_idx].columns[0].row_count;
-
-    if last_partition_end >= last_partition_rows {
-        encoder.pending_partitions.drain(..=last_partition_idx);
-        encoder
-            .pending_row_group_buffers
-            .drain(..=last_partition_idx);
-        encoder.first_partition_start = 0;
-    } else {
-        encoder.pending_partitions.drain(..last_partition_idx);
-        encoder
-            .pending_row_group_buffers
-            .drain(..last_partition_idx);
-        encoder.first_partition_start = last_partition_end;
-    }
-
-    encoder.accumulated_rows = encoder
-        .pending_partitions
-        .iter()
-        .enumerate()
-        .map(|(idx, p)| {
-            let rows = p.columns[0].row_count;
-            if idx == 0 {
-                rows.saturating_sub(encoder.first_partition_start)
-            } else {
-                rows
-            }
-        })
-        .sum();
-
-    Ok(())
 }
 
 #[no_mangle]
@@ -1370,20 +1284,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             encoder.current_buffer.set_len(0);
         }
 
-        if !encoder.pending_partitions.is_empty() && encoder.accumulated_rows > 0 {
-            let last_idx = encoder.pending_partitions.len() - 1;
-            let last_partition_end = encoder.pending_partitions[last_idx].columns[0].row_count;
-
-            let partitions: Vec<&Partition> = encoder.pending_partitions.iter().collect();
-            encoder.chunked_writer.write_row_group_from_partitions(
-                &partitions,
-                encoder.first_partition_start,
-                last_partition_end,
-            )?;
-
-            // Track remaining rows written in the final row group
-            encoder.rows_written_to_row_groups += encoder.accumulated_rows;
-        }
+        encoder
+            .frames
+            .write_remaining(&mut encoder.chunked_writer)?;
 
         encoder
             .chunked_writer
@@ -1396,7 +1299,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         encoder.current_buffer[8..16]
-            .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
+            .copy_from_slice(&(encoder.frames.rows_written_to_row_groups() as u64).to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
     };
 
@@ -1440,6 +1343,217 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetEncod
     } else {
         0
     }
+}
+
+/// Opens a [`PartitionFrameWriter`] over a new parquet file at `dest_path`. The column
+/// template has the layout `createStreamingParquetWriter` takes: three longs per column -
+/// name length, `writer index << 32 | type`, parquet encoding config - over the names in
+/// `col_names_ptr`, which, like the `_pm` fd, Java keeps alive until it destroys the writer.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFrameEncoder_create(
+    mut env: JNIEnv,
+    _class: JClass,
+    col_count: jint,
+    col_names_ptr: *const u8,
+    col_names_len: jint,
+    col_meta_data: *const i64,
+    timestamp_index: jint,
+    dest_path: *const u8,
+    dest_path_len: jint,
+    compression_codec: jlong,
+    statistics_enabled: jboolean,
+    raw_array_encoding: jboolean,
+    row_group_size: jlong,
+    data_page_size: jlong,
+    version: jint,
+    bloom_filter_column_indexes: *const jint,
+    bloom_filter_column_count: jint,
+    bloom_filter_fpp: jdouble,
+    min_compression_ratio: jdouble,
+    parquet_meta_fd: jint,
+    squash_tracker: jlong,
+    seq_txn: jlong,
+) -> *mut PartitionFrameWriter {
+    let env = &mut env;
+    let create = || -> ParquetResult<PartitionFrameWriter> {
+        let template = create_partition_template(
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_meta_data,
+            timestamp_index,
+            0,
+        )?;
+        let dest_path_len =
+            checked_slice_len::<u8>(i64::from(dest_path_len), "destination path length")?;
+        // SAFETY: JNI caller guarantees a valid pointer to `dest_path_len` bytes of UTF-8 path data.
+        let dest_path = unsafe {
+            std::str::from_utf8_unchecked(slice::from_raw_parts(dest_path, dest_path_len))
+        };
+        let dest_path = Path::new(dest_path);
+        let compression_options =
+            compression_from_i64(compression_codec).context("CompressionCodec")?;
+        let row_group_size = if row_group_size > 0 {
+            Some(row_group_size as usize)
+        } else {
+            None
+        };
+        let data_page_size = if data_page_size > 0 {
+            Some(data_page_size as usize)
+        } else {
+            None
+        };
+        let bloom_filter_cols = build_bloom_filter_set(
+            bloom_filter_column_indexes,
+            bloom_filter_column_count,
+            template.columns.len(),
+        )?;
+        let bloom_fpp = if bloom_filter_fpp > 0.0 && bloom_filter_fpp < 1.0 {
+            bloom_filter_fpp
+        } else {
+            DEFAULT_BLOOM_FILTER_FPP
+        };
+        let sorting_columns = template
+            .columns
+            .iter()
+            .position(|c| c.designated_timestamp)
+            .map(|i| vec![SortingColumn::new(i as i32, false, false)]);
+        let seq_txn = SeqTxn::new(seq_txn);
+
+        let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
+        let file = file.with_context(|_| {
+            format!("could not create parquet file for {}", dest_path.display())
+        })?;
+        let sync_handle: ParquetResult<_> = file.try_clone().map_err(|e| e.into());
+        let sync_handle = sync_handle.context("could not duplicate parquet file handle")?;
+
+        let (schema, additional_meta) = crate::parquet_write::schema::to_parquet_schema(
+            &template,
+            raw_array_encoding != 0,
+            squash_tracker,
+            seq_txn,
+        )?;
+        let encodings = crate::parquet_write::schema::to_encodings(&template);
+        let compressions = crate::parquet_write::schema::to_compressions(&template);
+        let chunked_writer = ParquetWriter::new(file)
+            .with_version(version_from_i32(version)?)
+            .with_compression(compression_options)
+            .with_statistics(statistics_enabled != 0)
+            .with_raw_array_encoding(raw_array_encoding != 0)
+            .with_row_group_size(row_group_size)
+            .with_data_page_size(data_page_size)
+            .with_sorting_columns(sorting_columns.clone())
+            .with_bloom_filter_columns(bloom_filter_cols)
+            .with_bloom_filter_fpp(bloom_fpp)
+            .with_min_compression_ratio(min_compression_ratio)
+            .with_squash_tracker(squash_tracker)
+            .with_seq_txn(seq_txn)
+            .chunked_with_compressions(schema, encodings, compressions)?;
+
+        Ok(PartitionFrameWriter::new(
+            template,
+            sync_handle,
+            chunked_writer,
+            additional_meta,
+            row_group_size.unwrap_or(DEFAULT_ROW_GROUP_SIZE),
+            sorting_columns,
+            parquet_meta_fd,
+            squash_tracker,
+            seq_txn,
+        ))
+    };
+
+    match create() {
+        Ok(writer) => Box::into_raw(Box::new(writer)),
+        Err(mut err) => {
+            err.add_context("error in PartitionFrameEncoder.create");
+            err.into_cairo_exception()
+                .throw::<*mut PartitionFrameWriter>(env)
+        }
+    }
+}
+
+/// Hands one frame to the writer: seven longs per template column, the layout
+/// `writeStreamingParquetChunk` takes - column top, primary address and size, secondary
+/// address and size (symbol values for a SYMBOL column), symbol offsets address and count.
+/// The frame's memory must stay valid until the returned count of rows written to row
+/// groups covers it.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFrameEncoder_writeFrame(
+    mut env: JNIEnv,
+    _class: JClass,
+    writer: *mut PartitionFrameWriter,
+    col_data_ptr: *const i64,
+    row_count: jlong,
+) -> jlong {
+    let env = &mut env;
+    if writer.is_null() {
+        let mut err = fmt_err!(InvalidType, "PartitionFrameWriter pointer is null");
+        err.add_context("error in PartitionFrameEncoder.writeFrame");
+        return err.into_cairo_exception().throw::<jlong>(env);
+    }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let writer = unsafe { &mut *writer };
+    let mut write_frame = || -> ParquetResult<jlong> {
+        let row_count = checked_non_negative_usize(row_count, "row count")?;
+        if row_count > 0 {
+            let mut frame = Partition {
+                table: String::new(),
+                columns: writer.template().columns.clone(),
+            };
+            update_partition_data(&mut frame, col_data_ptr, row_count)?;
+            return Ok(writer.write_frame(frame)? as jlong);
+        }
+        Ok(writer.rows_written_to_row_groups() as jlong)
+    };
+    match write_frame() {
+        Ok(rows) => rows,
+        Err(mut err) => {
+            err.add_context("error in PartitionFrameEncoder.writeFrame");
+            err.into_cairo_exception().throw::<jlong>(env)
+        }
+    }
+}
+
+/// Writes the last row group, the footer and the `_pm` sidecar, syncing both files when
+/// `sync` is set. Returns the parquet file size.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFrameEncoder_finish(
+    mut env: JNIEnv,
+    _class: JClass,
+    writer: *mut PartitionFrameWriter,
+    sync: jboolean,
+) -> jlong {
+    let env = &mut env;
+    if writer.is_null() {
+        let mut err = fmt_err!(InvalidType, "PartitionFrameWriter pointer is null");
+        err.add_context("error in PartitionFrameEncoder.finish");
+        return err.into_cairo_exception().throw::<jlong>(env);
+    }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    let writer = unsafe { &mut *writer };
+    match writer.finish(sync != 0) {
+        Ok(size) => size as jlong,
+        Err(mut err) => {
+            err.add_context("error in PartitionFrameEncoder.finish");
+            err.into_cairo_exception().throw::<jlong>(env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFrameEncoder_destroy(
+    _env: JNIEnv,
+    _class: JClass,
+    writer: *mut PartitionFrameWriter,
+) {
+    if writer.is_null() {
+        return;
+    }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Java guarantees a single destroy call and no further use after destroy.
+    let _ = unsafe { Box::from_raw(writer) };
 }
 
 fn create_partition_template(
@@ -1803,9 +1917,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 row_count,
                 symbol_data_ptr,
             )?;
-            encoder.pending_partitions.push(partition);
-            encoder.pending_row_group_buffers.push(Some(row_group_bufs));
-            encoder.accumulated_rows += row_count;
+            encoder.frames.push(partition, Some(row_group_bufs));
         }
 
         flush_pending_partitions(encoder)
@@ -1866,9 +1978,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 row_count,
                 symbol_data_ptr,
             )?;
-            encoder.pending_partitions.push(partition);
-            encoder.pending_row_group_buffers.push(Some(owned_bufs));
-            encoder.accumulated_rows += row_count;
+            encoder.frames.push(partition, Some(owned_bufs));
         }
 
         flush_pending_partitions(encoder)

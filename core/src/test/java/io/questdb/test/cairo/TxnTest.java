@@ -1023,7 +1023,7 @@ public class TxnTest extends AbstractCairoTest {
                         Assert.assertEquals("seqTxn survives setting REMOTE", 7L, tw.getNativePartitionSeqTxn(0));
                         // Invariant: REMOTE lives in bit 63 (the sign bit) of offset 3, so the raw
                         // word is negative -- but every value reader masks it off. Consumers that treat
-                        // "version < 0" as "no version" (e.g. markPartitionParquetReady) must never
+                        // "version < 0" as "no version" (e.g. installGeneratedParquet) must never
                         // misread a remote partition as unstamped.
                         Assert.assertTrue("a remote partition's seqTxn must read non-negative",
                                 tw.getNativePartitionSeqTxn(0) >= 0);

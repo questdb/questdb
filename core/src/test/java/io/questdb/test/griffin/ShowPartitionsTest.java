@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -34,8 +35,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
@@ -287,31 +286,30 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            // Stage the generated-not-switched shape: encode the first partition to a local
-            // data.parquet, then mark it parquet_generated while it stays native-format.
+            // Stage the generated-not-switched shape: the compaction job builds a parquet copy of the first
+            // partition and installs it beside the native files, the partition staying native-format.
             TableToken token = engine.verifyTableName(tableName);
-            long partitionTs;
-            long dataParquetSize;
-            try (
-                    TableReader reader = engine.getReader(token);
-                    Path path = new Path();
-                    PartitionDescriptor descriptor = new PartitionDescriptor()
-            ) {
+            final long partitionTs;
+            final long nameTxn;
+            try (TableReader reader = engine.getReader(token)) {
                 partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
-                long nameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                nameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            engine.releaseAllWriters();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetGeneration(token, partitionTs));
+                Assert.assertTrue("the request must dispatch the parquet copy", job.run());
+            }
+            final long dataParquetSize;
+            try (TableReader reader = engine.getReader(token); Path path = new Path()) {
+                Assert.assertFalse("partition must stay native-format", reader.getTxFile().isPartitionParquet(0));
+                Assert.assertTrue("partition must be parquet_generated", reader.getTxFile().isPartitionParquetGenerated(0));
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, nameTxn);
                 path.concat(TableUtils.PARQUET_PARTITION_NAME);
-                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
-                PartitionEncoder.encode(descriptor, path);
                 dataParquetSize = configuration.getFilesFacade().length(path.$());
-                Assert.assertTrue("encoded data.parquet must have positive size", dataParquetSize > 0);
-            }
-            try (TableWriter writer = engine.getWriter(token, "test")) {
-                Assert.assertTrue("markPartitionParquetReady must accept the staged partition",
-                        writer.markPartitionParquetReady(partitionTs));
-                Assert.assertFalse("partition must stay native-format", writer.getTxWriter().isPartitionParquet(0));
-                Assert.assertTrue("partition must be parquet_generated", writer.getTxWriter().isPartitionParquetGenerated(0));
+                Assert.assertTrue("the installed data.parquet must have positive size", dataParquetSize > 0);
             }
 
             // The generated-not-switched branch stats the local data.parquet for parquetFileSize:
@@ -548,8 +546,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     @Test
     public void testShowPartitionsParquetFormatWithoutGeneratedFlag() throws Exception {
         // A partition can be in parquet FORMAT while its parquet-generated bit is
-        // cleared. Parquet conversions go through
-        // switchNativePartitionWithParquet and recovery paths can reset the
+        // cleared. Recovery paths and older binaries can reset the
         // generated bit independently, so isParquet ends up true while the raw
         // parquetGenerated bit is false. SHOW PARTITIONS must report
         // hasParquetGenerated as true whenever the partition is parquet: a parquet

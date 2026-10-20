@@ -73,6 +73,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     private static final String[] KEY_FILTERS = {"s = 'a'", "s = 'b'", "s = 'c'", "s IS NULL"};
     private static final String[] ORDERS = {"", " ORDER BY ts DESC"};
     private static final String PARTITION = "2024-01-01";
+    private static final long PARTITION_TIMESTAMP = 1704067200000000L;
     // the same keys through a cast, so the filter does not use the index
     private static final String[] TRUTH_FILTERS = {"s::STRING = 'a'", "s::STRING = 'b'", "s::STRING = 'c'", "s::STRING IS NULL"};
     private final String indexClause;
@@ -440,6 +441,16 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRequestedCompactionAfterInPlaceUpdateAndAlterColumnType() throws Exception {
+        assertRequestedCompactionAfterInPlaceUpdateAndAlterColumnType(true);
+    }
+
+    @Test
+    public void testRequestedCompactionAfterInPlaceUpdateAndAlterColumnTypeNonWal() throws Exception {
+        assertRequestedCompactionAfterInPlaceUpdateAndAlterColumnType(false);
+    }
+
+    @Test
     public void testRewriteDropsIndexRowMap() throws Exception {
         // with a zero ratio, the first commit updates in place (no unused bytes yet),
         // and its unused bytes make the second commit rewrite the file, which rebuilds
@@ -605,8 +616,90 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
         return sink.toString();
     }
 
+    private static boolean isPartitionCompact() {
+        try (TableReader reader = getReader("pt")) {
+            reader.openPartition(0);
+            return PartitionCompactionScanJob.isParquetPartitionCompact(
+                    reader.getTxFile(),
+                    0,
+                    reader.getMetadata(),
+                    reader.getAndInitParquetPartitionDecoder(0).metadata()
+            );
+        }
+    }
+
+    private static String sortedLines(String text) {
+        // -1 keeps the empty lines a NULL key prints; the one past the final new line is dropped first
+        final String[] lines = (text.endsWith("\n") ? text.substring(0, text.length() - 1) : text).split("\n", -1);
+        Arrays.sort(lines, 1, lines.length);
+        return String.join("\n", lines);
+    }
+
     private static String truth(int key, int order) throws Exception {
         return queryToString("SELECT s, v, ts FROM pt WHERE " + TRUTH_FILTERS[key] + " AND ts IN '" + PARTITION + "'" + ORDERS[order]);
+    }
+
+    // The factory-property battery of assertIndexQueriesMatchTruth does not apply once an ALTER changes the type
+    // of a column a covering index includes: the index no longer covers it.
+    private void assertKeyQueriesMatchTruth() throws Exception {
+        for (int key = 0; key < KEY_FILTERS.length; key++) {
+            for (int order = 0; order < ORDERS.length; order++) {
+                final String sql = indexQuery(key, order);
+                assertQuery(sql).noLeakCheck().assertsPlanContaining("on: s");
+                TestUtils.assertEquals(truth(key, order), queryToString(sql));
+            }
+        }
+    }
+
+    private void assertMultiKeyQueriesMatchTruth() throws Exception {
+        // multi-key lookups and DISTINCT read the index of every key at once
+        final String partitionFilter = " FROM pt WHERE ts IN '" + PARTITION + "' AND ";
+        TestUtils.assertEquals(
+                sortedLines(queryToString("SELECT s, v, ts" + partitionFilter + "s::STRING IN ('a', 'c')")),
+                sortedLines(queryToString("SELECT s, v, ts" + partitionFilter + "s IN ('a', 'c')"))
+        );
+        TestUtils.assertEquals(
+                sortedLines(queryToString("SELECT s, v, ts" + partitionFilter + "(s::STRING IN ('b') OR s IS NULL)")),
+                sortedLines(queryToString("SELECT s, v, ts" + partitionFilter + "s IN ('b', NULL)"))
+        );
+        TestUtils.assertEquals("s\n\na\nb\nc", sortedLines(queryToString("SELECT DISTINCT s FROM pt")));
+    }
+
+    private void assertRequestedCompactionAfterInPlaceUpdateAndAlterColumnType(boolean isWal) throws Exception {
+        // An ALTER COLUMN TYPE over a parquet partition whose in-place update gave it an index row map: the
+        // requested rebuild re-encodes the file under the identity map and indexes it afresh. This is how
+        // Enterprise cold storage brings such a partition to the current schema before it uploads it.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
+        assertMemoryLeak(() -> {
+            createParquetPartition("", true, isWal);
+            execute("INSERT INTO pt VALUES ('b', 100, '2024-01-01T00:30:00.000000Z'), ('a', 101, '2024-01-01T06:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertTrue(hasIndexRowMap());
+            Assert.assertFalse("a partition with an index row map is not compact", isPartitionCompact());
+            execute("ALTER TABLE pt ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+            assertKeyQueriesMatchTruth();
+
+            final long nameTxn = getPartitionNameTxn();
+            engine.releaseInactive();
+            final TableToken tableToken = engine.verifyTableName("pt");
+            Assert.assertEquals(isWal, tableToken.isWal());
+            final ObjList<PinnedQuery> pinned = openPinnedQueries();
+            try {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(tableToken, PARTITION_TIMESTAMP));
+                try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                    Assert.assertTrue("the request must dispatch the rebuild", job.run());
+                }
+                Assert.assertNotEquals("the request must rebuild the partition", nameTxn, getPartitionNameTxn());
+                Assert.assertFalse(hasIndexRowMap());
+                Assert.assertTrue(isPartitionCompact());
+                assertPinnedSnapshots(pinned);
+            } finally {
+                Misc.freeObjList(pinned);
+            }
+            assertKeyQueriesMatchTruth();
+            assertMultiKeyQueriesMatchTruth();
+        });
     }
 
     private void assertIndexQueriesMatchTruth() throws Exception {
@@ -655,7 +748,12 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     }
 
     private void createParquetPartition(String dedupClause, boolean isIndexed) throws Exception {
-        execute("CREATE TABLE pt (s SYMBOL " + (isIndexed ? indexClause : "") + ", v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL" + dedupClause);
+        createParquetPartition(dedupClause, isIndexed, true);
+    }
+
+    private void createParquetPartition(String dedupClause, boolean isIndexed, boolean isWal) throws Exception {
+        execute("CREATE TABLE pt (s SYMBOL " + (isIndexed ? indexClause : "") + ", v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
+                + (isWal ? "WAL" : "BYPASS WAL") + dedupClause);
         execute(
                 """
                         INSERT INTO pt VALUES

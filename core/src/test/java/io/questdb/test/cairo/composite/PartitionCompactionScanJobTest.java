@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnTopRecorder;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -38,6 +39,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -385,6 +387,26 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * A non-WAL writer can hold a transaction open when a requested MERGE reaches it. The merge commits on its own
+     * when nothing the transaction holds can land in the day: here it holds in-order rows for the last partition, an
+     * in-order row that opens a new partition and an O3 row for the last partition. None of them is published by the
+     * merge, and the owner's commit publishes them all on top of it.
+     */
+    @Test
+    public void testRequestMergesANonWalSplitDayAroundAnOpenTransaction() throws Exception {
+        assertNonWalSplitDayMergeAroundOpenTransaction(false);
+    }
+
+    /**
+     * {@link #testRequestMergesANonWalSplitDayAroundAnOpenTransaction} with an O3 row for the split day itself in
+     * the transaction: the staged merge never saw it, so the writer refuses the merge and the day stays split.
+     */
+    @Test
+    public void testRequestedMergeIsRefusedByANonWalTransactionWritingTheDay() throws Exception {
+        assertNonWalSplitDayMergeAroundOpenTransaction(true);
+    }
+
+    /**
      * A request skips every idle threshold - the requester decided the partition is cold - and is served with
      * the sweep itself disabled: here a split day is merged into one folder under timeouts it is nowhere near.
      */
@@ -433,11 +455,12 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
 
     /**
      * A requester keeps asking until it sees the fold land, so a request can arrive for a partition that is
-     * already one plain folder, or for a non-WAL table the job never folds. Neither costs more than a {@code _txn}
-     * read, and one run drains them all.
+     * already one plain folder. That costs no more than a {@code _txn} read, and one run drains them all. A non-WAL
+     * composite partition is folded too, by a REWRITE: MAKE-PLAIN commits the writer itself, so it is never handed
+     * to a non-WAL writer.
      */
     @Test
-    public void testRequestOnlyFoldsAWalCompositePartitionOnce() throws Exception {
+    public void testRequestFoldsEachCompositePartitionOnce() throws Exception {
         final AtomicInteger stagingMkdirs = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -475,8 +498,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(walToken, day));
                 Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(walToken, day));
                 Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(nonWalToken, day));
+                Assert.assertTrue("the non-WAL request must dispatch the fold", job.run());
                 Assert.assertTrue("the WAL request must dispatch the fold", job.run());
-                Assert.assertFalse("the repeat and the non-WAL request must be drained as no-ops", job.run());
+                Assert.assertFalse("the repeats must be drained as no-ops", job.run());
             }
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -485,10 +509,10 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 Assert.assertFalse("the WAL partition must be folded", reader.getTxFile().isPartitionComposite(0));
             }
             try (TableReader reader = engine.getReader(nonWalToken)) {
-                Assert.assertTrue("a non-WAL partition must not be folded", reader.getTxFile().isPartitionComposite(0));
+                Assert.assertFalse("the non-WAL partition must be folded", reader.getTxFile().isPartitionComposite(0));
             }
             engine.releaseAllReaders();
-            Assert.assertEquals("exactly one staged copy is expected - the WAL table's, once", 1, stagingMkdirs.get());
+            Assert.assertEquals("exactly one staged copy per table is expected", 2, stagingMkdirs.get());
 
             TestUtils.assertSqlCursors(
                     engine, sqlExecutionContext, "SELECT * FROM cn ORDER BY ts, i", "SELECT * FROM cw ORDER BY ts, i", LOG
@@ -531,6 +555,148 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             assertUnusedBytes(token, 0, false);
             Assert.assertTrue("the rebuilt partition must be compact", isParquetPartitionCompact(token, 0));
             assertQuery("SELECT count() c FROM rq_px").noRandomAccess().expectSize().returns("c\n16\n");
+        });
+    }
+
+    /**
+     * A parquet copy - what cold storage uploads a native partition from - is built only off a logical partition that
+     * is one plain folder. Here the copy is asked of a day the O3 path left split after the build: the install finds the
+     * day no longer the one folder it copied, refuses, and removes the staged build rather than install a copy short
+     * of the split's rows. The next requests fold the day and then copy all of it.
+     */
+    @Test
+    public void testParquetCopyInstallRefusesADaySplitAfterItsBuild() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE gn AS (SELECT x::INT i," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO gn SELECT x::INT + 90000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            final TableToken token = engine.verifyTableName("gn");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            final String stagedBuild;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("2020-01-01 must start as one folder", 2, tx.getPartitionCount());
+                stagedBuild = generatingDir(
+                        token, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), day, tx.getPartitionNameTxn(0)
+                );
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                // The writer is checked out, so the job builds the copy and queues its install.
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetGeneration(token, day));
+                runSweepOnAnotherThread(ff);
+                Assert.assertTrue("the copy must be built and staged", dirExists(ff, stagedBuild));
+
+                // Rows near the END of 2020-01-01 split it. A pinned reader keeps the commit from squashing the split.
+                try (TableReader ignore = engine.getReader(token)) {
+                    final long base = MicrosFormatUtils.parseTimestamp("2020-01-01T22:00:07.000000Z");
+                    for (int k = 0; k < 200; k++) {
+                        final TableWriter.Row row = ownerWriter.newRow(base + k * 5_000_000L);
+                        row.putInt(0, 70_000 + k);
+                        row.append();
+                    }
+                    ownerWriter.commit();
+                }
+                Assert.assertEquals("the O3 rows must have split 2020-01-01", 3, ownerWriter.getTxWriter().getPartitionCount());
+
+                ownerWriter.tick();
+                Assert.assertFalse("the install must refuse the split day", ownerWriter.getTxWriter().isPartitionParquetGenerated(0));
+                Assert.assertEquals("the refused install must leave the day split", 3, ownerWriter.getTxWriter().getPartitionCount());
+                Assert.assertFalse("the refused install must remove the staged build", dirExists(ff, stagedBuild));
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            // A fresh job, as the refused install's in-flight record holds the day back on the old one until it ages out.
+            assertParquetCopyFoldsFirst(token, day, 5960);
+            assertQuery("SELECT count() c FROM gn").noRandomAccess().expectSize().returns("c\n6010\n");
+        });
+    }
+
+    /**
+     * A parquet copy asked of a split day is not built off one of its folders: the request folds the day into one
+     * plain folder, and the requester's next ask builds the copy off that folder, holding every row of the day.
+     */
+    @Test
+    public void testParquetCopyRequestFoldsASplitDayFirst() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createSplitDayTable("gx");
+            final TableToken token = engine.verifyTableName("gx");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            final long liveRows;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the O3 insert must have split 2020-01-01", 3, tx.getPartitionCount());
+                liveRows = tx.getPartitionSize(0) + tx.getPartitionSize(1);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            assertParquetCopyFoldsFirst(token, day, liveRows);
+            assertQuery("SELECT count() c FROM gx").noRandomAccess().expectSize().returns("c\n6010\n");
+        });
+    }
+
+    /**
+     * The staging directory of a native partition's parquet copy - built off a reader, then installed by the writer -
+     * names the partition folder it copies. The writer's stray-dir purge at open must keep one whose folder is still
+     * that native, copy-less folder, or it deletes a build the install is about to move in. A folder that never moved
+     * carries no name txn suffix, which the purge once misread as stale.
+     */
+    @Test
+    public void testPurgeReclaimsAbandonedParquetCopyStagingButKeepsAnInFlightOne() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cg (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO cg VALUES (1, '2020-01-01T00:00:00'), (2, '2020-01-02T00:00:00')");
+
+            final TableToken token = engine.verifyTableName("cg");
+            final String inFlightDir;
+            final String abandonedDir;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader txReader = reader.getTxFile();
+                final long partitionTimestamp = txReader.getPartitionTimestampByIndex(0);
+                final long nameTxn = txReader.getPartitionNameTxn(0);
+                Assert.assertEquals("the folder must never have moved", -1, nameTxn);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final int partitionBy = reader.getPartitionedBy();
+                inFlightDir = generatingDir(token, timestampType, partitionBy, partitionTimestamp, nameTxn);
+                // A name txn the live folder does not carry: the install would be refused as stale.
+                abandonedDir = generatingDir(token, timestampType, partitionBy, partitionTimestamp, nameTxn + 5);
+            }
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            stageWithContent(ff, inFlightDir);
+            stageWithContent(ff, abandonedDir);
+
+            // The stray-partition-dir purge runs when a writer opens the table.
+            engine.releaseInactive();
+            try (TableWriter ignore = engine.getWriter(token, "test")) {
+                Assert.assertNotNull(ignore);
+            }
+
+            Assert.assertFalse("abandoned parquet copy staging directory survived the purge", dirExists(ff, abandonedDir));
+            Assert.assertTrue("in-flight parquet copy staging directory was purged", dirExists(ff, inFlightDir));
+
+            try (Path path = new Path()) {
+                ff.rmdir(path.of(inFlightDir), false);
+            }
         });
     }
 
@@ -1492,6 +1658,119 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     @Test
     public void testScanMergesASplitDayWhoseSplitIsReadOnlyAndKeepsItReadOnly() throws Exception {
         assertReadOnlySplitDayMerges(1, false);
+    }
+
+    private void assertNonWalSplitDayMergeAroundOpenTransaction(boolean isDayWritten) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createSplitDayTable("nx");
+            execute("ALTER TABLE nx SET TYPE BYPASS WAL");
+            engine.releaseInactive();
+            engine.load();
+            final TableToken token = engine.verifyTableName("nx");
+            Assert.assertFalse(token.isWal());
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals("the O3 insert must have split 2020-01-01", 3, reader.getTxFile().getPartitionCount());
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                appendRow(ownerWriter, "2020-01-03T01:00:00.000000Z", 80001);
+                appendRow(ownerWriter, "2020-01-04T00:00:00.000000Z", 80002);
+                appendRow(ownerWriter, "2020-01-03T00:00:30.000000Z", 80003);
+                if (isDayWritten) {
+                    appendRow(ownerWriter, "2020-01-01T12:00:01.000000Z", 80004);
+                }
+                Assert.assertTrue(ownerWriter.inTransaction());
+                Assert.assertTrue("the fixture must hold O3 rows", ownerWriter.hasO3());
+
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day));
+                runSweepOnAnotherThread(configuration.getFilesFacade());
+                ownerWriter.tick();
+                Assert.assertTrue("the swap must leave the transaction open", ownerWriter.inTransaction());
+
+                try (TableReader reader = engine.getReader(token)) {
+                    final TxReader tx = reader.getTxFile();
+                    Assert.assertEquals(
+                            isDayWritten ? "a refused merge must leave the day split" : "the day's two folders must have become one",
+                            isDayWritten ? 3 : 2,
+                            tx.getPartitionCount()
+                    );
+                }
+                // Readers see none of the transaction's rows.
+                assertQuery("SELECT count() c FROM nx").noLeakCheck().noRandomAccess().expectSize().returns("c\n6010\n");
+                engine.releaseAllReaders();
+                ownerWriter.commit();
+            }
+
+            execute("CREATE TABLE nx_oracle AS (SELECT i, ts FROM (" +
+                    "SELECT x::INT i, timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760)" +
+                    " UNION ALL SELECT x::INT + 90000 i, timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)" +
+                    " UNION ALL SELECT x::INT + 70000 i, timestamp_sequence('2020-01-01T22:00:07', 5*1000000L) ts FROM long_sequence(200)" +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO nx_oracle VALUES (80001, '2020-01-03T01:00:00.000000Z'), (80002, '2020-01-04T00:00:00.000000Z'), " +
+                    "(80003, '2020-01-03T00:00:30.000000Z')" + (isDayWritten ? ", (80004, '2020-01-01T12:00:01.000000Z')" : ""));
+            TestUtils.assertSqlCursors(
+                    engine, sqlExecutionContext, "SELECT * FROM nx_oracle ORDER BY ts, i", "SELECT * FROM nx ORDER BY ts, i", LOG
+            );
+        });
+    }
+
+    /**
+     * Asks a fresh job twice for a parquet copy of the split day at {@code day}: the first ask folds the day into one
+     * plain folder and installs no copy, the second builds and installs the copy, which must hold all
+     * {@code liveRows} rows of the day while the folder stays native.
+     */
+    private void assertParquetCopyFoldsFirst(TableToken token, long day, long liveRows) {
+        try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+            Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetGeneration(token, day));
+            Assert.assertTrue("the first request must dispatch the fold", job.run());
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the day's folders must have become one", 2, tx.getPartitionCount());
+                Assert.assertFalse("the merged folder must be plain", tx.isPartitionComposite(0));
+                Assert.assertFalse("a fold installs no copy", tx.isPartitionParquetGenerated(0));
+                Assert.assertEquals("the fold must keep every row", liveRows, tx.getPartitionSize(0));
+            }
+
+            Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetGeneration(token, day));
+            Assert.assertTrue("the second request must dispatch the copy", job.run());
+        }
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+
+        try (TableReader reader = engine.getReader(token); Path path = new Path()) {
+            final TxReader tx = reader.getTxFile();
+            Assert.assertTrue("the copy must be installed", tx.isPartitionParquetGenerated(0));
+            Assert.assertFalse("the folder must stay native", tx.isPartitionParquet(0));
+            path.of(configuration.getDbRoot()).concat(token.getDirName());
+            TableUtils.setPathForNativePartition(
+                    path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), day, tx.getPartitionNameTxn(0)
+            );
+            final int partitionDirLen = path.size();
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long parquetFileSize = ff.length(path.concat(TableUtils.PARQUET_PARTITION_NAME).$());
+            Assert.assertTrue("the copy's data.parquet must be installed", parquetFileSize > 0);
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME);
+            final ParquetMetaFileReader pmReader = new ParquetMetaFileReader();
+            final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), pmReader);
+            Assert.assertTrue("the copy's _pm must be installed", addr != 0);
+            final long mappedSize = pmReader.getFileSize();
+            try {
+                Assert.assertTrue("the _pm must describe the installed data.parquet", pmReader.resolveFooter(parquetFileSize));
+                Assert.assertEquals("the copy must hold every row of the day", liveRows, pmReader.getPartitionRowCount());
+            } finally {
+                pmReader.clear();
+                ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
     }
 
     private void assertPartitionUntouched(TableToken tableToken, long nameTxnBefore, String why) throws Exception {
@@ -3634,6 +3913,18 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             return ff.exists(path.of(dir).$());
         }
     }
+    /**
+     * The directory name PartitionCompactionScanJob stages a native partition's parquet copy into.
+     */
+    private static String generatingDir(TableToken token, int timestampType, int partitionBy, long partitionTimestamp, long nameTxn) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token.getDirName());
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
+            path.put(TableUtils.GENERATING_DIR_MARKER);
+            return path.toString();
+        }
+    }
+
 
     /**
      * The directory name PartitionCompactionScanJob stages a REWRITE into.
@@ -3658,6 +3949,12 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      * One sweep from a thread of its own, so a writer the test thread holds is busy from the job's point of
      * view and the swap goes to the writer's command queue instead of being applied on the spot.
      */
+    private static void appendRow(TableWriter writer, String timestamp, int i) throws Exception {
+        final TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp(timestamp));
+        row.putInt(0, i);
+        row.append();
+    }
+
     private static void runSweepOnAnotherThread(FilesFacade ff) throws InterruptedException {
         final Throwable[] failure = new Throwable[1];
         final Thread sweeper = new Thread(() -> {

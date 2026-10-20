@@ -11647,8 +11647,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * try/catch that runs handleHousekeepingException, which sets
      * distressed=true before rethrowing. The non-housekeep callers
      * (convertPartitionNativeToParquet, detachPartition,
-     * generateParquetPartition, public squashPartitions(),
-     * switchNativePartitionWithParquet) do not. By the time the
+     * generateParquetPartition, public squashPartitions()) do not. By the time the
      * reseal runs, squashSplitPartitions has already mutated
      * txWriter (removeAttachedPartitions,
      * updatePartitionSizeByTimestamp) and columnVersionWriter

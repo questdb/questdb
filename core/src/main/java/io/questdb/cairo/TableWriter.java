@@ -202,9 +202,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int COVERING_INDEX_PUBLISHED = 1;
     // The write left rows [oldPartitionSize, newPartitionSize) unindexed; the sweep publishes them.
     public static final int COVERING_INDEX_DEFERRED = 2;
-    public static final int SWITCH_NO_PARQUET = -1;
-    public static final int SWITCH_OK = 0;
-    public static final int SWITCH_SKIPPED = -2;
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     // Staging memory per row of a sorted WAL apply block on top of the row itself: o3TimestampMem and
@@ -508,10 +505,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
     private volatile boolean o3oomObserved;
-    private IntList parquetRewriteColumnIndexes;
-    private SymbolColumnIndexer parquetRewriteIndexer;
-    private byte parquetRewriteIndexerType = IndexType.NONE;
-    private RowGroupBuffers parquetRewriteRowGroupBuffers;
     private PartitionCompactionPolicy partitionCompactionPolicy;
     private PartitionGeometry partitionGeometry;
     private long partitionTimestampHi;
@@ -1925,11 +1918,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Swaps in a Parquet partition compacted off a {@link TableReader} snapshot, holding this writer only for the
      * metadata-only swap.
+     * <p>
+     * A non-WAL writer can be handed the swap with a transaction open - ILP ticks its writer between commits. The
+     * swap then commits on its own, leaving the transaction's rows uncommitted, as long as none of them can land in
+     * the swapped partition (see {@link #isPartitionRangeClearOfOpenTransaction}).
      *
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the source partition's generation moved since
-     *                                                               the build snapshot, or the writer is in a
-     *                                                               transaction - either way the staged copy is
-     *                                                               removed and the next sweep decides again
+     *                                                               the build snapshot, or the writer's open
+     *                                                               transaction may write to the partition - either
+     *                                                               way the staged copy is removed and the next
+     *                                                               sweep decides again
      */
     public void swapCompactedParquetPartition(
             long partitionTimestamp,
@@ -1947,15 +1945,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isParquet = partitionIndex > -1 && txWriter.isPartitionParquet(partitionIndex);
         final long liveParquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(partitionIndex) : -1L;
         final long liveMetadataVersion = getMetadataVersion();
-        // An open transaction can hold non-WAL lag rows for this very partition, written after the reader
-        // snapshot the staged copy was built from - a swap would drop or misplace them. The writer's own
-        // owner commits them in its own time, and the next sweep rebuilds off a snapshot that has them.
+        // An open transaction can hold rows for this very partition, written after the reader snapshot the
+        // staged copy was built from - a swap would drop or misplace them. The writer's own owner commits them
+        // in its own time, and the next sweep rebuilds off a snapshot that has them. A transaction whose rows
+        // all land elsewhere does not stop the swap: it commits around them.
         final boolean isInTransaction = inTransaction();
+        final boolean isTransactionConflict = isInTransaction
+                && isParquet
+                && !isPartitionRangeClearOfOpenTransaction(partitionIndex, partitionIndex + 1, partitionTimestamp);
         // An upload moves none of the nameTxn, the file size or the metadata version, so the triple below
         // cannot see one that landed while the build ran; test the bit directly. A freeze does not make the
         // swap stale: the swap keeps the READ ONLY flag, see below.
         final boolean isRemote = isParquet && txWriter.isPartitionRemote(partitionIndex);
-        final boolean stale = isInTransaction
+        final boolean stale = isTransactionConflict
                 || !isParquet
                 || isRemote
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
@@ -1974,7 +1976,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", expectedMetadataVersion=").$(expectedMetadataVersion)
                     .$(", liveMetadataVersion=").$(liveMetadataVersion)
                     .$(", remote=").$(isRemote)
-                    .$(", inTransaction=").$(isInTransaction)
+                    .$(", transactionConflict=").$(isTransactionConflict)
                     .I$();
             if (ff.exists(other.$())) {
                 ff.rmdir(other, false);
@@ -2006,6 +2008,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("swapping in compacted parquet partition [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTimestamp, newNameTxn))
                 .$(", parquetFileSize=").$size(newParquetFileSize)
+                .$(", aroundOpenTransaction=").$(isInTransaction)
                 .I$();
 
         // Neither call touches the READ ONLY bit of the entry's masked-size word, so a frozen partition stays
@@ -2019,7 +2022,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.bumpPartitionTableVersion();
-        commitTxWriter();
+        if (isInTransaction) {
+            commitSwapAroundOpenTransaction(partitionIndex, partitionIndex + 1, 1);
+        } else {
+            commitTxWriter();
+        }
 
         // Best-effort cleanup: it must not roll back the committed transaction.
         try {
@@ -3193,6 +3200,125 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
     }
 
+    /**
+     * Installs a parquet copy of a native partition - {@code data.parquet} and {@code _pm}, built off a {@link TableReader}
+     * snapshot by {@code PartitionCompactionScanJob} and staged in {@code <partition>.<nameTxn>.generating} - beside
+     * the partition's native files, and marks the partition {@code parquet_generated}. The partition stays native and
+     * keeps its directory: the staged files are moved in, nothing is swapped. Cold storage uploads the copy.
+     * <p>
+     * Everything the copy was built off is re-checked against the live state first - the folder's name txn, its row
+     * count and the column version its files carry, the table's metadata version - and so is its shape: still the one
+     * plain native folder of its logical partition, not the active one, and with no parquet copy yet. A transaction
+     * this writer holds open does not stop the install unless it may write to the partition - see
+     * {@link #swapCompactedParquetPartition}.
+     *
+     * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the partition moved since the build snapshot,
+     *                                                               or the writer's open transaction may write to it -
+     *                                                               either way the staged copy is removed and the
+     *                                                               requester asks again
+     */
+    public void installGeneratedParquet(
+            long partitionTimestamp,
+            long expectedNameTxn,
+            long expectedRowCount,
+            long expectedColumnVersion,
+            long expectedMetadataVersion,
+            long seqTxn
+    ) {
+        assert PartitionBy.isPartitioned(partitionBy);
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        final long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final long liveNameTxn = partitionIndex > -1 ? txWriter.getPartitionNameTxn(partitionIndex) : -1;
+        final boolean isInTransaction = inTransaction();
+        final boolean isTransactionConflict = isInTransaction
+                && (partitionIndex < 0 || !isPartitionRangeClearOfOpenTransaction(partitionIndex, partitionIndex + 1, logicalPartitionTimestamp));
+        final boolean stale = isTransactionConflict
+                || partitionIndex < 0
+                // The active partition, whose files carry rows the copy never saw.
+                || partitionIndex >= txWriter.getPartitionCount() - 1
+                || txWriter.isPartitionParquet(partitionIndex)
+                || txWriter.isPartitionParquetGenerated(partitionIndex)
+                || txWriter.isPartitionComposite(partitionIndex)
+                || txWriter.isPartitionRemote(partitionIndex)
+                || liveNameTxn != expectedNameTxn
+                || txWriter.getPartitionSize(partitionIndex) != expectedRowCount
+                || columnVersionWriter.getMaxPartitionVersion(partitionTimestamp) != expectedColumnVersion
+                || getMetadataVersion() != expectedMetadataVersion
+                // The copy is of the whole logical partition: a split on either side holds rows it does not.
+                || partitionTimestamp != logicalPartitionTimestamp
+                || txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) == logicalPartitionTimestamp;
+
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, expectedNameTxn);
+        other.put(GENERATING_DIR_MARKER);
+        final int stagingDirLen = other.size();
+
+        if (stale) {
+            LOG.info().$("discarding stale parquet copy of a native partition [table=").$(tableToken)
+                    .$(", dir=").$substr(pathRootSize, other)
+                    .$(", expectedNameTxn=").$(expectedNameTxn)
+                    .$(", liveNameTxn=").$(liveNameTxn)
+                    .$(", transactionConflict=").$(isTransactionConflict)
+                    .I$();
+            if (ff.exists(other.$())) {
+                ff.rmdir(other, false);
+            }
+            other.trimTo(pathSize);
+            throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedNameTxn, liveNameTxn);
+        }
+
+        path.trimTo(pathSize);
+        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, expectedNameTxn);
+        final int partitionDirLen = path.size();
+        try {
+            installStagedFile(stagingDirLen, partitionDirLen, PARQUET_PARTITION_NAME);
+            installStagedFile(stagingDirLen, partitionDirLen, PARQUET_METADATA_FILE_NAME);
+            if (configuration.getCommitMode() != CommitMode.NOSYNC && !Os.isWindows()) {
+                final long dirFd = ff.openRO(path.trimTo(partitionDirLen).$());
+                if (dirFd > -1) {
+                    ff.fsyncAndClose(dirFd);
+                }
+            }
+        } catch (Throwable e) {
+            // processAsyncWriterCommand swallows this and the writer keeps going with these reusable Path fields.
+            other.trimTo(pathSize);
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+        }
+
+        LOG.info().$("installing parquet copy of a native partition [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                .$(", nameTxn=").$(expectedNameTxn)
+                .$(", aroundOpenTransaction=").$(isInTransaction)
+                .I$();
+
+        final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (tableToken.isWal() && seqTxn > 0 && nativePartitionSeqTxn(partitionIndex) <= 0) {
+            // A legacy partition with no recorded version takes the one the copy's footer carries. The stamp clears
+            // parquet_generated, so it goes first.
+            txWriter.setPartitionSeqTxnByRawIndex(rawIndex, seqTxn);
+        }
+        txWriter.setPartitionParquetGenerated(partitionIndex, true);
+        txWriter.bumpPartitionTableVersion();
+        if (isInTransaction) {
+            commitSwapAroundOpenTransaction(partitionIndex, partitionIndex + 1, 1);
+        } else {
+            commitTxWriter();
+        }
+
+        // Best-effort cleanup: it must not roll back the committed transaction.
+        try {
+            if (ff.exists(other.trimTo(stagingDirLen).$())) {
+                ff.rmdir(other, false);
+            }
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        } finally {
+            other.trimTo(pathSize);
+        }
+    }
+
     public boolean isCheckpointInProgress() {
         return engine.getCheckpointStatus().isInProgress();
     }
@@ -3235,71 +3361,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
-    }
-
-    /**
-     * Carries indexed SYMBOL files into a freshly rewritten parquet partition.
-     * Indexes whose source column top is already zero are hard-linked. Indexes
-     * whose top will be normalized to zero are rebuilt from the rewritten
-     * parquet so their NULL prefix (or all-NULL body) and POSTING sidecars are
-     * physically present before the column-version commit publishes top zero.
-     */
-    public void linkOrRebuildPartitionIndexFilesAfterParquetRewrite(
-            long partitionTimestamp,
-            long oldPartitionNameTxn,
-            long newPartitionNameTxn,
-            long newParquetFileSize
-    ) {
-        if (parquetRewriteColumnIndexes == null) {
-            parquetRewriteColumnIndexes = new IntList();
-        } else {
-            parquetRewriteColumnIndexes.clear();
-        }
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
-        final int srcDirLen = path.size();
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
-        final int dstDirLen = other.size();
-        try {
-            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
-                final byte indexType = metadata.getColumnIndexType(columnIndex);
-                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !IndexType.isIndexed(indexType)) {
-                    continue;
-                }
-                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                if (columnTop == 0) {
-                    linkColumnIndexFiles(
-                            srcDirLen,
-                            dstDirLen,
-                            metadata.getColumnName(columnIndex),
-                            getColumnNameTxn(partitionTimestamp, columnIndex),
-                            indexType,
-                            partitionTimestamp,
-                            oldPartitionNameTxn
-                    );
-                } else {
-                    // The rewritten parquet materializes every current-schema
-                    // column and normalizeColumnTopsAfterParquetRewrite will set
-                    // this top to zero, including absent (-1), partial and
-                    // full-top (>= partitionSize) source states.
-                    assert columnTop == -1 || columnTop > 0;
-                    parquetRewriteColumnIndexes.add(columnIndex);
-                }
-            }
-
-            if (parquetRewriteColumnIndexes.size() > 0) {
-                rebuildParquetRewriteIndexes(
-                        partitionTimestamp,
-                        newPartitionNameTxn,
-                        newParquetFileSize,
-                        dstDirLen,
-                        parquetRewriteColumnIndexes
-                );
-            }
-        } finally {
-            parquetRewriteColumnIndexes.clear();
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-        }
     }
 
     public void linkPartitionIndexFiles(long partitionTimestamp, long oldPartitionNameTxn, long newPartitionNameTxn) {
@@ -3431,62 +3492,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.bumpPartitionTableVersion();
     }
 
-    public boolean markPartitionParquetReady(long partitionTimestamp) {
-        assert metadata.getTimestampIndex() > -1;
-        assert PartitionBy.isPartitioned(partitionBy);
-
-        if (inTransaction()) {
-            assert !tableToken.isWal();
-            LOG.info()
-                    .$("committing open transaction before marking partition parquet ready [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            commit();
-        }
-
-        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0) {
-            return false;
-        }
-
-        if (txWriter.isPartitionParquet(partitionIndex)) {
-            // Already fully switched to parquet format - nothing to do.
-            return true;
-        }
-        if (txWriter.isPartitionComposite(partitionIndex)) {
-            // The generated bit masks the composite bit (isPartitionCompositeByRawIndex reads false once it is
-            // set) while the geometry pointer stays in offset 3, so marking a composite partition ready would
-            // hand every reader a flat [0, liveRows) range over a multi-piece layout. The staged data.parquet
-            // was produced before the merge-append anyway. Fold the partition first, then re-generate.
-            LOG.info().$("cannot mark a composite partition parquet ready [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp).I$();
-            return false;
-        }
-
-        try {
-            final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            path.concat(PARQUET_PARTITION_NAME);
-            if (!ff.exists(path.$())) {
-                return false;
-            }
-            if (txWriter.isPartitionParquetGenerated(partitionIndex)) {
-                return true;
-            }
-            if (nativePartitionSeqTxn(partitionIndex) <= 0 && tableToken.isWal()) {
-                txWriter.setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, txWriter.getSeqTxn());
-            }
-            txWriter.setPartitionParquetGenerated(partitionIndex, true);
-            txWriter.bumpPartitionTableVersion();
-            commitTxWriter();
-            return true;
-        } finally {
-            path.trimTo(pathSize);
-        }
-    }
-
     public void markSeqTxnCommitted(long seqTxn) {
         setSeqTxn(seqTxn);
         commitTxWriter();
@@ -3558,14 +3563,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return row;
     }
 
-    public void normalizeColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount) {
-        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, true);
-        if (columnVersionWriter.hasChanges()) {
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        }
-    }
-
     public void o3BumpErrorCount(boolean oom) {
         o3ErrorCount.incrementAndGet();
         if (oom) {
@@ -3580,63 +3577,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             freeColumns(false);
             throw e;
         }
-    }
-
-    public long preparePartitionForParquetConversion(long partitionTimestamp) {
-        assert metadata.getTimestampIndex() > -1;
-        assert PartitionBy.isPartitioned(partitionBy);
-
-        if (inTransaction()) {
-            assert !tableToken.isWal();
-            LOG.info()
-                    .$("committing open transaction before producing parquet for native partition [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            commit();
-        }
-
-        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
-            // The partition is active; conversion is currently unsupported.
-            LOG.info()
-                    .$("skipping active partition as it cannot be converted to parquet format [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            return -1L;
-        }
-
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0) {
-            formatPartitionForTimestamp(partitionTimestamp, -1);
-            throw CairoException.nonCritical()
-                    .put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
-                    .put(", partition=").put(utf8Sink).put(']');
-        }
-
-        if (txWriter.isPartitionParquetGenerated(partitionIndex) || txWriter.isPartitionParquet(partitionIndex)) {
-            // parquet has been generated for the partition
-            return -1L;
-        }
-
-        // Same pair, same order, as convertPartitionNativeToParquet: the caller is about to read this
-        // one directory flat, as [0, liveRows) from byte 0 of every column file, and squashPartitionForce
-        // alone never touches a logical partition that has no split siblings. If that single directory is
-        // composite, its live rows do not start at file row 0 and a merge-append may have relocated a
-        // piece to the tail, so it has to be folded to plain first.
-        compactPartitionToPlain(partitionIndex, "parquet conversion");
-        squashPartitionForce(partitionIndex);
-
-        // Remove any stale parquet file from a prior conversion that may not
-        // reflect the current native data (e.g. after an in-place squash or O3
-        // append that added rows without bumping the nameTxn).
-        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        ff.removeQuiet(path.$());
-        path.trimTo(pathSize);
-
-        return partitionTimestamp;
     }
 
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean contextAllowsAnyStructureChanges) {
@@ -4223,7 +4163,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         for (int i = 0; i < txWriter.getPartitionCount(); i++) {
             final boolean isLastPartition = i == txWriter.getPartitionCount() - 1;
-            // Same pair, same order, as preparePartitionForParquetConversion. squashPartitionForce alone
+            // Fold to plain, then squash: squashPartitionForce alone
             // never touches a logical partition that has no split siblings, so a composite one would keep
             // both the dead space a merge-append left behind and its relocated pieces. SQUASH PARTITIONS is
             // the explicit request to reclaim them, so fold the directory to plain first, then merge the
@@ -4261,10 +4201,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Swaps in a composite partition REWRITE built off a {@link TableReader} snapshot, holding this writer only for the
      * metadata-only swap.
      *
+     * A transaction this writer holds open does not stop the swap unless it may write to the partition - see
+     * {@link #swapCompactedParquetPartition}.
+     *
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the source partition's generation moved since
-     *                                                               the build snapshot, or the writer is in a
-     *                                                               transaction - either way the staged copy is
-     *                                                               removed and the next sweep decides again
+     *                                                               the build snapshot, or the writer's open
+     *                                                               transaction may write to the partition - either
+     *                                                               way the staged copy is removed and the next
+     *                                                               sweep decides again
      */
     public void swapCompactedCompositePartition(
             long partitionTimestamp,
@@ -4280,10 +4224,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // See swapCompactedParquetPartition: an open transaction can hold uncommitted rows for this
         // partition that the build's snapshot never saw, so decline rather than swap over them.
         final boolean isInTransaction = inTransaction();
+        final boolean isTransactionConflict = isInTransaction
+                && (partitionIndex < 0 || !isPartitionRangeClearOfOpenTransaction(
+                partitionIndex,
+                partitionIndex + 1,
+                txWriter.getLogicalPartitionTimestamp(partitionTimestamp)
+        ));
         // See swapCompactedParquetPartition: an upload moves none of the fields below, and a freeze does not
         // make the swap stale.
         final boolean isRemote = partitionIndex > -1 && txWriter.isPartitionRemote(partitionIndex);
-        final boolean stale = isInTransaction
+        final boolean stale = isTransactionConflict
                 || partitionIndex < 0
                 || isRemote
                 || !txWriter.isPartitionComposite(partitionIndex)
@@ -4303,7 +4253,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", expectedMetadataVersion=").$(expectedMetadataVersion)
                     .$(", liveMetadataVersion=").$(liveMetadataVersion)
                     .$(", remote=").$(isRemote)
-                    .$(", inTransaction=").$(isInTransaction)
+                    .$(", transactionConflict=").$(isTransactionConflict)
                     .I$();
             if (ff.exists(other.$())) {
                 ff.rmdir(other, false);
@@ -4335,6 +4285,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("swapping in composite partition rewrite [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTimestamp, newNameTxn))
                 .$(", liveRows=").$(liveRows)
+                .$(", aroundOpenTransaction=").$(isInTransaction)
                 .I$();
 
         // Keeps the entry's flag bits, READ ONLY included, so a frozen partition stays frozen in this same commit.
@@ -4361,7 +4312,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        if (isInTransaction) {
+            commitSwapAroundOpenTransaction(partitionIndex, partitionIndex + 1, 1);
+        } else {
+            commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        }
 
         // Drained here rather than parked on partitionRemoveCandidates, which the next commit clears without draining.
         try {
@@ -4392,11 +4347,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>
      * READ ONLY source folders are merged like any other. The merged folder is READ ONLY when any source folder
      * is, set in the same {@code _txn} commit that swaps it in, so the freeze is never lost.
+     * <p>
+     * With a non-negative {@code parquetFileSize} the staging directory holds the logical partition as one parquet
+     * file - a parquet conversion, see {@link CompositePartitionSwapCommand#ofParquetConversion} - and the run may be a
+     * single folder. The file holds every column from row 0, so the swap publishes every column top as zero.
+     * <p>
+     * A transaction this writer holds open does not stop the merge unless it may write to the logical partition -
+     * see {@link #swapCompactedParquetPartition}.
      *
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the logical partition moved since the build
-     *                                                               snapshot, or the writer is in a transaction -
-     *                                                               either way the staged copy is removed and the
-     *                                                               next sweep decides again
+     *                                                               snapshot, or the writer's open transaction may
+     *                                                               write to it - either way the staged copy is
+     *                                                               removed and the next sweep decides again
      */
     public void swapMergedLogicalPartition(
             long logicalPartitionTimestamp,
@@ -4405,18 +4367,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long expectedWriterTxn,
             long expectedMetadataVersion,
             long liveRows,
+            long parquetFileSize,
             ColumnTopRecorder columnTops
     ) {
         final int folderCount = folders.size() / CompositePartitionSwapCommand.LONGS_PER_FOLDER;
+        final boolean isParquetConversion = parquetFileSize > -1;
         // See swapCompactedCompositePartition: an open transaction can hold uncommitted rows the build's
         // snapshot never saw, so decline rather than swap over them.
         final boolean isInTransaction = inTransaction();
         final long liveMetadataVersion = getMetadataVersion();
-        final int firstIndex = folderCount > 1
+        final int firstIndex = folderCount > 1 || (isParquetConversion && folderCount > 0)
                 ? txWriter.findAttachedPartitionIndexByLoTimestamp(folders.getQuick(0))
                 : -1;
+        final boolean isTransactionConflict = isInTransaction
+                && (firstIndex < 0 || !isPartitionRangeClearOfOpenTransaction(firstIndex, firstIndex + folderCount, logicalPartitionTimestamp));
         // A run that reaches the last entry is the active logical partition - see the method doc.
-        boolean stale = isInTransaction
+        boolean stale = isTransactionConflict
                 || firstIndex < 0
                 || liveMetadataVersion != expectedMetadataVersion
                 || firstIndex + folderCount > txWriter.getPartitionCount() - 1;
@@ -4425,7 +4391,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int partitionIndex = firstIndex + i;
             stale = txWriter.getPartitionTimestampByIndex(partitionIndex) != folders.getQuick(offset)
                     || txWriter.getPartitionNameTxn(partitionIndex) != folders.getQuick(offset + 1)
-                    || txWriter.isPartitionRemote(partitionIndex)
+                    // A parquet conversion carries an upload over - see below; nothing else may drop one.
+                    || (!isParquetConversion && txWriter.isPartitionRemote(partitionIndex))
                     || txWriter.isPartitionParquet(partitionIndex)
                     || txWriter.getPartitionSize(partitionIndex) != folders.getQuick(offset + 3)
                     || compositePartitionGeneration(partitionIndex) != folders.getQuick(offset + 2)
@@ -4446,11 +4413,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (stale) {
             LOG.info().$("discarding stale logical partition merge [table=").$(tableToken)
+                    .$(", parquetConversion=").$(isParquetConversion)
                     .$(", dir=").$substr(pathRootSize, other)
                     .$(", folders=").$(folderCount)
                     .$(", expectedMetadataVersion=").$(expectedMetadataVersion)
                     .$(", liveMetadataVersion=").$(liveMetadataVersion)
-                    .$(", inTransaction=").$(isInTransaction)
+                    .$(", transactionConflict=").$(isTransactionConflict)
                     .I$();
             if (ff.exists(other.$())) {
                 ff.rmdir(other, false);
@@ -4482,16 +4450,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final Utf8Sequence mergedDir = formatPartitionForTimestamp(logicalPartitionTimestamp, newNameTxn);
         LOG.info().$("merging a logical partition into one directory [table=").$(tableToken)
                 .$(", dir=").$(mergedDir)
+                .$(", parquetFileSize=").$(parquetFileSize)
                 .$(", folders=").$(folderCount)
                 .$(", liveRows=").$(liveRows)
+                .$(", aroundOpenTransaction=").$(isInTransaction)
                 .I$();
 
         // Cold version of the merged partition: max of the merged sources' stamps, the same rule squashing applies.
         long mergedSeqTxn = 0;
         boolean isMergedReadOnly = false;
+        // The rows the bucket holds are the rows of the run only when every folder of it was uploaded.
+        boolean isMergedRemote = true;
         for (int i = 0; i < folderCount; i++) {
             mergedSeqTxn = Math.max(mergedSeqTxn, nativePartitionSeqTxn(firstIndex + i));
             isMergedReadOnly |= txWriter.isPartitionReadOnly(firstIndex + i);
+            isMergedRemote &= txWriter.isPartitionRemote(firstIndex + i);
         }
         // Back to front, so the indexes of the folders not yet removed do not shift under the loop.
         for (int i = folderCount - 1; i >= 0; i--) {
@@ -4506,13 +4479,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.insertPartition(firstIndex, logicalPartitionTimestamp, liveRows, newNameTxn);
         // The merged directory is one piece at row 0, the ordinary shape, so it publishes no geometry record.
         setPartitionGeometryRefTracked(logicalPartitionTimestamp, NO_GEOMETRY_REF);
-        txWriter.setPartitionSeqTxn(firstIndex, mergedSeqTxn);
+        if (isParquetConversion) {
+            // A parquet folder's offset-3 word is its file size; the merged seqTxn went into the file's footer.
+            txWriter.setPartitionParquet(logicalPartitionTimestamp, parquetFileSize);
+            // A parquet folder with its data.parquet held locally, as CONVERT PARTITION leaves one.
+            txWriter.setPartitionParquetGenerated(firstIndex, true);
+            if (isMergedRemote) {
+                // An uploaded native partition: its bucket copy holds the very rows, at the very seqTxn, the new
+                // file does, so the upload stands. Cold storage then treats it like any uploaded local parquet.
+                txWriter.setPartitionRemote(firstIndex, true);
+            }
+        } else {
+            txWriter.setPartitionSeqTxn(firstIndex, mergedSeqTxn);
+        }
         if (isMergedReadOnly) {
             txWriter.setPartitionReadOnly(firstIndex, true);
         }
 
         ColumnTopSink sink = columnVersionWriter.asColumnTopSink(logicalPartitionTimestamp);
         columnTops.pushInto(sink);
+        if (isParquetConversion) {
+            zeroColumnTopsAfterFullMaterialization(logicalPartitionTimestamp, liveRows, true);
+        }
 
         // The splits this merge folded may have been the earliest ones the squash scan starts from.
         minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
@@ -4522,7 +4510,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        if (isInTransaction) {
+            commitSwapAroundOpenTransaction(firstIndex, firstIndex + folderCount, 1);
+        } else {
+            commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        }
+        if (isParquetConversion) {
+            publishHasParquetPartitions();
+        }
 
         // Filled and drained here, the way safeDeletePartitionDir does it for a single directory: a list built
         // before the commit is one the commit may clear without draining.
@@ -4536,148 +4531,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable e) {
             handleHousekeepingException(e);
         }
-    }
-
-    // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
-    // skipped (active or already parquet), SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
-    public int switchNativePartitionWithParquet(long partitionTimestamp, long parquetFileSize) {
-        assert metadata.getTimestampIndex() > -1;
-        assert PartitionBy.isPartitioned(partitionBy);
-
-        if (inTransaction()) {
-            assert !tableToken.isWal();
-            LOG.info()
-                    .$("committing open transaction before applying convert partition to parquet command [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            commit();
-        }
-
-        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
-            // The partition is active; conversion is currently unsupported.
-            return SWITCH_SKIPPED;
-        }
-
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0) {
-            formatPartitionForTimestamp(partitionTimestamp, -1);
-            throw CairoException.nonCritical().put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
-                    .put(", partition=").put(utf8Sink).put(']');
-        }
-
-        if (txWriter.isPartitionParquet(partitionIndex)) {
-            // Partition is already in Parquet format.
-            return SWITCH_SKIPPED;
-        }
-        if (!txWriter.isPartitionParquetGenerated(partitionIndex)) {
-            // parquet file has not been generated yet
-            return SWITCH_NO_PARQUET;
-        }
-
-        int partitionCount = txWriter.getPartitionCount();
-        squashPartitionForce(partitionIndex);
-        int newPartitionCount = txWriter.getPartitionCount();
-        if (partitionCount != newPartitionCount) {
-            // The force-squash merged one or more split sub-partitions into this logical partition.
-            // The existing parquet file was produced before the squash, so it is now stale relative
-            // to the grown native partition.
-            LOG.info()
-                    .$("skipping switch to parquet, due to partition squash [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            return SWITCH_NO_PARQUET;
-        }
-
-        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-
-        int newPartitionDirLen = 0;
-        try {
-            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            final int partitionDirLen = path.size();
-            if (!ff.exists(path.$())) {
-                throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
-            }
-            path.concat(PARQUET_PARTITION_NAME);
-            if (!ff.exists(path.$())) {
-                txWriter.setPartitionParquetGenerated(partitionIndex, false);
-                txWriter.bumpPartitionTableVersion();
-                commitTxWriter();
-                return SWITCH_NO_PARQUET;
-            }
-
-            // upgrade partition version
-            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-            createDirsOrFail(ff, other, configuration.getMkDirMode());
-            newPartitionDirLen = other.size();
-
-            // set the parquet file full path
-            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-
-            LOG.info().$("switching native partition to parquet [path=").$substr(pathRootSize, path).I$();
-            if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
-                throw CairoException.critical(ff.errno())
-                        .put("could not hard link parquet file [table=")
-                        .put(tableToken.getTableName())
-                        .put(", from=").put(path)
-                        .put(", to=").put(other)
-                        .put(']');
-            }
-
-            setPathForParquetPartitionMetadata(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-            if (ff.exists(path.$())) {
-                if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
-                    throw CairoException.critical(ff.errno())
-                            .put("could not hard link parquet metadata sidecar [table=")
-                            .put(tableToken.getTableName())
-                            .put(", from=").put(path)
-                            .put(", to=").put(other)
-                            .put(']');
-                }
-            } else {
-                if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                    LOG.error().$("could not remove partition dir [path=").$(other).I$();
-                }
-                return SWITCH_NO_PARQUET;
-            }
-
-            LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
-            linkPartitionIndexFiles(partitionTimestamp, partitionNameTxn, partitionDirLen, newPartitionDirLen);
-
-            final long originalSize = txWriter.getPartitionSize(partitionIndex);
-            // used to update txn and bump recordStructureVersion
-            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
-            txWriter.setPartitionParquet(partitionTimestamp, parquetFileSize);
-            txWriter.bumpPartitionTableVersion();
-            commitTxWriter();
-        } catch (Throwable e) {
-            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                LOG.error().$("could not remove partition dir [path=").$(other).I$();
-            }
-            throw e;
-        } finally {
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-        }
-
-        // Post-commit: the switch is logically complete. Everything below is
-        // best-effort cleanup. Failures must not roll back the committed
-        // transaction (e.g. by deleting the new partition dir the TxReader
-        // already points to).
-        try {
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
-            }
-
-            // remove old partition dir
-            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
-        } catch (Throwable e) {
-            handleHousekeepingException(e);
-        }
-
-        return SWITCH_OK;
     }
 
     /**
@@ -5108,8 +4961,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             IntList coveringColumnIndices,
             long partitionTimestamp,
             ParquetMetaFileReader parquetMetadata,
-            long partitionSize,
-            boolean normalizeColumnTops
+            long partitionSize
     ) {
         coveredColumnAccumulator.clear();
         for (int slot = 0, n = coveringColumnIndices.size(); slot < n; slot++) {
@@ -5118,13 +4970,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 coveredColumnAccumulator.addDroppedSlot();
                 continue;
             }
-            final boolean isAllNull = !normalizeColumnTops && columnVersionWriter.getColumnTop(partitionTimestamp, covCol) >= partitionSize;
+            final boolean isAllNull = columnVersionWriter.getColumnTop(partitionTimestamp, covCol) >= partitionSize;
             coveredColumnAccumulator.addSlot(
                     covCol,
                     metadata.getColumnType(covCol),
                     metadata.getColumnName(covCol),
                     columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol),
-                    normalizeColumnTops ? 0 : columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol),
+                    columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol),
                     isAllNull ? -1 : findParquetColumnIndex(parquetMetadata, covCol)
             );
         }
@@ -6618,13 +6470,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // min/max stats) for the table. Publish only when the flag actually flips:
         // the metadata-cache write lock is global, so taking it on every commit would
         // serialize with the metadata reads that every query performs.
-        final boolean hasParquetPartitions = txWriter.hasParquetPartitions();
-        if (hasParquetPartitions != hasNotifiedParquetPartitions) {
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.setHasParquetPartitions(tableToken, hasParquetPartitions);
-            }
-            hasNotifiedParquetPartitions = hasParquetPartitions;
-        }
+        publishHasParquetPartitions();
         // Bookmark masterRef to track how many rows is in uncommitted state
         this.committedMasterRef = masterRef;
     }
@@ -6665,6 +6511,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long currentTableTxn = txWriter.getTxn();
         publishDeferredPostingSealPurges(currentTableTxn, false);
         publishRetiredGeometryGenerations(currentTableTxn);
+    }
+
+    /**
+     * Commits a compaction swap that replaced the committed entries {@code [lo, committedHi)} with {@code count}
+     * in-memory ones, while this writer's transaction stays open - see {@link TxWriter#commitPartitionRange}. Nothing
+     * queued for the open transaction's own commit - its posting seal purges, deferred purges - goes out here. Neither
+     * does a retired geometry generation: a swap writes a fresh directory, which retires none, and one the open
+     * transaction queued would have changed the partition table, refusing the swap.
+     */
+    private void commitSwapAroundOpenTransaction(int lo, int committedHi, int count) {
+        maybeUpgradeStorageVersion();
+        txWriter.commitPartitionRange(configuration.getCommitMode(), lo, committedHi, count);
+        maybeDowngradeStorageVersion();
     }
 
     private void commitTxWriterAndPublishPendingPostingSealPurges(int commitMode) {
@@ -8494,8 +8353,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // parquetMetaReader is a flyweight: it never owns its mmap, so
         // clear() (release native handle, zero state) is the right cleanup.
         parquetMetaReader.clear();
-        Misc.free(parquetRewriteIndexer);
-        Misc.free(parquetRewriteRowGroupBuffers);
         Misc.free(parquetBloomFilterIndexes);
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
@@ -9931,7 +9788,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long timestamp,
             RowGroupBuffers rowGroupBuffers,
             boolean allowDestructiveRecovery,
-            boolean normalizeColumnTops,
             long partitionNameTxn
     ) {
         final ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
@@ -9952,7 +9808,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // branch returns early on ff.exists, never resetting it).
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, allowDestructiveRecovery);
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
-        final long columnTop = normalizeColumnTops ? 0 : columnVersionWriter.getColumnTop(timestamp, columnIndex);
+        final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
         // Invariant: on a parquet partition the indexed SYMBOL's columnTop is
         // one of three values. 0 (column has data from row 0):
@@ -10005,7 +9861,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Covered column data goes to mmap-backed scratch files (+ aux for
                     // var-size), written in the row-group loop and read from the same
                     // addresses during seal -- no write()/re-mmap round-trip.
-                    addCoveredSlots(coveringColumnIndices, timestamp, parquetMetadata, partitionSize, normalizeColumnTops);
+                    addCoveredSlots(coveringColumnIndices, timestamp, parquetMetadata, partitionSize);
                     includedCoveredCount = coveredColumnAccumulator.openScratchFiles(
                             configuration, ff, path, plen, parquetMetadata, indexRowCount, parquetColumnIdsAndTypes);
                 }
@@ -10121,7 +9977,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     timestamp,
                     rowGroupBuffers,
                     true,
-                    false,
                     txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp)
             );
         } finally {
@@ -10153,6 +10008,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!isLastPartitionParquet()) {
             txWriter.initLastPartition(ts);
         }
+    }
+
+    /**
+     * Moves {@code fileName} from the staging directory {@link #other} names, up to {@code stagingDirLen}, into the
+     * partition directory {@link #path} names, up to {@code partitionDirLen}, over whatever an earlier attempt left.
+     */
+    private void installStagedFile(int stagingDirLen, int partitionDirLen, CharSequence fileName) {
+        other.trimTo(stagingDirLen).concat(fileName).$();
+        path.trimTo(partitionDirLen).concat(fileName).$();
+        ff.removeQuiet(path.$());
+        if (ff.rename(other.$(), path.$()) != Files.FILES_RENAME_OK) {
+            final CairoException e = CairoException.critical(ff.errno())
+                    .put("could not install staged parquet copy [table=").put(tableToken)
+                    .put(", from=").put(other)
+                    .put(", to=").put(path)
+                    .put(']');
+            other.trimTo(stagingDirLen);
+            path.trimTo(partitionDirLen);
+            throw e;
+        }
+        other.trimTo(stagingDirLen);
+        path.trimTo(partitionDirLen);
     }
 
     private boolean isColdSquashPartition(int partitionIndex, long lastCommitTxn) {
@@ -10315,6 +10192,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Whether the committed partitions {@code [lo, hi)} - the folders of the logical partition starting at
+     * {@code logicalPartitionTimestamp} - can be swapped and committed on their own while this writer's transaction
+     * stays open, i.e. nothing the transaction holds can land in them:
+     * <ul>
+     *     <li>in-order rows land in the last committed partition and in the partitions they open past it, so the
+     *     range has to end before the last committed one, its entries unchanged since the last commit;</li>
+     *     <li>no O3 row, lag rows kept from an earlier commit included, falls inside the logical partition;</li>
+     *     <li>nothing is pending that only a whole commit can publish: a partition table change, a column version
+     *     change, a row still being written.</li>
+     * </ul>
+     * A WAL writer is never handed a command with a transaction open other than mid-apply; it is refused outright.
+     */
+    private boolean isPartitionRangeClearOfOpenTransaction(int lo, int hi, long logicalPartitionTimestamp) {
+        if (tableToken.isWal()
+                || o3InError
+                || (masterRef & 1) != 0
+                || txWriter.isPartitionTableChanged()
+                || columnVersionWriter.hasChanges()
+                || hi >= txWriter.getCommittedPartitionCount()) {
+            return false;
+        }
+        for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
+            if (!txWriter.isPartitionEntryCommitted(partitionIndex)) {
+                return false;
+            }
+        }
+        if (hasO3()) {
+            // O3 rows are not sorted until the commit, so every one has to be looked at. The count is bounded by the
+            // table's max uncommitted rows, and a swap is rare.
+            final long logicalPartitionTimestampHi = txWriter.getNextLogicalPartitionTimestamp(logicalPartitionTimestamp);
+            final long o3TimestampAddr = o3TimestampMem.getAddress();
+            for (long row = 0, n = getO3RowCount0(); row < n; row++) {
+                final long timestamp = getTimestampIndexValue(o3TimestampAddr, row);
+                if (timestamp >= logicalPartitionTimestamp && timestamp < logicalPartitionTimestampHi) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
         LPSZ keyFile = io.questdb.cairo.idx.PostingIndexUtils.keyFileName(
                 path.trimTo(plen), columnName, columnNameTxn);
@@ -10399,9 +10318,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
             }
         } catch (CairoException e) {
-            // The outer catch in switchNativePartitionWithParquet rmdirs the
-            // new partition dir on any throw; this log adds the partition
-            // timestamp for triage and rethrows so the caller still rolls back.
+            // The caller rolls back on any throw; this log adds the partition
+            // timestamp for triage.
             LOG.error().$("could not link index files [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .$(", error=").$safe(e.getMessage()).I$();
@@ -13567,7 +13485,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 partitionTimestamp,
                                 rowGroupBuffers,
                                 false,
-                                false,
                                 partitionNameTxn
                         );
                     } finally {
@@ -14955,6 +14872,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         retiredGeometryGenerations.clear();
     }
 
+    /**
+     * Refreshes the metadata cache's has-parquet-partitions flag, which drives parquet row-group pruning, when the
+     * committed partition table flipped it. Only on a flip: the metadata-cache write lock is global.
+     */
+    private void publishHasParquetPartitions() {
+        final boolean hasParquetPartitions = txWriter.hasParquetPartitions();
+        if (hasParquetPartitions != hasNotifiedParquetPartitions) {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, hasParquetPartitions);
+            }
+            hasNotifiedParquetPartitions = hasParquetPartitions;
+        }
+    }
+
     private void publishPostingIndexesForLastPartitionFastLag() {
         // Fast-lag has no sealPostingIndexesForO3Partitions sweep to follow,
         // so this is the only place pending POSTING entries from
@@ -15446,77 +15377,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
     }
 
-    private void rebuildParquetRewriteIndexes(
-            long partitionTimestamp,
-            long partitionNameTxn,
-            long parquetFileSize,
-            int partitionDirLen,
-            IntList columnIndexes
-    ) {
-        long parquetAddr = 0;
-        long parquetSize = 0;
-        setPathForNativePartition(
-                path.trimTo(pathSize),
-                timestampType,
-                partitionBy,
-                partitionTimestamp,
-                partitionNameTxn
-        );
-        assert path.size() == partitionDirLen;
-        try {
-            if (parquetRewriteRowGroupBuffers == null) {
-                parquetRewriteRowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER, true);
-            }
-            parquetRewriteRowGroupBuffers.reopen();
-            openParquetMetadataOrThrow(path, partitionDirLen, parquetFileSize);
-            parquetSize = parquetMetaReader.getParquetFileSize();
-            path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
-            parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                final int columnIndex = columnIndexes.getQuick(i);
-                final byte indexType = metadata.getColumnIndexType(columnIndex);
-                if (parquetRewriteIndexer == null || parquetRewriteIndexerType != indexType) {
-                    parquetRewriteIndexer = Misc.free(parquetRewriteIndexer);
-                    parquetRewriteIndexer = new SymbolColumnIndexer(configuration, indexType);
-                    parquetRewriteIndexerType = indexType;
-                }
-                try {
-                    indexParquetColumn(
-                            parquetRewriteIndexer,
-                            metadata.getColumnName(columnIndex),
-                            columnIndex,
-                            getColumnNameTxn(partitionTimestamp, columnIndex),
-                            metadata.getIndexValueBlockCapacity(columnIndex),
-                            indexType,
-                            partitionDirLen,
-                            partitionTimestamp,
-                            parquetRewriteRowGroupBuffers,
-                            true,
-                            true,
-                            partitionNameTxn
-                    );
-                } finally {
-                    parquetRewriteIndexer.clear();
-                    path.trimTo(partitionDirLen);
-                }
-            }
-        } finally {
-            Misc.free(parquetRewriteRowGroupBuffers);
-            Misc.free(parquetDecoder);
-            if (parquetAddr != 0) {
-                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            }
-            final long parquetMetaAddr = parquetMetaReader.getAddr();
-            final long parquetMetaSize = parquetMetaReader.getFileSize();
-            parquetMetaReader.clear();
-            if (parquetMetaAddr != 0) {
-                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            }
-            path.trimTo(pathSize);
-        }
-    }
-
     private void rebuildColumnIndex(
             int columnIndex,
             CharSequence columnName,
@@ -16004,6 +15864,51 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * The staging directory of a native partition's parquet copy - see {@link #installGeneratedParquet} - is live
+     * while the partition it names is still that native, plain folder without a parquet copy of its own. Anything
+     * else means its install landed or can never land.
+     */
+    private void removeGeneratingPartitionDirIfStale(long pUtf8NameZ) {
+        final int markerLo = utf8Sink.size() - GENERATING_DIR_MARKER.length();
+        final boolean stale;
+        try {
+            final long srcNameTxn;
+            int txnSep = Utf8s.indexOfAscii(utf8Sink, 0, markerLo, '.');
+            if (txnSep < 0) {
+                // A folder that never moved has no name txn suffix: nameTxn -1.
+                txnSep = markerLo;
+                srcNameTxn = -1;
+            } else {
+                srcNameTxn = Numbers.parseLong(utf8Sink, txnSep + 1, markerLo);
+            }
+            final long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
+            final int partitionIndex = txWriter.getPartitionIndex(dirTimestamp);
+            stale = partitionIndex < 0
+                    || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn
+                    || txWriter.isPartitionParquet(partitionIndex)
+                    || txWriter.isPartitionParquetGenerated(partitionIndex)
+                    || txWriter.isPartitionComposite(partitionIndex);
+        } catch (NumericException ignore) {
+            // Not a name this writer's compaction produced; leave the directory rather than guess.
+            path.trimTo(pathSize);
+            path.concat(pUtf8NameZ).$();
+            LOG.error().$("invalid staging partition directory inside table folder: ").$(path).$();
+            path.trimTo(pathSize);
+            return;
+        }
+        if (stale) {
+            path.trimTo(pathSize);
+            path.concat(pUtf8NameZ);
+            LOG.info().$("removing abandoned parquet copy staging directory [path=").$substr(pathRootSize, path.$()).I$();
+            if (!ff.rmdir(path, false)) {
+                LOG.error().$("could not remove abandoned parquet copy staging directory [path=").$substr(pathRootSize, path.$())
+                        .$(", errno=").$(ff.errno()).I$();
+            }
+            path.trimTo(pathSize);
+        }
+    }
+
+    /**
      * The {@link TableUtils#MERGING_DIR_MARKER} twin of {@link #removeCompactingPartitionDirIfStale}: a merge's
      * staging directory is still wanted only while the logical partition it names still holds exactly the folder
      * count the copy was built from, starting on the name txn its name carries.
@@ -16034,9 +15939,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 liveFolderCount++;
             }
-            // A merge always names two folders or more, and a matching live count then puts partitionIndex
-            // inside the table, so the name txn below is readable.
-            stale = liveFolderCount < 2
+            // A merge names two folders or more, a parquet conversion one or more; a matching live count then puts
+            // partitionIndex inside the table, so the name txn below is readable.
+            stale = liveFolderCount < 1
                     || liveFolderCount != folderCount
                     || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn;
         } catch (NumericException ignore) {
@@ -16076,6 +15981,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // A logical partition merge's staging directory, named after the whole run rather than one
             // folder, so it too needs its own liveness test.
             removeMergingPartitionDirIfStale(pUtf8NameZ);
+            return;
+        }
+        if (Utf8s.endsWithAscii(utf8Sink, TableUtils.GENERATING_DIR_MARKER)) {
+            // A native partition's staged parquet copy, live only while the partition can still take it.
+            removeGeneratingPartitionDirIfStale(pUtf8NameZ);
             return;
         }
         if (!CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&

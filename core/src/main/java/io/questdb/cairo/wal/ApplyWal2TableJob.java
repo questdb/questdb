@@ -605,8 +605,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                     // The apply loop holds the writer across this batch of transactions and never
                     // ticks the command queue itself. Once the batch is applied and its sequencer
-                    // txn finalized, drain async writer commands (e.g. storage policy parquet-commit
-                    // / drop-local / squash) published while the writer was busy, so they run here
+                    // txn finalized, drain async writer commands (e.g. storage policy
+                    // drop-local, compaction swaps) published while the writer was busy, so they run here
                     // rather than sitting unprocessed until the writer is returned to the pool.
                     // The drain shares the per-table time quota with the apply loop: it gets at most
                     // half of whatever quota is left, so a backlog of expensive commands (each squash

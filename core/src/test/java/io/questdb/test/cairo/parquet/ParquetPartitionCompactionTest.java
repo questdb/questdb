@@ -68,6 +68,7 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     private static final String ADD_COLUMN = "ALTER TABLE %s ADD COLUMN x SYMBOL";
     private static final String ADD_COVERING_POSTING_INDEX = "ALTER TABLE %s ALTER COLUMN x ADD INDEX TYPE POSTING INCLUDE (a)";
     private static final String ADD_POSTING_INDEXED_COLUMN = "ALTER TABLE %s ADD COLUMN x SYMBOL INDEX TYPE POSTING";
+    private static final long DAY_2020_01_01 = 1577836800000000L;
 
     /**
      * A writer held by another thread cannot apply the swap directly: the job builds the compacted
@@ -107,18 +108,18 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
-     * {@link TableWriter#swapCompactedParquetPartition} refuses to run inside an open transaction: the staged
-     * copy was built off a reader snapshot taken before those uncommitted rows existed, so swapping it in
-     * would drop them. Declining leaves the transaction for its owner to commit normally - which is asserted
+     * {@link TableWriter#swapCompactedParquetPartition} refuses to run inside an open transaction holding a row
+     * for the partition: the staged copy was built off a reader snapshot taken before that uncommitted row
+     * existed, so swapping it in would drop it. Declining leaves the transaction for its owner to commit normally - which is asserted
      * here, row by row.
      * <p>
      * The table stays non-WAL because that is the shape the guard was written for: {@code
      * TableUpdateDetails.commitIfMaxUncommittedRowsCountReached()} ticks a non-WAL writer every {@code
      * cairo.writer.tick.rows.count} rows WITHOUT committing first, so an ILP-over-TCP table sits
-     * mid-transaction for most of a tick. The background sweep no longer reaches a non-WAL table at all
-     * (see {@link #testIdleSweepLeavesANonWalTableAlone}), so nothing queues a swap here any more and the
-     * test calls the entry point directly. The guard itself stays: the entry point is public and its
-     * contract holds for whoever calls it.
+     * mid-transaction for most of a tick. A swap requested for such a table does reach the writer, and it
+     * commits around a transaction that cannot touch the partition (see
+     * {@link #testSwapCommitsAroundAnOpenTransactionThatMissesThePartition}); an O3 row inside the partition
+     * is what it must refuse. The test calls the entry point directly.
      */
     @Test
     public void testSwapInsideAnOpenTransactionIsRefused() throws Exception {
@@ -173,6 +174,58 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             // and every row the partition already held is still there.
             assertDataIntactPlusLagRow("q");
         });
+    }
+
+    /**
+     * A compaction request serves a non-WAL table's lone parquet partition: the sweep leaves non-WAL tables
+     * alone (see {@link #testIdleSweepLeavesANonWalTableAlone}), but Enterprise cold storage asks for the
+     * rebuild explicitly before it uploads the partition. An idle writer takes the swap inline.
+     */
+    @Test
+    public void testRequestCompactsANonWalParquetPartition() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("rn", false);
+            final TableToken tableToken = engine.verifyTableName("rn");
+            assertUnusedBytesPositive(tableToken);
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+
+            Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(tableToken, DAY_2020_01_01));
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertTrue("the request must dispatch the rebuild", job.run());
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(tableToken, DAY_2020_01_01));
+                Assert.assertFalse("a compact partition must not be rebuilt again", job.run());
+            }
+            engine.releaseInactive();
+
+            Assert.assertNotEquals("the requested rebuild did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            assertUnusedBytesZero(tableToken);
+            assertDataIntact("rn");
+        });
+    }
+
+    /**
+     * A swap queued on a non-WAL writer that holds a transaction open commits on its own when none of the
+     * transaction's rows can land in the swapped partition. The transaction here holds every kind of pending
+     * state: in-order rows appended to the last partition, an in-order row that opens a new partition, and an
+     * O3 row for the last partition. None is published by the swap; the owner's commit publishes them all on
+     * top of the swapped-in partition.
+     */
+    @Test
+    public void testSwapCommitsAroundAnOpenTransactionThatMissesThePartition() throws Exception {
+        assertSwapAroundOpenTransaction(true);
+    }
+
+    /**
+     * {@link #testSwapCommitsAroundAnOpenTransactionThatMissesThePartition}, with the owner rolling its
+     * transaction back instead: the swap, committed on its own, survives the rollback, and none of the
+     * pending rows does.
+     */
+    @Test
+    public void testSwapCommittedAroundAnOpenTransactionSurvivesItsRollback() throws Exception {
+        assertSwapAroundOpenTransaction(false);
     }
 
     /**
@@ -647,6 +700,13 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         });
     }
 
+    private static void appendRow(TableWriter writer, String timestamp, int a, String s) throws Exception {
+        final TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp(timestamp));
+        row.putInt(0, a);
+        row.putSym(1, s);
+        row.append();
+    }
+
     private static boolean dirExists(String dir) {
         try (Path path = new Path()) {
             return configuration.getFilesFacade().exists(path.of(dir).$());
@@ -949,6 +1009,75 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                                 99\tk1\t2020-01-02T00:00:00.000000Z
                                 """
                 );
+    }
+
+    private void assertSwapAroundOpenTransaction(boolean isCommit) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("ot", false);
+            final TableToken tableToken = engine.verifyTableName("ot");
+            assertUnusedBytesPositive(tableToken);
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final String stagingDir = stagingDir(tableToken);
+
+            try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
+                appendRow(ownerWriter, "2020-01-02T01:00:00.000000Z", 201, "k2");
+                appendRow(ownerWriter, "2020-01-03T00:00:00.000000Z", 202, "k1");
+                appendRow(ownerWriter, "2020-01-02T00:30:00.000000Z", 203, "k2");
+                Assert.assertTrue(ownerWriter.inTransaction());
+                Assert.assertTrue("the fixture must hold O3 rows", ownerWriter.hasO3());
+
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(tableToken, DAY_2020_01_01));
+                runSweepOnAnotherThread();
+                Assert.assertTrue("the busy writer must have been handed a queued swap", dirExists(stagingDir));
+                Assert.assertEquals(nameTxnBefore, parquetPartitionNameTxn(tableToken));
+
+                ownerWriter.tick();
+                Assert.assertFalse("the swap should have renamed the staging directory in", dirExists(stagingDir));
+                Assert.assertTrue("the swap must leave the transaction open", ownerWriter.inTransaction());
+                Assert.assertNotEquals("the swap did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+                assertUnusedBytesZero(tableToken);
+                // Readers see the swapped-in partition and none of the transaction's rows.
+                assertDataIntact("ot");
+
+                if (isCommit) {
+                    ownerWriter.commit();
+                } else {
+                    ownerWriter.rollback();
+                }
+            }
+
+            Assert.assertNotEquals("the swap must outlive the transaction", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            assertUnusedBytesZero(tableToken);
+            if (!isCommit) {
+                assertDataIntact("ot");
+                return;
+            }
+            assertQuery("SELECT count() FROM ot")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n19\n");
+            assertQuery("SELECT count() FROM ot WHERE s = 'k1' AND ts IN '2020-01-01'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8\n");
+            assertQuery("SELECT a, s, ts FROM ot WHERE ts >= '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(
+                            """
+                                    a\ts\tts
+                                    99\tk1\t2020-01-02T00:00:00.000000Z
+                                    203\tk2\t2020-01-02T00:30:00.000000Z
+                                    201\tk2\t2020-01-02T01:00:00.000000Z
+                                    202\tk1\t2020-01-03T00:00:00.000000Z
+                                    """
+                    );
+        });
     }
 
     private void assertIdleSweepAfterDropColumnIndexesAddedColumn(String... ddl) throws Exception {
