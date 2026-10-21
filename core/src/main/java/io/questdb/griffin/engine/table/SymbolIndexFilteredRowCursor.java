@@ -96,7 +96,7 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
         }
         this.rowCursor = pageFrame
                 .getIndexReader(columnIndex, indexDirection)
-                .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(symbolKey, pageFrame.getIndexRowLo(), pageFrame.getIndexRowHi() - 1);
         record.init(pageFrameMemory);
         record.setRowIndex(0);
         return this;

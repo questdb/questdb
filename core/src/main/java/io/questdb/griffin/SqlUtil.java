@@ -1152,17 +1152,6 @@ public class SqlUtil {
         return ast.lhs;
     }
 
-    /**
-     * Extracts the timestamp column expression from a timestamp_floor or
-     * timestamp_floor_utc function call, handling 2/3/5-param overloads.
-     */
-    public static ExpressionNode getTimestampFloorTimestampArg(ExpressionNode ast) {
-        if (ast.paramCount == 3 || ast.paramCount == 5) {
-            return ast.args.getQuick(ast.paramCount - 2);
-        }
-        return ast.rhs;
-    }
-
     public static byte implicitCastAsByte(long value, int fromType) {
         if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
             return (byte) value;
