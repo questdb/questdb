@@ -1064,6 +1064,53 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByAllIndexedNullIntervalBelowColumnTop() throws Exception {
+        // The interval ends below the column top, so the frame's index row hi must clamp
+        // NULL's latest implicit row; the directory-wide top would answer a row past the interval.
+        configOverrideUseWithinLatestByOptimisation();
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"indexed", "plain"}) {
+                execute("CREATE TABLE " + table + " (ts " + timestampType.getTypeName() + ", price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + " SELECT timestamp_sequence('2020-01-01', 60 * 1_000_000L), x * 1.0 FROM long_sequence(100)");
+                execute("ALTER TABLE " + table + " ADD COLUMN s SYMBOL" + (table.equals("indexed") ? " INDEX" : ""));
+                execute("INSERT INTO " + table + " VALUES ('2020-01-01T02:00:00', 500.0, 'A')");
+            }
+            final String query = "SELECT s, ts, price FROM %s WHERE ts < '2020-01-01T00:50' LATEST ON ts PARTITION BY s ORDER BY s";
+            final String expected = "s\tts\tprice\n" +
+                    "\t2020-01-01T00:49:00.000000" + getTimestampSuffix(timestampType.getTypeName()) + "\t50.0\n";
+            assertQuery(String.format(query, "plain")).expectSize().returns(expected);
+            assertQuery(String.format(query, "indexed"))
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testLatestByAllIndexedNullPageFramesBelowColumnTop() throws Exception {
+        // Without an interval the backward frames are contiguous, so the first frame at or below the
+        // column top holds NULL's latest implicit row and the frame clamp must leave it unchanged.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(10, 10);
+            try {
+                execute("CREATE TABLE indexed (ts " + timestampType.getTypeName() + ", price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO indexed SELECT timestamp_sequence('2020-01-01', 60 * 1_000_000L), x * 1.0 FROM long_sequence(100)");
+                execute("ALTER TABLE indexed ADD COLUMN s SYMBOL INDEX");
+                execute("INSERT INTO indexed SELECT timestamp_sequence('2020-01-01T02:00', 60 * 1_000_000L), 500.0 + x, 'A' FROM long_sequence(35)");
+                final String suffix = getTimestampSuffix(timestampType.getTypeName());
+                assertQuery("SELECT s, ts, price FROM indexed LATEST ON ts PARTITION BY s ORDER BY s")
+                        .expectSize()
+                        .withPlanContaining("LatestByAllIndexed")
+                        .returns("s\tts\tprice\n" +
+                                "\t2020-01-01T01:39:00.000000" + suffix + "\t100.0\n" +
+                                "A\t2020-01-01T02:34:00.000000" + suffix + "\t535.0\n");
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
     public void testLatestByAllIndexedWithPrefixes() throws Exception {
         configOverrideUseWithinLatestByOptimisation();
 

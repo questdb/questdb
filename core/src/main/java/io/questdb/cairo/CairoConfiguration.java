@@ -254,6 +254,15 @@ public interface CairoConfiguration {
 
     boolean getDebugWalApplyBlockFailureNoRetry();
 
+    /**
+     * Upper bound on how many WAL transactions {@code WalTxnDetails.calculateInsertTransactionBlock}
+     * may fold into a single commit. Unlimited by default; a small value makes each transaction land
+     * on its own, which is what a test needs when it wants a later transaction to merge INTO data an
+     * earlier one already put on disk rather than be sorted alongside it into a partition the same
+     * commit creates.
+     */
+    int getDebugWalApplyMaxTxnBlockSize();
+
     @NotNull
     DateLocale getDefaultDateLocale();
 
@@ -591,7 +600,17 @@ public interface CairoConfiguration {
         return 1.5;
     }
 
+    /**
+     * @deprecated Use {@link #getO3PartitionMaxSplits()}.
+     */
+    @Deprecated
     int getO3LastPartitionMaxSplits();
+
+    /**
+     * How many partitions a writer keeps merge-append frames open for across commits - see
+     * {@link io.questdb.cairo.frm.file.CompositeFrameCache}. 0 disables the cache.
+     */
+    int getO3PartitionMergeAppendFrameCacheSize();
 
     /**
      * Default commit lag in microseconds for new tables. This value
@@ -603,11 +622,28 @@ public interface CairoConfiguration {
 
     int getO3MemMaxPages();
 
+    /**
+     * Split cap for a logical partition behind the last one of a non-WAL table, applied by the commit. The
+     * compaction sweep does not serve non-WAL tables. WAL tables use {@link #getO3PartitionMaxSplits()} for
+     * every logical partition and leave folding older days to the sweep.
+     */
     int getO3MidPartitionMaxSplits();
+
+    long getO3PartitionClusterBinWidth();
+
+    int getO3PartitionClusterMaxBins();
+
+    default int getO3PartitionMaxSplits() {
+        return getO3LastPartitionMaxSplits();
+    }
 
     long getO3MinLag();
 
+    int getO3PartitionPreSplitMaxCuts();
+
     int getO3OpenColumnQueueCapacity();
+
+    int getO3PartitionPreSplitMinPieceMultiple();
 
     int getO3PartitionQueueCapacity();
 
@@ -646,6 +682,64 @@ public interface CairoConfiguration {
     CharSequence getParquetExportTableNamePrefix();
 
     int getParquetExportVersion();
+
+    long getPartitionCompactionAvgRowsPieceLim();
+
+    long getPartitionCompactionCheckInterval();
+
+    long getPartitionCompactionDeadMinSize();
+
+    double getPartitionCompactionDeadRowsRatio();
+
+    long getPartitionCompactionDeclineBackoffMax();
+
+    long getPartitionCompactionDeclineBackoffMin();
+
+    int getPartitionCompactionDeclineBackoffMultiplier();
+
+    int getPartitionCompactionHotCommits();
+
+    long getPartitionCompactionIdleTimeout();
+
+    long getPartitionCompactionIoBudget();
+
+    int getPartitionCompactionIoCostMultiplier();
+
+    int getPartitionCompactionMoveTailDeadRowsPercent();
+
+    int getPartitionCompactionMoveTailPieceThreshold();
+
+    int getPartitionCompactionMoveTailPrefixMultiple();
+
+    int getPartitionCompactionPieceThreshold();
+
+    /**
+     * How long every folder of a logical partition - the main directory and all its MOVE-TAIL splits - has to
+     * have been idle before the background sweep merges the whole logical partition into a single folder. Always
+     * at or below {@link #getPartitionCompactionIdleTimeout()}, which is the threshold for compacting one
+     * composite folder on its own.
+     */
+    long getPartitionCompactionSquashIdleTimeout();
+
+    int getPartitionCompactionSquashTargetSizeMultiple();
+
+    long getPartitionCompactionSwapTimeout();
+
+    int getPartitionCompactionTableDeadStopPercent();
+
+    int getPartitionCompactionTableDeadStopTriggerPercent();
+
+    long getPartitionCompactionTableDeadThreshold();
+
+    int getPartitionCompactionTableDeadThresholdPercent();
+
+    long getPartitionCompactionTableDeadTrigger();
+
+    default double getPartitionCompactionTablePressureDeadRatio() {
+        return 0.5;
+    }
+
+    long getPartitionCompactionTimeBudgetMs();
 
     double getPartitionEncoderParquetBloomFilterFpp();
 
@@ -826,6 +920,8 @@ public interface CairoConfiguration {
     int getSampleByIndexSearchPageSize();
 
     long getSequencerCheckInterval();
+
+    long getSequencerCheckMinInterval();
 
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
@@ -1127,6 +1223,43 @@ public interface CairoConfiguration {
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
 
+    /**
+     * Hard cap, in rows, of one WAL apply transaction block while {@code cairo.wal.apply.block.size} is positive:
+     * caps both the starting row limit and its growth. At most 2 billion, which keeps block row counts and the
+     * look-ahead txn estimates derived from them within int range. Has no effect while
+     * {@code cairo.wal.apply.block.size} is 0.
+     */
+    long getWalApplyBlockMaxRows();
+
+    /**
+     * Memory budget of WAL apply transaction blocks above {@link #getWalApplyBlockSize()}, as a percentage of
+     * the RSS limit, shared by the {@link #getWalApplyWorkerCount()} workers: one block gets the percentage
+     * divided by the worker count. A block grows past the block size only while both of its memory uses fit: anonymous memory
+     * (sort index, a copy of the block's rows, and the O3 merge index over them and the existing rows the merge
+     * copies again) and page cache (the block's staging plus the existing rows copied again, read and written).
+     * The existing rows copied again are estimated from the partitions the block's transactions reach, times a
+     * copy ratio learned per table for merge-append partitions and for classic O3 merges. No RSS limit: no growth. Has
+     * no effect while {@code cairo.wal.apply.block.size} is 0.
+     */
+    int getWalApplyBlockMemoryPercent();
+
+    /**
+     * Starting size, in bytes, of one WAL apply transaction block, 75 MiB by default. The writer divides it by the
+     * table's average record size to get the block's starting row limit. {@code 0} disables adaptive blocks: the
+     * block row limit then comes from {@code cairo.wal.max.lag.size} and
+     * {@code cairo.wal.squash.uncommitted.rows.multiplier} x the table's max uncommitted rows. When positive, it
+     * replaces both for the block row limit (the lag row count still bounds the look-ahead and the in-memory lag).
+     * Rows up to the starting size are always applied without a memory check; past it, a block ends early when it
+     * no longer fits {@link #getWalApplyBlockMemoryPercent()}. The row limit doubles after every block that the
+     * row limit itself cut short, while there is a memory budget; without an RSS limit or at a memory percent of
+     * 0 it stays at the starting size. The grown limit is per table writer and resets when the writer reopens.
+     * Blocks can still be smaller: they end at the last pending transaction and at transactions that
+     * force a full commit. The look-ahead txn count starts at {@code cairo.wal.apply.look.ahead.txn.count} and
+     * adapts to one block's worth of transactions, and the table time quota does not stop the look-ahead
+     * before it has loaded one block of the transactions visible when it started.
+     */
+    long getWalApplyBlockSize();
+
     int getWalApplyLookAheadTransactionCount();
 
     /**
@@ -1151,6 +1284,13 @@ public interface CairoConfiguration {
     }
 
     long getWalApplyTableTimeQuota();
+
+    /**
+     * Number of threads that run WAL apply: the dedicated WAL apply pool's ({@code wal.apply.worker.count}), or the
+     * shared write pool's when there is no dedicated pool. They can apply as many tables at once, so a WAL apply
+     * block gets this share of {@link #getWalApplyBlockMemoryPercent()}.
+     */
+    int getWalApplyWorkerCount();
 
     /**
      * Whether WAL-apply-suspended tables (see {@link #getWalApplySuspendedTables()} and
@@ -1264,6 +1404,13 @@ public interface CairoConfiguration {
 
     boolean isCopierChunkedEnabled();
 
+    /**
+     * Debug-only: when true, {@link TableWriter} verifies its column-mapping and truncation invariants after
+     * every commit, structural change and close, and reports violations to {@link WriterInvariantChecker}.
+     * Index writers are not checked. Enabled by the test harness, never in production.
+     */
+    boolean isDebugWriterInvariantCheckEnabled();
+
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
@@ -1320,6 +1467,8 @@ public interface CairoConfiguration {
     boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();
+
+    boolean isO3PartitionMergeAppendEnabled();
 
     boolean isO3QuickSortEnabled();
 

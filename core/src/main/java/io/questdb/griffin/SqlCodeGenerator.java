@@ -332,7 +332,6 @@ import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
-import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
@@ -1744,6 +1743,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             bindVariable = findBindVariable(node.args.getQuick(i));
         }
         return bindVariable;
+    }
+
+    /**
+     * Returns the index of the SAMPLE BY bucket key in the group-by output, or -1 when
+     * the output does not carry it. SqlOptimiser.rewriteSampleBy records the bucket key
+     * node on the model that holds the fill parameters, and the group-by column that
+     * carries that very node is the bucket, under whatever alias the optimizer gave it.
+     * The lookup never identifies the bucket by name, so a user column that shares the
+     * timestamp's name or collides with the bucket's alias cannot be taken for the
+     * bucket (#7838).
+     * The TIMESTAMP check guards getTimestampDriver downstream.
+     */
+    private static int findFillBucketIndex(IQueryModel model, RecordMetadata metadata, IQueryModel fillModel) {
+        final ExpressionNode bucketKey = fillModel.getFillBucketKey();
+        assert bucketKey != null : "rewriteSampleBy records fillBucketKey together with fillStride";
+        if (bucketKey == null) {
+            return -1;
+        }
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (column.getAst() == bucketKey) {
+                final int index = SqlUtil.getColumnIndexQuiet(metadata, column.getAlias());
+                return index >= 0 && ColumnType.isTimestamp(metadata.getColumnType(index)) ? index : -1;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -4493,8 +4519,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(-1, "fill values were null");
             }
 
-            fillValues = new ObjList<>(fillValuesExprs.size());
-
             // FILL(NONE) is incompatible with per-aggregate fill values. The
             // optimizer accepts multi-element fill lists, so reject FILL(NONE, 1)
             // here rather than silently dropping the trailing values.
@@ -4506,6 +4530,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
+
+            // This group-by owns the fill when its output carries the bucket key node
+            // that SqlOptimiser.rewriteSampleBy recorded on the model holding the fill
+            // parameters. An outer GROUP BY over a SAMPLE BY ... FILL sub-query reaches
+            // the inner fill through the walk above but never carries that node, so it
+            // must not stack the inner fill on its own output. The owner may sit several
+            // models above the fill: LateralJoinRewriter's LATEST ON fallback inserts a
+            // filter model and a window model in between, which leaves the group-by's
+            // sampleByFill list empty (rewriteSelectClause0 re-exposes only a fill held
+            // by the immediate base model), so that list cannot decide ownership. A
+            // non-empty list without the node means an optimizer path dropped or
+            // rebuilt the node: fail loudly under -ea, and without -ea skip the fill
+            // rather than guess a column. That assertion reaches only the shape where
+            // rewriteSelectClause0 re-exposed the list; under the LATERAL fallback the
+            // list is empty by construction, so a rebuilt node there skips the fill
+            // silently and LateralJoinTest's LATEST ON fill tests are the net. The
+            // check runs after the FILL(NONE) validation so that an all-NONE list,
+            // which carries no signal, still fails that validation as before.
+            final RecordMetadata baseMeta = groupByFactory.getMetadata();
+            final int timestampIndex = findFillBucketIndex(model, baseMeta, curr);
+            if (timestampIndex < 0) {
+                assert model.getSampleByFill().size() == 0 : "fill bucket key node not found on the group-by output";
+                return groupByFactory;
+            }
+
+            fillValues = new ObjList<>(fillValuesExprs.size());
 
             ExpressionNode expr;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
@@ -4537,63 +4587,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return groupByFactory;
             }
 
-
-            IQueryModel temp = model;
-            ExpressionNode timestamp = model.getTimestamp();
-
-            while (timestamp == null && temp != null) {
-                temp = temp.getNestedModel();
-
-                if (temp != null) {
-                    timestamp = temp.getTimestamp();
-                }
-            }
-
-            assert timestamp != null;
-
-            // look for timestamp_floor to check for an alias
-            CharSequence alias = timestamp.token;
-            final CharSequence currTimestamp = curr.getTimestamp().token;
-            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn col = model.getBottomUpColumns().getQuick(i);
-                final ExpressionNode ast = col.getAst();
-                if (SqlUtil.isTimestampFloorFunction(ast)) {
-                    final CharSequence ts = SqlUtil.getTimestampFloorTimestampArg(ast).token;
-                    if (Chars.equalsIgnoreCase(ts, currTimestamp)) {
-                        alias = col.getAlias();
-                    }
-                }
-            }
-
-            final RecordMetadata baseMeta = groupByFactory.getMetadata();
-            int timestampIndex = SqlUtil.getColumnIndexQuiet(baseMeta, alias);
-            // The alias may resolve to a non-TIMESTAMP column after outer projection
-            // (e.g. SELECT ts::LONG AS ts, ...). Reset so the fallback below can try
-            // the raw timestamp token and getTimestampDriver doesn't trip its tag
-            // assert.
-            if (timestampIndex >= 0
-                    && !ColumnType.isTimestamp(baseMeta.getColumnType(timestampIndex))) {
-                timestampIndex = -1;
-            }
-            // When the same timestamp column appears multiple times (e.g. SELECT k, k),
-            // the alias may land on a renamed duplicate. Prefer the original token if
-            // it yields an earlier TIMESTAMP-typed index.
-            if (!Chars.equalsIgnoreCase(alias, timestamp.token)) {
-                int origIndex = SqlUtil.getColumnIndexQuiet(baseMeta, timestamp.token);
-                if (origIndex >= 0
-                        && ColumnType.isTimestamp(baseMeta.getColumnType(origIndex))
-                        && (timestampIndex < 0 || origIndex < timestampIndex)) {
-                    timestampIndex = origIndex;
-                }
-            }
-            // No TIMESTAMP column reachable (e.g. wrapped by an outer GROUP BY that
-            // projects different columns). Skip fill entirely.
-            if (timestampIndex < 0) {
-                final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
-                fillValues = null;
-                CairoException.rethrowCleanupFailure(cleanupFailure);
-                return groupByFactory;
-            }
             int timestampType = baseMeta.getColumnType(timestampIndex);
             TimestampDriver driver = getTimestampDriver(timestampType);
             fillFromFunc = driver.getTimestampConstantNull();
@@ -13353,14 +13346,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             //    "overhead" order by implementation, which would be trying to oder already ordered symbols
                             if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
                                 queryMeta.setTimestampIndex(-1);
-                                if (orderByAdviceSize == 1) {
-                                    orderByKeyColumn = true;
-                                } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                    orderByKeyColumn = true;
-                                    if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                        indexDirection = IndexReader.DIR_BACKWARD;
-                                    }
-                                }
+                                // A second ORDER BY term is honoured only when it asks for the direction the page
+                                // frames already arrive in. On this branch the first advice term is the key column,
+                                // so SqlOptimiser leaves isForceBackwardScan() false and the frames ascend; an index
+                                // cursor, however, is re-opened per frame, so a backward walk produces one descending
+                                // run PER FRAME inside an ascending frame sequence.
+                                orderByKeyColumn = orderByAdviceSize == 1
+                                        || (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)
+                                        && getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_ASCENDING);
                             }
                         }
                     }
@@ -13694,54 +13687,64 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                // Skip the symbol-index sort optimization when an outer time-series
-                // join needs the master in timestamp order. SortedSymbolIndexRecordCursorFactory
-                // emits rows in symbol order and zeroes the timestamp index, which would
-                // either trip "no timestamp" validation downstream or, worse, feed sym-ordered
-                // input into a SPLICE/ASOF/LT/WINDOW merge that assumes ts order.
-                if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null && !executionContext.isTimestampRequired()) {
-                    final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
-                    final int orderByAdviceSize = orderByAdvice.size();
-                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervalFilters()) {
-                        // This function cannot handle dotted aliases
-                        guardAgainstDotsInOrderByAdvice(model);
-
-                        // we can only deal with 'order by symbol, timestamp' at best
-                        // skip this optimisation if order by is more extensive
-                        final int columnIndex = SqlUtil.getColumnIndexQuiet(queryMeta, model.getOrderByAdvice().getQuick(0).token);
-                        assert columnIndex > -1;
-
-                        // this is our kind of column — bitmap only (native scanner)
-                        if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP
-                                && !SqlHints.hasNoIndexHint(model)) {
-                            boolean orderByKeyColumn = false;
-                            int indexDirection = IndexReader.DIR_FORWARD;
-                            if (orderByAdviceSize == 1) {
-                                orderByKeyColumn = true;
-                            } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                orderByKeyColumn = true;
-                                if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                    indexDirection = IndexReader.DIR_BACKWARD;
-                                }
-                            }
-
-                            if (orderByKeyColumn) {
-                                // check that intrinsicModel.intervals hit only one partition
-                                queryMeta.setTimestampIndex(-1);
-                                return new SortedSymbolIndexRecordCursorFactory(
-                                        configuration,
-                                        queryMeta,
-                                        dfcFactory,
-                                        columnIndex,
-                                        getOrderByDirectionOrDefault(model, 0) == IQueryModel.ORDER_DIRECTION_ASCENDING,
-                                        indexDirection,
-                                        columnIndexes,
-                                        columnSizeShifts
-                                );
-                            }
-                        }
-                    }
-                }
+                // Removed: the SortedSymbolIndex fast path for "ORDER BY sym" and
+                // "ORDER BY sym, ts" over an interval that floored to one calendar partition. It
+                // compiled to SortedSymbolIndexRecordCursorFactory, which claimed
+                // followedOrderByAdvice() unconditionally, so generateOrderBy() planned no
+                // corrective Sort above it.
+                //
+                // What it got wrong: the row cursor walked the sorted symbol key list INSIDE one
+                // page frame and restarted at key 0 for the next frame, while
+                // PageFrameRecordCursorImpl drives page frames in the outer loop. The output was a
+                // concatenation of per-frame symbol-ordered runs - k1,k2,k1,k2 - not a globally
+                // ordered result, and with a LIMIT on top it returned the wrong ROWS rather than
+                // merely the wrong order.
+                //
+                // Any of these cuts one partition into several page frames, and none of them is
+                // visible to the compiler: the page-frame row limit
+                // (min(cairo.sql.page.frame.max.rows, max(min.rows, rows / workers)), stock max
+                // 1,000,000), a column top left by ALTER TABLE ADD COLUMN, one frame per parquet
+                // row group (cairo.partition.encoder.parquet.row.group.size, stock 100,000), an O3
+                // partition split, and the pieces of a composite partition.
+                //
+                // No compile-time predicate is sound. The gate was intervalHitsOnlyOnePartition, a
+                // calendar-floor test (RuntimeIntervalModel.allIntervalsHitOnePartition): one
+                // calendar day can hold several physical partitions, and the frame count is a
+                // RUNTIME property of the data while the claim is consumed at COMPILE time and the
+                // plan is cached - a table at 999,000 rows compiles to "one frame" and is wrong
+                // after the next commit.
+                //
+                // The same reasoning withdrew two neighbouring claims. FilterOnValues and
+                // FilterOnExcludedValues no longer claim the advice for the key-column case: their
+                // SequentialRowCursorFactory restarts its per-key drain on every frame the same
+                // way. The single-key scan no longer claims "ORDER BY key, ts DESC", which asked
+                // for a backward index walk inside frames that still arrive in ascending order;
+                // "ORDER BY key" alone stays sound because the key column is constant across the
+                // result, and "ORDER BY key, ts ASC" stays sound because a forward index walk
+                // inside ascending frames is globally ascending. The orderByTimestamp claim also
+                // survives: it forces HeapRowCursorFactory, which emits the smallest row id first
+                // within a frame, frames arrive in timestamp order, and the descending form is
+                // admitted only for a single key value.
+                //
+                // The branch also carried the only guardAgainstDotsInOrderByAdvice() call on the
+                // intrinsicModel.keyColumn == null path, so a table-prefixed order-by advice now
+                // compiles to scan plus sort here instead of raising "cannot use table-prefixed
+                // names in order by"; the surviving call guards the keyColumn != null path.
+                //
+                // Two designs can bring the optimisation back:
+                // (a) key-major traversal in a dedicated cursor: for each sorted symbol key walk
+                //     every page frame, instead of for each frame walk every key. Frames are
+                //     enumerated once into PageFrameAddressCache and revisited through
+                //     PageFrameMemoryPool.navigateTo(); the index cursor bounds come from
+                //     PageFrame.getIndexRowLo() / getIndexRowHi(), which already carry the
+                //     composite piece shift. Such a cursor must pin ParquetDecodeHint.SCATTERED,
+                //     as LatestByLightRecordCursorFactory does, or the parquet decode cache
+                //     thrashes at four buffers.
+                // (b) decide per open rather than at compile time: build the fast factory and a
+                //     sorted backup, and choose when the cursor opens and the frame geometry is
+                //     knowable. CoveringIndexRecordCursorFactory already works this way - it asks
+                //     ScannedColumnTopProbe.hasAnyColumnTop() inside getCursor() and delegates to
+                //     its backup factory - precisely because the answer changes after compilation.
 
                 final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC);
 
