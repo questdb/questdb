@@ -67,6 +67,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -945,8 +946,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             }
 
                             @Override
-                            public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws TextException {
-                                throw TextException.$("cannot import text into missing column [index=").put(column).put(']');
+                            public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws NumericException {
+                                // An extra field on a partition's first row can reach this adapter.
+                                // Use the conversion-error path so workers apply the ON ERROR policy.
+                                throw NumericException.INSTANCE;
                             }
                         });
                     } else {

@@ -409,6 +409,46 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyWithExtraArrayFieldAbort() throws Exception {
+        testCopyWithExtraMissingColumnValue("DOUBLE[]", "ABORT", false);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraArrayFieldInSamePartition() throws Exception {
+        testCopyWithExtraMissingColumnValue("DOUBLE[]", "ABORT", true);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraArrayFieldSkipColumn() throws Exception {
+        testCopyWithExtraMissingColumnValue("DOUBLE[]", "SKIP_COLUMN", false);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraArrayFieldSkipRow() throws Exception {
+        testCopyWithExtraMissingColumnValue("DOUBLE[]", "SKIP_ROW", false);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraBinaryFieldAbort() throws Exception {
+        testCopyWithExtraMissingColumnValue("BINARY", "ABORT", false);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraBinaryFieldInSamePartition() throws Exception {
+        testCopyWithExtraMissingColumnValue("BINARY", "ABORT", true);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraBinaryFieldSkipColumn() throws Exception {
+        testCopyWithExtraMissingColumnValue("BINARY", "SKIP_COLUMN", false);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraBinaryFieldSkipRow() throws Exception {
+        testCopyWithExtraMissingColumnValue("BINARY", "SKIP_ROW", false);
+    }
+
+    @Test
     public void testParallelCopyWithMissingArrayColumn() throws Exception {
         final String oldInputRoot = inputRoot;
         try {
@@ -423,8 +463,8 @@ public class CopyImportTest extends AbstractCairoTest {
                     () -> {
                         assertQuery("SELECT status, rows_imported FROM " + configuration.getSystemTableNamePrefix() + "text_import_log LIMIT -1")
                                 .noLeakCheck().expectSize().returns("status\trows_imported\nfinished\t2\n");
-                        assertQuery("SELECT k, a, aa, s FROM t")
-                                .noLeakCheck().expectSize().returns("k\ta\taa\ts\n1\tnull\tnull\t\n2\tnull\tnull\t\n");
+                        assertQuery("SELECT k, a, aa, b IS NULL AS b_null, s FROM t")
+                                .noLeakCheck().expectSize().returns("k\ta\taa\tb_null\ts\n1\tnull\tnull\ttrue\t\n2\tnull\tnull\ttrue\t\n");
                     }
             );
         } finally {
@@ -1360,6 +1400,44 @@ public class CopyImportTest extends AbstractCairoTest {
                 .returns("cnt\n" + expectedCount + "\n");
 
         testCopy(stmt, test);
+    }
+
+    private void testCopyWithExtraMissingColumnValue(String columnType, String atomicity, boolean isSamePartition) throws Exception {
+        final String oldInputRoot = inputRoot;
+        final boolean isAbort = "ABORT".equals(atomicity) && !isSamePartition;
+        final int expectedCount = isAbort ? 0 : "SKIP_ROW".equals(atomicity) ? 1 : 2;
+        final boolean isBinary = "BINARY".equals(columnType);
+        final String nullValue = isBinary ? "true" : "null";
+        final String query = "SELECT k, " + (isBinary ? "a IS NULL AS a" : "a") + " FROM t";
+        final String expectedRows = "k\ta\n" + (expectedCount > 0 ? "1\t" + nullValue + "\n" : "") + (expectedCount > 1 ? "2\t" + nullValue + "\n" : "");
+        try {
+            File dir = temp.newFolder();
+            TestUtils.writeStringToFile(new File(dir, "extra.csv"), "k,ts\n1,2024-01-01T00:00:00.000000Z\n2,2024-01-0" + (isSamePartition ? "1" : "2") + "T01:00:00.000000Z,junk\n");
+            inputRoot = dir.getAbsolutePath();
+            testCopy(
+                    () -> {
+                        execute("CREATE TABLE t (k INT, a " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                        runAndFetchCopyID("COPY t FROM 'extra.csv' WITH HEADER true TIMESTAMP 'ts' ON ERROR " + atomicity, sqlExecutionContext);
+                    },
+                    () -> {
+                        assertQuery("SELECT status, rows_imported, errors FROM " + configuration.getSystemTableNamePrefix() + "text_import_log LIMIT -1")
+                                .noLeakCheck().expectSize().returns("status\trows_imported\terrors\n" + (isAbort ? "failed" : "finished") + "\t" + expectedCount + "\t" + (isAbort || isSamePartition ? 0 : 1) + "\n");
+                        assertQuery(query).noLeakCheck().expectSize().returns(expectedRows);
+                        if (isAbort) {
+                            assertQuery("SELECT message FROM " + configuration.getSystemTableNamePrefix() + "text_import_log LIMIT -1")
+                                    .noLeakCheck().expectSize().returns("message\nimport failed [phase=partition_import, msg=`bad syntax [line offset=35,column=2]`]\n");
+                        }
+                        String[] files = new File(inputWorkRoot).list();
+                        Assert.assertTrue(files == null || files.length == 0);
+                        // The importer must release the table writer on both success and failure.
+                        execute("INSERT INTO t (k, ts) VALUES (3, '2024-01-03T00:00:00.000000Z')");
+                        drainWalQueue();
+                        assertQuery(query).noLeakCheck().expectSize().returns(expectedRows + "3\t" + nullValue + "\n");
+                    }
+            );
+        } finally {
+            inputRoot = oldInputRoot;
+        }
     }
 
     protected static String runAndFetchCopyID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
