@@ -59,7 +59,9 @@ import org.jetbrains.annotations.Nullable;
  * keys and the values the lookup returns, and the agreement between the pairs written and the minimum, maximum
  * and order given to {@link #finish(long, long, boolean)}. The client owns the layout; a wrong layout is a wrong segment.
  * <p>
- * Not thread-safe; one instance per sink. {@link #close()} frees the buffer the var-size aux shift uses.
+ * Not thread-safe; one instance per sink. If the writer cancels a block by itself, which it does at close or pool
+ * return with a block open and which the sink's contract forbids, this appender does not learn of it and must not be
+ * used afterwards. {@link #close()} frees the buffer the var-size aux shift uses.
  */
 public final class WalColumnRangeAppender implements QuietCloseable {
     private final WalColumnSink sink;
@@ -336,9 +338,10 @@ public final class WalColumnRangeAppender implements QuietCloseable {
 
     /**
      * Syncs the memories of the columns written in the open block, data and aux: synchronous, regardless of the
-     * writer's commit mode, and covering each memory's current append page; an earlier page of a block larger than
-     * one page was synced when the memory released it under commit mode SYNC; under ASYNC that release-time msync
-     * is asynchronous, and a no-op on Linux. What the block finish and the commit sync afterwards is unchanged.
+     * writer's commit mode, and covering each memory's current append page; an earlier page of a block larger than one
+     * page was synced when the memory released it under commit mode SYNC; under ASYNC that release-time msync is
+     * asynchronous, and a no-op on Linux; under NOSYNC an earlier page is not synced. What the block finish and the
+     * commit sync afterwards is unchanged.
      */
     public void syncWrittenColumns() {
         checkInBlock();
