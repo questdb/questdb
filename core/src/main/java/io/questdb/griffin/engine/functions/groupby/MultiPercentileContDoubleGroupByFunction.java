@@ -38,6 +38,8 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntHashSet;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.Arrays;
+
 public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDiscDoubleGroupByFunction implements UnaryFunction, GroupByFunction {
     private final IntHashSet indexSet = new IntHashSet();
     private int[] contIndices = new int[0];
@@ -100,16 +102,7 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
         for (int i = 0; i < indexCount; i++) {
             contIndices[i] = indexSet.get(i);
         }
-        // Insertion sort - the array is typically very small (2-10 elements)
-        for (int i = 1; i < indexCount; i++) {
-            int key = contIndices[i];
-            int j = i - 1;
-            while (j >= 0 && contIndices[j] > key) {
-                contIndices[j + 1] = contIndices[j];
-                j--;
-            }
-            contIndices[j + 1] = key;
-        }
+        Arrays.sort(contIndices, 0, indexCount);
 
         // Use optimized multi-select instead of full sorting
         listA.quickSelectMultiple(0, size - 1, contIndices, 0, indexCount);

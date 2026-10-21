@@ -46,6 +46,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.Arrays;
+
 import static io.questdb.std.Numbers.LONG_NULL;
 
 public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
@@ -149,16 +151,7 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
             indices[i] = (int) SqlUtil.getPercentileDiscIndex(percentile, size);
         }
 
-        // Insertion sort - the array is typically very small (2-10 elements)
-        for (int i = 1; i < percentileCount; i++) {
-            int key = indices[i];
-            int j = i - 1;
-            while (j >= 0 && indices[j] > key) {
-                indices[j + 1] = indices[j];
-                j--;
-            }
-            indices[j + 1] = key;
-        }
+        Arrays.sort(indices, 0, percentileCount);
 
         // Use optimized multi-select instead of full sorting - much faster for sparse percentiles
         listA.quickSelectMultiple(0, size - 1, indices, 0, percentileCount);
