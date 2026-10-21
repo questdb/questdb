@@ -30,6 +30,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 
 @SuppressWarnings("unused")
 public class DebugUtils {
