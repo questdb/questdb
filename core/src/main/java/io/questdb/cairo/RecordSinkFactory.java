@@ -703,6 +703,26 @@ public class RecordSinkFactory {
     }
 
     /**
+     * Generates the step past a column the sink does not copy, i.e. a negative entry in
+     * the column filter. The step consumes exactly the space {@link RecordChain} lays out
+     * for the column: its bytes in the fixed-size area, or its slot among the var-size
+     * column offsets. Anything less shifts every column that follows into the wrong place.
+     */
+    private static void generateSkip(BytecodeAssembler asm, int type, int wSkip, int wSkipVarSize) {
+        if (ColumnType.isVarSize(type)) {
+            asm.aload(2);
+            asm.invokeInterface(wSkipVarSize, 0);
+            return;
+        }
+        final int size = ColumnType.sizeOf(type);
+        if (size > 0) {
+            asm.aload(2);
+            asm.iconst(size);
+            asm.invokeInterface(wSkip, 1);
+        }
+    }
+
+    /**
      * Generates a chunked RecordSink class with multiple private methods for column copying.
      * Returns null if any chunk exceeds the method size limit.
      */
@@ -791,6 +811,7 @@ public class RecordSinkFactory {
         final int fGetDecimal256 = asm.poolInterfaceMethod(Function.class, "getDecimal256", "(Lio/questdb/cairo/sql/Record;Lio/questdb/std/Decimal256;)V");
 
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
+        final int wSkipVarSize = asm.poolInterfaceMethod(RecordSinkSPI.class, "skipVarSize", "()V");
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
         final int wPutIPv4 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putIPv4", "(I)V");
         final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
@@ -1175,13 +1196,8 @@ public class RecordSinkFactory {
                 final int type = columnTypes.getColumnType(index);
 
                 if (factor < 0) {
-                    int size = ColumnType.sizeOf(type);
-                    if (size > 0) {
-                        asm.aload(2);
-                        asm.iconst(size);
-                        asm.invokeInterface(wSkip, 1);
-                        continue;
-                    }
+                    generateSkip(asm, type, wSkip, wSkipVarSize);
+                    continue;
                 }
 
                 final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
@@ -1601,6 +1617,7 @@ public class RecordSinkFactory {
         final int fGetDecimal256 = asm.poolInterfaceMethod(Function.class, "getDecimal256", "(Lio/questdb/cairo/sql/Record;Lio/questdb/std/Decimal256;)V");
 
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
+        final int wSkipVarSize = asm.poolInterfaceMethod(RecordSinkSPI.class, "skipVarSize", "()V");
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
         final int wPutIPv4 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putIPv4", "(I)V");
         final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
@@ -1704,15 +1721,8 @@ public class RecordSinkFactory {
             final int type = columnTypes.getColumnType(index);
 
             if (factor < 0) {
-                int size = ColumnType.sizeOf(type);
-
-                // skip n-bytes
-                if (size > 0) {
-                    asm.aload(2);
-                    asm.iconst(size);
-                    asm.invokeInterface(wSkip, 1);
-                    continue;
-                }
+                generateSkip(asm, type, wSkip, wSkipVarSize);
+                continue;
             }
             final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
             final boolean strAsVarchar = writeStringAsVarchar != null && writeStringAsVarchar.get(index);
