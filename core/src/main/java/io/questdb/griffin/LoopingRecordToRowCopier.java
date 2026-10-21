@@ -502,7 +502,8 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.SYMBOL -> row.putSym(toIndex, value);
             case ColumnType.STRING -> row.putStr(toIndex, value);
             case ColumnType.VARCHAR -> RecordToRowCopierUtils.transferStrToVarcharCol(row, toIndex, value);
-            case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, timestampDriver.implicitCast(value));
+            case ColumnType.TIMESTAMP ->
+                    row.putTimestamp(toIndex, timestampDriver.implicitCast(value, ColumnType.SYMBOL));
             default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }

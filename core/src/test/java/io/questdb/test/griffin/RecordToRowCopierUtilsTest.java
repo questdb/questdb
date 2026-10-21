@@ -878,6 +878,8 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE src (s SYMBOL)");
             execute("INSERT INTO src VALUES ('not-a-timestamp')");
+            final StringBuilder expectedMessages = new StringBuilder();
+            final StringBuilder actualMessages = new StringBuilder();
             for (int copierType : COPIER_TYPES) {
                 setCopierType(copierType);
                 for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
@@ -886,12 +888,14 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                         execute("INSERT INTO dst SELECT s FROM src");
                         Assert.fail("expected timestamp conversion failure");
                     } catch (ImplicitCastException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "not-a-timestamp");
+                        expectedMessages.append(copierType).append(": inconvertible value: `not-a-timestamp` [SYMBOL -> ").append(ColumnType.nameOf(type)).append("]\n");
+                        actualMessages.append(copierType).append(": ").append(e.getFlyweightMessage()).append('\n');
                     }
                     assertQuery("SELECT count(*) FROM dst").expectSize().noRandomAccess().noLeakCheck().returns("count\n0\n");
                     execute("DROP TABLE dst");
                 }
             }
+            Assert.assertEquals(expectedMessages.toString(), actualMessages.toString());
         });
     }
 
