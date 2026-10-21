@@ -547,15 +547,15 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
 
     @Test
     public void testResolvesSymbolKeysInFirstRowOrder() throws Exception {
-        // source keys 1, 0, 1, -1 with values b, a: "b" is resolved first and takes the table's key 0, as the row
-        // API would give it; a negative source key is NULL without a lookup
+        // source keys 1, 0, 1, -1, -1 with values b, a: "b" is resolved first and takes the table's key 0, as the row
+        // API would give it; a negative source key, here twice, is NULL and is resolved without a lookup
         assertMemoryLeak(() -> {
             final TableToken token = createTable(new TableModel(configuration, "symbols", PartitionBy.HOUR)
                     .col("s", ColumnType.SYMBOL)
                     .timestamp("ts")
                     .wal()
             );
-            final int rows = 4;
+            final int rows = 5;
             final long keys = Unsafe.malloc(rows * 4L, MemoryTag.NATIVE_DEFAULT);
             final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
             final AtomicInteger lookups = new AtomicInteger();
@@ -563,7 +563,7 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                     WalWriter writer = engine.getWalWriter(token);
                     WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
             ) {
-                final int[] sourceKeys = {1, 0, 1, -1};
+                final int[] sourceKeys = {1, 0, 1, -1, -1};
                 for (int i = 0; i < rows; i++) {
                     Unsafe.putInt(keys + i * 4L, sourceKeys[i]);
                     putPair(pairs, i, TS0 + i * SECOND, i);
@@ -574,7 +574,7 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                     return key == 0 ? "a" : "b";
                 });
                 appender.putTimestampRange(1, pairs, 0);
-                appender.finish(TS0, TS0 + 3 * SECOND, false);
+                appender.finish(TS0, TS0 + 4 * SECOND, false);
                 writer.commit();
             } finally {
                 Unsafe.free(keys, rows * 4L, MemoryTag.NATIVE_DEFAULT);
@@ -592,6 +592,7 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                             a\t2026-01-01T00:00:01.000000Z
                             b\t2026-01-01T00:00:02.000000Z
                             \t2026-01-01T00:00:03.000000Z
+                            \t2026-01-01T00:00:04.000000Z
                             """);
             try (TableReader reader = engine.getReader(token)) {
                 final SymbolMapReader symbols = reader.getSymbolMapReader(0);

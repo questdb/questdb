@@ -158,16 +158,27 @@ public final class WalColumnRangeAppender implements QuietCloseable {
         final SymbolMapReader reader = sink.getSymbolMapReader(columnIndex);
         final MemoryMA data = sink.getDataColumn(columnIndex);
         symbolKeys.clear();
+        int nullKey = 0;
+        boolean hasNullKey = false;
         for (int i = 0; i < rowCount; i++) {
             final int key = Unsafe.getInt(keysAddress + ((long) i << 2));
-            final int index = symbolKeys.keyIndex(key);
             final int targetKey;
-            if (index > -1) {
-                // first row of this key in the block: resolve once, in first-row order as the row API does
-                targetKey = sink.resolveSymbol(columnIndex, key < 0 ? null : values.valueOf(key), reader);
-                symbolKeys.putAt(index, key, targetKey);
+            if (key < 0) {
+                // NULL, resolved once per block; a negative key never enters the map, whose empty marker is -1
+                if (!hasNullKey) {
+                    nullKey = sink.resolveSymbol(columnIndex, null, reader);
+                    hasNullKey = true;
+                }
+                targetKey = nullKey;
             } else {
-                targetKey = symbolKeys.valueAt(index);
+                final int index = symbolKeys.keyIndex(key);
+                if (index > -1) {
+                    // first row of this key in the block: resolve once, in first-row order as the row API does
+                    targetKey = sink.resolveSymbol(columnIndex, values.valueOf(key), reader);
+                    symbolKeys.putAt(index, key, targetKey);
+                } else {
+                    targetKey = symbolKeys.valueAt(index);
+                }
             }
             data.putInt(targetKey);
         }
