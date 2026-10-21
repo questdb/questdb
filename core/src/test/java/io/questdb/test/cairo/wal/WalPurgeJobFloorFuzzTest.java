@@ -49,7 +49,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Drives the purge job's external consumer floor with random floors, segment rolls, commits on several writers,
  * applies and sweeps, and checks after every sweep that every segment and every sequencer part holding a
- * transaction above the held floor still exists.
+ * transaction above the highest hold any sweep has seen still exists.
  */
 public class WalPurgeJobFloorFuzzTest extends AbstractCairoTest {
 
@@ -57,7 +57,8 @@ public class WalPurgeJobFloorFuzzTest extends AbstractCairoTest {
     public void testRandomFloorsRollsAndSweepsHoldWhatTheConsumerNeeds() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
-            final int partSize = 1 + rnd.nextInt(8);
+            // 0 is the V1 log, the default, which has no sequencer parts
+            final int partSize = rnd.nextInt(9);
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, partSize);
             final String tableName = testName.getMethodName();
             execute("CREATE TABLE " + tableName + " (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -148,7 +149,9 @@ public class WalPurgeJobFloorFuzzTest extends AbstractCairoTest {
             final long txn = txns.getQuick(i);
             if (txn > held) {
                 assertSegmentExistence(true, tableToken, walIds.getQuick(i), segmentIds.getQuick(i));
-                assertSeqPartExists(tableToken, (txn - 1) / partSize);
+                if (partSize > 0) {
+                    assertSeqPartExists(tableToken, (txn - 1) / partSize);
+                }
             }
         }
     }
