@@ -286,6 +286,7 @@ import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
@@ -303,6 +304,7 @@ import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
@@ -327,7 +329,6 @@ import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
-import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
@@ -1692,6 +1693,75 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Returns the index of the SAMPLE BY bucket key in the group-by output, or -1 when
+     * the output does not carry it. SqlOptimiser.rewriteSampleBy records the bucket key
+     * node on the model that holds the fill parameters, and the group-by column that
+     * carries that very node is the bucket, under whatever alias the optimizer gave it.
+     * The lookup never identifies the bucket by name, so a user column that shares the
+     * timestamp's name or collides with the bucket's alias cannot be taken for the
+     * bucket (#7838).
+     * The TIMESTAMP check guards getTimestampDriver downstream.
+     */
+    private static int findFillBucketIndex(IQueryModel model, RecordMetadata metadata, IQueryModel fillModel) {
+        final ExpressionNode bucketKey = fillModel.getFillBucketKey();
+        assert bucketKey != null : "rewriteSampleBy records fillBucketKey together with fillStride";
+        if (bucketKey == null) {
+            return -1;
+        }
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (column.getAst() == bucketKey) {
+                final int index = SqlUtil.getColumnIndexQuiet(metadata, column.getAlias());
+                return index >= 0 && ColumnType.isTimestamp(metadata.getColumnType(index)) ? index : -1;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Finds the position of the leftmost column in a rejected HORIZON JOIN WHERE clause that
+     * does not belong to the left-hand side, so that the error points at the offending token
+     * rather than at the root of the clause.
+     *
+     * @param sqlNodeStack reusable traversal stack
+     * @param model        the parent model containing join models
+     * @param clause       the rejected filter clause
+     * @return the position of the leftmost right-hand or offset column, or the clause position
+     * when no column resolves to the right-hand side
+     */
+    private static int findHorizonFilterColumnPosition(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            IQueryModel model,
+            ExpressionNode clause
+    ) {
+        int position = Integer.MAX_VALUE;
+        ExpressionNode node = clause;
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.type == LITERAL) {
+                    if (node.position < position && isHorizonRightHandLiteral(model, node.token)) {
+                        position = node.position;
+                    }
+                    node = null;
+                    continue;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.add(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return position != Integer.MAX_VALUE ? position : clause.position;
+    }
+
+    /**
      * Finds the HorizonJoinContext from the synthetic offset model that precedes the HORIZON JOIN model.
      * The synthetic offset model is identified by having no table name and a non-null HorizonJoinContext alias.
      *
@@ -1736,6 +1806,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static boolean isBaseTimestampAscending(RecordCursorFactory factory, int timestampIndex) {
         return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
                 && factory.getMetadata().getTimestampIndex() == timestampIndex;
+    }
+
+    // FunctionParser resolves a column literal through SqlUtil.getColumnIndexQuiet(), which ignores
+    // letter case and accepts every table alias the base metadata knows. This check resolves the
+    // literal the same way and reports whether it reads the designated timestamp column of the base,
+    // rather than a projection column or another base column, such as a same-named column of a
+    // joined table.
+    private static boolean isBaseTimestampLiteral(ExpressionNode node, PriorityMetadata metadata, int baseTimestampIndex) {
+        return baseTimestampIndex > -1
+                && node.type == LITERAL
+                && metadata.getBaseColumnIndex(SqlUtil.getColumnIndexQuiet(metadata, node.token)) == baseTimestampIndex;
     }
 
     /**
@@ -1801,6 +1882,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return model.getTableNameExpr() == null
                 && model.getNestedModel() == null
                 && model.getHorizonJoinContext().getAlias() != null;
+    }
+
+    // The left-hand side of a HORIZON JOIN is always join model 0, since SqlParser rejects
+    // HORIZON JOIN combined with other join types. The optimiser has already rejected
+    // ambiguous unqualified names, so an unqualified name present in any later join model,
+    // the synthetic offset model included, belongs to the right-hand side.
+    private static boolean isHorizonRightHandLiteral(IQueryModel model, CharSequence token) {
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (dot > -1) {
+            return model.getModelAliasIndex(token, 0, dot) > 0;
+        }
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (joinModels.getQuick(i).getAliasToColumnMap().contains(token)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -1878,12 +1977,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return slaveTimestampIndex;
     }
 
-    private static void validateHorizonJoinFilter(IQueryModel model, int horizonJoinIndex, IQueryModel slaveModel) throws SqlException {
+    private static void validateHorizonJoinFilter(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            IQueryModel model,
+            int horizonJoinIndex,
+            IQueryModel slaveModel
+    ) throws SqlException {
         validateOuterJoinExpressions(slaveModel, "HORIZON");
         // HORIZON JOIN WHERE clause can only reference master table columns.
         // Predicates on slave columns end up as postJoinWhereClause on the slave model.
-        if (slaveModel.getPostJoinWhereClause() != null) {
-            throw SqlException.position(slaveModel.getPostJoinWhereClause().position)
+        final ExpressionNode postJoinWhere = slaveModel.getPostJoinWhereClause();
+        if (postJoinWhere != null) {
+            throw SqlException.position(findHorizonFilterColumnPosition(sqlNodeStack, model, postJoinWhere))
                     .put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         }
 
@@ -1895,7 +2000,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (isHorizonOffsetModel(jm)) {
                 final ExpressionNode where = jm.getWhereClause() != null ? jm.getWhereClause() : jm.getPostJoinWhereClause();
                 if (where != null) {
-                    throw SqlException.position(where.position)
+                    throw SqlException.position(findHorizonFilterColumnPosition(sqlNodeStack, model, where))
                             .put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
                 }
             }
@@ -4318,8 +4423,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(-1, "fill values were null");
             }
 
-            fillValues = new ObjList<>(fillValuesExprs.size());
-
             // FILL(NONE) is incompatible with per-aggregate fill values. The
             // optimizer accepts multi-element fill lists, so reject FILL(NONE, 1)
             // here rather than silently dropping the trailing values.
@@ -4331,6 +4434,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
+
+            // This group-by owns the fill when its output carries the bucket key node
+            // that SqlOptimiser.rewriteSampleBy recorded on the model holding the fill
+            // parameters. An outer GROUP BY over a SAMPLE BY ... FILL sub-query reaches
+            // the inner fill through the walk above but never carries that node, so it
+            // must not stack the inner fill on its own output. The owner may sit several
+            // models above the fill: LateralJoinRewriter's LATEST ON fallback inserts a
+            // filter model and a window model in between, which leaves the group-by's
+            // sampleByFill list empty (rewriteSelectClause0 re-exposes only a fill held
+            // by the immediate base model), so that list cannot decide ownership. A
+            // non-empty list without the node means an optimizer path dropped or
+            // rebuilt the node: fail loudly under -ea, and without -ea skip the fill
+            // rather than guess a column. That assertion reaches only the shape where
+            // rewriteSelectClause0 re-exposed the list; under the LATERAL fallback the
+            // list is empty by construction, so a rebuilt node there skips the fill
+            // silently and LateralJoinTest's LATEST ON fill tests are the net. The
+            // check runs after the FILL(NONE) validation so that an all-NONE list,
+            // which carries no signal, still fails that validation as before.
+            final RecordMetadata baseMeta = groupByFactory.getMetadata();
+            final int timestampIndex = findFillBucketIndex(model, baseMeta, curr);
+            if (timestampIndex < 0) {
+                assert model.getSampleByFill().size() == 0 : "fill bucket key node not found on the group-by output";
+                return groupByFactory;
+            }
+
+            fillValues = new ObjList<>(fillValuesExprs.size());
 
             ExpressionNode expr;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
@@ -4362,63 +4491,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return groupByFactory;
             }
 
-
-            IQueryModel temp = model;
-            ExpressionNode timestamp = model.getTimestamp();
-
-            while (timestamp == null && temp != null) {
-                temp = temp.getNestedModel();
-
-                if (temp != null) {
-                    timestamp = temp.getTimestamp();
-                }
-            }
-
-            assert timestamp != null;
-
-            // look for timestamp_floor to check for an alias
-            CharSequence alias = timestamp.token;
-            final CharSequence currTimestamp = curr.getTimestamp().token;
-            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn col = model.getBottomUpColumns().getQuick(i);
-                final ExpressionNode ast = col.getAst();
-                if (SqlUtil.isTimestampFloorFunction(ast)) {
-                    final CharSequence ts = SqlUtil.getTimestampFloorTimestampArg(ast).token;
-                    if (Chars.equalsIgnoreCase(ts, currTimestamp)) {
-                        alias = col.getAlias();
-                    }
-                }
-            }
-
-            final RecordMetadata baseMeta = groupByFactory.getMetadata();
-            int timestampIndex = SqlUtil.getColumnIndexQuiet(baseMeta, alias);
-            // The alias may resolve to a non-TIMESTAMP column after outer projection
-            // (e.g. SELECT ts::LONG AS ts, ...). Reset so the fallback below can try
-            // the raw timestamp token and getTimestampDriver doesn't trip its tag
-            // assert.
-            if (timestampIndex >= 0
-                    && !ColumnType.isTimestamp(baseMeta.getColumnType(timestampIndex))) {
-                timestampIndex = -1;
-            }
-            // When the same timestamp column appears multiple times (e.g. SELECT k, k),
-            // the alias may land on a renamed duplicate. Prefer the original token if
-            // it yields an earlier TIMESTAMP-typed index.
-            if (!Chars.equalsIgnoreCase(alias, timestamp.token)) {
-                int origIndex = SqlUtil.getColumnIndexQuiet(baseMeta, timestamp.token);
-                if (origIndex >= 0
-                        && ColumnType.isTimestamp(baseMeta.getColumnType(origIndex))
-                        && (timestampIndex < 0 || origIndex < timestampIndex)) {
-                    timestampIndex = origIndex;
-                }
-            }
-            // No TIMESTAMP column reachable (e.g. wrapped by an outer GROUP BY that
-            // projects different columns). Skip fill entirely.
-            if (timestampIndex < 0) {
-                final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
-                fillValues = null;
-                CairoException.rethrowCleanupFailure(cleanupFailure);
-                return groupByFactory;
-            }
             int timestampType = baseMeta.getColumnType(timestampIndex);
             TimestampDriver driver = getTimestampDriver(timestampType);
             fillFromFunc = driver.getTimestampConstantNull();
@@ -5934,6 +6006,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private RecordCursorFactory generateHorizonJoinProjection(
+            IQueryModel parentModel,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory factory,
+            boolean isOutputTimestampRequired
+    ) throws SqlException {
+        // generateJoins() keeps the timestamp requirement of the HORIZON JOIN operands on top of
+        // the stack while it builds the join. The projection is the output of the join, so it
+        // follows the requirement of the enclosing query instead. Otherwise, the projection adds
+        // a hidden timestamp column that nothing above it reads, and a UNION ALL branch ends up
+        // with more columns than its siblings.
+        executionContext.pushTimestampRequiredFlag(isOutputTimestampRequired);
+        try {
+            // The projection keeps the master's designated timestamp under every spelling that
+            // resolves to it. Other virtual SELECTs keep matching the exact column name.
+            return generateSelectVirtualWithSubQuery(parentModel, executionContext, factory, true);
+        } finally {
+            executionContext.popTimestampRequiredFlag();
+        }
+    }
+
     private RecordCursorFactory generateIntersectOrExceptAllFactory(
             IQueryModel model,
             SqlExecutionContext executionContext,
@@ -6429,6 +6522,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<IQueryModel> pendingHorizonSlaveModels = null;
         ObjList<RecordMetadata> pendingHorizonSlaveProjectionMetadatas = null;
         boolean isHorizonJoinCompleted = false;
+        // The loop below pushes the timestamp requirement of each join operand. Capture the
+        // requirement of the enclosing query first: it applies to the output of the joins.
+        final boolean isOutputTimestampRequired = executionContext.isTimestampRequired();
 
         try {
             int n = ordered.size();
@@ -7352,7 +7448,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         throw SqlException.position(slaveModel.getJoinKeywordPosition())
                                                 .put("RANGE or LIST must only appear on the last HORIZON JOIN");
                                     }
-                                    validateHorizonJoinFilter(model, index, slaveModel);
+                                    validateHorizonJoinFilter(sqlNodeStack, model, index, slaveModel);
                                     validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                     validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
                                     processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
@@ -7374,7 +7470,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
 
                                 // Validate: WHERE clause can only reference master table columns
-                                validateHorizonJoinFilter(model, index, slaveModel);
+                                validateHorizonJoinFilter(sqlNodeStack, model, index, slaveModel);
 
                                 // Get parent model for GROUP BY context (may be null for implicit aggregation)
                                 // If parentModel is null, we'll use the join model itself which contains the SELECT columns
@@ -7390,7 +7486,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // Process join context for key-based matching (similar to ASOF JOIN)
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
-                                if (pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
+                                if (horizonContext.isProjection() || pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
+                                    // The streaming projection uses the same cursor for one or many slaves.
+                                    if (pendingHorizonSlaves == null) {
+                                        pendingHorizonSlaves = new ObjList<>();
+                                        pendingHorizonSlaveModels = new ObjList<>();
+                                        pendingHorizonSlaveProjectionMetadatas = new ObjList<>();
+                                    }
                                     // Multi-slave HORIZON JOIN: collect all slaves.
                                     // Ownership of all slave factories transfers to generateMultiHorizonJoinFactory,
                                     // which frees them on error. Clear the pending list and set closeSlaveOnFailure
@@ -7417,7 +7519,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaves,
                                             slaveModels,
                                             slaveProjectionMetadatas,
-                                            executionContext
+                                            executionContext,
+                                            isOutputTimestampRequired
                                     );
                                 } else {
                                     // Single-slave HORIZON JOIN (existing path)
@@ -8219,7 +8322,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<RecordCursorFactory> slaveFactories,
             ObjList<IQueryModel> slaveModels,
             ObjList<RecordMetadata> slaveProjectionMetadatas,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            boolean isOutputTimestampRequired
     ) throws SqlException {
         long[] offsets;
         final int slaveCount = slaveFactories.size();
@@ -8254,6 +8358,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // This method adopts the master and every slave factory on entry. Until a cursor
             // factory constructor adopts them, this catch owns their rollback.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
+            // A projection evaluates its output expressions on the thread that reads the rows, so
+            // only the master filter and the right-hand filters have to be safe to run on workers.
+            final boolean isProjection = horizonContext.isProjection();
             if (executionContext.isParallelHorizonJoinEnabled()) {
                 // !supportsPageFrameCursor(): prefer the runtime-const gate's direct page-frame
                 // passthrough over stealing its filter, same as the single-slave horizon path.
@@ -8261,6 +8368,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && masterFactory.supportsFilterStealing()
                         && masterFactory.getBaseFactory().supportsPageFrameCursor();
                 supportsParallelism = masterFactory.supportsPageFrameCursor() || canStealFilter;
+                // The parallel projection cuts the master into frames that shrink as the offsets
+                // times the slaves grow, and every frame costs a reduce task whether or not its
+                // rows pass the filter. Past the slot cap the serial projection takes over, which
+                // leaves the filter on the master, so it scans frames of the usual size. A master
+                // that lacks random access, such as a covering index scan, stays parallel: the
+                // serial projection cannot read it.
+                if (supportsParallelism
+                        && isProjection
+                        && !AsyncHorizonJoinProjectionRecordCursorFactory.isWithinSlotCap(offsets.length, slaveCount)
+                        && masterFactory.recordCursorSupportsRandomAccess()) {
+                    supportsParallelism = false;
+                }
             }
 
             // validateBothTimestamps() already checks this before we get here
@@ -8337,34 +8456,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
             final IntList projectionFunctionFlags = new IntList(columnCount);
 
-            GroupByUtils.assembleGroupByFunctions(
-                    functionParser,
-                    sqlNodeStack,
-                    parentModel,
-                    executionContext,
-                    innerMetadata,
-                    timestampIndex,
-                    false,
-                    true,
-                    groupByFunctions,
-                    groupByFunctionPositions,
-                    outerProjectionFunctions,
-                    innerProjectionFunctions,
-                    recordFunctionPositions,
-                    projectionFunctionFlags,
-                    outerProjectionMetadata,
-                    valueTypes,
-                    keyTypes,
-                    listColumnFilterA,
-                    null,
-                    validateSampleByFillType,
-                    parentModel.getColumns(),
-                    null
-            );
+            if (!isProjection) {
+                GroupByUtils.assembleGroupByFunctions(
+                        functionParser,
+                        sqlNodeStack,
+                        parentModel,
+                        executionContext,
+                        innerMetadata,
+                        timestampIndex,
+                        false,
+                        true,
+                        groupByFunctions,
+                        groupByFunctionPositions,
+                        outerProjectionFunctions,
+                        innerProjectionFunctions,
+                        recordFunctionPositions,
+                        projectionFunctionFlags,
+                        outerProjectionMetadata,
+                        valueTypes,
+                        keyTypes,
+                        listColumnFilterA,
+                        null,
+                        validateSampleByFillType,
+                        parentModel.getColumns(),
+                        null
+                );
 
-            keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
-            if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
-                supportsParallelism = false;
+                keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
+                if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
+                    supportsParallelism = false;
+                }
             }
 
             // Now that we know parallelism is confirmed, steal the filter from the
@@ -8399,7 +8520,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // The keyed parallel branch clones the whole projection per worker below and reuses
             // the GROUP_BY-flagged clones from it, so only the not-keyed parallel branch compiles
             // dedicated worker group-by clones here.
-            if (supportsParallelism && keyTypesCopy.getColumnCount() == 0) {
+            if (supportsParallelism && !isProjection && keyTypesCopy.getColumnCount() == 0) {
                 perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
                         executionContext,
                         parentModel.getColumns(),
@@ -8574,6 +8695,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             .put("left-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
 
+                if (isProjection) {
+                    // The cursor emits the master rows in order, so the master's designated
+                    // timestamp stays the designated timestamp of the projection.
+                    final JoinRecordMetadata projectionMetadata = innerMetadata;
+                    final ObjList<HorizonJoinSlaveState> projectionSlaves = slaveStates;
+                    innerMetadata = null;
+                    slaveStates = null;
+                    isMasterFactoryTransferred = true;
+                    isSlaveFactoriesTransferred = true;
+                    return generateHorizonJoinProjection(
+                            parentModel,
+                            executionContext,
+                            new HorizonJoinProjectionRecordCursorFactory(
+                                    configuration,
+                                    projectionMetadata,
+                                    masterFactory,
+                                    projectionSlaves,
+                                    offsets,
+                                    masterTimestampColumnIndex,
+                                    columnSources,
+                                    columnIndices
+                            ),
+                            isOutputTimestampRequired
+                    );
+                }
+
                 // Before passing the objects to the cursor factory,
                 // transfer ownership away from variables handled in our local try-catch block.
                 // keyFunctions is empty on the not-keyed branch (no keys means no virtual key
@@ -8628,6 +8775,59 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // Parallel path
+            if (isProjection) {
+                perWorkerFilters = compileWorkerFiltersConditionally(
+                        executionContext,
+                        filter,
+                        workerCount,
+                        filterExpr,
+                        masterFactory.getMetadata()
+                );
+                // Transfer ownership to the factory, which frees every adopted resource when its
+                // constructor fails. The factory sizes the master page frames per execution.
+                final JoinRecordMetadata projectionMetadata = innerMetadata;
+                final ObjList<HorizonJoinSlaveState> projectionSlaves = slaveStates;
+                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(
+                        null,
+                        null,
+                        compiledFilter,
+                        bindVarMemory,
+                        bindVarFunctions,
+                        filter,
+                        filterUsedColumnIndexes,
+                        perWorkerFilters
+                );
+                innerMetadata = null;
+                slaveStates = null;
+                isSlaveFactoriesTransferred = true;
+                compiledFilter = null;
+                bindVarMemory = null;
+                bindVarFunctions = null;
+                filter = null;
+                perWorkerFilters = null;
+                isMasterFactoryTransferred = true;
+                return generateHorizonJoinProjection(
+                        parentModel,
+                        executionContext,
+                        new AsyncHorizonJoinProjectionRecordCursorFactory(
+                                configuration,
+                                executionContext.getCairoEngine(),
+                                executionContext.getMessageBus(),
+                                projectionMetadata,
+                                masterFactory,
+                                projectionSlaves,
+                                offsets,
+                                masterTimestampColumnIndex,
+                                columnSources,
+                                columnIndices,
+                                resources,
+                                reduceTaskFactory,
+                                workerCount
+                        ),
+                        isOutputTimestampRequired
+                );
+            }
+
             masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
 
             perWorkerFilters = compileWorkerFiltersConditionally(
@@ -10084,7 +10284,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (columnTypeMismatch) {
-                return generateSelectVirtualWithSubQuery(model, executionContext, factory);
+                return generateSelectVirtualWithSubQuery(model, executionContext, factory, false);
             }
         }
 
@@ -10132,10 +10332,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
-        // We require timestamp with asc order.
-        final int timestampIndex;
+        // The wrapper takes ownership of the factory only once it is built, so free the factory
+        // if anything on the way there throws.
         try {
-            timestampIndex = getTimestampIndex(model, factory);
+            // We require timestamp with asc order.
+            final int timestampIndex = getTimestampIndex(model, factory);
             if (executionContext.isTimestampRequired()) {
                 if (timestampIndex == -1) {
                     throw SqlException.$(model.getModelPosition(), "TIMESTAMP column is required but not provided");
@@ -10144,79 +10345,79 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
                 }
             }
+
+            CharSequence timestampName = null;
+            int timestampNameDot = -1;
+            if (timestampIndex != -1) {
+                timestampName = factory.getMetadata().getColumnName(timestampIndex);
+                timestampNameDot = Chars.indexOfLastUnquoted(timestampName, '.');
+            }
+            final CharSequence firstOrderByColumn = model.getOrderBy().size() > 0 && model.getOrderBy().getQuick(0).type == LITERAL
+                    ? model.getOrderBy().getQuick(0).token
+                    : null;
+
+            final IntList columnCrossIndex = new IntList(selectColumnCount);
+            final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
+            boolean timestampSet = false;
+            for (int i = 0; i < selectColumnCount; i++) {
+                final QueryColumn queryColumn = columns.getQuick(i);
+                int index = SqlUtil.getColumnIndexQuiet(metadata, queryColumn.getAst().token);
+                assert index > -1 : "wtf? " + queryColumn.getAst().token;
+                columnCrossIndex.add(index);
+
+                if (queryColumn.getAlias() == null) {
+                    queryMetadata.add(metadata.getColumnMetadata(index));
+                } else {
+                    TableColumnMetadata aliasedColumn = new TableColumnMetadata(
+                            SqlUtil.toColumnName(queryColumn.getAlias()),
+                            metadata.getColumnType(index),
+                            metadata.getColumnIndexType(index),
+                            metadata.getIndexValueBlockCapacity(index),
+                            metadata.isSymbolTableStatic(index),
+                            metadata.getMetadata(index)
+                    );
+                    aliasedColumn.setParquetEncodingConfig(
+                            metadata.getColumnMetadata(index).getParquetEncodingConfig()
+                    );
+                    queryMetadata.add(aliasedColumn);
+                }
+
+                if (index == timestampIndex) {
+                    // Always prefer the column matching the first ORDER BY column as the designated
+                    // timestamp in case of multiple timestamp aliases, e.g. `select ts, ts as ts1, ...`.
+                    // That's to choose the optimal plan in generateOrderBy().
+                    // Otherwise, prefer columns with aliases matching the base column name, e.g.
+                    // prefer `t1.ts as ts` over `t1.ts as ts2`.
+                    if (Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn)
+                            || Chars.equalsIgnoreCase(queryColumn.getAlias(), timestampName, timestampNameDot + 1, timestampName.length())
+                            || !timestampSet) {
+                        queryMetadata.setTimestampIndex(i);
+                        timestampSet = true;
+                    }
+                }
+            }
+
+            if (!timestampSet && executionContext.isTimestampRequired()) {
+                TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
+                TableColumnMetadata implicitTs = new TableColumnMetadata(
+                        "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
+                        colMetadata.getColumnType(),
+                        colMetadata.getIndexType(),
+                        colMetadata.getIndexValueBlockCapacity(),
+                        colMetadata.isSymbolTableStatic(),
+                        metadata
+                );
+                implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
+                queryMetadata.add(implicitTs);
+                queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
+                columnCrossIndex.add(timestampIndex);
+            }
+
+            return new SelectedRecordCursorFactory(queryMetadata, columnCrossIndex, factory);
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
         }
-
-        CharSequence timestampName = null;
-        int timestampNameDot = -1;
-        if (timestampIndex != -1) {
-            timestampName = factory.getMetadata().getColumnName(timestampIndex);
-            timestampNameDot = Chars.indexOfLastUnquoted(timestampName, '.');
-        }
-        final CharSequence firstOrderByColumn = model.getOrderBy().size() > 0 && model.getOrderBy().getQuick(0).type == LITERAL
-                ? model.getOrderBy().getQuick(0).token
-                : null;
-
-        final IntList columnCrossIndex = new IntList(selectColumnCount);
-        final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
-        boolean timestampSet = false;
-        for (int i = 0; i < selectColumnCount; i++) {
-            final QueryColumn queryColumn = columns.getQuick(i);
-            int index = SqlUtil.getColumnIndexQuiet(metadata, queryColumn.getAst().token);
-            assert index > -1 : "wtf? " + queryColumn.getAst().token;
-            columnCrossIndex.add(index);
-
-            if (queryColumn.getAlias() == null) {
-                queryMetadata.add(metadata.getColumnMetadata(index));
-            } else {
-                TableColumnMetadata aliasedColumn = new TableColumnMetadata(
-                        SqlUtil.toColumnName(queryColumn.getAlias()),
-                        metadata.getColumnType(index),
-                        metadata.getColumnIndexType(index),
-                        metadata.getIndexValueBlockCapacity(index),
-                        metadata.isSymbolTableStatic(index),
-                        metadata.getMetadata(index)
-                );
-                aliasedColumn.setParquetEncodingConfig(
-                        metadata.getColumnMetadata(index).getParquetEncodingConfig()
-                );
-                queryMetadata.add(aliasedColumn);
-            }
-
-            if (index == timestampIndex) {
-                // Always prefer the column matching the first ORDER BY column as the designated
-                // timestamp in case of multiple timestamp aliases, e.g. `select ts, ts as ts1, ...`.
-                // That's to choose the optimal plan in generateOrderBy().
-                // Otherwise, prefer columns with aliases matching the base column name, e.g.
-                // prefer `t1.ts as ts` over `t1.ts as ts2`.
-                if (Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn)
-                        || Chars.equalsIgnoreCase(queryColumn.getAlias(), timestampName, timestampNameDot + 1, timestampName.length())
-                        || !timestampSet) {
-                    queryMetadata.setTimestampIndex(i);
-                    timestampSet = true;
-                }
-            }
-        }
-
-        if (!timestampSet && executionContext.isTimestampRequired()) {
-            TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            TableColumnMetadata implicitTs = new TableColumnMetadata(
-                    "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
-                    colMetadata.getColumnType(),
-                    colMetadata.getIndexType(),
-                    colMetadata.getIndexValueBlockCapacity(),
-                    colMetadata.isSymbolTableStatic(),
-                    metadata
-            );
-            implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
-            queryMetadata.add(implicitTs);
-            queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
-            columnCrossIndex.add(timestampIndex);
-        }
-
-        return new SelectedRecordCursorFactory(queryMetadata, columnCrossIndex, factory);
     }
 
     private RecordCursorFactory generateSelectCursor(
@@ -10923,14 +11124,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectVirtual(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
-        return generateSelectVirtualWithSubQuery(model, executionContext, factory);
+        return generateSelectVirtualWithSubQuery(model, executionContext, factory, false);
     }
 
+    // With isTimestampSpellingResolved set, a literal that resolves to the designated timestamp
+    // column of the base keeps that column as the designated timestamp in any spelling, such as
+    // another letter case or another table alias. Without it, only the exact column name keeps it.
+    // generateHorizonJoinProjection() sets it. Every other caller matches the exact name, which
+    // INSERT INTO ... SELECT without a column list and CREATE TABLE AS SELECT depend on.
     @NotNull
     private VirtualRecordCursorFactory generateSelectVirtualWithSubQuery(
             IQueryModel model,
             SqlExecutionContext executionContext,
-            RecordCursorFactory factory
+            RecordCursorFactory factory,
+            boolean isTimestampSpellingResolved
     ) throws SqlException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
@@ -10994,9 +11201,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timestampOffsetAlias == null
                                 && modelTimestampIndex < 0
                                 && node.type == LITERAL
-                                && Chars.equalsNc(node.token, timestampColumn)
+                                && (Chars.equalsNc(node.token, timestampColumn)
+                                || (isTimestampSpellingResolved
+                                && virtualMetadata.getTimestampIndex() == -1
+                                && isBaseTimestampLiteral(node, priorityMetadata, timestampIndex)))
                 ) {
                     // Only use literal match when there is no derived timestamp selected by alias.
+                    // When the caller asks for it, a literal that spells the base timestamp column
+                    // differently, such as in another letter case or with another table alias, reads
+                    // the same column and matches too. The exact spelling still wins when the
+                    // projection selects the column more than once.
                     virtualMetadata.setTimestampIndex(i);
                 }
 
@@ -11156,22 +11370,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // here the base timestamp column name can name-clash with one of the
                 // functions, so we have to use bottomUpColumns to lookup alias we should
-                // be using. Bottom up column should have our timestamp because optimiser puts it there
-
+                // be using. Bottom up column should have our timestamp because optimiser puts it there.
+                // The exact spelling of the column wins. Otherwise, when the caller asks for it, the
+                // first literal that resolves to the column, spelled in another letter case or with
+                // another table alias, names it.
+                QueryColumn timestampSource = null;
                 for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                     QueryColumn qc = model.getBottomUpColumns().getQuick(i);
                     if (qc.getAst().type == LITERAL && Chars.equals(timestampColumn, qc.getAst().token)) {
-                        virtualMetadata.setTimestampIndex(virtualMetadata.getColumnCount());
-                        TableColumnMetadata m;
-                        m = new TableColumnMetadata(
-                                SqlUtil.toColumnName(qc.getAlias()),
-                                timestampFunction.getType(),
-                                timestampFunction.getMetadata()
-                        );
-                        virtualMetadata.add(m);
-                        priorityMetadata.add(m);
+                        timestampSource = qc;
                         break;
                     }
+                    if (isTimestampSpellingResolved
+                            && timestampSource == null
+                            && isBaseTimestampLiteral(qc.getAst(), priorityMetadata, timestampIndex)) {
+                        timestampSource = qc;
+                    }
+                }
+                if (timestampSource != null) {
+                    virtualMetadata.setTimestampIndex(virtualMetadata.getColumnCount());
+                    TableColumnMetadata m;
+                    m = new TableColumnMetadata(
+                            SqlUtil.toColumnName(timestampSource.getAlias()),
+                            timestampFunction.getType(),
+                            timestampFunction.getMetadata()
+                    );
+                    virtualMetadata.add(m);
+                    priorityMetadata.add(m);
                 }
             }
 
@@ -12730,14 +12955,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             //    "overhead" order by implementation, which would be trying to oder already ordered symbols
                             if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
                                 queryMeta.setTimestampIndex(-1);
-                                if (orderByAdviceSize == 1) {
-                                    orderByKeyColumn = true;
-                                } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                    orderByKeyColumn = true;
-                                    if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                        indexDirection = IndexReader.DIR_BACKWARD;
-                                    }
-                                }
+                                // A second ORDER BY term is honoured only when it asks for the direction the page
+                                // frames already arrive in. On this branch the first advice term is the key column,
+                                // so SqlOptimiser leaves isForceBackwardScan() false and the frames ascend; an index
+                                // cursor, however, is re-opened per frame, so a backward walk produces one descending
+                                // run PER FRAME inside an ascending frame sequence.
+                                orderByKeyColumn = orderByAdviceSize == 1
+                                        || (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)
+                                        && getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_ASCENDING);
                             }
                         }
                     }
@@ -13071,54 +13296,64 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                // Skip the symbol-index sort optimization when an outer time-series
-                // join needs the master in timestamp order. SortedSymbolIndexRecordCursorFactory
-                // emits rows in symbol order and zeroes the timestamp index, which would
-                // either trip "no timestamp" validation downstream or, worse, feed sym-ordered
-                // input into a SPLICE/ASOF/LT/WINDOW merge that assumes ts order.
-                if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null && !executionContext.isTimestampRequired()) {
-                    final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
-                    final int orderByAdviceSize = orderByAdvice.size();
-                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervalFilters()) {
-                        // This function cannot handle dotted aliases
-                        guardAgainstDotsInOrderByAdvice(model);
-
-                        // we can only deal with 'order by symbol, timestamp' at best
-                        // skip this optimisation if order by is more extensive
-                        final int columnIndex = SqlUtil.getColumnIndexQuiet(queryMeta, model.getOrderByAdvice().getQuick(0).token);
-                        assert columnIndex > -1;
-
-                        // this is our kind of column — bitmap only (native scanner)
-                        if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP
-                                && !SqlHints.hasNoIndexHint(model)) {
-                            boolean orderByKeyColumn = false;
-                            int indexDirection = IndexReader.DIR_FORWARD;
-                            if (orderByAdviceSize == 1) {
-                                orderByKeyColumn = true;
-                            } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                orderByKeyColumn = true;
-                                if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                    indexDirection = IndexReader.DIR_BACKWARD;
-                                }
-                            }
-
-                            if (orderByKeyColumn) {
-                                // check that intrinsicModel.intervals hit only one partition
-                                queryMeta.setTimestampIndex(-1);
-                                return new SortedSymbolIndexRecordCursorFactory(
-                                        configuration,
-                                        queryMeta,
-                                        dfcFactory,
-                                        columnIndex,
-                                        getOrderByDirectionOrDefault(model, 0) == IQueryModel.ORDER_DIRECTION_ASCENDING,
-                                        indexDirection,
-                                        columnIndexes,
-                                        columnSizeShifts
-                                );
-                            }
-                        }
-                    }
-                }
+                // Removed: the SortedSymbolIndex fast path for "ORDER BY sym" and
+                // "ORDER BY sym, ts" over an interval that floored to one calendar partition. It
+                // compiled to SortedSymbolIndexRecordCursorFactory, which claimed
+                // followedOrderByAdvice() unconditionally, so generateOrderBy() planned no
+                // corrective Sort above it.
+                //
+                // What it got wrong: the row cursor walked the sorted symbol key list INSIDE one
+                // page frame and restarted at key 0 for the next frame, while
+                // PageFrameRecordCursorImpl drives page frames in the outer loop. The output was a
+                // concatenation of per-frame symbol-ordered runs - k1,k2,k1,k2 - not a globally
+                // ordered result, and with a LIMIT on top it returned the wrong ROWS rather than
+                // merely the wrong order.
+                //
+                // Any of these cuts one partition into several page frames, and none of them is
+                // visible to the compiler: the page-frame row limit
+                // (min(cairo.sql.page.frame.max.rows, max(min.rows, rows / workers)), stock max
+                // 1,000,000), a column top left by ALTER TABLE ADD COLUMN, one frame per parquet
+                // row group (cairo.partition.encoder.parquet.row.group.size, stock 100,000), an O3
+                // partition split, and the pieces of a composite partition.
+                //
+                // No compile-time predicate is sound. The gate was intervalHitsOnlyOnePartition, a
+                // calendar-floor test (RuntimeIntervalModel.allIntervalsHitOnePartition): one
+                // calendar day can hold several physical partitions, and the frame count is a
+                // RUNTIME property of the data while the claim is consumed at COMPILE time and the
+                // plan is cached - a table at 999,000 rows compiles to "one frame" and is wrong
+                // after the next commit.
+                //
+                // The same reasoning withdrew two neighbouring claims. FilterOnValues and
+                // FilterOnExcludedValues no longer claim the advice for the key-column case: their
+                // SequentialRowCursorFactory restarts its per-key drain on every frame the same
+                // way. The single-key scan no longer claims "ORDER BY key, ts DESC", which asked
+                // for a backward index walk inside frames that still arrive in ascending order;
+                // "ORDER BY key" alone stays sound because the key column is constant across the
+                // result, and "ORDER BY key, ts ASC" stays sound because a forward index walk
+                // inside ascending frames is globally ascending. The orderByTimestamp claim also
+                // survives: it forces HeapRowCursorFactory, which emits the smallest row id first
+                // within a frame, frames arrive in timestamp order, and the descending form is
+                // admitted only for a single key value.
+                //
+                // The branch also carried the only guardAgainstDotsInOrderByAdvice() call on the
+                // intrinsicModel.keyColumn == null path, so a table-prefixed order-by advice now
+                // compiles to scan plus sort here instead of raising "cannot use table-prefixed
+                // names in order by"; the surviving call guards the keyColumn != null path.
+                //
+                // Two designs can bring the optimisation back:
+                // (a) key-major traversal in a dedicated cursor: for each sorted symbol key walk
+                //     every page frame, instead of for each frame walk every key. Frames are
+                //     enumerated once into PageFrameAddressCache and revisited through
+                //     PageFrameMemoryPool.navigateTo(); the index cursor bounds come from
+                //     PageFrame.getIndexRowLo() / getIndexRowHi(), which already carry the
+                //     composite piece shift. Such a cursor must pin ParquetDecodeHint.SCATTERED,
+                //     as LatestByLightRecordCursorFactory does, or the parquet decode cache
+                //     thrashes at four buffers.
+                // (b) decide per open rather than at compile time: build the fast factory and a
+                //     sorted backup, and choose when the cursor opens and the frame geometry is
+                //     knowable. CoveringIndexRecordCursorFactory already works this way - it asks
+                //     ScannedColumnTopProbe.hasAnyColumnTop() inside getCursor() and delegates to
+                //     its backup factory - precisely because the answer changes after compilation.
 
                 final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC);
 
