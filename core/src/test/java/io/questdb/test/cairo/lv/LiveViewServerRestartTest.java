@@ -33,6 +33,11 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
+import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
+import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.client.cutlass.qwp.client.QwpServerInfo;
+import io.questdb.client.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
@@ -55,10 +60,12 @@ import java.sql.Statement;
 import java.time.temporal.ChronoUnit;
 
 /**
- * Anchored live views across a real {@code ServerMain} restart: its own refresh pool, its own WAL
- * apply, its own startup metadata hydrator and its own network ingestion. Every row and every
- * {@code live_views()} reading goes over PGWire; the restart route and the fault count, which no
- * catalogue column carries, come off the server's engine.
+ * Anchored and bounded-frame live views across a real {@code ServerMain} restart: its own refresh
+ * pool, its own WAL apply, its own startup metadata hydrator and its own network ingestion. Every
+ * {@code live_views()} reading goes over PGWire, and so does every row of the anchored cases. The
+ * bounded-frame case reads its rows back through the client's QWP query client instead. The
+ * restart route and the fault count, which no catalogue column carries, come off the server's
+ * engine.
  * <p>
  * The hand-driven restart tests ({@code restartCycle()} and friends) reload the registry inside one
  * engine. They cannot show what a cold boot does: the order in which the refresh workers, the WAL
@@ -118,6 +125,46 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     private static final long SENDER_TICK_MICROS = 40 * Micros.MINUTE_MICROS;
     private static final int SENDER_TICKS_PER_ROUND = 6;
     private static final String SENDER_VIEW = "ticks_lv";
+    private static final int STAT_BACKFILL_ROWS_PER_ROUND = 5;
+    private static final String STAT_BASE = "fx";
+    private static final String STAT_RANGE_COLUMNS = "sym, ts::varchar, px, qty, c, sp, ks, cvl, vsx, cx";
+    // T1b over a RANGE frame in the issue's lv2 spelling, with T1a and T2 on the same frame, plus
+    // T1a and T1b over a lagged frame and over one that excludes the current row.
+    private static final String STAT_RANGE_QUERY = """
+            SELECT ts, sym, px, qty,
+                corr(px, qty) OVER w AS c,
+                stddev_pop(px) OVER w AS sp,
+                ksum(px) OVER w AS ks,
+                covar_pop(px, qty) OVER wl AS cvl,
+                var_samp(px) OVER wx AS vsx,
+                covar_samp(px, qty) OVER wx AS cx
+            FROM fx
+            WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE '1' MINUTE PRECEDING),
+                wl AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' MINUTE PRECEDING AND '30' SECOND PRECEDING),
+                wx AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '40' SECOND PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)""";
+    private static final String STAT_RANGE_VIEW = "fx_range_lv";
+    private static final int STAT_REPAIR_ROUNDS = 6;
+    private static final String STAT_ROWS_COLUMNS = "sym, ts::varchar, px, qty, vol, cv, vp, sx, cr";
+    // T1a and T1b over a ROWS frame in the issue's lv1 spelling, plus a lagged frame and one that
+    // excludes the current row.
+    private static final String STAT_ROWS_QUERY = """
+            SELECT ts, sym, px, qty,
+                stddev_samp(px) OVER w AS vol,
+                covar_samp(px, qty) OVER w AS cv,
+                var_pop(px) OVER wl AS vp,
+                stddev(px) OVER wx AS sx,
+                corr(px, qty) OVER wx AS cr
+            FROM fx
+            WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS 19 PRECEDING),
+                wl AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND 2 PRECEDING),
+                wx AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 6 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)""";
+    private static final String STAT_ROWS_VIEW = "fx_rows_lv";
+    private static final int STAT_SYMBOLS = 3;
+    private static final int STAT_TAIL_ROUNDS = 3;
+    // Six ticks span the one-minute frame. A round gives every symbol six in-order rows, so the
+    // 20-row frame fills within the first rounds and slides from then on.
+    private static final long STAT_TICK_MICROS = 10 * Micros.SECOND_MICROS;
+    private static final int STAT_TICKS_PER_ROUND = 6;
     private static final int SYMBOL_COUNT = 3;
     private static final int TIMEOUT_SECONDS = 60;
     private static final LogCapture capture = new LogCapture();
@@ -303,6 +350,93 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testBoundedFrameStatViewsFedBySendersRestoreAcrossARestart() throws Exception {
+        // The statistical window functions over bounded frames, end to end through the real
+        // client: stddev and variance (T1a) and covar and corr (T1b) over ROWS and RANGE frames,
+        // and ksum (T2) over a RANGE frame. A QWP stream feeds the base in timestamp order and an
+        // ILP-over-HTTP backfill sends late rows below its frontier, which the views repair. Some
+        // rows leave px or qty out, so the frames hold NULLs: the ROWS ring keeps a NaN
+        // placeholder for each, and the RANGE ring and every accumulator skip them.
+        //
+        // After the restart each view must come back on the timeline its previous process
+        // sealed, not on a rebuild, and keep computing on the frame state it restored: the next
+        // in-order rows read restored rows in their frames, and late rows after them still
+        // repair. The QWP query client reads every result back.
+        //
+        // Every value is a whole number far below 2^53, so each running sum is exact in whatever
+        // order a repair re-accumulates it, and a view row equals its recompute bit for bit.
+        assertMemoryLeak(() -> {
+            final StatWorkload workload = new StatWorkload();
+            final String rowsBeforeRestart;
+            final String rangeBeforeRestart;
+            try (TestServerMain serverMain = startServer(); Connection conn = connect()) {
+                execute(conn, "CREATE TABLE " + STAT_BASE + " (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty DOUBLE)"
+                        + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute(conn, createStatView(STAT_ROWS_VIEW, STAT_ROWS_QUERY));
+                execute(conn, createStatView(STAT_RANGE_VIEW, STAT_RANGE_QUERY));
+                try (Sender streamer = newStreamer(); Sender backfiller = newBackfiller()) {
+                    for (int round = 0; round < STAT_REPAIR_ROUNDS; round++) {
+                        streamStatRound(serverMain, conn, workload, streamer);
+                        backfillStatRound(serverMain, conn, workload, backfiller);
+                    }
+                    // A late row moves every later ROWS frame of its symbol, so the ROWS view
+                    // repairs it with a full replay from the applied base, which leaves it a
+                    // single root. In-order rounds with no late rows let both views seal a ladder
+                    // for the restart to pick from.
+                    for (int round = 0; round < STAT_TAIL_ROUNDS; round++) {
+                        streamStatRound(serverMain, conn, workload, streamer);
+                    }
+                }
+
+                assertStatPremises(conn, STAT_ROWS_VIEW, "vol", "cv", "vp", "sx", "cr");
+                assertStatPremises(conn, STAT_RANGE_VIEW, "c", "sp", "ks", "cvl", "vsx", "cx");
+                assertLadder(conn, STAT_ROWS_VIEW);
+                assertLadder(conn, STAT_RANGE_VIEW);
+                assertStatViewMatchesRecompute(STAT_ROWS_VIEW, STAT_ROWS_QUERY, STAT_ROWS_COLUMNS);
+                assertStatViewMatchesRecompute(STAT_RANGE_VIEW, STAT_RANGE_QUERY, STAT_RANGE_COLUMNS);
+                assertActive(conn, STAT_ROWS_VIEW);
+                assertActive(conn, STAT_RANGE_VIEW);
+                assertNoRefreshFaults(serverMain, STAT_ROWS_VIEW);
+                assertNoRefreshFaults(serverMain, STAT_RANGE_VIEW);
+                rowsBeforeRestart = readRowsOverQwp(statViewRowsSql(STAT_ROWS_VIEW, STAT_ROWS_COLUMNS));
+                rangeBeforeRestart = readRowsOverQwp(statViewRowsSql(STAT_RANGE_VIEW, STAT_RANGE_COLUMNS));
+            }
+
+            try (TestServerMain serverMain = startServer(); Connection conn = connect()) {
+                assertRestartRestoredFromTimeline(serverMain, conn, STAT_ROWS_VIEW);
+                assertRestartRestoredFromTimeline(serverMain, conn, STAT_RANGE_VIEW);
+                TestUtils.assertEquals(
+                        STAT_ROWS_VIEW + " must come back with the rows it had",
+                        rowsBeforeRestart,
+                        readRowsOverQwp(statViewRowsSql(STAT_ROWS_VIEW, STAT_ROWS_COLUMNS))
+                );
+                TestUtils.assertEquals(
+                        STAT_RANGE_VIEW + " must come back with the rows it had",
+                        rangeBeforeRestart,
+                        readRowsOverQwp(statViewRowsSql(STAT_RANGE_VIEW, STAT_RANGE_COLUMNS))
+                );
+
+                // Fresh connections after the restart, one more round each. In-order rows first:
+                // every frame of the first ones reaches back into rows from before the restart,
+                // which only the restored state holds. Then late rows, which the views repair on
+                // top of it.
+                try (Sender streamer = newStreamer(); Sender backfiller = newBackfiller()) {
+                    streamStatRound(serverMain, conn, workload, streamer);
+                    assertStatViewMatchesRecompute(STAT_ROWS_VIEW, STAT_ROWS_QUERY, STAT_ROWS_COLUMNS);
+                    assertStatViewMatchesRecompute(STAT_RANGE_VIEW, STAT_RANGE_QUERY, STAT_RANGE_COLUMNS);
+                    backfillStatRound(serverMain, conn, workload, backfiller);
+                }
+                assertStatViewMatchesRecompute(STAT_ROWS_VIEW, STAT_ROWS_QUERY, STAT_ROWS_COLUMNS);
+                assertStatViewMatchesRecompute(STAT_RANGE_VIEW, STAT_RANGE_QUERY, STAT_RANGE_COLUMNS);
+                assertActive(conn, STAT_ROWS_VIEW);
+                assertActive(conn, STAT_RANGE_VIEW);
+                assertNoRefreshFaults(serverMain, STAT_ROWS_VIEW);
+                assertNoRefreshFaults(serverMain, STAT_RANGE_VIEW);
+            }
+        });
+    }
+
+    @Test
     public void testTwoSendersIntoAnInMemoryViewBaseMatchARecomputeAcrossARestart() throws Exception {
         // Two real senders on two connections into one base: a QWP stream in timestamp order, and
         // an ILP-over-HTTP backfill of late rows below its frontier. Both auto-flush in batches
@@ -480,6 +614,27 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     }
 
     /**
+     * Asserts the premises the bounded-frame case relies on, read off the view: some rows carry a
+     * NULL px and some a NULL qty, every window column has values to compare, and late rows reached
+     * a repair rather than only the in-order append.
+     */
+    private static void assertStatPremises(Connection conn, String view, String... statColumns) throws SQLException {
+        final long rowCount = queryLong(conn, "SELECT count() FROM " + view);
+        Assert.assertTrue(view + " must hold rows with a NULL px", queryLong(conn, "SELECT count(px) FROM " + view) < rowCount);
+        Assert.assertTrue(view + " must hold rows with a NULL qty", queryLong(conn, "SELECT count(qty) FROM " + view) < rowCount);
+        for (String column : statColumns) {
+            Assert.assertTrue(
+                    view + '.' + column + " must carry values",
+                    queryLong(conn, "SELECT count(" + column + ") FROM " + view) > 0
+            );
+        }
+        Assert.assertTrue(
+                "late rows must have reached a repair of " + view,
+                queryLong(conn, "SELECT o3_replay_scan_rows FROM live_views() WHERE view_name = '" + view + "'") > 0
+        );
+    }
+
+    /**
      * Compares the view against a from-base recompute of the same window, row for row. ANCHOR is
      * live-view syntax, so the daily bucket is written out as a partition term.
      */
@@ -536,6 +691,26 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
         );
     }
 
+    private static void awaitStatViewsCaughtUp(TestServerMain serverMain, Connection conn, StatWorkload workload) throws Exception {
+        awaitRowCount(conn, STAT_BASE, workload.rowCount);
+        awaitCaughtUp(serverMain, conn, STAT_BASE, STAT_ROWS_VIEW);
+        awaitCaughtUp(serverMain, conn, STAT_BASE, STAT_RANGE_VIEW);
+    }
+
+    /**
+     * The late rows of one bounded-frame round, waited out until the base has applied them and
+     * both views have consumed them.
+     */
+    private static void backfillStatRound(
+            TestServerMain serverMain,
+            Connection conn,
+            StatWorkload workload,
+            Sender backfiller
+    ) throws Exception {
+        workload.backfill(backfiller);
+        awaitStatViewsCaughtUp(serverMain, conn, workload);
+    }
+
     /**
      * The metadata catalogue's entry for {@code token}, read without hydrating it: any lookup that
      * hydrates on demand would answer its own question.
@@ -558,6 +733,10 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     private static String createBase(String base, String symbolCapacityClause, String dedupClause) {
         return "CREATE TABLE " + base + " (ts TIMESTAMP, sym SYMBOL" + symbolCapacityClause + ", price DOUBLE)"
                 + " TIMESTAMP(ts) PARTITION BY DAY WAL" + dedupClause;
+    }
+
+    private static String createStatView(String view, String query) {
+        return "CREATE LIVE VIEW " + view + " FLUSH EVERY 100ms START FROM BEGINNING AS\n" + query;
     }
 
     private static void execute(Connection conn, CharSequence sql) throws SQLException {
@@ -645,12 +824,42 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
         return FIRST_TS + row * Micros.HOUR_MICROS;
     }
 
+    private static String statViewRowsSql(String view, String columns) {
+        return "SELECT " + columns + " FROM " + view + " ORDER BY 1, 2";
+    }
+
+    /**
+     * The in-order rows of one bounded-frame round, waited out until the base has applied them and
+     * both views have consumed them.
+     */
+    private static void streamStatRound(
+            TestServerMain serverMain,
+            Connection conn,
+            StatWorkload workload,
+            Sender streamer
+    ) throws Exception {
+        workload.stream(streamer);
+        awaitStatViewsCaughtUp(serverMain, conn, workload);
+    }
+
     private static String symbol(int row) {
         return "s" + (row % SYMBOL_COUNT);
     }
 
     private static String viewRowsSql(String view) {
         return "SELECT sym, ts::varchar, price, cumulative_sum, cumulative_count FROM " + view + " ORDER BY 1, 2";
+    }
+
+    /**
+     * Compares the view against a from-base recompute of the query it was created with, row for
+     * row, both read through the client's QWP query client.
+     */
+    private void assertStatViewMatchesRecompute(String view, String query, String columns) {
+        TestUtils.assertEquals(
+                view + " must equal a from-base recompute",
+                readRowsOverQwp("SELECT " + columns + " FROM (" + query + ") ORDER BY 1, 2"),
+                readRowsOverQwp(statViewRowsSql(view, columns))
+        );
     }
 
     private Connection connect() throws SQLException {
@@ -669,6 +878,59 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
                 .address("localhost:" + httpPort)
                 .autoFlushRows(SENDER_STREAM_FLUSH_ROWS)
                 .build();
+    }
+
+    /**
+     * Every row of {@code sql} as the client's QWP query client decodes it, one line each,
+     * tab-separated, in the order the query returns them. A DOUBLE prints its shortest round-trip
+     * text, so two equal lines carry the same bits.
+     */
+    private String readRowsOverQwp(String sql) {
+        final StringSink sink = new StringSink();
+        final StringSink error = new StringSink();
+        try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", httpPort)) {
+            client.connect();
+            client.execute(sql, new QwpColumnBatchHandler() {
+                @Override
+                public void onBatch(QwpColumnBatch batch) {
+                    for (int row = 0, rowCount = batch.getRowCount(); row < rowCount; row++) {
+                        for (int col = 0, columnCount = batch.getColumnCount(); col < columnCount; col++) {
+                            if (col > 0) {
+                                sink.put('\t');
+                            }
+                            if (batch.isNull(col, row)) {
+                                sink.put("null");
+                                continue;
+                            }
+                            switch (batch.getColumnWireType(col)) {
+                                case QwpConstants.TYPE_DOUBLE -> sink.put(batch.getDoubleValue(col, row));
+                                case QwpConstants.TYPE_SYMBOL, QwpConstants.TYPE_VARCHAR -> sink.put(batch.getString(col, row));
+                                default -> Assert.fail("unexpected wire type " + batch.getColumnWireType(col)
+                                        + " of column " + batch.getColumnName(col) + " in: " + sql);
+                            }
+                        }
+                        sink.put('\n');
+                    }
+                }
+
+                @Override
+                public void onEnd(long totalRows) {
+                }
+
+                @Override
+                public void onError(byte status, String message) {
+                    error.put("status=").put(status).put(", message=").put(message);
+                }
+
+                @Override
+                public void onFailoverReset(QwpServerInfo newNode) {
+                    // The client re-submits the query from its first batch.
+                    sink.clear();
+                }
+            });
+        }
+        Assert.assertEquals("QWP query failed: " + sql, "", error.toString());
+        return sink.toString();
     }
 
     private TestServerMain startServer() {
@@ -765,6 +1027,90 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
         // newest root's own timestamp, and below the cadence's row trigger, so no seal records it.
         private void streamTie(Sender streamer, int round) {
             streamRow(streamer, round);
+            streamer.flush();
+        }
+    }
+
+    /**
+     * The rows the bounded-frame case writes, and the count the base must reach. Deterministic, so
+     * a failure replays as it ran. Every value is a whole number.
+     * <p>
+     * The streamer writes one row per {@code (tick, symbol)}, in tick order, the symbols of a tick
+     * in turn, {@link #STAT_TICKS_PER_ROUND} ticks a round. Some rows leave px out and others qty,
+     * at ticks that differ by symbol.
+     * <p>
+     * The backfiller writes late rows below the frontier the streamer just left. A round's first
+     * late row lands in the tick just below the frontier; the rest spread over older ticks. Each
+     * sits one second and a serial number of milliseconds past its tick, so no late row shares
+     * {@code (sym, ts)} with any other row. Every fourth late row leaves px out.
+     */
+    private static class StatWorkload {
+        private int backfillSerial;
+        private int nextTick;
+        private int round;
+        private long rowCount;
+
+        private static boolean isPxNull(int tick, int symbol) {
+            return (tick + 2 * symbol) % 7 == 3;
+        }
+
+        private static boolean isQtyNull(int tick, int symbol) {
+            return (tick + symbol) % 9 == 5;
+        }
+
+        private static double px(int tick, int symbol) {
+            return (tick * 31 + symbol * 7) % 97 + 1;
+        }
+
+        private static double qty(int tick, int symbol) {
+            return (tick * 17 + symbol * 11) % 89 + 1;
+        }
+
+        private static String statSymbol(int symbol) {
+            return "x" + symbol;
+        }
+
+        private static long tickTs(int tick) {
+            return FIRST_TS + tick * STAT_TICK_MICROS;
+        }
+
+        private void backfill(Sender backfiller) {
+            // The tick the stream stopped at is the frontier; every late row sits below it.
+            final int frontierTick = nextTick;
+            for (int i = 0; i < STAT_BACKFILL_ROWS_PER_ROUND; i++) {
+                final int tick = i == 0 ? frontierTick - 1 : (round * 7 + i * 3) % (frontierTick - 1);
+                final int symbol = (round + i) % STAT_SYMBOLS;
+                backfillSerial++;
+                backfiller.table(STAT_BASE).symbol("sym", statSymbol(symbol));
+                if (backfillSerial % 4 != 0) {
+                    backfiller.doubleColumn("px", 100 + backfillSerial % 50);
+                }
+                backfiller.doubleColumn("qty", 50 + backfillSerial % 30);
+                backfiller.at(
+                        tickTs(tick) + Micros.SECOND_MICROS + backfillSerial * Micros.MILLI_MICROS,
+                        ChronoUnit.MICROS
+                );
+                rowCount++;
+            }
+            backfiller.flush();
+            round++;
+        }
+
+        private void stream(Sender streamer) {
+            final int stopTick = nextTick + STAT_TICKS_PER_ROUND;
+            for (; nextTick < stopTick; nextTick++) {
+                for (int symbol = 0; symbol < STAT_SYMBOLS; symbol++) {
+                    streamer.table(STAT_BASE).symbol("sym", statSymbol(symbol));
+                    if (!isPxNull(nextTick, symbol)) {
+                        streamer.doubleColumn("px", px(nextTick, symbol));
+                    }
+                    if (!isQtyNull(nextTick, symbol)) {
+                        streamer.doubleColumn("qty", qty(nextTick, symbol));
+                    }
+                    streamer.at(tickTs(nextTick), ChronoUnit.MICROS);
+                    rowCount++;
+                }
+            }
             streamer.flush();
         }
     }
