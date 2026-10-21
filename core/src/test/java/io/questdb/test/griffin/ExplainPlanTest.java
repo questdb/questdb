@@ -178,6 +178,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
@@ -1598,6 +1599,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateLiveViewAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, x int) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create live view test flush every 1s start from now as " +
+                            "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) rn from tab",
+                    "create live view other flush every 1s start from now as " +
+                            "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) rn from tab"
+            );
+        });
+    }
+
+    @Test
     public void testExplainCreateMatView() throws Exception {
         assertQuery("create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day")
                 .ddl("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal")
@@ -1617,12 +1631,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateMatViewAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
+                    "create materialized view other as (select ts, k, avg(v) from tab sample by 30s) partition by day"
+            );
+        });
+    }
+
+    @Test
     public void testExplainCreateTable() throws Exception {
         assertQuery("create table a ( l long, d double)")
                 .noLeakCheck()
                 .assertsPlan("""
                         Create table: a
                         """);
+    }
+
+    @Test
+    public void testExplainCreateTableAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> assertExplainAfterCompilerReuse(
+                "create table test (x long)",
+                "create table other (x long)"
+        ));
     }
 
     @Test
@@ -1635,6 +1668,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               functions: [x,1]
                                 long_sequence count: 10
                         """));
+    }
+
+    @Test
+    public void testExplainCreateTableAsSelectAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, x long) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create table test as (select ts, x from tab) timestamp(ts) partition by day",
+                    "create table other as (select ts, x from tab) timestamp(ts) partition by day"
+            );
+        });
     }
 
     @Test
@@ -1745,6 +1789,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainInsertAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse("insert into test values (1)", "insert into other values (2)");
+        });
+    }
+
+    @Test
     public void testExplainInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
@@ -1756,6 +1809,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   functions: [x,1]
                                     long_sequence count: 10
                             """);
+        });
+    }
+
+    @Test
+    public void testExplainInsertAsSelectAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse(
+                    "insert into test select x from long_sequence(10)",
+                    "insert into other select x from long_sequence(20)"
+            );
         });
     }
 
@@ -1897,6 +1962,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: b
                             """);
+        });
+    }
+
+    @Test
+    public void testExplainUpdateAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse("update test set x = 1", "update other set x = 2");
         });
     }
 
@@ -13490,6 +13564,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from t where x = :v1 ")
                 .noLeakCheck()
                 .assertsPlan("Async Filter workers: 1\n" + "  filter: x=:v1::" + type + "\n" + "    PageFrame\n" + "        Row forward scan\n" + "        Frame forward scan on: t\n");
+    }
+
+    private void assertExplainAfterCompilerReuse(String sql, String otherSql) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            ObjList<String> formats = list("text", "json");
+            ObjList<String> nextQueries = list("select * from long_sequence(1)", "explain " + otherSql);
+            for (int i = 0, n = formats.size(); i < n; i++) {
+                String explain = "explain (format " + formats.getQuick(i) + ") " + sql;
+                StringSink expected = new StringSink();
+                TestUtils.printSql(compiler, sqlExecutionContext, explain, expected);
+                for (int j = 0, m = nextQueries.size(); j < m; j++) {
+                    String nextSql = nextQueries.getQuick(j);
+                    try (RecordCursorFactory factory = compiler.compile(explain, sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursorFactory ignored = compiler.compile(nextSql, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertFactory(factory)
+                                    .withContext(sqlExecutionContext)
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns(expected);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private void assertNotSupportedByExplain(String sql, SqlExecutionContextImpl sqlExecutionContext) {
