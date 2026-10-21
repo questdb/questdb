@@ -3426,6 +3426,10 @@ public class CairoEngine implements Closeable, WriterSource {
         validNameOrThrow(toTableName);
 
         final TableToken fromTableToken = verifyTableName(fromTableName);
+        // a table the principal may not see fails exactly like a missing one does in verifyTableName()
+        if (!securityContext.isTableVisible(fromTableToken)) {
+            throw CairoException.tableDoesNotExist(fromTableName);
+        }
         if (Chars.equalsIgnoreCaseNc(fromTableName, toTableName)) {
             return fromTableToken;
         }
@@ -4039,7 +4043,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableToken.getDirName(),
                 struct,
                 ColumnType.VERSION,
-                tableToken.getTableId()
+                tableToken.getTableId(),
+                configuration.getCommitMode()
         );
     }
 
@@ -4061,7 +4066,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableToken.getDirName(),
                 struct,
                 ColumnType.VERSION,
-                tableToken.getTableId()
+                tableToken.getTableId(),
+                configuration.getCommitMode()
         );
     }
 

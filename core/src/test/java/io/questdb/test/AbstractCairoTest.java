@@ -799,6 +799,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
     }
 
+    protected static boolean containsSymbolNullValue(CharSequence tableName, CharSequence columnName) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getSymbolMapReader(reader.getMetadata().getColumnIndex(columnName)).containsNullValue();
+        }
+    }
+
     protected static MatViewRefreshJob createMatViewRefreshJob() {
         return createMatViewRefreshJob(engine);
     }
@@ -1041,6 +1047,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    protected static void unsetSymbolNullFlag(CharSequence tableName, CharSequence columnName) {
+        try (TableWriter writer = getWriter(tableName)) {
+            writer.getSymbolMapWriter(writer.getMetadata().getColumnIndex(columnName)).updateNullFlag(false);
+        }
+        engine.releaseAllReaders();
+        Assert.assertFalse(containsSymbolNullValue(tableName, columnName));
+    }
+
     /**
      * Reports whether the WAL-level symbol dictionary of {@code columnName} still sits in
      * {@code walName}'s directory. Every already-written segment of that WAL resolves its clean
@@ -1072,6 +1086,25 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     /**
+     * Asserts a query whose ORDER BY references a hidden key, such as an expression over a column
+     * that the select list does not output, together with the wrappers over it: {@code SELECT *}
+     * returns the query's rows, and {@link #assertRowCountInWrappersNoLeakCheck} checks the wrappers
+     * that drop the ORDER BY. The row count comes from the lines of {@code expected}, less the header.
+     * Every assertion skips the leak check, so the caller wraps this in {@code assertMemoryLeak()}.
+     */
+    protected void assertOrderByHiddenKeyNoLeakCheck(String sql, String expected, boolean isSizeKnown) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .expectSize(isSizeKnown)
+                .returns(expected);
+        assertQuery("SELECT * FROM (" + sql + ")")
+                .noLeakCheck()
+                .expectSize(isSizeKnown)
+                .returns(expected);
+        assertRowCountInWrappersNoLeakCheck(sql, expected.chars().filter(c -> c == '\n').count() - 1);
+    }
+
+    /**
      * Entry point for the fluent query-assertion builder. The expected output is supplied to the
      * terminal step ({@link QueryAssertion#returns}, {@link QueryAssertion#returnsRecords},
      * {@link QueryAssertion#fails}), so every chain reads as query -&gt; options -&gt; expectation:
@@ -1090,6 +1123,25 @@ public abstract class AbstractCairoTest extends AbstractTest {
      */
     protected QueryAssertion assertQuery(CharSequence query) {
         return new QueryAssertion(engine, sqlExecutionContext, this::prepareForQueryAssertion, query);
+    }
+
+    /**
+     * Asserts that {@code count()} over the query returns {@code rowCount}, and {@code count()} over
+     * the UNION ALL of the query with itself returns twice that. Both wrappers drop the query's
+     * ORDER BY, so a hidden ORDER BY key that splits the query's groups must still split them there.
+     * Both assertions skip the leak check, so the caller wraps this in {@code assertMemoryLeak()}.
+     */
+    protected void assertRowCountInWrappersNoLeakCheck(String sql, long rowCount) throws Exception {
+        assertQuery("SELECT count() FROM (" + sql + ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + rowCount + "\n");
+        assertQuery("SELECT count() FROM ((" + sql + ") UNION ALL (" + sql + "))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + 2 * rowCount + "\n");
     }
 
     protected File assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {

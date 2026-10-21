@@ -92,6 +92,13 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
     }
 
     @Override
+    public long getMaxValue() {
+        // key files that predate the field leave it zeroed
+        final long maxValue = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_MAX_VALUE);
+        return maxValue > 0 ? maxValue : -1;
+    }
+
+    @Override
     public long getPartitionTxn() {
         return partitionTxn;
     }
