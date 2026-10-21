@@ -94,6 +94,24 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolLengthBytes() throws Exception {
+        assertQuery("select s, length_bytes(s) from x")
+                .ddl("create table x as (" +
+                        "select rnd_symbol('abc','x','','тест',NULL) as s\n" +
+                        "from long_sequence(5)" +
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tlength_bytes
+                        abc\t3
+                        тест\t8
+                        тест\t8
+                        x\t1
+                        x\t1
+                        """);
+    }
+
+    @Test
     public void testUpperSymbolLength() throws Exception {
         assertQuery("select sym, length(upper(sym)) length from x")
                 .ddl("create table x as (" +

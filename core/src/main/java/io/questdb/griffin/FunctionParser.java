@@ -56,6 +56,7 @@ import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastSymbolToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFactory;
@@ -1485,6 +1486,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.IPv4 && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastIPv4ToStrFunctionFactory.Func(arg));
+            } else if (argTypeTag == ColumnType.IPv4 && sigArgTypeTag == ColumnType.VARCHAR) {
+                args.setQuick(k, new CastIPv4ToVarcharFunctionFactory.Func(arg));
+            } else if (argTypeTag == ColumnType.SYMBOL && sigArgTypeTag == ColumnType.VARCHAR) {
+                // SymbolFunction.getVarcharSize() throws, so VARCHAR parameters need a cast
+                args.setQuick(k, new CastSymbolToVarcharFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INTERVAL && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastIntervalToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INT && sigArgTypeTag == ColumnType.DECIMAL) {
