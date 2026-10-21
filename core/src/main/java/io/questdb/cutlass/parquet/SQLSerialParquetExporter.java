@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
@@ -57,6 +58,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -72,6 +74,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 public class SQLSerialParquetExporter extends BaseParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SQLSerialParquetExporter.class);
     private final DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CairoConfiguration configuration;
     private final StringSink exportPath = new StringSink(128);
     private final FilesFacade ff;
@@ -188,9 +191,6 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             if (tableToken == null) {
                 tableToken = cairoEngine.verifyTableName(task.getTableName());
             }
-            if (createOp == null) {
-                sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
-            }
 
             if (circuitBreaker.checkIfTrippedOrYield()) {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
@@ -198,6 +198,15 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             }
 
             try (TableReader reader = cairoEngine.getReader(tableToken)) {
+                if (createOp == null) {
+                    // the whole table is exported, so every column must be readable
+                    final TableReaderMetadata metadata = reader.getMetadata();
+                    columnNames.clear();
+                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                        columnNames.add(metadata.getColumnName(i));
+                    }
+                    sqlExecutionContext.getSecurityContext().authorizeSelect(tableToken, columnNames);
+                }
                 // SEQUENTIAL_EVICT: MADV_SEQUENTIAL/DONTNEED hints to release
                 // page cache after each partition, plus a hard cleanup
                 // backstop -- closeExcessPartitions(keepOpen=0) on pool
