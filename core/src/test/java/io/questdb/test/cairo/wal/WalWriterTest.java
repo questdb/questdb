@@ -4946,14 +4946,14 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
                     TestUtils.assertEquals("sym" + i, record.getSymA(1));
-                    assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
+                    TestUtils.assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
                     assertEquals(i % 2, record.getInt(2));
                     TestUtils.assertEquals("s" + i % 2, record.getSymA(2));
-                    assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
+                    TestUtils.assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
                     assertEquals(i % 2, record.getInt(3));
                     TestUtils.assertEquals("symbol" + i % 2, record.getSymA(3));
                     TestUtils.assertEquals(record.getSymB(3), record.getSymA(3));
-                    assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
+                    TestUtils.assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
                     i++;
                 }
                 assertEquals(i, reader.getTransientRowCount());

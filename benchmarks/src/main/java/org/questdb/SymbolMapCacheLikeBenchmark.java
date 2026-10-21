@@ -40,7 +40,9 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Locale;
 
-/** Measures first and repeated LIKE scans; arguments: symbol count, ample/stopped. */
+/**
+ * Measures first and repeated LIKE scans; arguments: symbol count, ample/stopped.
+ */
 public class SymbolMapCacheLikeBenchmark {
     private static final int BATCHES = 9;
     private static final int CACHE_WARMUPS = 3;

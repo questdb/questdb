@@ -145,7 +145,7 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
         }
         final int shift = Unsafe.getInt(t + TABLE_SHIFT_OFFSET);
         int h = hash(key, shift);
-        for (;;) {
+        for (; ; ) {
             final long slot = Unsafe.getLongVolatile(t + HEADER_SIZE + (long) h * Long.BYTES);
             if (slot == 0) {
                 return null;
@@ -203,7 +203,9 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
         return size;
     }
 
-    /** Returns STOPPED only to the inserter that stops admission. */
+    /**
+     * Returns STOPPED only to the inserter that stops admission.
+     */
     public int tryPutIfAbsent(int key, long charsAddr, int len) {
         assert len >= 0 && (len == 0 || charsAddr != 0);
         if (Integer.BYTES + 2L * len > MAX_RECORD_BYTES || !isFilling || lock.get() || !lock.compareAndSet(false, true)) {
@@ -255,7 +257,7 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
     private static long findSlot(long t, int key) {
         final int mask = Unsafe.getInt(t + TABLE_MASK_OFFSET);
         int h = hash(key, Unsafe.getInt(t + TABLE_SHIFT_OFFSET));
-        for (;;) {
+        for (; ; ) {
             final long address = t + HEADER_SIZE + (long) h * Long.BYTES;
             final long slot = Unsafe.getLong(address);
             if (slot == 0) {
