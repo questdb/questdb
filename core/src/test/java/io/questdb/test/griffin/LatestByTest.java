@@ -2871,6 +2871,7 @@ public class LatestByTest extends AbstractCairoTest {
                     """);
             final String horizon = "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) RANGE FROM 0s TO 0s STEP 1s AS h ";
             assertQuery("SELECT t.sym, t.qty, p.price " + horizon + "LATEST ON ts PARTITION BY sym")
+                    .noRandomAccess()
                     .expectSize()
                     .returns("""
                             sym	qty	price
@@ -2878,6 +2879,7 @@ public class LatestByTest extends AbstractCairoTest {
                             B	4.0	400.0
                             """);
             assertQuery("SELECT t.sym, t.qty, p.price " + horizon + "WHERE t.qty < 4 LATEST ON ts PARTITION BY sym")
+                    .noRandomAccess()
                     .expectSize()
                     .returns("""
                             sym	qty	price
@@ -2885,18 +2887,19 @@ public class LatestByTest extends AbstractCairoTest {
                             A	2.0	200.0
                             """);
             assertQuery("SELECT t.sym, t.qty, p.price " + horizon + "WHERE t.sym = 'A' LATEST ON ts PARTITION BY sym")
-                    .expectSize()
+                    .noRandomAccess()
                     .withPlanContaining("""
-                                LatestByValueDeferredFiltered
-                                  symbolFilter: sym='A'
-                                    Frame backward scan on: trades
+                                Horizon Join Projection offsets: 1
+                                    LatestByValueDeferredFiltered
+                                      symbolFilter: sym='A'
+                                        Frame backward scan on: trades
                             """)
                     .returns("""
                             sym	qty	price
                             A	2.0	200.0
                             """);
             assertQuery("SELECT t.sym, avg(p.price) " + horizon + "WHERE p.price > 0 LATEST ON ts PARTITION BY sym")
-                    .fails(129, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+                    .fails(121, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
             final String window = "FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING ";
             assertQuery("SELECT t.sym, t.qty, sum(p.price) " + window + "EXCLUDE PREVAILING LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()

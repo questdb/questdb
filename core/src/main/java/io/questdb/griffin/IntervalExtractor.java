@@ -247,9 +247,14 @@ public final class IntervalExtractor implements Mutable {
         return (ColumnType.isVarcharOrString(type) || type == ColumnType.DATE) && (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0;
     }
 
+    /**
+     * A runtime bound the interval model reads with {@code getTimestamp()}, which SHORT and BYTE functions do not
+     * implement.
+     */
     private static boolean isRuntimePoint(BoundExpression bound) {
         final int type = bound.getDataType();
-        return (ColumnType.isTimestamp(type) || isIntegralType(type)) && (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0;
+        return (ColumnType.isTimestamp(type) || type == ColumnType.INT || type == ColumnType.LONG)
+                && (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0;
     }
 
     private static boolean isSameOffset(BoundExpression left, BoundExpression right) {

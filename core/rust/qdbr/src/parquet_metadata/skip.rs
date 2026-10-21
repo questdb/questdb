@@ -139,15 +139,7 @@ pub fn can_skip_row_group(
             || ParquetDecoder::nulls_hidden_from_stats(qdb_column_type);
         let col_type_tag = qdb_column_type & 0xFF;
 
-        let is_decimal = matches!(
-            col_type_tag,
-            x if x == ColumnTypeTag::Decimal8 as i32
-                || x == ColumnTypeTag::Decimal16 as i32
-                || x == ColumnTypeTag::Decimal32 as i32
-                || x == ColumnTypeTag::Decimal64 as i32
-                || x == ColumnTypeTag::Decimal128 as i32
-                || x == ColumnTypeTag::Decimal256 as i32
-        );
+        let decimal_size = ParquetDecoder::decimal_filter_size(qdb_column_type);
 
         // Inline stats hold parquet bytes verbatim at parquet physical type
         // width: the convert path writes them this way and the comparison
@@ -291,7 +283,6 @@ pub fn can_skip_row_group(
                         &filter_desc,
                         has_nulls,
                         has_implicit_zeros,
-                        is_decimal,
                         qdb_column_type,
                     )?;
                     if all_absent {
@@ -308,7 +299,7 @@ pub fn can_skip_row_group(
                             &physical_type,
                             &filter_desc,
                             has_nulls,
-                            is_decimal,
+                            decimal_size,
                             is_ipv4,
                             is_date,
                             Some(min_b),
@@ -326,7 +317,7 @@ pub fn can_skip_row_group(
                     if ParquetDecoder::value_outside_range(
                         &physical_type,
                         &filter_desc,
-                        is_decimal,
+                        decimal_size,
                         is_ipv4,
                         is_date,
                         op,
@@ -351,6 +342,7 @@ mod tests {
     use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
     use crate::parquet_metadata::types::{encode_stat_sizes, Codec, ColumnFlags, FieldRepetition};
     use crate::parquet_metadata::writer::ParquetMetaWriter;
+    use qdb_core::col_type::ColumnType;
 
     /// Physical type ordinal for Int64 in the `_pm` format.
     const PHYS_INT64: u8 = 2;
@@ -747,6 +739,33 @@ mod tests {
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
         assert!(can_skip_row_group(&reader, 0, &[filter], buf_end)?);
+        Ok(())
+    }
+
+    #[test]
+    fn decimal_bound_compares_against_int64_stats() -> ParquetResult<()> {
+        // An attached external file stores DECIMAL(20,2) as INT64 [-200, 200]; the bound arrives
+        // big-endian at DECIMAL128 width.
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(1000, 0, -200, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
+        let decimal128 = ColumnType::new_decimal(20, 2).unwrap().code();
+        for (op, bound, expected_skip) in [
+            (FILTER_OP_GT, 200i128, true),
+            (FILTER_OP_GT, 199, false),
+            (FILTER_OP_LT, -200, true),
+            (FILTER_OP_LT, -199, false),
+            (FILTER_OP_EQ, 300, true),
+            (FILTER_OP_EQ, -150, false),
+        ] {
+            let value = bound.to_be_bytes();
+            let filter = make_filter(0, 1, op, value.as_ptr() as u64, decimal128);
+            let buf_end = value.as_ptr() as u64 + value.len() as u64;
+            assert_eq!(
+                can_skip_row_group(&reader, 0, &[filter], buf_end)?,
+                expected_skip,
+                "op {op} bound {bound}"
+            );
+        }
         Ok(())
     }
 

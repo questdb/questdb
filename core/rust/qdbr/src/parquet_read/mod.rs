@@ -277,7 +277,7 @@ mod tests {
     use parquet::format::KeyValue;
     use parquet::schema::types::Type;
     use parquet2::metadata::{ColumnChunkMetaData, RowGroupMetaData};
-    use qdb_core::col_type::ColumnTypeTag;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use std::io::Cursor;
     use std::sync::Arc;
 
@@ -1020,6 +1020,118 @@ mod tests {
             !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
             "IS NULL should not skip when nulls exist"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn decimal_bounds_prune_external_files_at_their_physical_width() -> ParquetResult<()> {
+        let fixture = |path: &str| {
+            std::fs::read(format!(
+                "{}/../../src/test/resources/{path}",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap()
+        };
+        let skips = |buf: &[u8], column: u32, column_type: i32, op: u8, bound: &[u8]| {
+            let filters = [make_filter_with_op_and_type(
+                column,
+                1,
+                bound.as_ptr() as u64,
+                op,
+                column_type,
+            )];
+            let buf_end = bound.as_ptr() as u64 + bound.len() as u64;
+            read_decoder(buf)?.can_skip_row_group(0, buf, &filters, buf_end)
+        };
+        let decimal64 = ColumnType::new_decimal(10, 2).unwrap().code();
+        let decimal128 = ColumnType::new_decimal(25, 2).unwrap().code();
+
+        // INT64 DECIMAL(10,2) holding 1.00 to 24.00, bound at DECIMAL64 width.
+        let buf = fixture("sqllogictest/data/parquet-testing/decimal/int64_decimal.parquet");
+        assert!(skips(
+            &buf,
+            0,
+            decimal64,
+            FILTER_OP_GT,
+            &2400i64.to_be_bytes()
+        )?);
+        assert!(!skips(
+            &buf,
+            0,
+            decimal64,
+            FILTER_OP_LT,
+            &1000i64.to_be_bytes()
+        )?);
+
+        // parquet-mr 1.8.2 wrote only the deprecated min/max for this FIXED_LEN_BYTE_ARRAY(11)
+        // DECIMAL(25,2), in signed-byte order: [2.00, 24.00] over values 1.00 to 24.00.
+        let buf = fixture("sqllogictest/data/parquet-testing/decimal/fixed_length_decimal.parquet");
+        assert!(!skips(
+            &buf,
+            0,
+            decimal128,
+            FILTER_OP_LT,
+            &150i128.to_be_bytes()
+        )?);
+        assert!(!skips(
+            &buf,
+            0,
+            decimal128,
+            FILTER_OP_GT,
+            &2400i128.to_be_bytes()
+        )?);
+
+        // PyArrow writes min_value/max_value; its FIXED_LEN_BYTE_ARRAY(5) DECIMAL(11,1) column d11
+        // holds [-9.0, -5.0] in the first row group.
+        let buf = fixture("parquet/decimal_flba_physical.parquet");
+        let decimal11 = ColumnType::new_decimal(11, 1).unwrap().code();
+        assert!(skips(
+            &buf,
+            5,
+            decimal11,
+            FILTER_OP_GT,
+            &(-50i64).to_be_bytes()
+        )?);
+        assert!(!skips(
+            &buf,
+            5,
+            decimal11,
+            FILTER_OP_GT,
+            &(-51i64).to_be_bytes()
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn deprecated_string_bounds_never_prune() -> ParquetResult<()> {
+        let varchar = ColumnTypeTag::Varchar as i32;
+        let skips = |buf: &[u8], column: u32, op: u8, bound: &str| {
+            let filter_buf = make_string_filter_buf(&[bound]);
+            let filters = [make_filter_with_op_and_type(
+                column,
+                1,
+                filter_buf.as_ptr() as u64,
+                op,
+                varchar,
+            )];
+            read_decoder(buf)?.can_skip_row_group(0, buf, &filters, u64::MAX)
+        };
+
+        // parquet-mr 1.8.1 wrote only the deprecated min/max for column 12, `comments`, ordered
+        // by signed bytes: its upper bound starts with 't' although 82 values start with a byte
+        // above 0x7F, which sort above 'u' in UTF-8 order.
+        let buf = std::fs::read(format!(
+            "{}/../../src/test/resources/sqllogictest/data/parquet-testing/userdata1.parquet",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        assert!(!skips(&buf, 12, FILTER_OP_GT, "u")?);
+        assert!(!skips(&buf, 12, FILTER_OP_GE, "u")?);
+
+        // min_value/max_value order UTF-8 bytes unsigned: "bé" sorts above "bz".
+        let buf = gen_string_parquet_with_bloom(&["a", "bé", "bz"])?;
+        assert!(!skips(&buf, 0, FILTER_OP_GT, "bz")?);
+        assert!(skips(&buf, 0, FILTER_OP_GT, "c")?);
         Ok(())
     }
 
@@ -2210,7 +2322,6 @@ mod tests {
                     &filter_desc,
                     false,
                     false,
-                    false,
                     ColumnTypeTag::Long as i32,
                 )?,
                 "a bitset of {len} bytes must not answer 'absent'"
@@ -2223,7 +2334,6 @@ mod tests {
             &bitset,
             &PhysicalType::Int64,
             &filter_desc,
-            false,
             false,
             false,
             ColumnTypeTag::Long as i32,

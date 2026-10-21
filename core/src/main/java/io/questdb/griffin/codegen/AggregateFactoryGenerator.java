@@ -780,35 +780,41 @@ final class AggregateFactoryGenerator {
                 }
             }
             innerMetadata.setTimestampIndex(masterMetadata.getTimestampIndex());
-            // One preparation/ownership path serves both the stream and the fused aggregate. The
-            // normal ProjectPlan above a stream owns its expressions; workers never evaluate them.
-            final boolean isProjection = plan == null;
-            final ObjList<GroupByFunction> aggregates = new ObjList<>(isProjection ? 0 : plan.getAggregates().size());
-            keyFunctions = new ObjList<>(isProjection ? 0 : plan.getGroupingExpressions().size());
-            recordFunctions = new ObjList<>(isProjection ? 0 : plan.getOutput().getColumnCount());
+            final ObjList<GroupByFunction> aggregates = new ObjList<>();
+            keyFunctions = new ObjList<>();
+            recordFunctions = new ObjList<>();
             final ArrayColumnTypes keyTypes = frame.keyTypes;
             final ArrayColumnTypes valueTypes = frame.valueTypes;
             final ListColumnFilter columnFilter = frame.listColumnFilterA;
             keyTypes.clear();
             valueTypes.clear();
             columnFilter.clear();
-            if (!isProjection) {
-                assemble(plan, innerMetadata, functionInstantiator, executionContext,
-                        aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter, frame.intListA);
+            final RecordMetadata metadata;
+            final boolean isParallel;
+            switch (horizon.getConsumer()) {
+                case PROJECTION -> {
+                    metadata = innerMetadata;
+                    isParallel = switch (horizon.getAlgorithm()) {
+                        case SERIAL -> false;
+                        case PARALLEL, PARALLEL_STOLEN_FILTER -> true;
+                        case null -> throw new IllegalStateException("horizon join has no physical choice");
+                    };
+                }
+                case AGGREGATE -> {
+                    assemble(plan, innerMetadata, functionInstantiator, executionContext,
+                            aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter, frame.intListA);
+                    metadata = metadata(plan, innerMetadata, recordFunctions);
+                    isParallel = plan.getAlgorithm() != null && plan.getAlgorithm() != AggregatePlan.Algorithm.SERIAL;
+                    if (isParallel) {
+                        workerAggregates = functionInstantiator.instantiateWorkerAggregates(plan.getAggregates(), plan.getChild().getOutput(), innerMetadata,
+                                aggregates, executionContext.getSharedQueryWorkerCount(), executionContext);
+                        workerKeys = workerKeys(frame, plan, keyFunctions, innerMetadata, functionInstantiator, executionContext);
+                    }
+                }
+                case null -> throw new IllegalStateException("horizon join has no consumer");
             }
-            final RecordMetadata metadata = isProjection ? innerMetadata : metadata(plan, innerMetadata, recordFunctions);
-            final boolean isParallel = isProjection ? switch (horizon.getAlgorithm()) {
-                case SERIAL -> false;
-                case PARALLEL, PARALLEL_STOLEN_FILTER -> true;
-                case null, default -> throw new IllegalStateException("horizon stream has no physical choice");
-            } : plan.getAlgorithm() != null && plan.getAlgorithm() != AggregatePlan.Algorithm.SERIAL;
             final PreparedFilter filter = isParallel ? stolenFilter : null;
             if (isParallel) {
-                if (!isProjection) {
-                    workerAggregates = functionInstantiator.instantiateWorkerAggregates(plan.getAggregates(), plan.getChild().getOutput(), innerMetadata,
-                            aggregates, executionContext.getSharedQueryWorkerCount(), executionContext);
-                    workerKeys = workerKeys(frame, plan, keyFunctions, innerMetadata, functionInstantiator, executionContext);
-                }
                 if (filter != null) {
                     filterGenerator.prepareParallel(frame, filter, master, executionContext);
                     filter.getColumns().add(masterMetadata.getTimestampIndex());
@@ -818,7 +824,7 @@ final class AggregateFactoryGenerator {
             isAdopted = true;
             return generateHorizonJoin(horizon, master, slaves, slaveFilters, slaveMetadatas, slaveCrossIndexes, innerMetadata,
                     metadata, columnFilter, keyTypes, valueTypes, aggregates, workerAggregates, keyFunctions, workerKeys,
-                    recordFunctions, filterResources, isParallel, isProjection, executionContext);
+                    recordFunctions, filterResources, isParallel, executionContext);
         } catch (Throwable th) {
             if (!isAdopted) {
                 closeWorkers(workerAggregates, th);
@@ -834,19 +840,27 @@ final class AggregateFactoryGenerator {
     }
 
     /**
-     * Builds the standalone stream when aggregate is null, otherwise its fused aggregation. This
-     * method owns preparation and rollback for both shapes; the plan owns every physical choice.
+     * Builds the HORIZON JOIN whose rows a projection reads.
      */
-    RecordCursorFactory generateHorizonJoin(GenerationFrame frame, @Nullable AggregatePlan aggregate, HorizonJoinPlan horizon, SqlExecutionContext executionContext)
+    RecordCursorFactory generateHorizonJoin(GenerationFrame frame, HorizonJoinPlan horizon, SqlExecutionContext executionContext) throws SqlException {
+        return generateHorizonJoin(frame, null, horizon, executionContext);
+    }
+
+    /**
+     * Builds the HORIZON JOIN as its {@link HorizonJoinPlan#getConsumer() consumer} reads it, fused with the aggregate
+     * that consumes it when there is one. This method owns preparation and rollback for both shapes; the plan owns
+     * every physical choice.
+     */
+    private RecordCursorFactory generateHorizonJoin(GenerationFrame frame, @Nullable AggregatePlan aggregate, HorizonJoinPlan horizon, SqlExecutionContext executionContext)
             throws SqlException {
         final int slaveCount = horizon.getSlaves().size();
         final ObjList<RecordCursorFactory> slaves = new ObjList<>(slaveCount);
         final ObjList<PreparedFilter> slaveFilters = new ObjList<>(slaveCount);
         final ObjList<RecordMetadata> slaveMetadatas = new ObjList<>(slaveCount);
         final ObjList<IntList> slaveCrossIndexes = new ObjList<>(slaveCount);
-        final PreparedFilter prepared = frame.pushPreparedFilter(aggregate == null
-                ? horizon.getAlgorithm() == HorizonJoinPlan.Algorithm.PARALLEL_STOLEN_FILTER
-                : aggregate.getAlgorithm() == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER);
+        final PreparedFilter prepared = frame.pushPreparedFilter(horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE
+                ? aggregate.getAlgorithm() == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER
+                : horizon.getAlgorithm() == HorizonJoinPlan.Algorithm.PARALLEL_STOLEN_FILTER);
         final RecordCursorFactory factory;
         try {
             final RecordCursorFactory master = codeGenerator.generateSource(frame, horizon.getMaster(), prepared, executionContext);
@@ -898,7 +912,6 @@ final class AggregateFactoryGenerator {
             ObjList<Function> recordFunctions,
             AsyncFilterResources filterResources,
             boolean isParallel,
-            boolean isProjection,
             SqlExecutionContext executionContext
     ) throws SqlException {
         ObjList<HorizonJoinSlaveState> slaveStates = null;
@@ -908,17 +921,7 @@ final class AggregateFactoryGenerator {
             final RecordMetadata masterMetadata = master.getMetadata();
             final ObjList<HorizonJoinSlave> steps = plan.getSlaves();
             final int slaveCount = slaves.size();
-            for (int s = 0; s < slaveCount; s++) {
-                final RecordCursorFactory slave = slaves.getQuick(s);
-                final int position = steps.getQuick(s).getPosition();
-                assert masterMetadata.getTimestampIndex() >= 0 && slave.getMetadata().getTimestampIndex() >= 0;
-                if (!slave.supportsTimeFrameCursor()) {
-                    throw SqlException.position(position).put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
-                }
-            }
-            if (!isParallel && !master.recordCursorSupportsRandomAccess()) {
-                throw SqlException.position(steps.getQuick(0).getPosition()).put("left-hand side of HORIZON JOIN can only be a table with an optional filter");
-            }
+            final boolean isProjection = plan.getConsumer() == HorizonJoinPlan.Consumer.PROJECTION;
             final int workerCount = executionContext.getSharedQueryWorkerCount();
             if (isParallel) {
                 for (int s = 0; s < slaveCount; s++) {
@@ -984,13 +987,13 @@ final class AggregateFactoryGenerator {
                 final RecordSinkTemplate masterSinkTemplate = key == null ? null : key.masterSinkTemplate(configuration, asm, masterMetadata);
                 final RecordSinkTemplate slaveSinkTemplate = key == null ? null : key.slaveSinkTemplate(configuration, asm, slave.getMetadata());
                 slaveFilterResources = slaveFilter != null ? slaveFilter.adopt() : null;
-                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, workerKeyFunctions,
-                        filterResources, slaveFilterResources);
+                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, keyFunctions,
+                        workerKeyFunctions, filterResources, slaveFilterResources);
                 isAdopted = true;
                 return isKeyed
                         ? new AsyncHorizonJoinRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), metadata, innerMetadata, master, slave, offsets, masterTimestampIndex,
-                        groupByFunctions, recordFunctions, keyFunctions, keyTypes, valueTypes, joinKeyTypes, masterSinkTemplate,
+                        groupByFunctions, recordFunctions, keyTypes, valueTypes, joinKeyTypes, masterSinkTemplate,
                         slaveSinkTemplate, masterColumnCount, masterSymbols, slaveSymbols, columnFilter, columnSources, columnIndices,
                         resources, workerCount)
                         : new AsyncHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
@@ -1032,7 +1035,7 @@ final class AggregateFactoryGenerator {
                     return new HorizonJoinProjectionRecordCursorFactory(configuration, innerMetadata, master, slaveStates,
                             offsets, masterTimestampIndex, columnSources, columnIndices);
                 }
-                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, filterResources, null);
+                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null, filterResources, null);
                 isAdopted = true;
                 return new AsyncHorizonJoinProjectionRecordCursorFactory(configuration, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), innerMetadata, master, slaveStates, offsets, masterTimestampIndex,
@@ -1047,13 +1050,13 @@ final class AggregateFactoryGenerator {
                         : new MultiHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, metadata, innerMetadata, master, slaveStates,
                         offsets, masterTimestampIndex, groupByFunctions, valueTypes.getColumnCount(), columnSources, columnIndices);
             }
-            final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, workerKeyFunctions,
-                    filterResources, null);
+            final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, keyFunctions,
+                    workerKeyFunctions, filterResources, null);
             isAdopted = true;
             return isKeyed
                     ? new AsyncMultiHorizonJoinRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                     executionContext.getMessageBus(), metadata, innerMetadata, master, slaveStates, joinKeyTypes,
-                    offsets, masterTimestampIndex, groupByFunctions, recordFunctions, keyFunctions, keyTypes,
+                    offsets, masterTimestampIndex, groupByFunctions, recordFunctions, keyTypes,
                     valueTypes, columnFilter, columnSources, columnIndices, resources, workerCount)
                     : new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                     executionContext.getMessageBus(), metadata, innerMetadata, master, slaveStates, joinKeyTypes,

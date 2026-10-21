@@ -45,6 +45,7 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
     private final RecordCursorFactory factory;
     private final boolean isFactoryDeterminismReported;
     private final int position;
+    private boolean isStateInherited;
     private ScalarTimestampBoundHolder publishHolder;
     private long value = Numbers.LONG_NULL;
 
@@ -101,6 +102,9 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        if (isStateInherited) {
+            return;
+        }
         // Disarm before re-opening the sub-query, so the residual-side assertion is live on every
         // execution rather than only the first one, and so a readTimestamp() failure below leaves the
         // holder unpublished instead of silently retaining the previous execution's bound.
@@ -130,6 +134,14 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
     @Override
     public boolean isStableWithinExecution() {
         return true;
+    }
+
+    @Override
+    public void offerStateTo(Function that) {
+        if (that instanceof ScalarSubQueryTimestampFunction thatF) {
+            thatF.value = value;
+            thatF.isStateInherited = true;
+        }
     }
 
     public void setPublishHolder(ScalarTimestampBoundHolder publishHolder) {

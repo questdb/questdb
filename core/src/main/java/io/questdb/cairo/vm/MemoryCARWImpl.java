@@ -172,6 +172,9 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker && pageAddress != 0) {
+            Unsafe.chargeHeldMemory(lim - pageAddress, memoryTag, tracker);
+        }
         this.memoryTracker = tracker;
     }
 

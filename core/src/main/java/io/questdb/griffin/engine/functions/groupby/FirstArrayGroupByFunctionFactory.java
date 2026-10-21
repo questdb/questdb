@@ -35,6 +35,11 @@ import io.questdb.std.Transient;
 public class FirstArrayGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
     public int getResultType(IntList argTypes) {
         return argTypes.getQuick(0);
     }

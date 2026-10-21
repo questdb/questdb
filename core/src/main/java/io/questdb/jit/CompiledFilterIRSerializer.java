@@ -1491,14 +1491,24 @@ public class CompiledFilterIRSerializer implements Mutable {
             // stubs `-<constant>` for the backfill, and serializeConstant() emitted the code point
             // with the sign dropped, so `c < -'5'` compiled as `c < '5'`.
             //
+            // SYMBOL takes the same route. The Java filter compares the symbol with the TEXT of the
+            // folded constant, while the IR resolves each constant to a symbol KEY, so any
+            // arithmetic would run on keys. A stubbed `-<constant>` stays compilable, because
+            // serializeSymbolConstant() resolves the negated text.
+            //
             // Until the serializer types an arithmetic node by its own result, decline the
             // predicate; the Java filter is always correct. This runs ahead of the constant
             // backfill so that the decline names the operator rather than a constant the backfill
             // would have refused for its own reasons.
             final int predicateColumnTypeTag = ColumnType.tagOf(predicateContext.columnType);
-            final boolean hasUnaryMinus = predicateContext.unaryMinusNode != null;
-            if ((predicateContext.hasArithmeticOperations || hasUnaryMinus)
-                    && (predicateColumnTypeTag == ColumnType.IPv4 || predicateColumnTypeTag == ColumnType.CHAR)) {
+            final boolean isArithmeticDeclined = switch (predicateColumnTypeTag) {
+                case ColumnType.IPv4, ColumnType.CHAR ->
+                        predicateContext.hasArithmeticOperations || predicateContext.unaryMinusNode != null;
+                case ColumnType.SYMBOL ->
+                        predicateContext.hasArithmeticOperations || predicateContext.arithmeticNode != null;
+                default -> false;
+            };
+            if (isArithmeticDeclined) {
                 final BoundExpression operatorNode = predicateContext.arithmeticNode != null
                         ? predicateContext.arithmeticNode
                         : predicateContext.unaryMinusNode;
@@ -6365,9 +6375,9 @@ public class CompiledFilterIRSerializer implements Mutable {
         final TypesObserver globalTypesObserver = new TypesObserver();
         final TypesObserver localTypesObserver = new TypesObserver();
         int columnType;
-        // The first arithmetic operation the predicate holds, for the IPv4 / CHAR decline's
-        // message. Null when the predicate has none, or only a pure-constant subtree descend()
-        // folded.
+        // The first arithmetic operation the predicate visits, a unary minus included, for the
+        // IPv4 / CHAR / SYMBOL decline. Null when the predicate has none, or only a pure-constant
+        // subtree descend() folded or a `-<constant>` it stubbed.
         BoundExpression arithmeticNode;
         boolean hasArithmeticOperations;
         // The first unary minus the predicate holds, whether visited or stubbed by descend() over
@@ -6554,6 +6564,9 @@ public class CompiledFilterIRSerializer implements Mutable {
                 }
             } else if (paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
                 markUnaryMinus(node);
+                if (arithmeticNode == null) {
+                    arithmeticNode = node;
+                }
             }
         }
 

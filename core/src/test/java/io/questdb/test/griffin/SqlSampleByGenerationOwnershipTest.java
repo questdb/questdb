@@ -73,6 +73,18 @@ public class SqlSampleByGenerationOwnershipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInterpolationRejectsUnsupportedTypeClosingAggregatesOnce() throws Exception {
+        assertSampleBy((fixture, compiler) -> {
+            fixture.table("ts", ColumnType.TIMESTAMP_MICRO, "v", ColumnType.LONG)
+                    .timestamp(0).closeFailure = new RuntimeException("input close");
+            fixture.assertCompileFails(compiler, sqlExecutionContext,
+                    "SELECT ts, sum(owned_long(v)) s, first(make_geohash(owned_long(v)::DOUBLE, 0.0, 30)) f FROM owned_table(0) SAMPLE BY 1h FILL(LINEAR) ALIGN TO FIRST OBSERVATION",
+                    "Unsupported interpolation type: GEOHASH(6c)");
+            Assert.assertTrue(fixture.longCount() >= 2);
+        });
+    }
+
+    @Test
     public void testMixedLinearFillOwnsArrayConstantOnSuccessAndFailure() throws Exception {
         assertSampleBy((fixture, compiler) -> {
             fixture.table("ts", ColumnType.TIMESTAMP_MICRO, "v", ColumnType.DOUBLE, "arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))

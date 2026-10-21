@@ -928,6 +928,30 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinFilterUnresolvedColumn() throws Exception {
+        // A WHERE column that no input of the join has, or that several inputs have, fails as in any
+        // WHERE clause, before the check that the clause reads only left-hand side columns.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            for (String select : new String[]{"SELECT avg(p.price)", "SELECT h.offset, p.price"}) {
+                final String sql = select + " FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0s TO 0s STEP 1s AS h WHERE ";
+                final int where = sql.length();
+                assertQuery(sql + "t.qty > 0 AND nope > 1").noLeakCheck().fails(where + 14, "Invalid column: nope");
+                assertQuery(sql + "nope > 1 AND p.price > 10").noLeakCheck().fails(where, "Invalid column: nope");
+                assertQuery(sql + "p.price > 10 AND nope > 1").noLeakCheck().fails(where + 17, "Invalid column: nope");
+                assertQuery(sql + "t.nope > 1").noLeakCheck().fails(where, "Invalid column: t.nope");
+                assertQuery(sql + "p.nope > 1").noLeakCheck().fails(where, "Invalid column: p.nope");
+                assertQuery(sql + "h.nope > 1").noLeakCheck().fails(where, "Invalid column: h.nope");
+                assertQuery(sql + "x.qty > 1").noLeakCheck().fails(where, "Invalid table name or alias");
+                assertQuery(sql + "sym = 'A'").noLeakCheck().fails(where, "Ambiguous column [name=sym]");
+                assertQuery(sql + "t.qty > 0 AND p.price > 10").noLeakCheck()
+                        .fails(where + 14, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinKeyFunctionsFreedOnClose() throws Exception {
         // alloc() allocates native memory that is freed in close().
         // If keyFunctions are not freed in factory._close(), assertMemoryLeak() detects the leak.

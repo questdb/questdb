@@ -107,6 +107,7 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
                 assertError(table, "ts IN ('1583077401000000')", 7, "Invalid date: 1583077401000000");
                 assertError(table, "ts NOT IN '1583077401000000'", 10, "Invalid date: 1583077401000000");
                 assertError(table, "t2 IN '1583077401000000'", 6, "Invalid date: 1583077401000000");
+                assertError(table, "t2 IN ('1583077401000000')", 7, "Invalid date: 1583077401000000");
                 assertError(table, "ts IN ('1583077401000000', '2024')", 7, "Invalid date");
             }
         });

@@ -523,7 +523,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case AggregatePlan aggregate when PlanToFactoryRules.postingDistinctScan(aggregate) instanceof ScanPlan scan ->
                     scanGenerator.generatePostingDistinct(frame, aggregate, scan, executionContext);
             case AggregatePlan aggregate -> aggregateGenerator.generateAggregate(frame, aggregate, executionContext);
-            case HorizonJoinPlan horizon -> aggregateGenerator.generateHorizonJoin(frame, null, horizon, executionContext);
+            case HorizonJoinPlan horizon -> aggregateGenerator.generateHorizonJoin(frame, horizon, executionContext);
             case JoinPlan join -> joinGenerator.generateJoin(frame, join, executionContext);
             case WindowJoinPlan windowJoin ->
                     joinGenerator.generateWindowJoin(frame, windowJoin, null, executionContext);

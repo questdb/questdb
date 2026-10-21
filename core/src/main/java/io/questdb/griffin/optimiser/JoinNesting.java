@@ -129,7 +129,6 @@ final class JoinNesting implements OptimiserPass {
             nested.getOrderedInputs().add(step);
             nested.getOutput().addColumnsFrom(step.getSourceOutput(), step.getBindingAlias());
         }
-        final JoinInput step = joinInputs.next().of(nested, JoinKind.CROSS, null, first.getPosition());
         int occurrence = -1;
         for (int i = 0, n = inputs.size(); i < n; i++) {
             final JoinInput input = inputs.getQuick(i);
@@ -140,14 +139,7 @@ final class JoinNesting implements OptimiserPass {
                 }
             }
         }
-        for (int i = inputs.size() - 1; i > occurrence; i--) {
-            if (nested.getInputs().indexOf(inputs.getQuick(i)) > -1) {
-                inputs.remove(i);
-            }
-        }
-        inputs.setQuick(occurrence, step);
-        ordered.setQuick(start, step);
-        ordered.remove(start + 1, end);
+        join.nestSteps(start, end, nested, joinInputs.next().of(nested, JoinKind.CROSS, null, first.getPosition()), occurrence);
         nested.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(nested, end - start + 1));
     }
 

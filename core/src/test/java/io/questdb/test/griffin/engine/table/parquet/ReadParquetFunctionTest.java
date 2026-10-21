@@ -538,6 +538,112 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalPushdownAcrossPhysicalEncodings() throws Exception {
+        assertMemoryLeak(() -> {
+            // PyArrow writes each column at the narrowest physical width its precision allows:
+            // INT32/INT64 with store_decimal_as_integer, a FIXED_LEN_BYTE_ARRAY of 1 to 17 bytes
+            // otherwise. Every column holds the same values in four row groups:
+            // [-9.0, -5.0], [-1.5, 2.5] plus a NULL at id 7, [3.0, 7.0] and [8.0, 9.9].
+            final String[] predicates = {
+                    "%s = 5", "13\n", "3",
+                    "%s = -7", "3\n", "3",
+                    "%s = 2.5m", "10\n", "3",
+                    "%s = 2.50m", "10\n", "3",
+                    "%s = 5 OR %s = -8.5m", "2\n13\n", "2",
+                    "%s = -7 OR %s = NULL", "3\n7\n", "2",
+                    "%s = NULL", "7\n", "3",
+                    "%s < 0", "1\n2\n3\n4\n5\n6\n", "2",
+                    "%s < -6.5m", "1\n2\n3\n", "3",
+                    "%s <= -5", "1\n2\n3\n4\n5\n", "3",
+                    "%s > 7", "16\n17\n18\n19\n20\n", "3",
+                    "7 < %s", "16\n17\n18\n19\n20\n", "3",
+                    "%s >= 7", "15\n16\n17\n18\n19\n20\n", "2",
+                    "%s >= -1.50m", "6\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n", "1",
+                    "%s > 2.55m", "11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n", "0",
+                    "%s > -1 AND %s < 3", "8\n9\n10\n", "3",
+                    "%s > 9.9m", "", "4",
+            };
+            for (String fixture : new String[]{"decimal_int_physical.parquet", "decimal_flba_physical.parquet"}) {
+                copyParquetFixture("/parquet/", fixture);
+                for (String column : new String[]{"d2", "d4", "d5", "d9", "d11", "d18", "d25", "d40"}) {
+                    for (int i = 0; i < predicates.length; i += 3) {
+                        assertIdsAndRowGroupsSkipped(
+                                "SELECT id FROM read_parquet('" + fixture + "') WHERE " + predicates[i].replace("%s", column),
+                                "id\n" + predicates[i + 1],
+                                Integer.parseInt(predicates[i + 2])
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalPushdownIgnoresSignedByteLegacyStatistics() throws Exception {
+        assertMemoryLeak(() -> {
+            // parquet-mr 1.8.2 records [2.00, 24.00] in the deprecated min/max of this
+            // FIXED_LEN_BYTE_ARRAY(11) column, which holds 1.00 to 24.00.
+            copyParquetFixture("/sqllogictest/data/parquet-testing/decimal/", "fixed_length_decimal.parquet");
+            assertIdsAndRowGroupsSkipped("SELECT value FROM read_parquet('fixed_length_decimal.parquet') WHERE value < 1.5m", "value\n1.00\n", 0);
+            assertIdsAndRowGroupsSkipped("SELECT value FROM read_parquet('fixed_length_decimal.parquet') WHERE value = 1", "value\n1.00\n", 0);
+            // The same writer's INT64 statistics are numeric and keep pruning.
+            copyParquetFixture("/sqllogictest/data/parquet-testing/decimal/", "int64_decimal.parquet");
+            assertIdsAndRowGroupsSkipped(
+                    "SELECT value FROM read_parquet('int64_decimal.parquet') WHERE value < 10",
+                    """
+                            value
+                            1.00
+                            2.00
+                            3.00
+                            4.00
+                            5.00
+                            6.00
+                            7.00
+                            8.00
+                            9.00
+                            """,
+                    0
+            );
+            assertIdsAndRowGroupsSkipped("SELECT value FROM read_parquet('int64_decimal.parquet') WHERE value > 24", "value\n", 1);
+        });
+    }
+
+    @Test
+    public void testDeprecatedStringStatisticsKeepNonAsciiRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // parquet-mr 1.8.1 wrote only the deprecated min/max for `comments`, ordered by signed
+            // bytes: its upper bound starts with 't' although 82 values start with a non-ASCII byte.
+            copyParquetFixture("/sqllogictest/data/parquet-testing/", "userdata1.parquet");
+            assertRowGroupsSkipped("SELECT count() FROM read_parquet('userdata1.parquet') WHERE comments > 'u'", "count\n82\n", 0);
+
+            // QuestDB writes min_value/max_value, which order UTF-8 bytes unsigned and keep pruning.
+            execute("CREATE TABLE x (v VARCHAR)");
+            execute("INSERT INTO x VALUES ('a'), ('bé'), ('bz')");
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("current_stats.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        100,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+            }
+            assertIdsAndRowGroupsSkipped("SELECT v FROM read_parquet('current_stats.parquet') WHERE v > 'bz'", "v\nbé\n", 0);
+            assertIdsAndRowGroupsSkipped("SELECT v FROM read_parquet('current_stats.parquet') WHERE v > 'c'", "v\n", 1);
+        });
+    }
+
+    @Test
     public void testDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 100;
@@ -2137,12 +2243,31 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         }
     }
 
+    private static void copyParquetFixture(String directory, String fixture) throws Exception {
+        try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream(directory + fixture)) {
+            Assert.assertNotNull("missing test fixture on classpath", is);
+            java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), is.readAllBytes());
+        }
+    }
+
+    private void assertIdsAndRowGroupsSkipped(String query, String expected, int expectedSkipped) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .supportsRandomAccess(parallel)
+                .returns(expected);
+        drainAndAssertRowGroupsSkipped(query, expectedSkipped);
+    }
+
     private void assertRowGroupsSkipped(String query, String expected, int expectedSkipped) throws Exception {
         assertQuery(query)
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
                 .returns(expected);
+        drainAndAssertRowGroupsSkipped(query, expectedSkipped);
+    }
+
+    private void drainAndAssertRowGroupsSkipped(String query, int expectedSkipped) throws Exception {
         ParquetRowGroupFilter.resetRowGroupsSkipped();
         try (
                 RecordCursorFactory factory = select(query);

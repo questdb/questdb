@@ -79,7 +79,6 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
-            @NotNull ObjList<Function> keyFunctions,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -111,7 +110,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
 
         try {
             // Store key functions for init() and close()
-            this.ownerKeyFunctions = keyFunctions;
+            this.ownerKeyFunctions = resources.takeKeyFunctions();
             this.perWorkerKeyFunctions = resources.takePerWorkerKeyFunctions();
 
             // Create per-worker map sinks to support expression keys
@@ -121,7 +120,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                     asm,
                     markoutMetadata,
                     groupByColumnFilter,
-                    keyFunctions,
+                    ownerKeyFunctions,
                     null,
                     null,
                     null,
@@ -131,7 +130,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                     sinkClass,
                     markoutMetadata,
                     groupByColumnFilter,
-                    keyFunctions,
+                    ownerKeyFunctions,
                     null,
                     null,
                     null,

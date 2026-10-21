@@ -137,7 +137,7 @@ final class OrderRequirement implements Mutable {
     }
 
     /**
-     * True when a SPLICE join reads the plan by random access through projections, filters, limits and sorts.
+     * True when a join step reads the plan by random access through projections, filters, limits and sorts.
      */
     boolean isRandomAccessRequired() {
         return isRandomAccessRequired;
@@ -223,7 +223,7 @@ final class OrderRequirement implements Mutable {
     }
 
     /**
-     * Narrows where the plan sits to what reaches the plan and its inputs: the random access of a SPLICE join passes
+     * Narrows where the plan sits to what reaches the plan and its inputs: the random access of a join step passes
      * through projections, filters, limits and sorts, and the single group of an aggregate without keys through
      * projections and filters to a scan.
      */

@@ -432,6 +432,19 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinFullFatTemporalOverVarSizeSlaveColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (ts TIMESTAMP, s STRING) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("SELECT a.ts, b.s FROM a ASOF JOIN b", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.Algorithm.TEMPORAL_TIME_FRAME, step.getAlgorithm());
+                step.setAlgorithm(JoinInput.Algorithm.FULL_FAT_TEMPORAL);
+            }, PlanVerifier.JOIN_SLAVE_VALUE_TYPE);
+        });
+    }
+
+    @Test
     public void testJoinMaterializedNestedLoopFullOuter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (ts TIMESTAMP) TIMESTAMP(ts)");
@@ -445,6 +458,20 @@ public class PlanVerifierTest extends AbstractCairoTest {
                         join.getOutput().setTimestampIndex(-1);
                     }, PlanVerifier.JOIN_ALGORITHM);
         });
+    }
+
+    @Test
+    public void testJoinFilterOrigin() {
+        final JoinPlan join = join(source(), source(5, 6));
+        join.getFilterConjuncts().add(column(2, ColumnType.BOOLEAN));
+        join.getFilterConjunctOrigins().add(-1);
+        join.getFilterConjuncts().add(column(6, ColumnType.BOOLEAN));
+        join.getFilterConjunctOrigins().add(1);
+        verifier.verify(join, PASS);
+        join.getFilterConjunctOrigins().setQuick(1, 2);
+        assertFails(join, PlanVerifier.JOIN_FILTER_ORIGIN, "JoinPlan");
+        join.getFilterConjunctOrigins().setQuick(1, -2);
+        assertFails(join, PlanVerifier.JOIN_FILTER_ORIGIN, "JoinPlan");
     }
 
     @Test
@@ -895,7 +922,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
             assertAlgorithmContradicts(sql, HorizonJoinPlan.class,
                     horizon -> horizon.setAlgorithm(HorizonJoinPlan.Algorithm.PARALLEL_STOLEN_FILTER), PlanVerifier.HORIZON_ALGORITHM);
             assertAlgorithmContradicts(sql, HorizonJoinPlan.class,
-                    horizon -> horizon.setAlgorithm(HorizonJoinPlan.Algorithm.FUSED_AGGREGATE), PlanVerifier.HORIZON_ALGORITHM);
+                    horizon -> horizon.setConsumer(HorizonJoinPlan.Consumer.AGGREGATE), PlanVerifier.HORIZON_CONSUMER);
             assertAlgorithmContradicts(sql, HorizonJoinPlan.class,
                     horizon -> horizon.getOutput().remove(horizon.getMaster().getOutput().getColumnCount()), PlanVerifier.HORIZON_JOIN_SHAPE);
             assertAlgorithmContradicts("SELECT h.offset FROM a a HORIZON JOIN b b RANGE FROM 0s TO 100s STEP 1s AS h",
@@ -908,11 +935,81 @@ public class PlanVerifierTest extends AbstractCairoTest {
                         Assert.assertEquals(HorizonJoinPlan.Algorithm.SERIAL, horizon.getAlgorithm());
                         horizon.setAlgorithm(HorizonJoinPlan.Algorithm.PARALLEL);
                     }, PlanVerifier.HORIZON_ALGORITHM);
-            assertAlgorithmContradicts("SELECT h.offset, count() FROM a a HORIZON JOIN b b LIST (0s) AS h",
-                    HorizonJoinPlan.class, horizon -> {
-                        Assert.assertEquals(HorizonJoinPlan.Algorithm.FUSED_AGGREGATE, horizon.getAlgorithm());
-                        horizon.setAlgorithm(HorizonJoinPlan.Algorithm.SERIAL);
-                    }, PlanVerifier.HORIZON_ALGORITHM);
+            final String fused = "SELECT h.offset, count() FROM a a HORIZON JOIN b b LIST (0s) AS h";
+            assertAlgorithmContradicts(fused, HorizonJoinPlan.class, horizon -> {
+                Assert.assertEquals(HorizonJoinPlan.Consumer.AGGREGATE, horizon.getConsumer());
+                Assert.assertNull(horizon.getAlgorithm());
+                horizon.setAlgorithm(HorizonJoinPlan.Algorithm.SERIAL);
+            }, PlanVerifier.HORIZON_ALGORITHM);
+            assertAlgorithmContradicts(fused, HorizonJoinPlan.class,
+                    horizon -> horizon.setConsumer(HorizonJoinPlan.Consumer.PROJECTION), PlanVerifier.HORIZON_CONSUMER);
+            assertAlgorithmContradicts(fused, HorizonJoinPlan.class, horizon -> horizon.setConsumer(null), PlanVerifier.HORIZON_CONSUMER);
+        });
+    }
+
+    @Test
+    public void testHorizonProjectionCollapsedIntoAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTemporalTables();
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile(
+                            "SELECT count() FROM (SELECT h.offset FROM a a HORIZON JOIN b b LIST (0s) AS h)", sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                final LogicalPlan plan = compiler.getPlanForTesting();
+                final AggregatePlan aggregate = find(plan, AggregatePlan.class);
+                Assert.assertNotNull(aggregate);
+                Assert.assertTrue(aggregate.getChild() instanceof ProjectPlan project && project.getChild() instanceof HorizonJoinPlan);
+                verifier.verifyAccessPaths(plan);
+                aggregate.replaceInput(0, aggregate.getChild().inputAt(0));
+                assertFails(plan, PlanVerifier.HORIZON_CONSUMER, "HorizonJoinPlan");
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonReadsMasterWithoutRandomAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE)
+                    TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            final String join = " FROM cov t HORIZON JOIN quotes q ON (sym) LIST (0s) AS h WHERE t.sym = 'A'";
+            assertAlgorithmContradicts("SELECT t.px, h.offset, q.bid" + join, HorizonJoinPlan.class, horizon -> {
+                Assert.assertEquals(HorizonJoinPlan.Algorithm.PARALLEL, horizon.getAlgorithm());
+                horizon.setAlgorithm(HorizonJoinPlan.Algorithm.SERIAL);
+            }, PlanVerifier.INPUT_RANDOM_ACCESS);
+            assertAlgorithmContradicts("SELECT h.offset, avg(q.bid)" + join, AggregatePlan.class, aggregate -> {
+                Assert.assertEquals(AggregatePlan.Algorithm.PARALLEL, aggregate.getAlgorithm());
+                aggregate.setAlgorithm(AggregatePlan.Algorithm.SERIAL);
+            }, PlanVerifier.INPUT_RANDOM_ACCESS);
+        });
+    }
+
+    @Test
+    public void testHorizonSlaveWithoutTimeFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createTemporalTables();
+            for (String sql : new String[]{
+                    "SELECT h.offset, b.v FROM a a HORIZON JOIN b b LIST (0s) AS h",
+                    "SELECT h.offset, avg(b.v) FROM a a HORIZON JOIN b b LIST (0s) AS h"
+            }) {
+                try (
+                        SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                        RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+                ) {
+                    final LogicalPlan plan = compiler.getPlanForTesting();
+                    final HorizonJoinPlan horizon = find(plan, HorizonJoinPlan.class);
+                    Assert.assertNotNull(horizon);
+                    verifier.verifyAccessPaths(plan);
+                    ((ScanPlan) horizon.getSlaves().getQuick(0).getInput()).setRandomAccess(false);
+                    verifier.verify(plan, PASS);
+                    assertAccessPathsFail(plan, PlanVerifier.HORIZON_SLAVE_TIME_FRAME, "HorizonJoinPlan");
+                }
+            }
         });
     }
 

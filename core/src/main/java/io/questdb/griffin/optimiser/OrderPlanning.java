@@ -181,6 +181,19 @@ final class OrderPlanning implements OptimiserPass {
     }
 
     /**
+     * True when the join step reads its slave by random access: a SPLICE join, and an ASOF or LT join whose slave has
+     * a column the full-fat join over a slave without random access cannot carry, see
+     * {@link PlanToFactoryRules#fullFatTemporalRejectedColumn}.
+     */
+    private static boolean isSlaveRandomAccessRequired(JoinInput step) {
+        return switch (step.getJoinType()) {
+            case SPLICE -> true;
+            case ASOF, LT -> PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0;
+            default -> false;
+        };
+    }
+
+    /**
      * True when a key of the sort is the column, as the projections and filters beneath the sort pass it on.
      */
     private static boolean isSortKey(SortPlan sort, int columnId) {
@@ -449,8 +462,9 @@ final class OrderPlanning implements OptimiserPass {
 
     /**
      * Records what the consumer of {@code plan} requires, see {@link OrderRequirement}, and pushes it on to the inputs.
-     * A SPLICE join reads its slave by random access, which a merged UNION ALL does not provide, so a set operation the
-     * slave reads through projections, filters, limits and sorts gets no order request, and the sort over it sorts.
+     * A join step that reads its slave by random access, see {@link #isSlaveRandomAccessRequired}, needs a slave a merged
+     * UNION ALL does not provide, so a set operation the slave reads through projections, filters, limits and sorts gets
+     * no order request, and the sort over it sorts.
      */
     private void require(LogicalPlan plan, OrderRequirement requirement) {
         final boolean isRandomAccessRequired = requirement.isRandomAccessRequired();
@@ -526,7 +540,7 @@ final class OrderPlanning implements OptimiserPass {
         require(PlanToFactoryRules.aggregateBase(aggregate), requirements.next().inputOf(requirement)
                 .singleGroupInput(aggregate.getGroupingExpressions().size() == 0)
                 .orderBy(inputOrderColumnId, inputOrderColumnId < 0 ? null : requirement.getDirection())
-                .rowOrderRequired(LogicalPlans.hasOrderSensitiveAggregate(aggregate.getAggregates())));
+                .rowOrderRequired(LogicalPlans.hasTableOrderAggregate(aggregate.getAggregates())));
     }
 
     /**
@@ -563,7 +577,7 @@ final class OrderPlanning implements OptimiserPass {
             if (joinType != JoinKind.UNNEST) {
                 final boolean isLimited = !isOrdered && limit != null && i == n - 1 && joinType == JoinKind.CROSS
                         && step.getPostJoinFilter() == null && limit.getLo() instanceof ConstantExpression;
-                require(step.getInput(), requirements.next().inputOf(requirement).joinSlave(joinType == JoinKind.SPLICE)
+                require(step.getInput(), requirements.next().inputOf(requirement).joinSlave(isSlaveRandomAccessRequired(step))
                         .limit(isLimited ? limit : null).rowOrderRequired(joinType.isTemporal() || requirement.isRowOrderRequired()));
             }
         }

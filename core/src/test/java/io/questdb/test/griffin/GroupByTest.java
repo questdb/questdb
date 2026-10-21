@@ -1536,6 +1536,79 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByRepeatedKeyOrderByTimestampLimitKeepsTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00Z', 1, 1.0),
+                        ('2024-01-01T00:30:00Z', 2, 2.0),
+                        ('2024-01-01T01:00:00Z', 1, 3.0),
+                        ('2024-01-01T02:00:00Z', 2, 4.0),
+                        ('2024-01-01T03:00:00Z', 1, 5.0)
+                    """);
+            execute("""
+                    INSERT INTO m VALUES
+                        ('2024-01-01T00:45:00Z', 1),
+                        ('2024-01-01T01:00:00Z', 2),
+                        ('2024-01-01T02:30:00Z', 3)
+                    """);
+            final String grouped = "SELECT ts, k, k + 1 k1, sum(v) s FROM t GROUP BY ts, k, k + 1 ORDER BY ts LIMIT 4";
+            final String groupedRows = """
+                    ts\tk\tk1\ts
+                    2024-01-01T00:00:00.000000Z\t1\t2\t1.0
+                    2024-01-01T00:30:00.000000Z\t2\t3\t2.0
+                    2024-01-01T01:00:00.000000Z\t1\t2\t3.0
+                    2024-01-01T02:00:00.000000Z\t2\t3\t4.0
+                    """;
+            assertQuery(grouped)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(groupedRows);
+            assertQuery("SELECT ts, sum(s) s FROM (" + grouped + ") SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\t3.0
+                            2024-01-01T01:00:00.000000Z\t3.0
+                            2024-01-01T02:00:00.000000Z\t4.0
+                            """);
+            assertQuery("SELECT m.ts, m.i, g.s FROM m ASOF JOIN (" + grouped + ") g")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\ti\ts
+                            2024-01-01T00:45:00.000000Z\t1\t2.0
+                            2024-01-01T01:00:00.000000Z\t2\t3.0
+                            2024-01-01T02:30:00.000000Z\t3\t4.0
+                            """);
+            assertQuery("SELECT m.ts, m.i, g.s FROM m LT JOIN (" + grouped + ") g")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\ti\ts
+                            2024-01-01T00:45:00.000000Z\t1\t2.0
+                            2024-01-01T01:00:00.000000Z\t2\t2.0
+                            2024-01-01T02:30:00.000000Z\t3\t4.0
+                            """);
+            execute("CREATE TABLE c AS (" + grouped + ")");
+            assertQuery("SELECT * FROM c")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(groupedRows);
+        });
+    }
+
+    @Test
     public void testGroupBySingleVarcharKeyFromSampleByWithFill() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));

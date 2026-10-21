@@ -592,6 +592,12 @@ io.questdb.griffin.engine.functions.groupby.StringDistinctAggSymbolGroupByFuncti
 io.questdb.griffin.engine.functions.groupby.StringDistinctAggVarcharGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.RegressionInterceptFunctionFactory
 
+# 'arg_max', 'arg_min' group by functions: a cast tie keeps the type of the value argument
+io.questdb.griffin.engine.functions.groupby.ArgMaxLongDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.ArgMaxTimestampLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.ArgMinLongDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.ArgMinTimestampLongGroupByFunctionFactory
+
 # 'sum' group by function
 io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunctionFactory

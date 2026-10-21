@@ -482,7 +482,7 @@ final class OrderBinder implements Mutable {
         final QueryColumn column = model.getBottomUpColumns().getQuick(0);
         final ExpressionNode expression = column.getAst();
         final FunctionExpression count = ctx.functionBinder.bindAggregate(rowCountCall(expression), input.getOutput(), sourceAlias(source), executionContext);
-        final AggregatePlan aggregate = ctx.planNodes.aggregates.next().of(input, expression.position);
+        final AggregatePlan aggregate = ctx.aggregate(input, expression.position);
         aggregate.getAggregates().add(count);
         // The output keeps the SELECT name an enclosing query reads; the count factory names its column count under
         // any spelling, see PlanToFactoryRules.factoryColumnName.

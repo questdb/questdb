@@ -10,9 +10,11 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Owns async horizon resources while construction transfers them from the SQL generator to an atom: the filter of
- * the master's page frames, the per-worker aggregate and key functions, and the filter of the slave.
+ * the master's page frames, the per-worker aggregate functions, the key functions and their per-worker clones, and
+ * the filter of the slave.
  */
 public final class AsyncHorizonJoinResources extends AsyncFilterResources {
+    private @Nullable ObjList<Function> keyFunctions;
     private @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private @Nullable ObjList<Function> perWorkerSlaveFilters;
@@ -24,12 +26,14 @@ public final class AsyncHorizonJoinResources extends AsyncFilterResources {
      */
     public AsyncHorizonJoinResources(
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
+            @Nullable ObjList<Function> keyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             AsyncFilterResources filter,
             @Nullable AsyncFilterResources slaveFilter
     ) {
         super(filter);
         this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
+        this.keyFunctions = keyFunctions;
         this.perWorkerKeyFunctions = perWorkerKeyFunctions;
         if (slaveFilter != null) {
             this.slaveFilter = slaveFilter.takeFilter();
@@ -42,6 +46,8 @@ public final class AsyncHorizonJoinResources extends AsyncFilterResources {
         Throwable cleanupFailure = null;
         cleanupFailure = closeWorkerFunctions(cleanupFailure, perWorkerGroupByFunctions);
         perWorkerGroupByFunctions = null;
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
+        keyFunctions = null;
         cleanupFailure = closeWorkerFunctions(cleanupFailure, perWorkerKeyFunctions);
         perWorkerKeyFunctions = null;
         cleanupFailure = freeBestEffort(cleanupFailure);
@@ -50,6 +56,12 @@ public final class AsyncHorizonJoinResources extends AsyncFilterResources {
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveFilters);
         perWorkerSlaveFilters = null;
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    @Nullable ObjList<Function> takeKeyFunctions() {
+        final ObjList<Function> value = keyFunctions;
+        keyFunctions = null;
+        return value;
     }
 
     @Nullable ObjList<ObjList<GroupByFunction>> takePerWorkerGroupByFunctions() {

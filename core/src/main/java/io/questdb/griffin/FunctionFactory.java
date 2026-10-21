@@ -39,6 +39,15 @@ public interface FunctionFactory {
     }
 
     /**
+     * How the value of the group by function the factory builds depends on the order of its input rows.
+     *
+     * @return the order dependence of the group by function
+     */
+    default OrderDependence getOrderDependence() {
+        return OrderDependence.NONE;
+    }
+
+    /**
      * The type of the function {@link #newInstance} returns for arguments of the given resolved types, known without
      * building it. It must hold for every argument of these types, constant or not; {@link ColumnType#UNDEFINED}
      * means only the built function knows its type, e.g. when the type depends on an argument's value. A factory
@@ -255,5 +264,26 @@ public interface FunctionFactory {
 
     default boolean variadicTypeSupportUndefinedBindVariables(int argCount) {
         return true;
+    }
+
+    /**
+     * How the value of a group by function depends on the order of its input rows.
+     */
+    enum OrderDependence {
+        /**
+         * The value does not depend on the row order; floating-point rounding does not count.
+         */
+        NONE,
+        /**
+         * The value depends on the order the input delivers, including which of several tied rows it picks, but
+         * without an ORDER BY that order is unspecified: a sort under the aggregate stays, a scan delivers its rows
+         * in any order.
+         */
+        INPUT_ORDER,
+        /**
+         * The value is defined by the table order of the input, as for first(): a sort under the aggregate stays,
+         * and a scan delivers its rows in table order.
+         */
+        TABLE_ORDER
     }
 }

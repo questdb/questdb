@@ -82,6 +82,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
     private boolean isDataMapBuilt;
     private boolean isOpen;
+    private boolean isOpenedByShared;
     private MapRecordCursor mapCursor;
     private Map ownerMap;
     private ObjList<Map> shards;
@@ -113,6 +114,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
+        isOpenedByShared = false;
         if (isOpen) {
             try {
                 if (frameSequence != null) {
@@ -406,6 +408,17 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
     }
 
+    boolean isOpen() {
+        return isOpen;
+    }
+
+    /**
+     * True when a shared cursor opened this cursor before the factory handed it out.
+     */
+    boolean isOpenedByShared() {
+        return isOpenedByShared;
+    }
+
     void longTopK(DirectLongLongSortedList list, Function recordFunction, MapRecordCursor sharedMapCursor) {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
         if (recordFunction.isThreadSafe() && atom.isSharded() && sharedMapCursor.size() > configuration.getGroupByParallelTopKThreshold()) {
@@ -432,5 +445,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         // per-function classification scan.
         Function.init(nonGroupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;
+    }
+
+    void setOpenedByShared(boolean isOpenedByShared) {
+        this.isOpenedByShared = isOpenedByShared;
     }
 }

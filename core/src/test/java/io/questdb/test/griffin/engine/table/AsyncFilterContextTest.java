@@ -204,6 +204,7 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
             workers.add(worker1);
             final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(
                     null,
+                    null,
                     workers,
                     new AsyncFilterResources(),
                     null

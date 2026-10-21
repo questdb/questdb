@@ -543,7 +543,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     assertFullOutput(compiler, "SELECT a.k,b.k bk,c.k ck,d.k dk" + COMMA_FULL_FROM + " RIGHT JOIN d ON c.k=d.k ORDER BY dk",
                             "k\tbk\tck\tdk\n7\tnull\t2\t2\n7\tnull\tnull\t3\n");
                     assertFullOutput(compiler, "SELECT z.k,l.bk,l.ck,l.dk FROM a z CROSS JOIN LATERAL (SELECT b.k bk,c.k ck,d.k dk"
-                                    + from.replace("FROM a,", "FROM (SELECT z.k k) a,") + ") l ORDER BY bk,ck,dk", expected);
+                            + from.replace("FROM a,", "FROM (SELECT z.k k) a,") + ") l ORDER BY bk,ck,dk", expected);
                 }
             }
         });
@@ -4597,6 +4597,92 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             1\t110.0\t111.0\t10.0
                             2\t120.0\t121.0\t20.0
                             3\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnConstantAfterCorrelatedFullJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT)");
+            execute("CREATE TABLE x (id INT, k INT)");
+            execute("CREATE TABLE y (id INT, k INT, v INT)");
+            execute("CREATE TABLE z (id INT, k INT)");
+            execute("CREATE TABLE w (id INT, k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("INSERT INTO x VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO y VALUES (1, 1, 5), (2, 2, 1)");
+            execute("INSERT INTO z VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO w VALUES (1, 1), (2, 2)");
+            assertQuery("""
+                    SELECT o.id oid, l.xi, l.yi, l.zi, l.wi FROM o CROSS JOIN LATERAL (
+                        SELECT x.id xi, y.id yi, z.id zi, w.id wi
+                        FROM x FULL JOIN y ON x.k = y.k AND y.v > o.id
+                        LEFT JOIN z ON z.k = x.k AND x.k = 1
+                        JOIN w ON w.k = x.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            oid\txi\tyi\tzi\twi
+                            1\t1\t1\t1\t1
+                            1\t2\tnull\tnull\t2
+                            2\t1\t1\t1\t1
+                            2\t2\tnull\tnull\t2
+                            """);
+            assertQuery("""
+                    SELECT o.id oid, l.xi, l.yi, l.zi, l.wi FROM o CROSS JOIN LATERAL (
+                        SELECT x.id xi, y.id yi, z.id zi, w.id wi
+                        FROM x FULL JOIN y ON x.k = y.k AND y.v > o.id
+                        LEFT JOIN w ON w.k = x.k
+                        LEFT JOIN z ON z.k = x.k AND x.k = 1
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            oid\txi\tyi\tzi\twi
+                            1\tnull\t2\tnull\tnull
+                            1\t1\t1\t1\t1
+                            1\t2\tnull\tnull\t2
+                            2\tnull\t2\tnull\tnull
+                            2\t1\t1\t1\t1
+                            2\t2\tnull\tnull\t2
+                            """);
+            assertQuery("""
+                    SELECT o.id oid, l.xi, l.yi, l.zi FROM o CROSS JOIN LATERAL (
+                        SELECT x.id xi, y.id yi, z.id zi
+                        FROM x FULL JOIN y ON x.k = y.k AND y.v > o.id
+                        LEFT JOIN z ON z.k = x.k AND x.k = 1
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            oid\txi\tyi\tzi
+                            1\tnull\t2\tnull
+                            1\t1\t1\t1
+                            1\t2\tnull\tnull
+                            2\tnull\t2\tnull
+                            2\t1\t1\t1
+                            2\t2\tnull\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id oid, l.xi, l.wi, l.yi FROM o CROSS JOIN LATERAL (
+                        SELECT x.id xi, w.id wi, y.id yi
+                        FROM x JOIN w ON w.k = x.k AND x.k = 1
+                        FULL JOIN y ON x.k = y.k AND y.v > o.id
+                    ) l ORDER BY 1, 2, 4
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            oid\txi\twi\tyi
+                            1\tnull\tnull\t2
+                            1\t1\t1\t1
+                            2\tnull\tnull\t2
+                            2\t1\t1\t1
                             """);
         });
     }

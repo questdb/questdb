@@ -579,6 +579,13 @@ public class Unordered8Map implements Map, Reopenable {
 
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker) {
+            long heldBytes = memStart != 0 ? memLimit - memStart + entrySize : 0;
+            if (batchEmptyValueStart != 0) {
+                heldBytes += valueSize;
+            }
+            Unsafe.chargeHeldMemory(heldBytes, memoryTag, tracker);
+        }
         this.memoryTracker = tracker;
     }
 

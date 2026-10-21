@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
-import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -85,7 +84,8 @@ import io.questdb.std.ObjList;
  * level, counts the decorrelation domains that re-read each aggregate, see {@link #countSharedConsumers}; it decides
  * how each domain reads its input from the join inputs the generator builds before it, see {@link #planSharedRead}.
  * The generator builds exactly what it records. From the same properties it rejects a time series join, a SAMPLE BY and
- * an aggregate function whose input does not deliver the ascending designated timestamp order they require.
+ * an aggregate function whose input does not deliver the ascending designated timestamp order they require, and a
+ * full-fat ASOF or LT join whose slave has a column the join cannot carry.
  */
 final class OperatorPlanning implements Mutable {
     private static final PlanVisitor SHARED_CONSUMERS = plan -> {
@@ -289,6 +289,18 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * Rejects the full-fat temporal join step whose slave has a column the join cannot carry, see
+     * {@link PlanToFactoryRules#fullFatTemporalRejectedColumn}.
+     */
+    private static void validateFullFatTemporalSlave(JoinInput step) throws SqlException {
+        final int rejectedIndex = PlanToFactoryRules.fullFatTemporalRejectedColumn(step);
+        if (rejectedIndex >= 0) {
+            throw SqlException.position(step.getPosition()).put("right side column '")
+                    .put(PlanToFactoryRules.factoryColumnName(step.getInput(), rejectedIndex)).put("' is of unsupported type");
+        }
+    }
+
+    /**
      * Rejects an aggregate function that requires the designated timestamp of its input as its second argument when
      * the argument is not that column, at {@code timestampIndex} of {@code input}, and one that requires ascending
      * designated timestamp order when the input does not deliver it.
@@ -336,7 +348,7 @@ final class OperatorPlanning implements Mutable {
         if (isPageFrameSource && PlanToFactoryRules.hasVectorShape(aggregate) && !hasParquetConvertedColumns(base)) {
             return AggregatePlan.Algorithm.VECTORISED;
         }
-        final boolean isFilterStolen = !isPageFrameSource && isStolenFilter(base, FilterConsumer.AGGREGATE);
+        final boolean isFilterStolen = !isPageFrameSource && isStolenFilter(base, FilterConsumer.FRAME_REDUCER);
         if (!isParallelGroupBy(aggregate, base) || !isPageFrameSource && !isFilterStolen) {
             return AggregatePlan.Algorithm.SERIAL;
         }
@@ -355,19 +367,27 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * The HORIZON JOIN the generator builds: parallel over the page frames of its master, or over the frames under a
-     * filter it steals from the master, when every key and aggregate function supports parallelism; serial otherwise.
+     * How the generator reads the master of the HORIZON JOIN: in parallel over its page frames, or over the frames
+     * under a filter it steals from the master, when the functions of its consumer support parallelism and a
+     * projection over a master with random access stays {@link PlanToFactoryRules#isHorizonWithinSlotCap within the
+     * slot cap}; by row id otherwise, which rejects a master without random access.
      */
-    private AggregatePlan.Algorithm horizonAlgorithm(AggregatePlan aggregate, LogicalPlan master) {
-        if (!context.getExecutionContext().isParallelHorizonJoinEnabled()) {
-            return AggregatePlan.Algorithm.SERIAL;
+    private HorizonJoinPlan.Algorithm horizonAlgorithm(HorizonJoinPlan horizon, boolean hasParallelFunctions) throws SqlException {
+        final LogicalPlan master = horizon.getMaster();
+        final boolean isRandomAccess = isRandomAccess(master);
+        HorizonJoinPlan.Algorithm algorithm = HorizonJoinPlan.Algorithm.SERIAL;
+        if (context.getExecutionContext().isParallelHorizonJoinEnabled() && hasParallelFunctions
+                && (horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE || !isRandomAccess || PlanToFactoryRules.isHorizonWithinSlotCap(horizon))) {
+            if (isPageFrameSource(master)) {
+                algorithm = HorizonJoinPlan.Algorithm.PARALLEL;
+            } else if (isStolenFilter(master, FilterConsumer.FRAME_REDUCER)) {
+                algorithm = HorizonJoinPlan.Algorithm.PARALLEL_STOLEN_FILTER;
+            }
         }
-        final boolean isPageFrameSource = isPageFrameSource(master);
-        final boolean isFilterStolen = !isPageFrameSource && isStolenFilter(master, FilterConsumer.AGGREGATE);
-        if (!hasParallelFunctions(aggregate) || !isPageFrameSource && !isFilterStolen) {
-            return AggregatePlan.Algorithm.SERIAL;
+        if (algorithm == HorizonJoinPlan.Algorithm.SERIAL && !isRandomAccess) {
+            throw SqlException.$(horizon.getSlaves().getQuick(0).getPosition(), "left-hand side of HORIZON JOIN can only be a table with an optional filter");
         }
-        return isFilterStolen ? AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER : AggregatePlan.Algorithm.PARALLEL;
+        return algorithm;
     }
 
     private boolean isAdviceFollowed(LogicalPlan plan) {
@@ -456,7 +476,7 @@ final class OperatorPlanning implements Mutable {
     /**
      * True when the consumer steals the filter the generator builds for the plan and reads the frames under it: a
      * parallel filter without a LIMIT, within a pattern scan or above it; the serial filter of a table scan, which a
-     * top-K and a GROUP BY steal, and of a covering index scan, which a GROUP BY steals; and a gate over page frames,
+     * top-K and a frame reducer steal, and of a covering index scan, which a frame reducer steals; and a gate over page frames,
      * which a temporal join steals when the factory under the filter serves time frames, as it must for any filter.
      */
     private boolean isStolenFilter(LogicalPlan plan, FilterConsumer consumer) {
@@ -464,7 +484,7 @@ final class OperatorPlanning implements Mutable {
         if (filter == null) {
             return false;
         }
-        final boolean isSerialScanFilterStolen = consumer == FilterConsumer.TOP_K || consumer == FilterConsumer.AGGREGATE;
+        final boolean isSerialScanFilterStolen = consumer == FilterConsumer.TOP_K || consumer == FilterConsumer.FRAME_REDUCER;
         final boolean isGateStolen = consumer == FilterConsumer.TEMPORAL_JOIN;
         final boolean isStolen;
         if (!PlanToFactoryRules.isFusedFilter(filter)) {
@@ -482,7 +502,7 @@ final class OperatorPlanning implements Mutable {
                         ? (isParallel || isSerialScanFilterStolen) && !isLimited : isGateStolen && isGate(residual));
                 case SYMBOL_INDEX ->
                         isCovering && residual != null && isFiltering(residual) && !scan.hasCoveringBackup()
-                                && (isParallel ? !isLimited : consumer == FilterConsumer.AGGREGATE);
+                                && (isParallel ? !isLimited : consumer == FilterConsumer.FRAME_REDUCER);
                 case SYMBOL_PATTERN -> !isCovering ? isParallel : isParallel ? !isLimited : isSerialScanFilterStolen;
                 case null, default -> false;
             };
@@ -576,8 +596,11 @@ final class OperatorPlanning implements Mutable {
             final HorizonJoinPlan horizon = (HorizonJoinPlan) aggregate.getChild();
             validateHorizonInputs(horizon);
             validateTimestampAggregates(aggregate.getAggregates(), horizon.getOutput(), timestampIndex(horizon.getMaster()), false);
-            aggregate.setAlgorithm(horizonAlgorithm(aggregate, horizon.getMaster()));
-            horizon.setAlgorithm(HorizonJoinPlan.Algorithm.FUSED_AGGREGATE);
+            aggregate.setAlgorithm(switch (horizonAlgorithm(horizon, hasParallelFunctions(aggregate))) {
+                case SERIAL -> AggregatePlan.Algorithm.SERIAL;
+                case PARALLEL -> AggregatePlan.Algorithm.PARALLEL;
+                case PARALLEL_STOLEN_FILTER -> AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER;
+            });
             return;
         }
         if (factory != PlanToFactoryRules.AggregateFactory.GROUP_BY) {
@@ -620,34 +643,37 @@ final class OperatorPlanning implements Mutable {
                 : isParallelEnabled && isParallelResidual(scan) ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL);
     }
 
+    /**
+     * Decides how the generator reads the master of a HORIZON JOIN whose rows a projection reads; the projection
+     * evaluates its expressions on the thread that reads the rows, so they never stop the join running in parallel.
+     */
     private void planHorizon(HorizonJoinPlan horizon) throws SqlException {
+        if (horizon.getConsumer() != HorizonJoinPlan.Consumer.PROJECTION) {
+            throw new IllegalStateException("fused horizon join is planned by its aggregate");
+        }
         validateHorizonInputs(horizon);
-        final LogicalPlan master = horizon.getMaster();
-        // Output expressions run on the cursor owner, not the horizon workers.
-        if (!context.getExecutionContext().isParallelHorizonJoinEnabled()
-                || !AsyncHorizonJoinProjectionRecordCursorFactory.isWithinSlotCap(horizon.getOffsetValues().size(), horizon.getSlaves().size())
-                && isRandomAccess(master)) {
-            horizon.setAlgorithm(HorizonJoinPlan.Algorithm.SERIAL);
-        } else if (isPageFrameSource(master)) {
-            horizon.setAlgorithm(HorizonJoinPlan.Algorithm.PARALLEL);
-        } else if (isStolenFilter(master, FilterConsumer.AGGREGATE)) {
-            horizon.setAlgorithm(HorizonJoinPlan.Algorithm.PARALLEL_STOLEN_FILTER);
-        } else {
-            horizon.setAlgorithm(HorizonJoinPlan.Algorithm.SERIAL);
-        }
-        if (horizon.getAlgorithm() == HorizonJoinPlan.Algorithm.SERIAL && !isRandomAccess(master)) {
-            throw SqlException.$(horizon.getSlaves().getQuick(0).getPosition(),
-                    "left-hand side of HORIZON JOIN can only be a table with an optional filter");
-        }
+        horizon.setAlgorithm(horizonAlgorithm(horizon, true));
     }
 
+    /**
+     * Rejects a HORIZON JOIN input the join consumes the designated timestamp of when its factory designates none, an
+     * input that does not deliver ascending designated timestamp order, and a slave whose rows the join cannot match
+     * through time-frame cursors.
+     */
     private void validateHorizonInputs(HorizonJoinPlan horizon) throws SqlException {
         final LogicalPlan master = horizon.getMaster();
         validateConsumedTimestamp(master);
-        for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
-            final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
+        final ObjList<HorizonJoinSlave> slaves = horizon.getSlaves();
+        for (int i = 0, n = slaves.size(); i < n; i++) {
+            final HorizonJoinSlave slave = slaves.getQuick(i);
             validateConsumedTimestamp(slave.getInput());
             validateTimeSeriesOrders(master, slave.getInput(), slave.getPosition());
+        }
+        for (int i = 0, n = slaves.size(); i < n; i++) {
+            final HorizonJoinSlave slave = slaves.getQuick(i);
+            if (!isKnownYes(PhysicalProperties.supportsHorizonSlaveTimeFrameCursor(slave.getInput()))) {
+                throw SqlException.$(slave.getPosition(), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+            }
         }
     }
 
@@ -671,6 +697,9 @@ final class OperatorPlanning implements Mutable {
                 case ASOF, LT -> {
                     validateTimeSeriesOrders(join, i, slave, step.getPosition());
                     final JoinInput.Algorithm algorithm = temporalAlgorithm(join, i, step);
+                    if (algorithm == JoinInput.Algorithm.FULL_FAT_TEMPORAL) {
+                        validateFullFatTemporalSlave(step);
+                    }
                     step.setAlgorithm(algorithm);
                     step.setTimeFrameScan(algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME && step.getJoinType() == JoinKind.ASOF
                             && isKeyedTemporalStep(join, i, step) ? timeFrameScan(join, i, step) : null);
@@ -1569,10 +1598,11 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * The parallel operator that steals the filter of its input.
+     * The parallel operator that steals the filter of its input. A {@link #FRAME_REDUCER} is a GROUP BY or a HORIZON
+     * JOIN, aggregating or not, which reduce the page frames under the filter alike.
      */
     private enum FilterConsumer {
-        AGGREGATE, TEMPORAL_JOIN, TOP_K, WINDOW_JOIN
+        FRAME_REDUCER, TEMPORAL_JOIN, TOP_K, WINDOW_JOIN
     }
 
     /**

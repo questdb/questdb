@@ -365,7 +365,6 @@ final class JoinFactoryGenerator {
             RecordCursorFactory slave,
             RecordMetadata slaveMetadata,
             CharSequence slaveAlias,
-            int joinPosition,
             FullFatJoinGenerator generator,
             Plannable joinContext,
             long toleranceInterval
@@ -386,28 +385,6 @@ final class JoinFactoryGenerator {
             intHashSet.remove(slaveMetadata.getTimestampIndex());
             final int slaveOutputColumnCount = slaveMetadata.getColumnCount()
                     + listColumnFilterA.getColumnCount() - intHashSet.size();
-
-            // map doesn't support variable length types in map value, which is ok
-            // when we join tables on strings - technically string is the key,
-            // and we do not need to store it in value, but we will still reject
-            //
-            // never mind, this is a stop-gap measure until I understand the problem
-            // fully
-
-            for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
-                if (intHashSet.excludes(k)) {
-                    // A non-key slave column is materialized into the map value, so it must be a
-                    // type the value sink can store. That excludes variable-length types and
-                    // fixed-size types the map value cannot hold (e.g. INTERVAL). Reject them here
-                    // with a user-facing message instead of letting RecordValueSinkFactory throw a
-                    // bare UnsupportedOperationException.
-                    if (!RecordValueSinkFactory.isSupportedColumnType(slaveMetadata.getColumnType(k))) {
-                        throw SqlException
-                                .position(joinPosition).put("right side column '")
-                                .put(slaveMetadata.getColumnName(k)).put("' is of unsupported type");
-                    }
-                }
-            }
 
             // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
             // so masterCopier writes key columns of master record to a sink
@@ -1264,7 +1241,6 @@ final class JoinFactoryGenerator {
             @Nullable IntList slaveCrossIndex,
             @Nullable PreparedFilter stolenFilter,
             CharSequence slaveAlias,
-            int joinPosition,
             Plannable condition,
             long toleranceInterval
     ) throws SqlException {
@@ -1283,7 +1259,6 @@ final class JoinFactoryGenerator {
                         slave,
                         slaveMetadata,
                         slaveAlias,
-                        joinPosition,
                         CREATE_FULL_FAT_AS_OF_JOIN,
                         condition,
                         toleranceInterval
@@ -1536,7 +1511,6 @@ final class JoinFactoryGenerator {
             RecordCursorFactory slave,
             RecordMetadata slaveMetadata,
             CharSequence slaveAlias,
-            int joinPosition,
             Plannable condition,
             long toleranceInterval
     ) throws SqlException {
@@ -1553,7 +1527,6 @@ final class JoinFactoryGenerator {
                         slave,
                         slaveMetadata,
                         slaveAlias,
-                        joinPosition,
                         CREATE_FULL_FAT_LT_JOIN,
                         condition,
                         toleranceInterval
@@ -1803,10 +1776,9 @@ final class JoinFactoryGenerator {
             isTransferred = true;
             final RecordCursorFactory joined = joinType == JoinKind.ASOF
                     ? generateJoinAsof(frame, algorithm, step.getTimeFrameScan(), isSelfJoin, master, masterMetadata, masterAlias,
-                    slave, slaveMetadata, slaveCrossIndex, stolenFilter, step.getBindingAlias(), step.getPosition(), condition,
-                    toleranceInterval)
+                    slave, slaveMetadata, slaveCrossIndex, stolenFilter, step.getBindingAlias(), condition, toleranceInterval)
                     : generateJoinLt(frame, algorithm, master, masterMetadata, masterAlias, slave, slaveMetadata,
-                    step.getBindingAlias(), step.getPosition(), condition, toleranceInterval);
+                    step.getBindingAlias(), condition, toleranceInterval);
             final RecordCursorFactory restored = algorithm != JoinInput.Algorithm.FULL_FAT_TEMPORAL ? joined
                     : restoreTemporalOutput(joined, masterMetadata.getColumnCount(), step.getInput().getOutput(), slaveMetadata.getTimestampIndex(),
                     slaveKeyIndexes, step.getOutput());

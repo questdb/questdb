@@ -1261,6 +1261,52 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewSampleByOrderedOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String desc = "SELECT ts, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s ORDER BY ts DESC";
+            final String aliasDesc = "SELECT ts AS bucket, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s ORDER BY bucket DESC";
+            final String byKey = "SELECT ts, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s ORDER BY k";
+            final String outerDesc = "SELECT * FROM (SELECT ts, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s) ORDER BY ts DESC";
+            execute("CREATE MATERIALIZED VIEW desc_day AS (" + desc + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW desc_default AS (" + desc + ")");
+            execute("CREATE MATERIALIZED VIEW alias_desc AS (" + aliasDesc + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW by_key AS (" + byKey + ")");
+            execute("CREATE MATERIALIZED VIEW outer_desc AS (" + outerDesc + ") PARTITION BY DAY");
+
+            assertQuery0("ts\tk\tavg_v\n", "desc_day", "ts");
+            assertQuery0("ts\tk\tavg_v\n", "desc_default", "ts");
+            assertQuery0("bucket\tk\tavg_v\n", "alias_desc", "bucket");
+            assertQuery0("ts\tk\tavg_v\n", "by_key", "ts");
+            assertQuery0("ts\tk\tavg_v\n", "outer_desc", "ts");
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("desc_default"))) {
+                assertEquals(PartitionBy.DAY, metadata.getPartitionBy());
+            }
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "desc_day", desc, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "desc_default", desc, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "alias_desc", aliasDesc, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "by_key", byKey, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "outer_desc", outerDesc, TABLE1, 30, 's', null, null);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleBySubQueryOrderByTimestampDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "SELECT ts, k, avg(v) avg_v FROM (SELECT * FROM " + TABLE1 + " WHERE v > 0) SAMPLE BY 30s ORDER BY ts DESC";
+            assertQuery("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails(34, "materialized view query is required to have designated timestamp");
+            assertNull(getMatViewDefinition("test"));
+            assertQuery("CREATE MATERIALIZED VIEW test AS (" + query + ")")
+                    .noLeakCheck()
+                    .fails(34, "materialized view query is required to have designated timestamp");
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewSampleByTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

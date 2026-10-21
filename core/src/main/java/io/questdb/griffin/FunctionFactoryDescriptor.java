@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.functions.array.DoubleArraySliceFunctionFactory
 import io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
@@ -56,12 +55,12 @@ public class FunctionFactoryDescriptor {
     private final boolean isArrayElementWiseScalar;
     private final boolean isCase;
     private final boolean isOr;
-    private final boolean isOrderSensitiveAggregate;
     private final boolean isRelocatableScalar;
     private final boolean isRowCount;
     private final boolean isSwitch;
     private final String name;
     private final int openParenIndex;
+    private final FunctionFactory.OrderDependence orderDependence;
     private final int sigArgCount;
 
     public FunctionFactoryDescriptor(FunctionFactory factory) throws SqlException {
@@ -88,9 +87,7 @@ public class FunctionFactoryDescriptor {
         final String sig = factory.getSignature();
         this.openParenIndex = validateSignatureAndGetNameSeparator(sig);
         this.name = sig.substring(0, openParenIndex);
-        this.isOrderSensitiveAggregate = factory.isGroupBy() && (Chars.equalsIgnoreCase(name, "array_agg")
-                || Chars.equalsIgnoreCase(name, "first") || Chars.equalsIgnoreCase(name, "first_not_null")
-                || Chars.equalsIgnoreCase(name, "last") || Chars.equalsIgnoreCase(name, "last_not_null"));
+        this.orderDependence = factory.isGroupBy() ? factory.getOrderDependence() : FunctionFactory.OrderDependence.NONE;
         // validate data types
         int typeCount = 0;
         for (
@@ -301,10 +298,6 @@ public class FunctionFactoryDescriptor {
         return commutedEquality;
     }
 
-    public boolean isOrderSensitiveAggregate() {
-        return isOrderSensitiveAggregate;
-    }
-
     void setCommutedEquality(FunctionFactoryDescriptor descriptor) {
         commutedEquality = descriptor;
     }
@@ -315,6 +308,14 @@ public class FunctionFactoryDescriptor {
 
     public String getName() {
         return name;
+    }
+
+    /**
+     * How the value of the aggregate depends on the order of its input rows; NONE for a function that is not an
+     * aggregate.
+     */
+    public FunctionFactory.OrderDependence getOrderDependence() {
+        return orderDependence;
     }
 
     public int getSigArgCount() {

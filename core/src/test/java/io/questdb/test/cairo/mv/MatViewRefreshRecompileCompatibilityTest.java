@@ -300,6 +300,43 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testRefreshPreservesPersistedSampleByOrderedByTimestampDesc() throws Exception {
+        // Older releases created this view with the SAMPLE BY bucket as its designated timestamp.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:10:00Z', 'a', 1.0), ('2024-01-01T01:20:00Z', 'b', 2.0)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS ("
+                    + "SELECT ts, k, avg(v) avg_v FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalQueue();
+            installPersistedViewSql("mv", "SELECT ts, k, avg(v) avg_v FROM base SAMPLE BY 1h ORDER BY ts DESC");
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('2024-01-01T01:40:00Z', 'b', 4.0), ('2024-01-01T02:30:00Z', 'a', 3.0)");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT view_name, view_status FROM materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_name\tview_status\nmv\tvalid\n");
+            assertQuery("mv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tk\tavg_v
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            2024-01-01T01:00:00.000000Z\tb\t3.0
+                            2024-01-01T02:00:00.000000Z\ta\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testRefreshRecompileSucceedsAfterUnrelatedAddIndex() throws Exception {
         // An index on the *config* table swaps the sub-query's filtered scan for an index-driven row
         // cursor. That must not retroactively invalidate an already-created view.

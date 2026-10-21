@@ -226,7 +226,8 @@ final class AggregateBinder implements Mutable {
         final OutputSchema input = aggregate.getChild().getOutput();
         if (expression.isWildcard()) {
             ctx.validateWildcard(expression, input, source);
-            for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+            for (int j = 0, n = input.getColumnCount(); j < n; j++) {
+                final int i = aggregate.getChild() instanceof HorizonJoinPlan horizon ? TemporalJoinBinder.horizonWildcardIndex(horizon, j) : j;
                 if (!isWildcardColumn(expression, input, i, sourceAlias(source))) {
                     continue;
                 }
@@ -1434,7 +1435,7 @@ final class AggregateBinder implements Mutable {
     ) throws SqlException {
         final BindScope scope = ctx.scope();
         final boolean isOrderBound = !ctx.hasDeferredOrder(source);
-        final GroupingPlan aggregate = sampleBy == null ? ctx.planNodes.aggregates.next().of(input, model.getModelPosition())
+        final GroupingPlan aggregate = sampleBy == null ? ctx.aggregate(input, model.getModelPosition())
                 : sampleBy.of(input, model.getModelPosition());
         final ObjList<ExpressionNode> sampleFill = source.getSampleByFill();
         final boolean hasSampleByFill = source.getSampleBy() != null && sampleFill.size() > 0
@@ -1611,7 +1612,8 @@ final class AggregateBinder implements Mutable {
             if (expression.isWildcard()) {
                 final OutputSchema schema = input.getOutput();
                 ctx.validateWildcard(expression, schema, source);
-                for (int k = 0, count = schema.getColumnCount(); k < count; k++) {
+                for (int j = 0, count = schema.getColumnCount(); j < count; j++) {
+                    final int k = input instanceof HorizonJoinPlan horizon ? TemporalJoinBinder.horizonWildcardIndex(horizon, j) : j;
                     if (!isWildcardColumn(expression, schema, k, sourceAlias(source))) {
                         continue;
                     }

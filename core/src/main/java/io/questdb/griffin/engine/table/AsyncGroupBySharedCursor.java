@@ -62,6 +62,9 @@ public class AsyncGroupBySharedCursor implements RecordCursor {
     @Override
     public void close() {
         mapCursor = Misc.free(mapCursor);
+        if (primaryCursor.isOpenedByShared()) {
+            primaryCursor.close();
+        }
     }
 
     @Override

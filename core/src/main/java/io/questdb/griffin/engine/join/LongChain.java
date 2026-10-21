@@ -133,6 +133,9 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        if (memoryTracker != this.memoryTracker && heapStart != 0) {
+            Unsafe.chargeHeldMemory(heapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
+        }
         this.memoryTracker = memoryTracker;
     }
 

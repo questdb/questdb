@@ -25,7 +25,6 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
@@ -214,6 +213,13 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
+     * Checks a HORIZON JOIN that reads its master by row id, which requires a master with random access.
+     */
+    private static String serialHorizon(HorizonJoinPlan horizon, boolean isPlanned) {
+        return isUnsatisfied(PhysicalProperties.supportsRandomAccess(horizon.getMaster()), isPlanned) ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
+    }
+
+    /**
      * Checks how a decorrelation domain reads its input: only a domain with a shared source records a read, which the
      * source's factory or the head of the source's set operation must serve.
      */
@@ -251,26 +257,43 @@ final class PhysicalChoiceVerifier {
             case PARALLEL, PARALLEL_STOLEN_FILTER -> isParallelAggregate(aggregate, algorithm, isHorizon, isPlanned);
             case SERIAL -> true;
         };
-        return isValid ? null : PlanVerifier.AGGREGATE_ALGORITHM;
+        if (!isValid) {
+            return PlanVerifier.AGGREGATE_ALGORITHM;
+        }
+        return isHorizon && algorithm == AggregatePlan.Algorithm.SERIAL ? serialHorizon((HorizonJoinPlan) aggregate.getChild(), isPlanned) : null;
     }
 
+    /**
+     * Checks the slaves of a HORIZON JOIN, whose rows it matches through time-frame cursors once planned, and how it
+     * reads its master: a fused aggregate records no choice on the join, a projection records the one the master
+     * serves, see {@link OperatorPlanning}.
+     */
     static String horizon(HorizonJoinPlan horizon, boolean isPlanned) {
+        for (int i = 0, n = horizon.getSlaves().size(); isPlanned && i < n; i++) {
+            if (isUnsatisfied(PhysicalProperties.supportsHorizonSlaveTimeFrameCursor(horizon.getSlaves().getQuick(i).getInput()), true)) {
+                return PlanVerifier.HORIZON_SLAVE_TIME_FRAME;
+            }
+        }
         final HorizonJoinPlan.Algorithm algorithm = horizon.getAlgorithm();
+        if (horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE) {
+            return algorithm == null ? null : PlanVerifier.HORIZON_ALGORITHM;
+        }
         if (algorithm == null) {
             return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
         final LogicalPlan master = horizon.getMaster();
         final boolean isValid = switch (algorithm) {
-            case FUSED_AGGREGATE -> true;
-            case SERIAL -> !isUnsatisfied(PhysicalProperties.supportsRandomAccess(master), isPlanned);
-            case PARALLEL, PARALLEL_STOLEN_FILTER ->
-                    (AsyncHorizonJoinProjectionRecordCursorFactory.isWithinSlotCap(horizon.getOffsetValues().size(), horizon.getSlaves().size())
-                            || PhysicalProperties.supportsRandomAccess(master) != PhysicalProperties.Capability.YES)
-                            && (algorithm == HorizonJoinPlan.Algorithm.PARALLEL
-                            ? !isUnsatisfied(PhysicalProperties.supportsPageFrameCursor(master), isPlanned)
-                            : PlanToFactoryRules.stolenFilter(master) != null);
+            case SERIAL -> true;
+            case PARALLEL, PARALLEL_STOLEN_FILTER -> (PlanToFactoryRules.isHorizonWithinSlotCap(horizon)
+                    || PhysicalProperties.supportsRandomAccess(master) != PhysicalProperties.Capability.YES)
+                    && (algorithm == HorizonJoinPlan.Algorithm.PARALLEL
+                    ? !isUnsatisfied(PhysicalProperties.supportsPageFrameCursor(master), isPlanned)
+                    : PlanToFactoryRules.stolenFilter(master) != null);
         };
-        return isValid ? null : PlanVerifier.HORIZON_ALGORITHM;
+        if (!isValid) {
+            return PlanVerifier.HORIZON_ALGORITHM;
+        }
+        return algorithm == HorizonJoinPlan.Algorithm.SERIAL ? serialHorizon(horizon, isPlanned) : null;
     }
 
     static String fill(FillPlan fill, boolean isPlanned) {
@@ -328,6 +351,9 @@ final class PhysicalChoiceVerifier {
         };
         if (!isValid) {
             return PlanVerifier.JOIN_ALGORITHM;
+        }
+        if (algorithm == JoinInput.Algorithm.FULL_FAT_TEMPORAL && PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0) {
+            return PlanVerifier.JOIN_SLAVE_VALUE_TYPE;
         }
         final JoinInput.TimeFrameScan scan = step.getTimeFrameScan();
         final boolean hasScanChoice = algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME && joinType == JoinKind.ASOF && position > 0

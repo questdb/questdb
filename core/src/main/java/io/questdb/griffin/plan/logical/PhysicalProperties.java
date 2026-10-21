@@ -119,6 +119,15 @@ public final class PhysicalProperties {
     }
 
     /**
+     * Whether the factory a HORIZON JOIN matches the rows of its slave in serves time-frame cursors: the factory under
+     * the filter the join steals from the slave, see {@link PlanToFactoryRules#horizonStolenFilter}, else the slave's.
+     */
+    public static Capability supportsHorizonSlaveTimeFrameCursor(LogicalPlan slave) {
+        final FilterPlan filter = PlanToFactoryRules.horizonStolenFilter(slave);
+        return filter != null ? supportsLeafTimeFrameCursor(filter) : supportsTimeFrameCursor(slave, null);
+    }
+
+    /**
      * Whether the factory under the filter the generator builds for the node serves time-frame cursors: the factory
      * of a non-fused filter's input, the page-frame scan of a fused one without its residual, or the page-frame scan
      * of a pattern scan that filters in parallel.
@@ -1038,8 +1047,7 @@ public final class PhysicalProperties {
             case ScanPlan scan -> isSource ? -1 : scanTimestampIndex(scan);
             case DistinctPlan _, FillPlan _ -> forwarded(plan.getOutput().getTimestampIndex(), isSource);
             case HorizonJoinPlan horizon -> forwarded(timestamp(horizon.getMaster(), null, false), isSource);
-            case SampleByPlan _, FunctionSourcePlan _ ->
-                    isSource ? -1 : plan.getOutput().getTimestampIndex();
+            case SampleByPlan _, FunctionSourcePlan _ -> isSource ? -1 : plan.getOutput().getTimestampIndex();
         };
     }
 

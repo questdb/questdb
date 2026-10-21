@@ -31,6 +31,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.FunctionResolver;
@@ -111,7 +112,7 @@ public class FunctionBinderArrayOperationsTest extends AbstractCairoTest {
                     try {
                         try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                             final FunctionExpression expression = binder.bindAggregate(unary(name, literal()), schema(inputType, true), null, sqlExecutionContext);
-                            Assert.assertTrue(expression.getOverload().isOrderSensitiveAggregate());
+                            Assert.assertEquals(FunctionFactory.OrderDependence.TABLE_ORDER, expression.getOverload().getOrderDependence());
                             owner = binder.instantiateAggregate(expression, schema(inputType, false), metadata(inputType, false), sqlExecutionContext);
                             worker = binder.instantiateAggregate(expression, schema(inputType, true), metadata(inputType, true), sqlExecutionContext);
                             Assert.assertNotSame(owner, worker);
@@ -196,7 +197,7 @@ public class FunctionBinderArrayOperationsTest extends AbstractCairoTest {
                             final FunctionExpression expression = (FunctionExpression) binder.bindGroupByExpression(unary(name, literal()),
                                     schema(type, true), null, sqlExecutionContext);
                             Assert.assertTrue(expression.isAggregate());
-                            Assert.assertFalse(expression.getOverload().isOrderSensitiveAggregate());
+                            Assert.assertEquals(FunctionFactory.OrderDependence.NONE, expression.getOverload().getOrderDependence());
                             owner = binder.instantiateAggregate(expression, schema(type, false), metadata(type, false), sqlExecutionContext);
                             worker = binder.instantiateAggregate(expression, schema(type, true), metadata(type, true), sqlExecutionContext);
                             binder.clear();

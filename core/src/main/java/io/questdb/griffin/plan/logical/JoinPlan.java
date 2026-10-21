@@ -132,6 +132,38 @@ public final class JoinPlan extends LogicalPlan {
         return isLeadingCrossJoinFixed;
     }
 
+    /**
+     * Replaces the steps from {@code start} to {@code end} of the execution order, {@code end} after {@code start},
+     * with {@code step}, which takes occurrence {@code occurrence} among the inputs this join keeps. {@code nested}
+     * holds the inputs of those steps in occurrence order and takes over the filter conjuncts their ON clauses state.
+     */
+    public void nestSteps(int start, int end, JoinPlan nested, JoinInput step, int occurrence) {
+        final ObjList<JoinInput> nestedInputs = nested.inputs;
+        int keptCount = 0;
+        for (int i = 0, n = filterConjuncts.size(); i < n; i++) {
+            final BoundExpression conjunct = filterConjuncts.getQuick(i);
+            final int origin = filterConjunctOrigins.getQuick(i);
+            final int nestedOrigin = origin < 0 ? -1 : nestedInputs.indexOf(inputs.getQuick(origin));
+            if (nestedOrigin > -1) {
+                nested.filterConjuncts.add(conjunct);
+                nested.filterConjunctOrigins.add(nestedOrigin);
+            } else {
+                filterConjuncts.setQuick(keptCount, conjunct);
+                filterConjunctOrigins.setQuick(keptCount++, origin < 0 ? -1 : keptOccurrence(origin, nestedInputs, occurrence));
+            }
+        }
+        filterConjuncts.setPos(keptCount);
+        filterConjunctOrigins.setPos(keptCount);
+        for (int i = inputs.size() - 1; i > -1; i--) {
+            if (nestedInputs.indexOf(inputs.getQuick(i)) > -1) {
+                inputs.remove(i);
+            }
+        }
+        inputs.insert(occurrence, 1, step);
+        orderedInputs.setQuick(start, step);
+        orderedInputs.remove(start + 1, end);
+    }
+
     public JoinPlan of(int position) {
         setPosition(position);
         return this;
@@ -173,5 +205,19 @@ public final class JoinPlan extends LogicalPlan {
             }
         }
         throw new IndexOutOfBoundsException();
+    }
+
+    /**
+     * The occurrence that input {@code index} takes once the inputs {@code nestedInputs} holds leave this join and
+     * the step that nests them takes occurrence {@code occurrence}.
+     */
+    private int keptOccurrence(int index, ObjList<JoinInput> nestedInputs, int occurrence) {
+        int keptBefore = 0;
+        for (int i = 0; i < index; i++) {
+            if (nestedInputs.indexOf(inputs.getQuick(i)) < 0) {
+                keptBefore++;
+            }
+        }
+        return keptBefore < occurrence ? keptBefore : keptBefore + 1;
     }
 }

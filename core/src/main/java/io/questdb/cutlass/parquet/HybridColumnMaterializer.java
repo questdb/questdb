@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.parquet;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
@@ -34,8 +35,11 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -66,8 +70,10 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
 /**
  * Materializes computed columns into native memory buffers for Parquet export.
- * Pass-through columns (simple column references) use page frame pointers directly (zero-copy).
- * Computed columns (expressions) are evaluated row-by-row and written to allocated buffers.
+ * Pass-through columns (simple column references) of a native page frame use its page pointers
+ * directly (zero-copy); a Parquet page frame has none, so the materializer decodes its pass-through
+ * columns and copies them like computed columns. Computed columns (expressions) are evaluated
+ * row-by-row and written to allocated buffers.
  * <p>
  * Also supports cursor-based mode (no page frame backing) where all columns are materialized
  * from a RecordCursor.
@@ -81,10 +87,10 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         columnData.add(dataBuf.getAppendOffset());
         if (auxBuf != null) {
             columnData.add(auxBuf.addressOf(0));
-            // For STRING columns, the aux buffer has N+1 entries. Discard the
-            // last entry, which refers to the offset of the yet-unwritten string.
+            // For STRING and BINARY columns, the aux buffer has N+1 entries. Discard the
+            // last entry, which refers to the offset of the yet-unwritten value.
             long auxSize = auxBuf.getAppendOffset();
-            if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
+            if (hasOffsetAux(columnType)) {
                 auxSize -= Long.BYTES;
             }
             columnData.add(auxSize);
@@ -94,6 +100,21 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         }
         columnData.add(0L);
         columnData.add(0L);
+    }
+
+    private static void addSymbolTable(DirectLongList columnData, PageFrameCursor cursor, int baseColIdx) {
+        SymbolMapReader symbolMapReader = (SymbolMapReader) cursor.getSymbolTable(baseColIdx);
+        final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
+        final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
+        columnData.add(symbolValuesMem.addressOf(0));
+        columnData.add(symbolValuesMem.size());
+        columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
+        columnData.add(symbolMapReader.getSymbolCount());
+    }
+
+    private static boolean hasOffsetAux(int columnType) {
+        final int tag = ColumnType.tagOf(columnType);
+        return tag == ColumnType.STRING || tag == ColumnType.BINARY;
     }
 
     private static boolean isTypePreservingParquetPassThrough(int sourceColumnType, int outputColumnType) {
@@ -118,6 +139,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final IntList baseColumnMap = new IntList();
     // Reuse pool for MemoryCARWImpl instances released by releasePinnedBuffers()
     private final ObjList<MemoryCARWImpl> bufferPool = new ObjList<>();
+    // Per buffer slot: the export column type the slot holds
+    private final IntList bufferTypes = new IntList();
     // Per output col: index into buffer lists, or -1 if pass-through
     private final IntList computedBufferIdx = new IntList();
     // Dense array of output column indices that are computed (not pass-through)
@@ -137,13 +160,21 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final HybridSymbolTableSource hybridSymbolTableSource = new HybridSymbolTableSource();
     private final ReusablePageFrameMemory pageFrameMemory = new ReusablePageFrameMemory();
     private final PageFrameMemoryRecord pageFrameRecord = new PageFrameMemoryRecord();
+    // Per output col: buffer slot that holds a pass-through column copied from a Parquet frame, or -1
+    private final IntList passThroughBufferIdx = new IntList();
+    // Dense array of output column indices that are pass-through (page-frame path only)
+    private final IntList passThroughColumnIndices = new IntList();
     // Buffers that Rust still references (pending_partitions). Freed after row group flush.
     private final ObjList<MemoryCARWImpl> pinnedAuxBuffers = new ObjList<>();
     private final ObjList<MemoryCARWImpl> pinnedDataBuffers = new ObjList<>();
     private int computedCount;
+    private CairoConfiguration configuration;
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
     private int outputColumnCount;
+    // A Parquet frame carries no page addresses; these decode it the way a query scan does
+    private PageFrameAddressCache parquetFrameAddressCache;
+    private PageFrameMemoryPool parquetFrameMemoryPool;
     private VirtualRecordCursorFactory virtualFactory;
 
     /**
@@ -184,8 +215,10 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
     /**
      * Builds the mixed 7-longs column data array for a page frame (page-frame-backed path).
-     * Pass-through columns get their data from the page frame directly.
-     * Computed columns get their data from materialization buffers.
+     * Pass-through columns of a native frame get their data from the page frame directly;
+     * a Parquet frame has no page addresses, so this method decodes its pass-through columns
+     * and copies them into materialization buffers. Computed columns get their data from
+     * materialization buffers.
      *
      * @param cursor     page frame cursor for symbol tables
      * @param frame      current page frame
@@ -194,15 +227,20 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
      */
     public long buildColumnDataFromPageFrame(PageFrameCursor cursor, PageFrame frame, DirectLongList columnData) {
         final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
-        populatePageFrameRecord(frame);
-        materializeComputedColumns(frameRowCount);
+        final boolean isParquet = frame.getFormat() == PartitionFormat.PARQUET;
+        if (isParquet) {
+            decodeParquetFrame(cursor, frame);
+        } else {
+            populatePageFrameRecord(frame);
+        }
+        materializeColumns(frameRowCount, isParquet);
 
         columnData.clear();
         for (int i = 0; i < outputColumnCount; i++) {
             final int baseColIdx = baseColumnMap.getQuick(i);
             final int adjustedType = adjustedMetadata.getColumnType(i);
 
-            if (baseColIdx >= 0) {
+            if (baseColIdx >= 0 && !isParquet) {
                 // Pass-through column: read directly from page frame.
                 // Var-size columns may have an empty .d file when all values are inlined into
                 // the aux vector (see FwdTableReaderPageFrameCursor for the producer contract);
@@ -220,13 +258,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 columnData.add(pageAddress);
                 columnData.add(frame.getPageSize(baseColIdx));
                 if (ColumnType.isSymbol(adjustedType)) {
-                    SymbolMapReader symbolMapReader = (SymbolMapReader) cursor.getSymbolTable(baseColIdx);
-                    final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
-                    final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
-                    columnData.add(symbolValuesMem.addressOf(0));
-                    columnData.add(symbolValuesMem.size());
-                    columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
-                    columnData.add(symbolMapReader.getSymbolCount());
+                    addSymbolTable(columnData, cursor, baseColIdx);
                 } else {
                     columnData.add(frame.getAuxPageAddress(baseColIdx));
                     columnData.add(frame.getAuxPageSize(baseColIdx));
@@ -234,11 +266,16 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                     columnData.add(0L);
                 }
             } else {
-                // Computed column: use materialization buffers
-                int bufIdx = computedBufferIdx.getQuick(i);
-                MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);
-                MemoryCARWImpl auxBuf = auxBuffers.getQuick(bufIdx);
-                addColumnData(columnData, dataBuf, auxBuf, adjustedType);
+                final int bufIdx = baseColIdx >= 0 ? passThroughBufferIdx.getQuick(i) : computedBufferIdx.getQuick(i);
+                final MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);
+                if (ColumnType.isSymbol(adjustedType)) {
+                    columnData.add(0L);
+                    columnData.add(dataBuf.addressOf(0));
+                    columnData.add(dataBuf.getAppendOffset());
+                    addSymbolTable(columnData, cursor, baseColIdx);
+                } else {
+                    addColumnData(columnData, dataBuf, auxBuffers.getQuick(bufIdx), adjustedType);
+                }
             }
         }
         return frameRowCount;
@@ -265,7 +302,10 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             Misc.free(auxBuffers.getQuick(i));
         }
         auxBuffers.clear();
+        bufferTypes.clear();
         pageFrameMemory.clear();
+        Misc.clear(parquetFrameAddressCache);
+        Misc.clear(parquetFrameMemoryPool);
         baseColumnMap.clear();
         computedBufferIdx.clear();
         computedColumnIndices.clear();
@@ -273,6 +313,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         computedIsSymbolToString.clear();
         computedOutputTypes.clear();
         computedSourceTypes.clear();
+        passThroughBufferIdx.clear();
+        passThroughColumnIndices.clear();
+        configuration = null;
         functions = null;
         functionRecord = null;
         virtualFactory = null;
@@ -285,6 +328,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     public void close() {
         clear();
         Misc.free(pageFrameMemory);
+        parquetFrameMemoryPool = Misc.free(parquetFrameMemoryPool);
+        parquetFrameAddressCache = Misc.free(parquetFrameAddressCache);
         pageFrameRecord.close();
     }
 
@@ -410,8 +455,11 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         this.outputColumnCount = outputMeta.getColumnCount();
         this.baseColumnMap.setPos(outputColumnCount);
         this.computedBufferIdx.setPos(outputColumnCount);
+        this.passThroughBufferIdx.setAll(outputColumnCount, -1);
+        this.passThroughColumnIndices.clear();
         this.adjustedMetadata.clear();
         this.computedCount = 0;
+        this.configuration = ctx.getCairoEngine().getConfiguration();
 
         for (int i = 0; i < outputColumnCount; i++) {
             ColumnFunction cf = ColumnFunction.unwrap(functions.getQuick(i));
@@ -433,6 +481,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             if (baseColIdx >= 0) {
                 // Pass-through
                 computedBufferIdx.setQuick(i, -1);
+                passThroughColumnIndices.add(i);
                 TableColumnMetadata passThrough;
                 if (ColumnType.isSymbol(columnType)) {
                     // SYMBOL columns require the extended constructor
@@ -513,6 +562,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private void allocateBuffer(int columnType) {
         dataBuffers.add(obtainBuffer());
         auxBuffers.add(ColumnType.isVarSize(columnType) ? obtainBuffer() : null);
+        bufferTypes.add(columnType);
     }
 
     private void buildComputedColumnIndices() {
@@ -528,7 +578,25 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         }
     }
 
-    private void materializeComputedColumns(long frameRowCount) {
+    private void decodeParquetFrame(PageFrameCursor cursor, PageFrame frame) {
+        if (parquetFrameMemoryPool == null) {
+            parquetFrameAddressCache = new PageFrameAddressCache();
+            parquetFrameMemoryPool = new PageFrameMemoryPool(configuration);
+        }
+        for (int k = 0, n = passThroughColumnIndices.size(); k < n; k++) {
+            final int i = passThroughColumnIndices.getQuick(k);
+            if (passThroughBufferIdx.getQuick(i) < 0) {
+                passThroughBufferIdx.setQuick(i, dataBuffers.size());
+                allocateBuffer(adjustedMetadata.getColumnType(i));
+            }
+        }
+        parquetFrameAddressCache.of(virtualFactory.getBaseFactory().getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+        parquetFrameAddressCache.add(0, frame);
+        parquetFrameMemoryPool.of(parquetFrameAddressCache);
+        parquetFrameMemoryPool.navigateTo(0, pageFrameRecord);
+    }
+
+    private void materializeColumns(long frameRowCount, boolean isParquet) {
         resetBuffers();
         for (long row = 0; row < frameRowCount; row++) {
             pageFrameRecord.setRowIndex(row);
@@ -542,6 +610,19 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                     StringTypeDriver.appendValue(auxBuf, dataBuf, sym);
                 } else {
                     writeComputedValue(computedFunctions.getQuick(k), functionRecord.getInternalJoinRecord(), computedOutputTypes.getQuick(k), dataBuf, auxBuf);
+                }
+            }
+            if (isParquet) {
+                for (int k = 0, n = passThroughColumnIndices.size(); k < n; k++) {
+                    final int i = passThroughColumnIndices.getQuick(k);
+                    final int bufIdx = passThroughBufferIdx.getQuick(i);
+                    final int columnType = adjustedMetadata.getColumnType(i);
+                    final int baseColIdx = baseColumnMap.getQuick(i);
+                    if (ColumnType.isSymbol(columnType)) {
+                        dataBuffers.getQuick(bufIdx).putInt(pageFrameRecord.getInt(baseColIdx));
+                    } else {
+                        writeColumnValue(pageFrameRecord, baseColIdx, columnType, dataBuffers.getQuick(bufIdx), auxBuffers.getQuick(bufIdx));
+                    }
                 }
             }
         }
@@ -566,48 +647,31 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     }
 
     private void resetBuffers() {
-        // Check if any buffer has data that Rust may still reference.
-        boolean hasData = false;
-        for (int i = 0; i < computedCount; i++) {
-            if (dataBuffers.getQuick(i).getAppendOffset() > 0) {
-                hasData = true;
-                break;
-            }
-        }
-
-        if (hasData) {
-            // Pin current buffers (Rust still references them via pending_partitions)
-            // and allocate fresh ones for the next frame.
-            for (int i = 0; i < computedCount; i++) {
-                pinnedDataBuffers.add(dataBuffers.getQuick(i));
-                pinnedAuxBuffers.add(auxBuffers.getQuick(i));
-            }
-            dataBuffers.clear();
-            auxBuffers.clear();
-            int savedComputedCount = computedCount;
-            computedCount = 0;
-            for (int k = 0; k < savedComputedCount; k++) {
-                computedBufferIdx.setQuick(computedColumnIndices.getQuick(k), computedCount);
-                allocateBuffer(computedOutputTypes.getQuick(k));
-                computedCount++;
-            }
-        } else {
-            // First call or empty buffers: truncate in place.
-            for (int i = 0; i < computedCount; i++) {
-                dataBuffers.getQuick(i).truncate();
-                MemoryCARWImpl auxBuf = auxBuffers.getQuick(i);
+        for (int i = 0, n = dataBuffers.size(); i < n; i++) {
+            final MemoryCARWImpl dataBuf = dataBuffers.getQuick(i);
+            final MemoryCARWImpl auxBuf = auxBuffers.getQuick(i);
+            final boolean hasOffsetAux = hasOffsetAux(bufferTypes.getQuick(i));
+            if (dataBuf.getAppendOffset() > 0 || (auxBuf != null && auxBuf.getAppendOffset() > (hasOffsetAux ? Long.BYTES : 0))) {
+                // Pin the buffer (Rust still references it via pending_partitions)
+                // and allocate a fresh one for the next frame.
+                pinnedDataBuffers.add(dataBuf);
+                pinnedAuxBuffers.add(auxBuf);
+                dataBuffers.setQuick(i, obtainBuffer());
+                if (auxBuf != null) {
+                    auxBuffers.setQuick(i, obtainBuffer());
+                }
+            } else {
+                // First call or empty buffer: truncate in place.
+                dataBuf.truncate();
                 if (auxBuf != null) {
                     auxBuf.truncate();
                 }
             }
-        }
-
-        // Write the zero offset of the first string in a STRING data column.
-        // StringTypeDriver will then append the offset of the first available byte
-        // after each written string (start offset of the next, yet unwritten string).
-        for (int k = 0; k < computedCount; k++) {
-            if (ColumnType.tagOf(computedOutputTypes.getQuick(k)) == ColumnType.STRING) {
-                auxBuffers.getQuick(computedBufferIdx.getQuick(computedColumnIndices.getQuick(k))).putLong(0);
+            // Write the zero offset of the first value in a STRING or BINARY data column.
+            // The appenders then append the offset of the first available byte after each
+            // written value (start offset of the next, yet unwritten value).
+            if (hasOffsetAux) {
+                auxBuffers.getQuick(i).putLong(0);
             }
         }
     }
@@ -661,8 +725,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 dataBuf.putLong(iv.getHi());
             }
             case ColumnType.ARRAY -> ArrayTypeDriver.appendValue(auxBuf, dataBuf, record.getArray(col, columnType));
-            // determineExportMode() routes queries with BINARY columns to TEMP_TABLE
-            // mode, so this method never encounters BINARY.
+            // Only a pass-through column copied from a Parquet frame reaches this arm:
+            // determineExportMode() routes every other BINARY column to TEMP_TABLE mode.
+            case ColumnType.BINARY -> auxBuf.putLong(dataBuf.putBin(record.getBin(col)));
             default ->
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(columnType));
         }

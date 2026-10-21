@@ -34,6 +34,11 @@ import io.questdb.std.ObjList;
 
 public class ArgMinUuidTimestampGroupByFunctionFactory implements FunctionFactory {
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.INPUT_ORDER;
+    }
+
+    @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.UUID;
     }

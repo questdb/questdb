@@ -68,11 +68,11 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
     ) {
         super(groupByMetadata);
+        this.base = base;
+        this.groupByFunctions = groupByFunctions;
+        this.sharedRecordFunctions = sharedRecordFunctions;
         try {
             this.value = new SimpleMapValue(valueCount);
-            this.base = base;
-            this.groupByFunctions = groupByFunctions;
-            this.sharedRecordFunctions = sharedRecordFunctions;
             this.virtualRecordA = new VirtualRecordNoRowid(groupByFunctions);
             this.virtualRecordA.of(value);
 
@@ -109,28 +109,11 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // The base cursor is shared with getSharedCursor and opened by whichever runs first, so
-        // close the cursor on a breach only when this call opened it.
-        if (cursor.baseCursor == null) {
-            cursor.baseCursor = base.getCursor(executionContext);
-            try {
-                return cursor.of(cursor.baseCursor, executionContext);
-            } catch (Throwable th) {
-                cursor.close();
-                throw th;
-            }
+        if (cursor.isOpenedByShared) {
+            cursor.isOpenedByShared = false;
+            return cursor;
         }
-        // getSharedCursor opened cursor.baseCursor first (e.g. it sits on the build side of a
-        // hash join, which opens before the probe side that holds this primary getCursor). cursor.of()
-        // reopens the allocator and then runs Function.init, which can throw; guard it so the reopened
-        // allocator is freed under the current per-query tracker instead of being deferred to factory
-        // close, by which point the tracker may have been recycled to another query.
-        try {
-            return cursor.of(cursor.baseCursor, executionContext);
-        } catch (Throwable th) {
-            cursor.close();
-            throw th;
-        }
+        return openCursor(executionContext);
     }
 
     @Override
@@ -149,21 +132,17 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             shared = new GroupByNotKeyedSharedCursor(cursor, sharedRecordFunctions.getQuick(idx), value);
             sharedCursors.extendAndSet(idx, shared);
         }
-        boolean isNewCursor = cursor.baseCursor == null;
-        if (isNewCursor) {
-            cursor.baseCursor = base.getCursor(executionContext);
+        // A shared consumer on the build side of a hash join opens before the primary cursor. The owner group-by
+        // functions must initialize before any consumer's clones, exactly once per query: stateful functions inside
+        // aggregate arguments, such as cursor comparisons caching a scalar sub-query result, run their initialization
+        // in the owner and every consumer inherits that state. The consumer therefore opens the primary, which
+        // getCursor then hands over.
+        final boolean isPrimaryOpened = cursor.baseCursor == null;
+        if (isPrimaryOpened) {
+            openCursor(executionContext);
+            cursor.isOpenedByShared = true;
         }
         try {
-            // The owner group-by functions must initialize before any shared consumer's clones,
-            // regardless of open order: stateful functions inside aggregate arguments - such as
-            // cursor comparisons caching a scalar sub-query result - run their expensive and
-            // potentially nondeterministic initialization exactly once per query, in the owner,
-            // and every consumer inherits that state. Shared consumers can open first (they sit
-            // on the build side of the enclosing join), so trigger the owner setup here; the
-            // primary getCursor skips the second initialization via areFunctionsInitialized.
-            if (!cursor.areFunctionsInitialized) {
-                cursor.of(cursor.baseCursor, executionContext);
-            }
             // donate the owner state to the consumer's aligned clones before they initialize
             final ObjList<Function> sharedFunctions = sharedRecordFunctions.getQuick(idx);
             assert groupByFunctions.size() == sharedFunctions.size();
@@ -173,13 +152,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             shared.of(cursor.baseCursor, executionContext);
             return shared;
         } catch (Throwable e) {
-            if (isNewCursor) {
-                // This call opened the base cursor and may have run the owner setup above. Close
-                // the primary cursor outright - freeing the base cursor and the allocator under
-                // the current per-query tracker, clearing the functions, and resetting
-                // areFunctionsInitialized - so the next execution of this cached factory
-                // re-initializes the functions instead of serving stale state. When the primary
-                // opened the base cursor, its owner closes it.
+            if (isPrimaryOpened) {
                 cursor.close();
             }
             throw e;
@@ -254,6 +227,16 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
+    private RecordCursor openCursor(SqlExecutionContext executionContext) throws SqlException {
+        cursor.baseCursor = base.getCursor(executionContext);
+        try {
+            return cursor.of(cursor.baseCursor, executionContext);
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
+    }
+
     private static class GroupByNotKeyedSharedCursor implements NoRandomAccessRecordCursor {
         private final ObjList<Function> groupByFunctions;
         private final GroupByNotKeyedRecordCursor primaryCursor;
@@ -278,6 +261,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public void close() {
             Misc.clearObjList(groupByFunctions);
+            if (primaryCursor.isOpenedByShared) {
+                primaryCursor.close();
+            }
         }
 
         @Override
@@ -351,14 +337,12 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         private final GroupByAllocator allocator;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
-        // True once of() has initialized the group-by functions for the current execution;
-        // getSharedCursor donates owner state to shared consumers only when this is set.
-        private boolean areFunctionsInitialized;
         // hold on to reference of base cursor here
         // because we use it as symbol table source for the functions
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isExhausted;
+        private boolean isOpenedByShared;
         private boolean isValueBuilt;
 
         public GroupByNotKeyedRecordCursor(
@@ -384,7 +368,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public void close() {
-            areFunctionsInitialized = false;
+            isOpenedByShared = false;
             baseCursor = Misc.free(baseCursor);
             Misc.free(allocator);
             Misc.clearObjList(groupByFunctions);
@@ -426,13 +410,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.circuitBreaker = executionContext.getCircuitBreaker();
             allocator.setMemoryTracker(executionContext.getMemoryTracker());
             allocator.reopen();
-            // getSharedCursor may have run this setup already (a shared consumer can open before
-            // the primary cursor); the functions must not re-run their once-per-query
-            // initialization, or stateful functions such as scalar sub-query caches execute again.
-            if (!areFunctionsInitialized) {
-                Function.init(groupByFunctions, baseCursor, executionContext, null);
-                areFunctionsInitialized = true;
-            }
+            Function.init(groupByFunctions, baseCursor, executionContext, null);
             return this;
         }
 

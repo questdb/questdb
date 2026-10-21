@@ -278,18 +278,11 @@ final class OuterJoinCarriers implements Mutable {
             final BoundExpression predicate = context.getRewriter().remapColumns(where, substitution);
             top = planNodes.filters.next().of(project, predicate, position);
         }
-        if (full == ordered.size() - 1) {
+        final boolean isLast = full == ordered.size() - 1;
+        join.nestSteps(0, full, nested, planNodes.joinInputs.next().of(top, JoinKind.CROSS, null, position), 0);
+        if (isLast) {
             return top;
         }
-        for (int i = inputs.size() - 1; i > -1; i--) {
-            if (nested.getInputs().indexOf(inputs.getQuick(i)) > -1) {
-                inputs.remove(i);
-            }
-        }
-        ordered.remove(0, full);
-        final JoinInput leading = planNodes.joinInputs.next().of(top, JoinKind.CROSS, null, position);
-        inputs.insert(0, 1, leading);
-        ordered.insert(0, 1, leading);
         join.addMissingInputColumns();
         return join;
     }

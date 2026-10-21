@@ -42,6 +42,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
     public static final String NAME = "last_not_null";
 
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
     public int getResultType(IntList argTypes) {
         return argTypes.getQuick(0);
     }

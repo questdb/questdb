@@ -34,6 +34,11 @@ import io.questdb.std.ObjList;
 
 public class LastNotNullDoubleGroupByFunctionFactory implements FunctionFactory {
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.DOUBLE;
     }

@@ -2618,14 +2618,9 @@ impl ParquetDecoder {
             let has_nulls =
                 null_count.is_none_or(|c| c > 0) || Self::nulls_hidden_from_stats(qdb_column_type);
             let has_implicit_zeros = Self::has_matchable_zero_nulls(qdb_column_type, has_nulls);
-
-            let (min_bytes, max_bytes) = statistics
-                .map(|s| {
-                    let min = s.min_value.as_deref().or(s.min.as_deref());
-                    let max = s.max_value.as_deref().or(s.max.as_deref());
-                    (min, max)
-                })
-                .unwrap_or((None, None));
+            let decimal_size = Self::decimal_filter_size(qdb_column_type);
+            let (min_bytes, max_bytes) =
+                Self::comparable_min_max(statistics, &physical_type, qdb_column_type);
             let mut zero_widened_min = [0u8; 4];
             let mut zero_widened_max = [0u8; 4];
             let (min_bytes, max_bytes) = if has_implicit_zeros {
@@ -2641,8 +2636,6 @@ impl ParquetDecoder {
 
             match op {
                 FILTER_OP_EQ => {
-                    let is_decimal = Self::is_decimal_type(column_metadata);
-
                     let bitset =
                         parquet2::bloom_filter::read_from_slice(column_metadata, file_data)
                             .unwrap_or(&[]);
@@ -2653,7 +2646,6 @@ impl ParquetDecoder {
                             &filter_desc,
                             has_nulls,
                             has_implicit_zeros,
-                            is_decimal,
                             qdb_column_type,
                         )?;
                         if all_absent {
@@ -2675,7 +2667,7 @@ impl ParquetDecoder {
                             &physical_type,
                             &filter_desc,
                             has_nulls,
-                            is_decimal,
+                            decimal_size,
                             is_ipv4,
                             is_date,
                             min_bytes,
@@ -2686,7 +2678,6 @@ impl ParquetDecoder {
                     }
                 }
                 FILTER_OP_LT | FILTER_OP_LE | FILTER_OP_GT | FILTER_OP_GE | FILTER_OP_BETWEEN => {
-                    let is_decimal = Self::is_decimal_type(column_metadata);
                     let col_type_tag = qdb_column_type & 0xFF;
                     let is_ipv4 = col_type_tag == ColumnTypeTag::IPv4 as i32;
                     let is_date = col_type_tag == ColumnTypeTag::Date as i32;
@@ -2699,7 +2690,7 @@ impl ParquetDecoder {
                         && Self::value_outside_range(
                             &physical_type,
                             &filter_desc,
-                            is_decimal,
+                            decimal_size,
                             is_ipv4,
                             is_date,
                             op,
@@ -2717,16 +2708,52 @@ impl ParquetDecoder {
         Ok(false)
     }
 
-    #[inline]
-    fn is_decimal_type(column_metadata: &parquet2::metadata::ColumnChunkMetaData) -> bool {
-        let primitive_type = &column_metadata.descriptor().descriptor.primitive_type;
-        matches!(
-            primitive_type.logical_type,
-            Some(PrimitiveLogicalType::Decimal(_, _))
-        ) || matches!(
-            primitive_type.converted_type,
-            Some(PrimitiveConvertedType::Decimal(_, _))
-        )
+    /// Returns the bounds of a column chunk's statistics that compare in the order the pruner
+    /// compares values in.
+    ///
+    /// `min_value`/`max_value` hold bounds in the column's own sort order and always qualify. The
+    /// deprecated `min`/`max` hold bounds in signed order and qualify only where signed order is
+    /// the pruner's order:
+    ///
+    /// - INT32, INT64, FLOAT and DOUBLE: the old writers computed these with the signed numeric
+    ///   comparison the pruner uses, and that holds for a DATE, TIMESTAMP and an INT32/INT64
+    ///   DECIMAL too. Third-party unsigned integers never get here; the callers decline them.
+    /// - IPv4 is excluded: the pruner compares it as an unsigned 32-bit value.
+    /// - BYTE_ARRAY and FIXED_LEN_BYTE_ARRAY are excluded: their deprecated bounds come from a
+    ///   signed-byte comparison, which matches neither the unsigned byte order of UTF-8 text, a
+    ///   UUID or other binary value, nor the numeric order of a big-endian decimal. parquet-mr
+    ///   1.8 records 2.00 as the minimum of a FIXED_LEN_BYTE_ARRAY decimal holding 1.00, and an
+    ///   upper bound below every non-ASCII string. Parquet readers ignore these bounds since
+    ///   PARQUET-686 for the same reason.
+    pub(crate) fn comparable_min_max<'a>(
+        statistics: Option<&'a parquet_format_safe::Statistics>,
+        physical_type: &PhysicalType,
+        qdb_column_type: i32,
+    ) -> (Option<&'a [u8]>, Option<&'a [u8]>) {
+        let Some(s) = statistics else {
+            return (None, None);
+        };
+        let is_signed_order = matches!(
+            physical_type,
+            PhysicalType::Int32 | PhysicalType::Int64 | PhysicalType::Float | PhysicalType::Double
+        ) && qdb_column_type & 0xFF != ColumnTypeTag::IPv4 as i32;
+        if is_signed_order {
+            (
+                s.min_value.as_deref().or(s.min.as_deref()),
+                s.max_value.as_deref().or(s.max.as_deref()),
+            )
+        } else {
+            (s.min_value.as_deref(), s.max_value.as_deref())
+        }
+    }
+
+    /// Returns the width of a decimal column's filter values, or `None` for any other column.
+    /// `ParquetRowGroupFilter` writes each value big-endian at the width of the QuestDB column
+    /// type, whatever physical type the file stores the column in: an external writer picks
+    /// INT32, INT64, a FIXED_LEN_BYTE_ARRAY of any length, or a BYTE_ARRAY.
+    pub(crate) fn decimal_filter_size(qdb_column_type: i32) -> Option<usize> {
+        let tag = ColumnTypeTag::try_from((qdb_column_type & 0xFF) as u8).ok()?;
+        is_decimal_tag(tag).then(|| decimal_tag_size(tag))
     }
 
     #[inline]
@@ -2791,7 +2818,6 @@ impl ParquetDecoder {
         filter_desc: &ColumnFilterValues,
         has_nulls: bool,
         has_implicit_zeros: bool,
-        is_decimal: bool,
         qdb_column_type: i32,
     ) -> ParquetResult<bool> {
         let count = filter_desc.count as usize;
@@ -2807,6 +2833,15 @@ impl ParquetDecoder {
         // only place that does the indexing.
         if bitset.len() < 32 || !bitset.len().is_multiple_of(32) {
             return Ok(false);
+        }
+        if let Some(decimal_size) = Self::decimal_filter_size(qdb_column_type) {
+            return Self::decimal_values_absent_from_bloom(
+                bitset,
+                physical_type,
+                filter_desc,
+                decimal_size,
+                has_nulls,
+            );
         }
 
         let ptr = filter_desc.ptr as *const u8;
@@ -2962,14 +2997,9 @@ impl ParquetDecoder {
                     return Ok(false);
                 }
                 Self::validate_filter_span(ptr, count, size, filter_desc.buf_end)?;
-                let null_check = if is_decimal {
-                    is_fixed_len_null_be
-                } else {
-                    is_fixed_len_null
-                };
                 for i in 0..count {
                     let bytes = unsafe { slice::from_raw_parts(ptr.add(i * size), size) };
-                    if null_check(bytes) {
+                    if is_fixed_len_null(bytes) {
                         if has_nulls {
                             return Ok(false);
                         }
@@ -2986,12 +3016,155 @@ impl ParquetDecoder {
         }
     }
 
+    /// Probes the bloom set with each decimal filter value re-encoded the way the writer hashed
+    /// it: a plain INT32 or INT64, or a big-endian FIXED_LEN_BYTE_ARRAY of the column's length.
+    /// A value that does not fit that width matches no row. A BYTE_ARRAY writer may store a
+    /// value in more bytes than it needs, so no single encoding reproduces its hash and the
+    /// probe declines.
+    fn decimal_values_absent_from_bloom(
+        bitset: &[u8],
+        physical_type: &PhysicalType,
+        filter_desc: &ColumnFilterValues,
+        decimal_size: usize,
+        has_nulls: bool,
+    ) -> ParquetResult<bool> {
+        let physical_size = match physical_type {
+            PhysicalType::Int32 => size_of::<i32>(),
+            PhysicalType::Int64 => size_of::<i64>(),
+            PhysicalType::FixedLenByteArray(size) if (1..=DECIMAL_MAX_SIZE).contains(size) => *size,
+            _ => return Ok(false),
+        };
+        let count = filter_desc.count as usize;
+        let ptr = filter_desc.ptr as *const u8;
+        Self::validate_filter_span(ptr, count, decimal_size, filter_desc.buf_end)?;
+        let mut buf = [0u8; DECIMAL_MAX_SIZE];
+        let physical = &mut buf[..physical_size];
+        for i in 0..count {
+            let value = unsafe { slice::from_raw_parts(ptr.add(i * decimal_size), decimal_size) };
+            if is_fixed_len_null_be(value) {
+                if has_nulls {
+                    return Ok(false);
+                }
+                continue;
+            }
+            if !resize_signed_be(value, physical) {
+                continue;
+            }
+            let hash = match physical_type {
+                PhysicalType::Int32 => parquet2::bloom_filter::hash_native(i32::from_be_bytes(
+                    physical.try_into().unwrap_or_default(),
+                )),
+                PhysicalType::Int64 => parquet2::bloom_filter::hash_native(i64::from_be_bytes(
+                    physical.try_into().unwrap_or_default(),
+                )),
+                _ => parquet2::bloom_filter::hash_byte(&*physical),
+            };
+            if parquet2::bloom_filter::is_in_set(bitset, hash) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Reports whether every decimal filter value lies outside the row group's statistics.
+    /// Both sides compare as big-endian two's complement integers of any length.
+    fn decimal_values_outside_min_max(
+        physical_type: &PhysicalType,
+        filter_desc: &ColumnFilterValues,
+        decimal_size: usize,
+        has_nulls: bool,
+        min_bytes: Option<&[u8]>,
+        max_bytes: Option<&[u8]>,
+    ) -> ParquetResult<bool> {
+        let count = filter_desc.count as usize;
+        let ptr = filter_desc.ptr as *const u8;
+        Self::validate_filter_span(ptr, count, decimal_size, filter_desc.buf_end)?;
+        let mut min_buf = [0u8; 8];
+        let mut max_buf = [0u8; 8];
+        let min_max = decimal_stats_be(
+            physical_type,
+            min_bytes,
+            max_bytes,
+            &mut min_buf,
+            &mut max_buf,
+        );
+        for i in 0..count {
+            let value = unsafe { slice::from_raw_parts(ptr.add(i * decimal_size), decimal_size) };
+            if is_fixed_len_null_be(value) {
+                if has_nulls {
+                    return Ok(false);
+                }
+            } else if let Some((min, max)) = min_max {
+                if compare_signed_be_varlen(value, min) != cmp::Ordering::Less
+                    && compare_signed_be_varlen(value, max) != cmp::Ordering::Greater
+                {
+                    return Ok(false);
+                }
+            } else {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Reports whether a decimal range bound excludes every value between the row group's
+    /// statistics. See [`Self::decimal_values_outside_min_max`] for the comparison.
+    fn decimal_value_outside_range(
+        physical_type: &PhysicalType,
+        filter_desc: &ColumnFilterValues,
+        decimal_size: usize,
+        op: u8,
+        min_bytes: Option<&[u8]>,
+        max_bytes: Option<&[u8]>,
+    ) -> ParquetResult<bool> {
+        let count = filter_desc.count as usize;
+        let ptr = filter_desc.ptr as *const u8;
+        Self::validate_filter_span(ptr, count, decimal_size, filter_desc.buf_end)?;
+        let mut min_buf = [0u8; 8];
+        let mut max_buf = [0u8; 8];
+        let Some((min, max)) = decimal_stats_be(
+            physical_type,
+            min_bytes,
+            max_bytes,
+            &mut min_buf,
+            &mut max_buf,
+        ) else {
+            return Ok(false);
+        };
+        let value = unsafe { slice::from_raw_parts(ptr, decimal_size) };
+        if is_fixed_len_null_be(value) {
+            return Ok(false);
+        }
+        if op == FILTER_OP_BETWEEN {
+            let other = unsafe { slice::from_raw_parts(ptr.add(decimal_size), decimal_size) };
+            if is_fixed_len_null_be(other) {
+                return Ok(false);
+            }
+            let (lo, hi) = if compare_signed_be_varlen(value, other) == cmp::Ordering::Greater {
+                (other, value)
+            } else {
+                (value, other)
+            };
+            return Ok(compare_signed_be_varlen(max, lo) == cmp::Ordering::Less
+                || compare_signed_be_varlen(min, hi) == cmp::Ordering::Greater);
+        }
+        let cmp_min = compare_signed_be_varlen(min, value);
+        let cmp_max = compare_signed_be_varlen(max, value);
+        Ok(match op {
+            FILTER_OP_LT => cmp_min != cmp::Ordering::Less,
+            FILTER_OP_LE => cmp_min == cmp::Ordering::Greater,
+            FILTER_OP_GT => cmp_max != cmp::Ordering::Greater,
+            FILTER_OP_GE => cmp_max == cmp::Ordering::Less,
+            _ => false,
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn all_values_outside_min_max_with_stats(
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
         has_nulls: bool,
-        is_decimal: bool,
+        decimal_size: Option<usize>,
         is_ipv4: bool,
         is_date: bool,
         min_bytes: Option<&[u8]>,
@@ -3000,6 +3173,16 @@ impl ParquetDecoder {
         let count = filter_desc.count as usize;
         if count == 0 {
             return Ok(false);
+        }
+        if let Some(decimal_size) = decimal_size {
+            return Self::decimal_values_outside_min_max(
+                physical_type,
+                filter_desc,
+                decimal_size,
+                has_nulls,
+                min_bytes,
+                max_bytes,
+            );
         }
 
         let ptr = filter_desc.ptr as *const u8;
@@ -3193,13 +3376,7 @@ impl ParquetDecoder {
                         }
                         let bytes = unsafe { slice::from_raw_parts(ptr.add(offset), len) };
                         offset += len;
-                        let in_range = if is_decimal {
-                            compare_signed_be_varlen(bytes, min_b) != cmp::Ordering::Less
-                                && compare_signed_be_varlen(bytes, max_b) != cmp::Ordering::Greater
-                        } else {
-                            bytes >= min_b && bytes <= max_b
-                        };
-                        if in_range {
+                        if bytes >= min_b && bytes <= max_b {
                             return Ok(false);
                         }
                     }
@@ -3218,25 +3395,14 @@ impl ParquetDecoder {
                     }
                     _ => None,
                 };
-                let null_check = if is_decimal {
-                    is_fixed_len_null_be
-                } else {
-                    is_fixed_len_null
-                };
                 for i in 0..count {
                     let bytes = unsafe { slice::from_raw_parts(ptr.add(i * size), size) };
-                    if null_check(bytes) {
+                    if is_fixed_len_null(bytes) {
                         if has_nulls {
                             return Ok(false);
                         }
                     } else if let Some((min_b, max_b)) = min_max {
-                        if is_decimal {
-                            if compare_signed_be(bytes, min_b) != cmp::Ordering::Less
-                                && compare_signed_be(bytes, max_b) != cmp::Ordering::Greater
-                            {
-                                return Ok(false);
-                            }
-                        } else if bytes >= min_b && bytes <= max_b {
+                        if bytes >= min_b && bytes <= max_b {
                             return Ok(false);
                         }
                     } else {
@@ -3422,7 +3588,7 @@ impl ParquetDecoder {
     pub(crate) fn value_outside_range(
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
-        is_decimal: bool,
+        decimal_size: Option<usize>,
         is_ipv4: bool,
         is_date: bool,
         op: u8,
@@ -3437,6 +3603,16 @@ impl ParquetDecoder {
             }
         } else if count != 1 {
             return Ok(false);
+        }
+        if let Some(decimal_size) = decimal_size {
+            return Self::decimal_value_outside_range(
+                physical_type,
+                filter_desc,
+                decimal_size,
+                op,
+                min_bytes,
+                max_bytes,
+            );
         }
         let ptr = filter_desc.ptr as *const u8;
 
@@ -3687,42 +3863,19 @@ impl ParquetDecoder {
                     }
                     let bytes2 = unsafe { slice::from_raw_parts(ptr2.add(size_of::<i32>()), len2) };
 
-                    Ok(if is_decimal {
-                        let ord = compare_signed_be_varlen(bytes1, bytes2);
-                        let (lo, hi) = if ord == cmp::Ordering::Greater {
-                            (bytes2, bytes1)
-                        } else {
-                            (bytes1, bytes2)
-                        };
-                        compare_signed_be_varlen(max_b, lo) == cmp::Ordering::Less
-                            || compare_signed_be_varlen(min_b, hi) == cmp::Ordering::Greater
+                    let (lo, hi) = if bytes1 > bytes2 {
+                        (bytes2, bytes1)
                     } else {
-                        let (lo, hi) = if bytes1 > bytes2 {
-                            (bytes2, bytes1)
-                        } else {
-                            (bytes1, bytes2)
-                        };
-                        max_b < lo || min_b > hi
-                    })
+                        (bytes1, bytes2)
+                    };
+                    Ok(max_b < lo || min_b > hi)
                 } else {
-                    Ok(if is_decimal {
-                        let cmp_min = compare_signed_be_varlen(min_b, bytes1);
-                        let cmp_max = compare_signed_be_varlen(max_b, bytes1);
-                        match op {
-                            FILTER_OP_LT => cmp_min != cmp::Ordering::Less,
-                            FILTER_OP_LE => cmp_min == cmp::Ordering::Greater,
-                            FILTER_OP_GT => cmp_max != cmp::Ordering::Greater,
-                            FILTER_OP_GE => cmp_max == cmp::Ordering::Less,
-                            _ => false,
-                        }
-                    } else {
-                        match op {
-                            FILTER_OP_LT => min_b >= bytes1,
-                            FILTER_OP_LE => min_b > bytes1,
-                            FILTER_OP_GT => max_b <= bytes1,
-                            FILTER_OP_GE => max_b < bytes1,
-                            _ => false,
-                        }
+                    Ok(match op {
+                        FILTER_OP_LT => min_b >= bytes1,
+                        FILTER_OP_LE => min_b > bytes1,
+                        FILTER_OP_GT => max_b <= bytes1,
+                        FILTER_OP_GE => max_b < bytes1,
+                        _ => false,
                     })
                 }
             }
@@ -3738,58 +3891,29 @@ impl ParquetDecoder {
                     }
                     _ => return Ok(false),
                 };
-                let null_check = if is_decimal {
-                    is_fixed_len_null_be
-                } else {
-                    is_fixed_len_null
-                };
-
                 if is_between {
                     let bytes1 = unsafe { slice::from_raw_parts(ptr, size) };
                     let bytes2 = unsafe { slice::from_raw_parts(ptr.add(size), size) };
-                    if null_check(bytes1) || null_check(bytes2) {
+                    if is_fixed_len_null(bytes1) || is_fixed_len_null(bytes2) {
                         return Ok(false);
                     }
-                    Ok(if is_decimal {
-                        let ord = compare_signed_be(bytes1, bytes2);
-                        let (lo, hi) = if ord == cmp::Ordering::Greater {
-                            (bytes2, bytes1)
-                        } else {
-                            (bytes1, bytes2)
-                        };
-                        compare_signed_be(max_b, lo) == cmp::Ordering::Less
-                            || compare_signed_be(min_b, hi) == cmp::Ordering::Greater
+                    let (lo, hi) = if bytes1 > bytes2 {
+                        (bytes2, bytes1)
                     } else {
-                        let (lo, hi) = if bytes1 > bytes2 {
-                            (bytes2, bytes1)
-                        } else {
-                            (bytes1, bytes2)
-                        };
-                        max_b < lo || min_b > hi
-                    })
+                        (bytes1, bytes2)
+                    };
+                    Ok(max_b < lo || min_b > hi)
                 } else {
                     let bytes = unsafe { slice::from_raw_parts(ptr, size) };
-                    if null_check(bytes) {
+                    if is_fixed_len_null(bytes) {
                         return Ok(false);
                     }
-                    Ok(if is_decimal {
-                        let cmp_min = compare_signed_be(min_b, bytes);
-                        let cmp_max = compare_signed_be(max_b, bytes);
-                        match op {
-                            FILTER_OP_LT => cmp_min != cmp::Ordering::Less,
-                            FILTER_OP_LE => cmp_min == cmp::Ordering::Greater,
-                            FILTER_OP_GT => cmp_max != cmp::Ordering::Greater,
-                            FILTER_OP_GE => cmp_max == cmp::Ordering::Less,
-                            _ => false,
-                        }
-                    } else {
-                        match op {
-                            FILTER_OP_LT => min_b >= bytes,
-                            FILTER_OP_LE => min_b > bytes,
-                            FILTER_OP_GT => max_b <= bytes,
-                            FILTER_OP_GE => max_b < bytes,
-                            _ => false,
-                        }
+                    Ok(match op {
+                        FILTER_OP_LT => min_b >= bytes,
+                        FILTER_OP_LE => min_b > bytes,
+                        FILTER_OP_GT => max_b <= bytes,
+                        FILTER_OP_GE => max_b < bytes,
+                        _ => false,
                     })
                 }
             }
@@ -4121,15 +4245,63 @@ fn is_fixed_len_null_be(bytes: &[u8]) -> bool {
     !bytes.is_empty() && bytes[0] == 0x80 && bytes[1..].iter().all(|&b| b == 0x00)
 }
 
-fn compare_signed_be(a: &[u8], b: &[u8]) -> cmp::Ordering {
-    debug_assert_eq!(a.len(), b.len());
-    if a.is_empty() {
-        return cmp::Ordering::Equal;
+/// Width of the widest QuestDB decimal, DECIMAL256.
+const DECIMAL_MAX_SIZE: usize = 32;
+
+/// Writes the big-endian two's complement `src` into `dst`, sign-extending or truncating it to
+/// `dst.len()` bytes. Returns false when the value does not fit `dst`.
+fn resize_signed_be(src: &[u8], dst: &mut [u8]) -> bool {
+    let fill = if src.first().is_some_and(|&b| (b as i8) < 0) {
+        0xFF
+    } else {
+        0x00
+    };
+    if dst.len() >= src.len() {
+        let pad = dst.len() - src.len();
+        dst[..pad].fill(fill);
+        dst[pad..].copy_from_slice(src);
+        return true;
     }
-    match (a[0] as i8).cmp(&(b[0] as i8)) {
-        cmp::Ordering::Equal => a[1..].cmp(&b[1..]),
-        other => other,
+    let cut = src.len() - dst.len();
+    if src[..cut].iter().any(|&b| b != fill) || (src[cut] ^ fill) & 0x80 != 0 {
+        return false;
     }
+    dst.copy_from_slice(&src[cut..]);
+    true
+}
+
+/// Returns a decimal column's statistics as big-endian two's complement integers. INT32 and
+/// INT64 statistics are little-endian, so this reverses them into the caller's buffers;
+/// FIXED_LEN_BYTE_ARRAY and BYTE_ARRAY statistics already are big-endian.
+fn decimal_stats_be<'a>(
+    physical_type: &PhysicalType,
+    min_bytes: Option<&'a [u8]>,
+    max_bytes: Option<&'a [u8]>,
+    min_buf: &'a mut [u8; 8],
+    max_buf: &'a mut [u8; 8],
+) -> Option<(&'a [u8], &'a [u8])> {
+    let (min, max) = (min_bytes?, max_bytes?);
+    let size = match physical_type {
+        PhysicalType::Int32 => size_of::<i32>(),
+        PhysicalType::Int64 => size_of::<i64>(),
+        PhysicalType::FixedLenByteArray(size) => {
+            return (*size > 0 && min.len() == *size && max.len() == *size).then_some((min, max));
+        }
+        PhysicalType::ByteArray => {
+            return (!min.is_empty() && !max.is_empty()).then_some((min, max));
+        }
+        _ => return None,
+    };
+    if min.len() != size || max.len() != size {
+        return None;
+    }
+    let min_be = &mut min_buf[..size];
+    min_be.copy_from_slice(min);
+    min_be.reverse();
+    let max_be = &mut max_buf[..size];
+    max_be.copy_from_slice(max);
+    max_be.reverse();
+    Some((min_be, max_be))
 }
 
 /// Compare two big-endian signed integers of potentially different lengths.
@@ -5469,5 +5641,416 @@ mod column_top_zero_tests {
         assert!(ParquetDecoder::writer_undercounts_nulls(packed_char));
         let packed_int = qdb_type(ColumnTypeTag::Int) | (7 << 8);
         assert!(!ParquetDecoder::writer_undercounts_nulls(packed_int));
+    }
+}
+
+#[cfg(test)]
+mod decimal_pruning_tests {
+    use super::*;
+
+    const NULL: Option<i128> = None;
+    const MIN: i128 = -150;
+    const MAX: i128 = 250;
+    // DECIMAL16, DECIMAL64 and DECIMAL256: narrower than, as wide as and wider than the stats.
+    const WIDTHS: [usize; 3] = [2, 8, 32];
+
+    fn physical_types() -> [PhysicalType; 5] {
+        [
+            PhysicalType::Int32,
+            PhysicalType::Int64,
+            PhysicalType::FixedLenByteArray(5),
+            PhysicalType::FixedLenByteArray(16),
+            PhysicalType::ByteArray,
+        ]
+    }
+
+    fn decimal_type(width: usize) -> i32 {
+        let precision = match width {
+            2 => 4,
+            8 => 18,
+            _ => 40,
+        };
+        ColumnType::new_decimal(precision, 2).unwrap().code()
+    }
+
+    /// Encodes filter values the way `ParquetRowGroupFilter` does: big-endian two's complement
+    /// at the width of the QuestDB decimal type.
+    fn filter_values(width: usize, values: &[Option<i128>]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        for value in values {
+            match value {
+                Some(v) => {
+                    let fill = if *v < 0 { 0xFF } else { 0x00 };
+                    buf.extend(std::iter::repeat_n(fill, width.saturating_sub(16)));
+                    buf.extend_from_slice(&v.to_be_bytes()[16 - width.min(16)..]);
+                }
+                None => {
+                    buf.push(0x80);
+                    buf.extend(std::iter::repeat_n(0, width - 1));
+                }
+            }
+        }
+        buf
+    }
+
+    fn desc(buf: &[u8], count: usize) -> ColumnFilterValues {
+        ColumnFilterValues {
+            count: count as u32,
+            ptr: buf.as_ptr() as u64,
+            buf_end: buf.as_ptr() as u64 + buf.len() as u64,
+        }
+    }
+
+    /// Encodes a statistic the way an external writer stores it: INT32 and INT64 plain
+    /// little-endian, FIXED_LEN_BYTE_ARRAY big-endian at its length, BYTE_ARRAY big-endian in
+    /// more bytes than the value needs.
+    fn stat(physical_type: &PhysicalType, value: i128) -> Vec<u8> {
+        match physical_type {
+            PhysicalType::Int32 => (value as i32).to_le_bytes().to_vec(),
+            PhysicalType::Int64 => (value as i64).to_le_bytes().to_vec(),
+            PhysicalType::FixedLenByteArray(size) => value.to_be_bytes()[16 - size..].to_vec(),
+            _ => value.to_be_bytes()[12..].to_vec(),
+        }
+    }
+
+    fn range_skips(
+        physical_type: &PhysicalType,
+        width: usize,
+        op: u8,
+        values: &[Option<i128>],
+    ) -> bool {
+        let buf = filter_values(width, values);
+        let (min, max) = (stat(physical_type, MIN), stat(physical_type, MAX));
+        ParquetDecoder::value_outside_range(
+            physical_type,
+            &desc(&buf, values.len()),
+            Some(width),
+            false,
+            false,
+            op,
+            Some(&min),
+            Some(&max),
+        )
+        .unwrap()
+    }
+
+    fn equality_skips(
+        physical_type: &PhysicalType,
+        width: usize,
+        has_nulls: bool,
+        values: &[Option<i128>],
+    ) -> bool {
+        let buf = filter_values(width, values);
+        let (min, max) = (stat(physical_type, MIN), stat(physical_type, MAX));
+        ParquetDecoder::all_values_outside_min_max_with_stats(
+            physical_type,
+            &desc(&buf, values.len()),
+            has_nulls,
+            Some(width),
+            false,
+            false,
+            Some(&min),
+            Some(&max),
+        )
+        .unwrap()
+    }
+
+    fn bloom_absent(
+        bitset: &[u8],
+        physical_type: &PhysicalType,
+        width: usize,
+        has_nulls: bool,
+        values: &[Option<i128>],
+    ) -> bool {
+        let buf = filter_values(width, values);
+        ParquetDecoder::all_values_absent_from_bloom(
+            bitset,
+            physical_type,
+            &desc(&buf, values.len()),
+            has_nulls,
+            false,
+            decimal_type(width),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn decimal_filter_size_follows_the_questdb_type() {
+        for width in WIDTHS {
+            assert_eq!(
+                ParquetDecoder::decimal_filter_size(decimal_type(width)),
+                Some(width)
+            );
+        }
+        assert_eq!(
+            ParquetDecoder::decimal_filter_size(ColumnTypeTag::Long as i32),
+            None
+        );
+    }
+
+    #[test]
+    fn range_bounds_compare_across_physical_widths() {
+        for physical_type in physical_types() {
+            for width in WIDTHS {
+                let skips =
+                    |op, values: &[Option<i128>]| range_skips(&physical_type, width, op, values);
+                let case = format!("{physical_type:?} at width {width}");
+                assert!(skips(FILTER_OP_LT, &[Some(MIN)]), "{case}");
+                assert!(!skips(FILTER_OP_LT, &[Some(MIN + 1)]), "{case}");
+                assert!(skips(FILTER_OP_LE, &[Some(MIN - 1)]), "{case}");
+                assert!(!skips(FILTER_OP_LE, &[Some(MIN)]), "{case}");
+                assert!(skips(FILTER_OP_GT, &[Some(MAX)]), "{case}");
+                assert!(!skips(FILTER_OP_GT, &[Some(MAX - 1)]), "{case}");
+                assert!(skips(FILTER_OP_GE, &[Some(MAX + 1)]), "{case}");
+                assert!(!skips(FILTER_OP_GE, &[Some(MAX)]), "{case}");
+                assert!(
+                    skips(FILTER_OP_BETWEEN, &[Some(300), Some(MAX + 1)]),
+                    "{case}"
+                );
+                assert!(
+                    skips(FILTER_OP_BETWEEN, &[Some(MIN - 1), Some(-200)]),
+                    "{case}"
+                );
+                assert!(
+                    !skips(FILTER_OP_BETWEEN, &[Some(MAX + 1), Some(MAX)]),
+                    "{case}"
+                );
+                assert!(
+                    !skips(FILTER_OP_BETWEEN, &[Some(MIN - 1), Some(MIN)]),
+                    "{case}"
+                );
+                assert!(!skips(FILTER_OP_LT, &[NULL]), "{case}");
+                assert!(!skips(FILTER_OP_BETWEEN, &[NULL, Some(-1000)]), "{case}");
+                assert!(!skips(FILTER_OP_BETWEEN, &[Some(-1000), NULL]), "{case}");
+                assert!(!skips(FILTER_OP_EQ, &[Some(MAX + 1)]), "{case}");
+            }
+        }
+    }
+
+    #[test]
+    fn equality_values_compare_across_physical_widths() {
+        for physical_type in physical_types() {
+            for width in WIDTHS {
+                let skips = |has_nulls, values: &[Option<i128>]| {
+                    equality_skips(&physical_type, width, has_nulls, values)
+                };
+                let case = format!("{physical_type:?} at width {width}");
+                assert!(skips(false, &[Some(MIN - 1), Some(MAX + 1)]), "{case}");
+                assert!(!skips(false, &[Some(MIN - 1), Some(MIN)]), "{case}");
+                assert!(!skips(false, &[Some(MAX + 1), Some(MAX)]), "{case}");
+                assert!(!skips(false, &[Some(0)]), "{case}");
+                assert!(skips(false, &[NULL, Some(1000)]), "{case}");
+                assert!(!skips(true, &[NULL]), "{case}");
+            }
+        }
+    }
+
+    #[test]
+    fn statistics_of_the_wrong_length_never_prune() {
+        let buf = filter_values(8, &[Some(1000)]);
+        for (physical_type, bad) in [
+            (PhysicalType::Int32, vec![0u8; 8]),
+            (PhysicalType::Int64, vec![0u8; 4]),
+            (PhysicalType::FixedLenByteArray(5), vec![0u8; 4]),
+            (PhysicalType::ByteArray, vec![]),
+            (PhysicalType::Double, vec![0u8; 8]),
+        ] {
+            assert!(!ParquetDecoder::value_outside_range(
+                &physical_type,
+                &desc(&buf, 1),
+                Some(8),
+                false,
+                false,
+                FILTER_OP_GT,
+                Some(&bad),
+                Some(&bad),
+            )
+            .unwrap());
+            assert!(!ParquetDecoder::all_values_outside_min_max_with_stats(
+                &physical_type,
+                &desc(&buf, 1),
+                false,
+                Some(8),
+                false,
+                false,
+                Some(&bad),
+                Some(&bad),
+            )
+            .unwrap());
+        }
+    }
+
+    #[test]
+    fn bloom_probe_hashes_the_physical_encoding() {
+        for physical_type in [
+            PhysicalType::Int32,
+            PhysicalType::Int64,
+            PhysicalType::FixedLenByteArray(5),
+        ] {
+            let hash = |v: i128| match physical_type {
+                PhysicalType::Int32 => parquet2::bloom_filter::hash_native(v as i32),
+                PhysicalType::Int64 => parquet2::bloom_filter::hash_native(v as i64),
+                _ => parquet2::bloom_filter::hash_byte(&v.to_be_bytes()[11..]),
+            };
+            let mut bitset = vec![0u8; 32];
+            parquet2::bloom_filter::insert(&mut bitset, hash(MAX));
+            parquet2::bloom_filter::insert(&mut bitset, hash(MIN));
+            for width in WIDTHS {
+                let absent = |has_nulls, values: &[Option<i128>]| {
+                    bloom_absent(&bitset, &physical_type, width, has_nulls, values)
+                };
+                let case = format!("{physical_type:?} at width {width}");
+                assert!(!absent(false, &[Some(MAX)]), "{case}");
+                assert!(!absent(false, &[Some(MIN)]), "{case}");
+                assert!(absent(false, &[Some(MAX - 1), Some(0)]), "{case}");
+                assert!(absent(false, &[NULL]), "{case}");
+                assert!(!absent(true, &[NULL]), "{case}");
+            }
+        }
+    }
+
+    #[test]
+    fn bloom_probe_treats_a_value_wider_than_the_column_as_absent() {
+        let physical_type = PhysicalType::FixedLenByteArray(1);
+        let mut bitset = vec![0u8; 32];
+        parquet2::bloom_filter::insert(&mut bitset, parquet2::bloom_filter::hash_byte([0x2C]));
+        // 300 = 0x012C: its low byte is in the set, but no FIXED_LEN_BYTE_ARRAY(1) row holds it.
+        assert!(bloom_absent(
+            &bitset,
+            &physical_type,
+            8,
+            false,
+            &[Some(300)]
+        ));
+        assert!(!bloom_absent(
+            &bitset,
+            &physical_type,
+            8,
+            false,
+            &[Some(0x2C)]
+        ));
+    }
+
+    #[test]
+    fn bloom_probe_declines_byte_array_decimals() {
+        let mut bitset = vec![0u8; 32];
+        parquet2::bloom_filter::insert(
+            &mut bitset,
+            parquet2::bloom_filter::hash_byte([0x00, 0xFA]),
+        );
+        for value in [MAX, MAX - 1] {
+            assert!(!bloom_absent(
+                &bitset,
+                &PhysicalType::ByteArray,
+                8,
+                false,
+                &[Some(value)]
+            ));
+        }
+    }
+
+    #[test]
+    fn resize_signed_be_sign_extends_and_rejects_values_that_do_not_fit() {
+        let mut wide = [0u8; 4];
+        assert!(resize_signed_be(&[0xFF, 0x6A], &mut wide));
+        assert_eq!(wide, (-150i32).to_be_bytes());
+        let mut narrow = [0u8; 1];
+        for (value, fits) in [
+            (127i64, true),
+            (-128, true),
+            (128, false),
+            (-129, false),
+            (-1, true),
+        ] {
+            assert_eq!(
+                resize_signed_be(&value.to_be_bytes(), &mut narrow),
+                fits,
+                "{value}"
+            );
+            if fits {
+                assert_eq!(narrow[0] as i8 as i64, value);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod legacy_stats_tests {
+    use super::*;
+
+    fn stats(
+        min: Option<&[u8]>,
+        max: Option<&[u8]>,
+        min_value: Option<&[u8]>,
+        max_value: Option<&[u8]>,
+    ) -> parquet_format_safe::Statistics {
+        parquet_format_safe::Statistics {
+            max: max.map(<[u8]>::to_vec),
+            min: min.map(<[u8]>::to_vec),
+            null_count: Some(0),
+            distinct_count: None,
+            max_value: max_value.map(<[u8]>::to_vec),
+            min_value: min_value.map(<[u8]>::to_vec),
+            is_max_value_exact: None,
+            is_min_value_exact: None,
+        }
+    }
+
+    #[test]
+    fn deprecated_bounds_serve_signed_numeric_types_only() {
+        let deprecated = stats(Some(b"lo"), Some(b"hi"), None, None);
+        for (physical_type, tag) in [
+            (PhysicalType::Int32, ColumnTypeTag::Int),
+            (PhysicalType::Int32, ColumnTypeTag::Date),
+            (PhysicalType::Int64, ColumnTypeTag::Long),
+            (PhysicalType::Int64, ColumnTypeTag::Decimal64),
+            (PhysicalType::Float, ColumnTypeTag::Float),
+            (PhysicalType::Double, ColumnTypeTag::Double),
+        ] {
+            assert_eq!(
+                ParquetDecoder::comparable_min_max(Some(&deprecated), &physical_type, tag as i32),
+                (Some(&b"lo"[..]), Some(&b"hi"[..])),
+                "{physical_type:?} {tag:?}"
+            );
+        }
+        for (physical_type, tag) in [
+            (PhysicalType::Int32, ColumnTypeTag::IPv4),
+            (PhysicalType::ByteArray, ColumnTypeTag::Varchar),
+            (PhysicalType::ByteArray, ColumnTypeTag::Binary),
+            (PhysicalType::FixedLenByteArray(16), ColumnTypeTag::Uuid),
+            (PhysicalType::FixedLenByteArray(5), ColumnTypeTag::Decimal64),
+            (PhysicalType::Boolean, ColumnTypeTag::Boolean),
+        ] {
+            assert_eq!(
+                ParquetDecoder::comparable_min_max(Some(&deprecated), &physical_type, tag as i32),
+                (None, None),
+                "{physical_type:?} {tag:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn current_bounds_serve_every_type() {
+        let current = stats(Some(b"lo"), Some(b"hi"), Some(b"a"), Some(b"z"));
+        for (physical_type, tag) in [
+            (PhysicalType::Int64, ColumnTypeTag::Long),
+            (PhysicalType::Int32, ColumnTypeTag::IPv4),
+            (PhysicalType::ByteArray, ColumnTypeTag::Varchar),
+            (PhysicalType::FixedLenByteArray(16), ColumnTypeTag::Uuid),
+        ] {
+            assert_eq!(
+                ParquetDecoder::comparable_min_max(Some(&current), &physical_type, tag as i32),
+                (Some(&b"a"[..]), Some(&b"z"[..])),
+                "{physical_type:?} {tag:?}"
+            );
+        }
+        assert_eq!(
+            ParquetDecoder::comparable_min_max(
+                None,
+                &PhysicalType::Int64,
+                ColumnTypeTag::Long as i32
+            ),
+            (None, None)
+        );
     }
 }

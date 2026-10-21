@@ -193,6 +193,9 @@ public class FastGroupByAllocator implements GroupByAllocator {
         // Only the data chunks (query-proportional) are charged to the per-query tracker;
         // the chunk index stays on the global counter, so it is never bound here and can be
         // retained across cursors without dirtying the per-query counter.
+        if (tracker != memoryTracker) {
+            Unsafe.chargeHeldMemory(allocated, MemoryTag.NATIVE_GROUP_BY_FUNCTION, tracker);
+        }
         this.memoryTracker = tracker;
     }
 

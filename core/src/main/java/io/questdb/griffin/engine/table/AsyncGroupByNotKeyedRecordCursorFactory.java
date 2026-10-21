@@ -202,17 +202,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        frameSequence.of(base, executionContext, order);
-        try {
-            cursor.of(frameSequence, executionContext);
+        if (cursor.isOpenedByShared()) {
+            cursor.setOpenedByShared(false);
             return cursor;
-        } catch (Throwable th) {
-            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
-            // so the cached factory stays reusable.
-            cursor.close();
-            throw th;
         }
+        return openCursor(executionContext);
     }
 
     @Override
@@ -236,6 +230,13 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             shared = new AsyncGroupByNotKeyedSharedCursor(cursor, sharedRecordFunctions.getQuick(idx), frameSequence.getAtom().getOwnerMapValue());
             sharedCursors.extendAndSet(idx, shared);
         }
+        // A shared consumer on the build side of a hash join opens before the primary cursor and reads its
+        // symbol tables as it opens; getCursor then hands over the open primary.
+        final boolean isPrimaryOpened = !cursor.isOpen();
+        if (isPrimaryOpened) {
+            openCursor(executionContext);
+            cursor.setOpenedByShared(true);
+        }
         // Donate the owner state to the consumer's aligned clones before they initialize, so
         // stateful functions inside aggregate arguments - such as cursor comparisons caching a
         // scalar sub-query result - never re-run their expensive and potentially
@@ -246,10 +247,17 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         // exactly once in the atom when the primary cursor opens.
         final ObjList<Function> sharedFunctions = sharedRecordFunctions.getQuick(idx);
         assert groupByFunctions.size() == sharedFunctions.size();
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            groupByFunctions.getQuick(i).offerStateTo(sharedFunctions.getQuick(i));
+        try {
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                groupByFunctions.getQuick(i).offerStateTo(sharedFunctions.getQuick(i));
+            }
+            shared.of(executionContext, frameSequence);
+        } catch (Throwable th) {
+            if (isPrimaryOpened) {
+                cursor.close();
+            }
+            throw th;
         }
-        shared.of(executionContext, frameSequence);
         return shared;
     }
 
@@ -591,5 +599,19 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    private RecordCursor openCursor(SqlExecutionContext executionContext) throws SqlException {
+        final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        frameSequence.of(base, executionContext, order);
+        try {
+            cursor.of(frameSequence, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 }

@@ -201,7 +201,12 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     /**
      * Returns an independent cursor for the given consumer ID. Idempotent —
-     * same sharedId always returns the same cursor instance.
+     * same sharedId always returns the same cursor instance. A consumer can
+     * open before the primary cursor, as on the build side of a hash join: the
+     * factory then opens the primary cursor, so the shared cursor's symbol
+     * tables are valid when it returns, and {@link #getCursor} hands that
+     * primary over. Closing a shared cursor closes a primary the factory has
+     * not handed over.
      *
      * @param executionContext SQL execution context
      * @param sharedId         unique consumer identifier (0-based)

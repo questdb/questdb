@@ -42,6 +42,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.IPv4;
     }

@@ -26,6 +26,7 @@ package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlKeywords;
@@ -46,6 +47,11 @@ import org.jetbrains.annotations.Nullable;
  * facts they are built on and never reads them.
  */
 public final class PlanToFactoryRules {
+    /**
+     * The most slots per master row, offsets times slaves, for which a HORIZON JOIN projection over a master with
+     * random access runs in parallel, see {@link #isHorizonWithinSlotCap}.
+     */
+    public static final int MAX_HORIZON_SLOTS_PER_MASTER_ROW = 100;
 
     private PlanToFactoryRules() {
     }
@@ -65,7 +71,7 @@ public final class PlanToFactoryRules {
         if (postingDistinctScan(aggregate) != null) {
             return AggregateFactory.POSTING_DISTINCT;
         }
-        if (aggregate.getChild() instanceof HorizonJoinPlan) {
+        if (aggregate.getChild() instanceof HorizonJoinPlan horizon && horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE) {
             return AggregateFactory.HORIZON;
         }
         if (LogicalPlans.isCount(aggregate)) {
@@ -82,6 +88,21 @@ public final class PlanToFactoryRules {
         final CharSequence name = plan.getOutput().getColumnName(index);
         return LogicalPlans.skipFilters(plan) instanceof AggregatePlan aggregate && LogicalPlans.isCount(aggregate) && SqlKeywords.isCountKeyword(name)
                 ? "count" : name;
+    }
+
+    /**
+     * The index, in the output of the temporal join step's slave, of the first column the full-fat ASOF or LT join
+     * cannot carry: a column that is not a slave key, which the join stores in its map value, of a type the map value
+     * cannot hold, such as a variable-size type. -1 when the join carries every slave column.
+     */
+    public static int fullFatTemporalRejectedColumn(JoinInput step) {
+        final OutputSchema slave = step.getInput().getOutput();
+        for (int i = 0, n = slave.getColumnCount(); i < n; i++) {
+            if (!RecordValueSinkFactory.isSupportedColumnType(slave.getColumnType(i)) && !step.hasKeyOn(slave.getColumnId(i))) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -235,6 +256,15 @@ public final class PlanToFactoryRules {
      */
     public static boolean isFusedFilter(FilterPlan filter) {
         return fusedScan(filter) != null;
+    }
+
+    /**
+     * True when the HORIZON JOIN matches at most {@link #MAX_HORIZON_SLOTS_PER_MASTER_ROW} slaves and offsets per
+     * master row. Past that, a projection over a master with random access runs serially: the parallel projection
+     * cuts the master into frames that shrink as the slots grow, and every frame costs a reduce task.
+     */
+    public static boolean isHorizonWithinSlotCap(HorizonJoinPlan horizon) {
+        return (long) horizon.getOffsetValues().size() * horizon.getSlaves().size() <= MAX_HORIZON_SLOTS_PER_MASTER_ROW;
     }
 
     /**

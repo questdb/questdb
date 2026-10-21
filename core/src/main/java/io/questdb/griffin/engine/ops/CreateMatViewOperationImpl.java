@@ -37,6 +37,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -54,6 +55,7 @@ import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -390,9 +392,19 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             intervalExpr = cursor.getPeriodToken();
             intervalPos = cursor.getPeriodPosition();
         } else if (sampleBy != null) {
-            final ConstantExpression period = (ConstantExpression) sampleByBucket((AggregatePlan) sampleBy).argumentAt(0);
+            final AggregatePlan aggregate = (AggregatePlan) sampleBy;
+            final FunctionExpression bucket = sampleByBucket(aggregate);
+            final ConstantExpression period = (ConstantExpression) bucket.argumentAt(0);
             intervalExpr = intervalText(period);
             intervalPos = period.getPosition();
+            if (timestamp == null) {
+                final int bucketId = aggregate.getOutput().getColumnId(aggregate.getGroupingExpressions().indexOf(bucket));
+                final int bucketIndex = copyingColumnIndex(root, aggregate, bucketId);
+                if (bucketIndex >= 0) {
+                    createTableOperation.setTimestampColumnName(Chars.toString(columns.getColumnName(bucketIndex)));
+                    createTableOperation.setTimestampColumnNamePosition(positions.getQuick(bucketIndex));
+                }
+            }
         }
         if (sampleBy != null && timestamp == null && isDirectTableSampleBy(sampleBy)) {
             // SAMPLE BY buckets the base designated timestamp, which the view must select.
@@ -517,15 +529,53 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
-        if (createTableOperation.getTimestampColumnName() == null) {
-            if (selectMetadata.getTimestampIndex() == -1) {
-                throw SqlException.position(selectTextPosition)
-                        .put("materialized view query is required to have designated timestamp");
-            }
+        if (createTableOperation.getTimestampColumnName() == null
+                && (selectMetadata.getTimestampIndex() == -1 || scanDirection != RecordCursorFactory.SCAN_DIRECTION_FORWARD)) {
+            throw SqlException.position(selectTextPosition)
+                    .put("materialized view query is required to have designated timestamp");
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
+    }
+
+    /**
+     * Whether column {@code id} of {@code plan} copies column {@code sourceId} of {@code source} as a plain column,
+     * through the projections and the row-preserving levels between them, whatever order they sort the rows in.
+     */
+    private static boolean copiesColumn(LogicalPlan plan, int id, LogicalPlan source, int sourceId) {
+        while (plan != source) {
+            switch (plan) {
+                case ProjectPlan project -> {
+                    if (!(project.getExpressions().getQuick(project.getOutput().getColumnIndexById(id)) instanceof ColumnExpression column)
+                            || column.isCast()) {
+                        return false;
+                    }
+                    id = column.getColumnId();
+                }
+                case ForwardingPlan _, WindowPlan _ -> {
+                }
+                default -> {
+                    return false;
+                }
+            }
+            plan = plan.inputAt(0);
+        }
+        return id == sourceId;
+    }
+
+    /**
+     * The index of the last root column that copies column {@code sourceId} of {@code source}, or -1 when none does;
+     * the last, as the binder names a SAMPLE BY bucket after the last alias of the timestamp.
+     */
+    private static int copyingColumnIndex(LogicalPlan root, LogicalPlan source, int sourceId) {
+        final OutputSchema columns = root.getOutput();
+        for (int i = columns.getColumnCount() - 1; i >= 0; i--) {
+            if (copiesColumn(root, columns.getColumnId(i), source, sourceId)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**

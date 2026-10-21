@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -77,7 +78,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                     final OutputSchema pruned = schema(type, false);
                     try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
-                        Assert.assertTrue(expression.getOverload().isOrderSensitiveAggregate());
+                        Assert.assertEquals(FunctionFactory.OrderDependence.TABLE_ORDER, expression.getOverload().getOrderDependence());
                         Assert.assertEquals(type, expression.getDataType());
                         Assert.assertEquals(27, ((ColumnExpression) expression.argumentAt(0)).getColumnId());
                         try (Function owner = binder.instantiateAggregate(expression, pruned, metadata(type, false), sqlExecutionContext);
@@ -134,7 +135,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                     try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
                         Assert.assertEquals(type, expression.getDataType());
-                        Assert.assertFalse(expression.getOverload().isOrderSensitiveAggregate());
+                        Assert.assertEquals(FunctionFactory.OrderDependence.NONE, expression.getOverload().getOrderDependence());
                         try (Function owner = binder.instantiateAggregate(expression, pruned, metadata(type, false), sqlExecutionContext);
                              Function worker = binder.instantiateAggregate(expression, full, metadata(type, true), sqlExecutionContext);
                              PageFrameMemoryRecord ownerFrame = new PageFrameMemoryRecord() {
@@ -203,12 +204,12 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Aggregate function cannot be passed as an argument");
                 }
-                Assert.assertTrue(binder.bindAggregate(call("first_not_null"), input, null, sqlExecutionContext)
-                        .getOverload().isOrderSensitiveAggregate());
+                Assert.assertEquals(FunctionFactory.OrderDependence.TABLE_ORDER, binder.bindAggregate(call("first_not_null"), input, null, sqlExecutionContext)
+                        .getOverload().getOrderDependence());
             }
             final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(new FirstIntGroupByFunctionFactory() {
             });
-            Assert.assertTrue(descriptor.isOrderSensitiveAggregate());
+            Assert.assertEquals(FunctionFactory.OrderDependence.TABLE_ORDER, descriptor.getOrderDependence());
         });
     }
 
@@ -238,7 +239,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                                  SimpleMapValue workerValue = new SimpleMapValue(2)) {
                                 Assert.assertEquals(!isDynamic, ((SymbolFunction) owner).isSymbolTableStatic());
                                 Assert.assertTrue(((SymbolFunction) worker).isSymbolTableStatic());
-                                Assert.assertTrue(expression.getOverload().isOrderSensitiveAggregate());
+                                Assert.assertEquals(FunctionFactory.OrderDependence.TABLE_ORDER, expression.getOverload().getOrderDependence());
                                 final GroupByFunction first = (GroupByFunction) owner;
                                 final GroupByFunction second = (GroupByFunction) worker;
                                 first.initValueTypes(new ArrayColumnTypes());
@@ -270,7 +271,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                     final OutputSchema pruned = schema(type, false);
                     try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
-                        Assert.assertFalse(expression.getOverload().isOrderSensitiveAggregate());
+                        Assert.assertEquals(FunctionFactory.OrderDependence.NONE, expression.getOverload().getOrderDependence());
                         try (Function owner = binder.instantiateAggregate(expression, pruned, metadata(type, false), sqlExecutionContext);
                              Function worker = binder.instantiateAggregate(expression, full, metadata(type, true), sqlExecutionContext);
                              FastGroupByAllocator ownerAllocator = new FastGroupByAllocator(1024, 4096);

@@ -67,6 +67,9 @@ public class AsyncGroupByNotKeyedSharedCursor implements NoRandomAccessRecordCur
     @Override
     public void close() {
         Misc.clearObjList(groupByFunctions);
+        if (primaryCursor.isOpenedByShared()) {
+            primaryCursor.close();
+        }
     }
 
     @Override

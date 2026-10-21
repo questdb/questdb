@@ -508,6 +508,33 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNanoOutOfRangeConstantFailsAtLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE events (event_time TIMESTAMP_NS, other TIMESTAMP_NS, id INT) TIMESTAMP(event_time) PARTITION BY DAY");
+            final String pre1677 = "inconvertible value: -11676096000000000 [TIMESTAMP -> TIMESTAMP_NS]";
+            final String post2262 = "inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]";
+            final String[][] cases = {
+                    {"event_time > '1600-01-01'", "'1600-01-01'", pre1677},
+                    {"event_time <= '2300-01-01'", "'2300-01-01'", post2262},
+                    {"'1600-01-01' < event_time", "'1600-01-01'", pre1677},
+                    {"event_time = '1600-01-01'", "'1600-01-01'", pre1677},
+                    {"event_time != '1600-01-01'::TIMESTAMP", "::TIMESTAMP", pre1677},
+                    {"other > '1600-01-01'", "'1600-01-01'", pre1677},
+                    {"event_time BETWEEN '1600-01-01' AND '2024-01-01'", "'1600-01-01'", pre1677},
+                    {"other BETWEEN '2024-01-01' AND '2300-01-01'", "'2300-01-01'", post2262},
+                    {"other IN ('2024-01-01'::TIMESTAMP, '2300-01-01'::TIMESTAMP)", "::TIMESTAMP)", post2262},
+            };
+            for (int pass = 0; pass < 2; pass++) {
+                for (String[] c : cases) {
+                    final String sql = "SELECT id FROM events WHERE " + c[0];
+                    assertQuery(sql).noLeakCheck().fails(sql.indexOf(c[1]), c[2]);
+                }
+                execute("INSERT INTO events VALUES ('2024-01-01T00:00:00.000000001Z', '2024-01-01', 1)");
+            }
+        });
+    }
+
+    @Test
     public void testNanoProjectionKeepsMicrosecondsBeyondNanosecondRange() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE n (ts TIMESTAMP_NS)");

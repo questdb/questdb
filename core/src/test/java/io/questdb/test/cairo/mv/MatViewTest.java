@@ -8760,6 +8760,54 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByOrderedOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE base_price (sym VARCHAR, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            execute("CREATE MATERIALIZED VIEW desc_day AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h ORDER BY ts DESC) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW desc_default AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h ORDER BY ts DESC)");
+            execute("CREATE MATERIALIZED VIEW by_sym AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h ORDER BY sym, price DESC)");
+            execute("CREATE MATERIALIZED VIEW outer_desc AS (SELECT * FROM (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h) ORDER BY ts DESC) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW sub_query_desc AS (SELECT sym, last(price) price, ts FROM (SELECT * FROM base_price WHERE price > 0) TIMESTAMP(ts) SAMPLE BY 1h ORDER BY ts DESC) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO base_price VALUES
+                        ('gbpusd', 1.320, '2024-09-10T12:01'),
+                        ('gbpusd', 1.323, '2024-09-10T12:02'),
+                        ('jpyusd', 103.21, '2024-09-10T13:02'),
+                        ('gbpusd', 1.321, '2024-09-10T14:02')
+                    """);
+            drainQueues();
+            assertSampleByOrderedOutputViews("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T13:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T14:00:00.000000Z
+                    """);
+
+            execute("INSERT INTO base_price VALUES ('jpyusd', 103.25, '2024-09-10T13:30'), ('gbpusd', 1.322, '2024-09-11T00:10')");
+            drainQueues();
+            assertSampleByOrderedOutputViews("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.25\t2024-09-10T13:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T14:00:00.000000Z
+                    gbpusd\t1.322\t2024-09-11T00:00:00.000000Z
+                    """);
+            assertQuery("SELECT table_name, designatedTimestamp, partitionBy FROM tables() WHERE table_name <> 'base_price' ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name\tdesignatedTimestamp\tpartitionBy
+                            by_sym\tts\tMONTH
+                            desc_day\tts\tDAY
+                            desc_default\tts\tMONTH
+                            outer_desc\tts\tDAY
+                            sub_query_desc\tts\tDAY
+                            """);
+        });
+    }
+
+    @Test
     public void testSelfJoinQuery() throws Exception {
         // Verify that the detached base table reader used by the refresh job
         // can be safely used in the mat view query multiple times.
@@ -10652,6 +10700,21 @@ public class MatViewTest extends AbstractCairoTest {
         assertQuery(prefix + select + ") PARTITION BY DAY")
                 .noLeakCheck()
                 .fails(prefix.length() + select.lastIndexOf(offender), "non-deterministic function cannot be used in materialized view: " + offenderName);
+    }
+
+    private void assertSampleByOrderedOutputViews(String expected) throws Exception {
+        assertQuery("SELECT view_name, invalidation_reason FROM materialized_views() WHERE view_status <> 'valid'")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("view_name\tinvalidation_reason\n");
+        final String[] views = {"by_sym", "desc_day", "desc_default", "outer_desc", "sub_query_desc"};
+        for (String view : views) {
+            assertQuery(view)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+        }
     }
 
     private String copySql(int from, int count) {

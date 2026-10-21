@@ -2064,6 +2064,121 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOverTimestampOrderedUnionAllVarSizeColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE a (ts TIMESTAMP, s STRING, v VARCHAR, bin BINARY, arr DOUBLE[], d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (ts TIMESTAMP, s STRING, v VARCHAR, bin BINARY, arr DOUBLE[], d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('2024-01-01T00:00:01Z', 1),
+                        ('2024-01-01T00:00:02Z', 2),
+                        ('2024-01-01T00:00:04Z', 3),
+                        ('2024-01-01T00:00:05Z', 4)
+                    """);
+            execute("""
+                    INSERT INTO a VALUES
+                        ('2024-01-01T00:00:00Z', 'a0', 'va0', NULL, ARRAY[0.0], 0.0),
+                        ('2024-01-01T00:00:04Z', 'a4', 'va4', NULL, ARRAY[4.0], 4.0)
+                    """);
+            execute("INSERT INTO b VALUES ('2024-01-01T00:00:02Z', 'b2', 'vb2', NULL, ARRAY[2.0], 2.0)");
+            final String union = "(SELECT * FROM (SELECT * FROM a UNION ALL SELECT * FROM b) ORDER BY ts) u";
+            assertQuery("SELECT m.ts, m.k, u.s, u.v, u.bin, u.arr, u.d FROM m ASOF JOIN " + union)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: m
+                                    Encode sort
+                                      keys: [ts]
+                                        Union All
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """)
+                    .returns("""
+                            ts\tk\ts\tv\tbin\tarr\td
+                            2024-01-01T00:00:01.000000Z\t1\ta0\tva0\t\t[0.0]\t0.0
+                            2024-01-01T00:00:02.000000Z\t2\tb2\tvb2\t\t[2.0]\t2.0
+                            2024-01-01T00:00:04.000000Z\t3\ta4\tva4\t\t[4.0]\t4.0
+                            2024-01-01T00:00:05.000000Z\t4\ta4\tva4\t\t[4.0]\t4.0
+                            """);
+            assertQuery("SELECT m.ts, m.k, u.s, u.v, u.bin, u.arr, u.d FROM m LT JOIN " + union)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Lt Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: m
+                                    Encode sort
+                                      keys: [ts]
+                                        Union All
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """)
+                    .returns("""
+                            ts\tk\ts\tv\tbin\tarr\td
+                            2024-01-01T00:00:01.000000Z\t1\ta0\tva0\t\t[0.0]\t0.0
+                            2024-01-01T00:00:02.000000Z\t2\ta0\tva0\t\t[0.0]\t0.0
+                            2024-01-01T00:00:04.000000Z\t3\tb2\tvb2\t\t[2.0]\t2.0
+                            2024-01-01T00:00:05.000000Z\t4\ta4\tva4\t\t[4.0]\t4.0
+                            """);
+            assertQuery("SELECT m.ts, m.k, u.d FROM m ASOF JOIN " + union)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join
+                                  condition:\s
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: m
+                                    Union All Merge
+                                      order: [ts asc]
+                                      branches: 2
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """)
+                    .returns("""
+                            ts\tk\td
+                            2024-01-01T00:00:01.000000Z\t1\t0.0
+                            2024-01-01T00:00:02.000000Z\t2\t2.0
+                            2024-01-01T00:00:04.000000Z\t3\t4.0
+                            2024-01-01T00:00:05.000000Z\t4\t4.0
+                            """);
+            assertQuery("SELECT m.ts, m.k, u.s FROM m ASOF JOIN " + union)
+                    .fullFatJoins()
+                    .noLeakCheck()
+                    .fails(29, "right side column 's' is of unsupported type");
+            assertQuery("SELECT m.ts, x.s FROM m ASOF JOIN (SELECT ts, first(s) s FROM a SAMPLE BY 1s FILL(PREV)) x")
+                    .noLeakCheck()
+                    .fails(24, "right side column 's' is of unsupported type");
+        });
+    }
+
+    @Test
     public void testAsOfJoinSymbolAndDecimalKeys() throws Exception {
         assertMemoryLeak(() -> {
             assertAsOfJoinSymbolAndDecimalKey("dec8", "DECIMAL(2,1)", "1.2", "2.3");

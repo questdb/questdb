@@ -869,6 +869,36 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotNarrowIntegerMeasure() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT CASE WHEN x % 3 = 0 THEN 'a' WHEN x % 3 = 1 THEN 'b' ELSE 'c' END k, x % 4 g,
+                            (x - 1)::BYTE b, (x * -100)::SHORT sh
+                        FROM long_sequence(24)
+                    )""");
+            assertQuery("SELECT * FROM t PIVOT (first(b) fb, last(sh) ls FOR k IN ('a', 'b', 'c', 'd') GROUP BY g) ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\ta_fb\ta_ls\tb_fb\tb_ls\tc_fb\tc_ls\td_fb\td_ls
+                            0\t11\t-2400\t3\t-1600\t7\t-2000\tnull\tnull
+                            1\t8\t-2100\t0\t-1300\t4\t-1700\tnull\tnull
+                            2\t5\t-1800\t9\t-2200\t1\t-1400\tnull\tnull
+                            3\t2\t-1500\t6\t-1900\t10\t-2300\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (first(b) FOR k IN ('a', 'b') g IN (0, 1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_0\ta_1\tb_0\tb_1
+                            11\t8\t3\t0
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotNestedPivot() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
@@ -2623,6 +2653,43 @@ public class PivotTest extends AbstractSqlParserTest {
                             """);
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN qn ON (t.s = qn.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING PIVOT (avg(bp) FOR s IN ('a', 'b'))", 124, "PIVOT over WINDOW JOIN supports avg only over DOUBLE, FLOAT, INT, LONG and SHORT values");
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN qn ON (t.s = qn.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING PIVOT (avg(dp) FOR s IN ('a', 'b'))", 124, "PIVOT over WINDOW JOIN supports avg only over DOUBLE, FLOAT, INT, LONG and SHORT values");
+        });
+    }
+
+    @Test
+    public void testPivotWindowJoinNarrowIntegerMeasure() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowJoinTables();
+            execute("CREATE TABLE qs (sym SYMBOL, sp SHORT, bp BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO qs VALUES ('a', 0, 0, 1_000_000), ('b', 7, 7, 2_000_000), ('a', 3, 3, 3_000_000), ('b', -4, -4, 4_500_000)");
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN qs ON (t.s = qs.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    PIVOT (first(sp) f, last(bp) l FOR s IN ('a', 'b') GROUP BY v)
+                    ORDER BY v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\ta_f\ta_l\tb_f\tb_l
+                            1\t0\t0\tnull\tnull
+                            2\tnull\tnull\t7\t7
+                            3\t3\t3\tnull\tnull
+                            4\tnull\tnull\tnull\tnull
+                            5\tnull\tnull\tnull\tnull
+                            """);
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN qs ON (t.s = qs.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    PIVOT (first(sp) f, last(bp) l FOR s IN ('a', 'b'))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_f\ta_l\tb_f\tb_l
+                            0\t3\t7\t7
+                            """);
         });
     }
 

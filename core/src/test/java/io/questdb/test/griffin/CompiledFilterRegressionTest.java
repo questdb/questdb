@@ -8260,6 +8260,58 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolConstantArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('1', 0), ('2', 1), ('3', 2), ('5000000001', 3), ('-1', 4), (null, 5)
+                    """);
+
+            final String one = """
+                    sy\tk
+                    1\t1970-01-01T00:00:00.000000Z
+                    """;
+            assertJitMatchesJava("x WHERE sy = 2 - 1", false, one);
+            assertJitMatchesJava("x WHERE 2 - 1 = sy", false, one);
+            assertJitMatchesJava("x WHERE sy = 1 * 1", false, one);
+            assertJitMatchesJava("x WHERE sy = -(-1)", false, one);
+            assertJitMatchesJava("x WHERE sy = 5_000_000_000 - 4_999_999_999", false, one);
+            assertJitMatchesJava("x WHERE sy = -(1 - 3)", false, """
+                    sy\tk
+                    2\t1970-01-01T00:00:00.000001Z
+                    """);
+            assertJitMatchesJava("x WHERE sy != 3 - 1", false, """
+                    sy\tk
+                    1\t1970-01-01T00:00:00.000000Z
+                    3\t1970-01-01T00:00:00.000002Z
+                    5000000001\t1970-01-01T00:00:00.000003Z
+                    -1\t1970-01-01T00:00:00.000004Z
+                    \t1970-01-01T00:00:00.000005Z
+                    """);
+            assertJitMatchesJava("x WHERE sy = 5_000_000_000 + 1", false, """
+                    sy\tk
+                    5000000001\t1970-01-01T00:00:00.000003Z
+                    """);
+            assertJitMatchesJava("x WHERE sy = 1 / 0", false, """
+                    sy\tk
+                    \t1970-01-01T00:00:00.000005Z
+                    """);
+            assertJitMatchesJava("x WHERE sy IN (2 - 1, 3)", false, """
+                    sy\tk
+                    1\t1970-01-01T00:00:00.000000Z
+                    3\t1970-01-01T00:00:00.000002Z
+                    """);
+
+            assertJitMatchesJava("x WHERE sy = '1'", true, one);
+            assertJitMatchesJava("x WHERE sy = -1", true, """
+                    sy\tk
+                    -1\t1970-01-01T00:00:00.000004Z
+                    """);
+        });
+    }
+
+    @Test
     public void testSymbolKnownConstant() throws Exception {
         // The column order is important here, since we want
         // query and table column indexes to be different.

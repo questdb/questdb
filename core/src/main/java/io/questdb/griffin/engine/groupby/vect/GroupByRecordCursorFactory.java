@@ -227,28 +227,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        aggregateError.clear();
-        oomCounter.set(0);
-        // clear maps
-        for (int i = 0, n = pRosti.length; i < n; i++) {
-            raf.clear(pRosti[i]);
+        if (cursor.isOpenedByShared) {
+            cursor.isOpenedByShared = false;
+            return cursor;
         }
-        // clear state of aggregate functions
-        for (int i = 0, n = vafList.size(); i < n; i++) {
-            vafList.getQuick(i).clear();
-        }
-        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
-        return cursor.of(
-                base.getMetadata(),
-                pageFrameCursor,
-                executionContext.getMessageBus(),
-                executionContext.getCircuitBreaker(),
-                executionContext.getMemoryTracker()
-        );
+        return openCursor(executionContext);
     }
 
     @Override
-    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) {
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }
@@ -257,6 +244,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         if (shared == null) {
             shared = new RostiSharedCursor();
             sharedCursors.extendAndSet(idx, shared);
+        }
+        // A shared consumer on the build side of a hash join opens before the primary cursor and reads its
+        // symbol tables as it opens; getCursor then hands over the open primary.
+        if (cursor.frameCursor == null) {
+            openCursor(executionContext);
+            cursor.isOpenedByShared = true;
         }
         shared.of();
         return shared;
@@ -366,6 +359,27 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return reclaimed;
     }
 
+    private RecordCursor openCursor(SqlExecutionContext executionContext) throws SqlException {
+        aggregateError.clear();
+        oomCounter.set(0);
+        // clear maps
+        for (int i = 0, n = pRosti.length; i < n; i++) {
+            raf.clear(pRosti[i]);
+        }
+        // clear state of aggregate functions
+        for (int i = 0, n = vafList.size(); i < n; i++) {
+            vafList.getQuick(i).clear();
+        }
+        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
+        return cursor.of(
+                base.getMetadata(),
+                pageFrameCursor,
+                executionContext.getMessageBus(),
+                executionContext.getCircuitBreaker(),
+                executionContext.getMemoryTracker()
+        );
+    }
+
     private void resetRostiMemorySize() {
         for (int i = 0, n = pRosti.length; i < n; i++) {
             if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
@@ -424,6 +438,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private long ctrlStart;
         private int frameCount;
         private PageFrameCursor frameCursor;
+        private boolean isOpenedByShared;
         private boolean isRostiBuilt;
         private long pRostiBig;
         private RostiRecord recordB;
@@ -451,6 +466,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
+            isOpenedByShared = false;
             Misc.free(frameAddressCache);
             frameCursor = Misc.free(frameCursor);
             raf.reset(pRostiBig, ROSTI_MINIMIZED_SIZE);
@@ -1007,6 +1023,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
+            if (cursor.isOpenedByShared) {
+                cursor.close();
+            }
         }
 
         @Override

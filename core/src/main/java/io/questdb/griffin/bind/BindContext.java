@@ -46,6 +46,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.TableFunctionSources;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
@@ -298,6 +299,17 @@ final class BindContext implements Mutable {
             scope.sourceProjectionIndexes.setQuick(index, aliasIndex);
         }
         scope.projectionAliasIndexes.add(aliasIndex);
+    }
+
+    /**
+     * An aggregate over the rows of {@code input}. Over a HORIZON JOIN it is the join's consumer, which the generator
+     * fuses with the join.
+     */
+    AggregatePlan aggregate(LogicalPlan input, int position) {
+        if (input instanceof HorizonJoinPlan horizon) {
+            horizon.setConsumer(HorizonJoinPlan.Consumer.AGGREGATE);
+        }
+        return planNodes.aggregates.next().of(input, position);
     }
 
     /**

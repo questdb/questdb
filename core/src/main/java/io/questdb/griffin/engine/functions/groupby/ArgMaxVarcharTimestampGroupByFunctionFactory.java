@@ -34,6 +34,11 @@ import io.questdb.std.ObjList;
 
 public class ArgMaxVarcharTimestampGroupByFunctionFactory implements FunctionFactory {
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.INPUT_ORDER;
+    }
+
+    @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.VARCHAR;
     }

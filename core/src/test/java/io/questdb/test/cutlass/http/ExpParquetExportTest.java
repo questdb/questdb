@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
@@ -39,6 +40,8 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.ParquetExportMode;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
@@ -1708,6 +1711,52 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFrameBackedOverParquetPartitions() throws Exception {
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE pq_hybrid (ts TIMESTAMP, x LONG, sym SYMBOL, v VARCHAR, s STRING, b BINARY, arr DOUBLE[], d DOUBLE)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """, sqlExecutionContext);
+                    engine.execute("""
+                            INSERT INTO pq_hybrid
+                            SELECT
+                                timestamp_sequence('2024-01-01', 3_600_000_000L),
+                                x,
+                                rnd_symbol('a', 'b', 'c'),
+                                rnd_varchar(1, 20, 1),
+                                rnd_str(1, 10, 1),
+                                rnd_bin(1, 8, 1),
+                                rnd_double_array(1, 1),
+                                rnd_double(1)
+                            FROM long_sequence(100)
+                            """, sqlExecutionContext);
+                    drainWalQueue(engine);
+                    engine.execute("ALTER TABLE pq_hybrid CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-04'", sqlExecutionContext);
+                    engine.execute("ALTER TABLE pq_hybrid ADD COLUMN y INT", sqlExecutionContext);
+                    engine.execute("INSERT INTO pq_hybrid (ts, x, y) VALUES ('2024-01-05T12:00:00.000000Z', 101, 7)", sqlExecutionContext);
+                    drainWalQueue(engine);
+
+                    final String tableQuery = "SELECT ts, x, x * 2 AS x2, sym, v, s, b, arr, d + 1 AS d1, y, y + 1 AS y1 FROM pq_hybrid";
+                    final String fileQuery = "SELECT x, x2 + 1 AS x3, v, sym, b, arr FROM read_parquet('pq_hybrid.parquet')";
+                    try (
+                            SqlCompiler compiler = engine.getSqlCompiler();
+                            TestHttpClient testHttpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        assertExportMode(compiler, sqlExecutionContext, tableQuery, ParquetExportMode.PAGE_FRAME_BACKED);
+                        exportParquet(testHttpClient, sink, tableQuery);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, tableQuery, "pq_hybrid.parquet");
+
+                        assertExportMode(compiler, sqlExecutionContext, fileQuery, ParquetExportMode.PAGE_FRAME_BACKED);
+                        exportParquet(testHttpClient, sink, fileQuery);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, fileQuery, "pq_hybrid_file.parquet");
+                    }
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{tableQuery, fileQuery}, 6, 50);
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameBackedPreservesDictionaryEncodingAcrossPartitions() throws Exception {
         getExportTesterPageFrame()
                 .run((engine, sqlExecutionContext) -> {
@@ -2598,6 +2647,17 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         );
                     }
                 });
+    }
+
+    private static void assertExportMode(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            ParquetExportMode expectedExportMode
+    ) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            Assert.assertEquals(query, expectedExportMode, ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
+        }
     }
 
     private static void assertExpExplainRecompilesAfterConcurrentDdl(

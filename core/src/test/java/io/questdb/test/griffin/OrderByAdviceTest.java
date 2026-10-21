@@ -36,10 +36,13 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.PlanShape.assertPlanned;
 
 public class OrderByAdviceTest extends AbstractCairoTest {
 
@@ -192,6 +195,57 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                             from long_sequence(1000)) timestamp (ts)""")
                 .expectSize()
                 .returns("sym\tmaxp\n", expected);
+    }
+
+    @Test
+    public void testInputOrderAggregatesReadIndexKeysInAnyOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedKeyTable();
+            assertIndexOrder(ScanPlan.IndexOrder.TABLE_PER_FRAME, "SELECT sym, arg_max(v, ts) FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
+            assertIndexOrder(ScanPlan.IndexOrder.TABLE_PER_FRAME, "SELECT sym, string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
+            assertIndexOrder(ScanPlan.IndexOrder.KEY_PER_FRAME, "SELECT arg_max(v, ts) FROM t WHERE sym IN ('a', 'b')");
+            assertQuery("SELECT arg_max(v, ts) FROM t WHERE sym IN ('a', 'b')")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            GroupBy vectorized: false
+                              values: [arg_max(v,ts)]
+                                FilterOnValues symbolOrder: desc
+                                    Cursor-order scan
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='b'
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='a'
+                                    Frame forward scan on: t
+                            """);
+            assertIndexOrder(ScanPlan.IndexOrder.KEY_PER_FRAME, "SELECT mode(v) FROM t WHERE sym IN ('a', 'b')");
+            assertQuery("SELECT mode(v) FROM t WHERE sym IN ('a', 'b')")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            GroupBy vectorized: false
+                              values: [mode(v)]
+                                FilterOnValues symbolOrder: desc
+                                    Cursor-order scan
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='b'
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='a'
+                                    Frame forward scan on: t
+                            """);
+            assertIndexOrder(ScanPlan.IndexOrder.KEY_PER_FRAME, "SELECT string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b')");
+            assertQuery("SELECT string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b')")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            GroupBy vectorized: false
+                              values: [string_agg(v::string,,)]
+                                FilterOnValues symbolOrder: desc
+                                    Cursor-order scan
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='b'
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='a'
+                                    Frame forward scan on: t
+                            """);
+        });
     }
 
     @Test
@@ -622,6 +676,58 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         1\t0000001\t001
                         2\t1000000\th00
                         """);
+    }
+
+    @Test
+    public void testOrderSensitiveAggregatesKeepSubQueryOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, x % 2 g, x % 3 m, (x % 3)::STRING::SYMBOL msym, x::STRING s, x::STRING::SYMBOL sym,
+                            ((x * 7) % 5)::DOUBLE lat, 0.0 lon, 1 k, x::TIMESTAMP ts
+                        FROM long_sequence(12)
+                    ) TIMESTAMP(ts)""");
+            assertQuery("""
+                    SELECT g, string_agg(s, ',') sa, string_agg(s::VARCHAR, ',') va, string_distinct_agg(s, ',') sd,
+                        string_distinct_agg(sym, ',') yd, string_distinct_agg(s::VARCHAR, ',') vd
+                    FROM (SELECT * FROM t ORDER BY id DESC)
+                    GROUP BY g
+                    ORDER BY g""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tsa\tva\tsd\tyd\tvd
+                            0\t12,10,8,6,4,2\t12,10,8,6,4,2\t12,10,8,6,4,2\t12,10,8,6,4,2\t12,10,8,6,4,2
+                            1\t11,9,7,5,3,1\t11,9,7,5,3,1\t11,9,7,5,3,1\t11,9,7,5,3,1\t11,9,7,5,3,1
+                            """);
+            assertQuery("""
+                    SELECT g, mode(m) ml, mode(m::DOUBLE) md, mode(msym) mk, arg_max(id, k) amax, arg_min(id, k) amin,
+                        isOrdered(id) o
+                    FROM (SELECT * FROM t ORDER BY id DESC)
+                    GROUP BY g
+                    ORDER BY g""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tml\tmd\tmk\tamax\tamin\to
+                            0\t0\t0.0\t1\t12\t12\tfalse
+                            1\t0\t0.0\t2\t11\t11\tfalse
+                            """);
+            assertQuery("SELECT g, haversine_dist_deg(lat, lon, ts) dist FROM (SELECT * FROM t ORDER BY lat) GROUP BY g ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tdist
+                            0\t444.7858501372019
+                            1\t444.7858501372019
+                            """);
+            assertQuery("SELECT g, twap(m, ts) FROM (SELECT * FROM t ORDER BY ts DESC) GROUP BY g ORDER BY g")
+                    .noLeakCheck()
+                    .fails(10, "twap() requires the base query to provide ascending designated timestamp order");
+            assertQuery("SELECT g, sparkline(m) FROM (SELECT * FROM t ORDER BY ts DESC) GROUP BY g ORDER BY g")
+                    .noLeakCheck()
+                    .fails(10, "sparkline() requires the base query to provide ascending designated timestamp order");
+        });
     }
 
     @Test
@@ -2593,6 +2699,37 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableOrderAggregatesReadIndexKeysInTableOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedKeyTable();
+            final String expected = """
+                    f\tl\taa\ttw\tsp
+                    1\t5\t[1.0,2.0,4.0,5.0]\t2.25\t▁▂▆█
+                    """;
+            assertQuery("SELECT first(v) f, last(v) l, array_agg(v::DOUBLE) aa, twap(v, ts) tw, sparkline(v) sp FROM t WHERE sym IN ('a', 'b')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT first(v) f, last(v) l, array_agg(v::DOUBLE) aa, twap(v, ts) tw, sparkline(v) sp FROM t WHERE sym::STRING IN ('a', 'b')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT twap(v, ts) tw FROM t WHERE sym IN ('a', 'b')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            tw
+                            2.25
+                            """);
+            assertIndexOrder(ScanPlan.IndexOrder.TABLE, "SELECT twap(v, ts) FROM t WHERE sym IN ('a', 'b')");
+            assertIndexOrder(ScanPlan.IndexOrder.TABLE, "SELECT sym, first(v) FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
+        });
+    }
+
+    @Test
     public void testTimestampLessThan() throws Exception {
         final String expected = """
                 k\tprice\tts
@@ -2776,6 +2913,10 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 .returns("sym\tspread\n", expected);
     }
 
+    private static void assertIndexOrder(ScanPlan.IndexOrder expected, String sql) throws Exception {
+        assertPlanned(engine, sqlExecutionContext, sql, ScanPlan.class, scan -> Assert.assertEquals(expected, scan.getIndexOrder()));
+    }
+
     private static void assertKeyOrderedDecodes(String query, ParquetDecodeHint consumerHint, ParquetDecodeHint expectedHint, long expectedDecodes) throws Exception {
         try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
             if (consumerHint != null) {
@@ -2806,6 +2947,17 @@ public class OrderByAdviceTest extends AbstractCairoTest {
             Assert.assertEquals(lastId, cursor.getRecord().getLong(0));
             Assert.assertFalse(cursor.hasNext());
         }
+    }
+
+    private static void createIndexedKeyTable() throws Exception {
+        execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t VALUES
+                    ('a', 1, '2024-01-01T00:00:01.000000Z'),
+                    ('b', 2, '2024-01-01T00:00:02.000000Z'),
+                    ('c', 3, '2024-01-01T00:00:03.000000Z'),
+                    ('b', 4, '2024-01-01T00:00:04.000000Z'),
+                    ('a', 5, '2024-01-01T00:00:05.000000Z')""");
     }
 
     private static void createIndexedTable() throws Exception {

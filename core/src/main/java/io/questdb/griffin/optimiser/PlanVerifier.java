@@ -101,17 +101,21 @@ public final class PlanVerifier {
     public static final String FILL_TIMESTAMP = "fill does not designate its bucket timestamp";
     public static final String FILTER_ALGORITHM = "filter algorithm contradicts the filter the generator builds";
     public static final String FUNCTION_OVERLOAD = "function call has no overload";
-    public static final String HORIZON_ALGORITHM = "horizon projection algorithm does not match its inputs";
+    public static final String HORIZON_ALGORITHM = "horizon join algorithm contradicts its consumer or inputs";
+    public static final String HORIZON_CONSUMER = "horizon join consumer contradicts whether an aggregate reads it directly";
     public static final String HORIZON_JOIN_SHAPE = "horizon join output does not start with the master columns";
+    public static final String HORIZON_SLAVE_TIME_FRAME = "horizon join slave serves no time-frame cursors";
     public static final String INPUT_NULL = "input is null";
     public static final String INPUT_RANDOM_ACCESS = "physical choice reads an input by row id that lacks random access";
     public static final String JOIN_ALGORITHM = "join step algorithm contradicts its kind, keys or hints";
+    public static final String JOIN_FILTER_ORIGIN = "join filter conjunct origin is neither WHERE nor an input of the join";
     public static final String JOIN_FILTER_ORIGINS = "join filter conjuncts and their origins differ in length";
     public static final String JOIN_INPUT_SOURCE = "join input has neither a plan nor an UNNEST, or both";
     public static final String JOIN_ON_KEPT = "join step that does not commute lost an ON condition fact in decorrelation";
     public static final String JOIN_ORDER = "ordered join inputs are not a permutation of the inputs";
     public static final String JOIN_OUTPUT = "join output does not list every input column exactly once";
     public static final String JOIN_SCOPE = "join step scope differs from its ordered prefix";
+    public static final String JOIN_SLAVE_VALUE_TYPE = "full-fat temporal join stores a slave column its map value cannot hold";
     public static final String JOIN_TIMESTAMP = "join designated timestamp is not the one its steps designate";
     public static final String LATEST_BY_ALGORITHM = "LATEST BY over a table scan has an algorithm for a derived input";
     public static final String LIMIT_APPLICATION = "LIMIT application contradicts the sort or the scan under it";
@@ -541,6 +545,13 @@ public final class PlanVerifier {
     }
 
     private void horizonJoin(HorizonJoinPlan horizon) {
+        boolean isAggregated = false;
+        for (int i = 0, n = visited.size(); i < n && !isAggregated; i++) {
+            isAggregated = visited.getQuick(i) instanceof AggregatePlan aggregate && aggregate.getChild() == horizon;
+        }
+        if (horizon.getConsumer() == null || isAggregated != (horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE)) {
+            fail(HORIZON_CONSUMER);
+        }
         failIfViolated(PhysicalChoiceVerifier.horizon(horizon, isAccessPathRequired));
         final OutputSchema master = horizon.getMaster().getOutput();
         final OutputSchema output = horizon.getOutput();
@@ -548,17 +559,6 @@ public final class PlanVerifier {
                 || output.getColumnType(master.getColumnCount()) != ColumnType.LONG
                 || !ColumnType.isTimestamp(output.getColumnType(master.getColumnCount() + 1))) {
             fail(HORIZON_JOIN_SHAPE);
-        }
-        boolean hasFusedConsumer = false;
-        for (int i = 0, n = visited.size(); i < n; i++) {
-            if (visited.getQuick(i) instanceof AggregatePlan aggregate && aggregate.getChild() == horizon) {
-                hasFusedConsumer = true;
-                break;
-            }
-        }
-        if ((isAccessPathRequired || horizon.getAlgorithm() != null)
-                && hasFusedConsumer != (horizon.getAlgorithm() == HorizonJoinPlan.Algorithm.FUSED_AGGREGATE)) {
-            fail(HORIZON_ALGORITHM);
         }
         for (int i = 0, n = master.getColumnCount(); i < n; i++) {
             if (output.getColumnId(i) != master.getColumnId(i) || output.getColumnType(i) != master.getColumnType(i)) {
@@ -638,8 +638,15 @@ public final class PlanVerifier {
         if (output.getTimestampColumnId() != LogicalPlans.joinTimestampColumnId(join, steps.size())) {
             fail(JOIN_TIMESTAMP, output.getTimestampColumnId());
         }
-        if (join.getFilterConjunctOrigins().size() != join.getFilterConjuncts().size()) {
+        final IntList origins = join.getFilterConjunctOrigins();
+        if (origins.size() != join.getFilterConjuncts().size()) {
             fail(JOIN_FILTER_ORIGINS);
+        }
+        for (int i = 0, n = origins.size(); i < n; i++) {
+            final int origin = origins.getQuick(i);
+            if (origin < -1 || origin >= join.getInputs().size()) {
+                fail(JOIN_FILTER_ORIGIN);
+            }
         }
         site = "filter conjuncts";
         expressions(output, join.getFilterConjuncts());

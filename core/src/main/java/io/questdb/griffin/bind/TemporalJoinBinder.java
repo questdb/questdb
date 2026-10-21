@@ -263,7 +263,7 @@ final class TemporalJoinBinder {
         }
         if (node.type == ExpressionNode.LITERAL) {
             final int dot = Chars.indexOfLastUnquoted(node.token, '.');
-            if (dot > 0 && Chars.equalsIgnoreCase(GenericLexer.unquote(node.token.subSequence(0, dot)), horizonAlias)
+            if (dot > 0 && !node.isWildcard() && Chars.equalsIgnoreCase(GenericLexer.unquote(node.token.subSequence(0, dot)), horizonAlias)
                     && FunctionBinder.findColumn(node, output, null) < 0) {
                 throw SqlException.invalidColumn(node.position, node.token);
             }
@@ -419,10 +419,32 @@ final class TemporalJoinBinder {
         return position;
     }
 
-    private void rejectHorizonWhere(ExpressionNode node, OutputSchema master, CharSequence masterAlias) throws SqlException {
-        final int position = firstUnresolvableReference(node, master, masterAlias);
-        if (position != Integer.MAX_VALUE) {
-            throw SqlException.position(position).put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+    /**
+     * Rejects a WHERE clause of a HORIZON JOIN that reads a column no input of the join has, or one that several inputs
+     * have, as any WHERE clause does, then one that reads a right-hand side or horizon column, at the position of the
+     * leftmost column outside the master, {@code outsidePosition}.
+     */
+    private void rejectHorizonWhere(ExpressionNode where, OutputSchema output, int outsidePosition) throws SqlException {
+        resolveHorizonWhere(where, output);
+        if (outsidePosition != Integer.MAX_VALUE) {
+            throw SqlException.position(outsidePosition).put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+        }
+    }
+
+    private void resolveHorizonWhere(ExpressionNode node, OutputSchema output) throws SqlException {
+        if (node == null || node.queryModel != null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            if (!ctx.functionBinder.isOuterColumn(node, output, null)) {
+                FunctionBinder.resolveColumn(node, output, null);
+            }
+            return;
+        }
+        resolveHorizonWhere(node.lhs, output);
+        resolveHorizonWhere(node.rhs, output);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            resolveHorizonWhere(node.args.getQuick(i), output);
         }
     }
 
@@ -718,14 +740,15 @@ final class TemporalJoinBinder {
         final QueryModel masterModel = sources.getQuick(0);
         final CharSequence masterAlias = sourceAlias(masterModel);
         LogicalPlan master = binder.bindSource(masterModel, executionContext);
-        if (where != null) {
-            rejectHorizonWhere(where, master.getOutput(), masterAlias);
-        }
-        if (binder.isLatestOverLeadingInput(source)) {
-            master = binder.bindLatestBy(master, where, source, executionContext);
-        } else if (where != null) {
-            final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
-            master = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
+        // A clause that reads beyond the master fails once every input's columns are known.
+        final int whereOutsidePosition = where == null ? Integer.MAX_VALUE : firstUnresolvableReference(where, master.getOutput(), masterAlias);
+        if (whereOutsidePosition == Integer.MAX_VALUE) {
+            if (binder.isLatestOverLeadingInput(source)) {
+                master = binder.bindLatestBy(master, where, source, executionContext);
+            } else if (where != null) {
+                final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
+                master = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
+            }
         }
         final OutputSchema masterOutput = master.getOutput();
         // A master ordered by a key that is not a timestamp binds by the timestamp beneath that order, see JoinBinder.
@@ -781,6 +804,9 @@ final class TemporalJoinBinder {
                         slaveOutput.getColumnId(ctx.bindColumnIndex(column, slaveOutput, slaveAlias)), column.position);
             }
         }
+        if (where != null) {
+            rejectHorizonWhere(where, output, whereOutsidePosition);
+        }
         bindHorizonOffsets(plan, horizon, masterOutput.getColumnType(masterTimestampIndex),
                 executionContext.getCairoEngine().getConfiguration().getSqlHorizonJoinMaxOffsets());
         for (int s = 0, m = plan.getSlaves().size(); s < m; s++) {
@@ -810,7 +836,7 @@ final class TemporalJoinBinder {
      * SQL places the offset source immediately before the last slave. The runtime layout always
      * places it after the master, so wildcard expansion maps source order onto that layout.
      */
-    int horizonWildcardIndex(HorizonJoinPlan horizon, int index) {
+    static int horizonWildcardIndex(HorizonJoinPlan horizon, int index) {
         final int masterCount = horizon.getMaster().getOutput().getColumnCount();
         int precedingSlaveCount = 0;
         for (int i = 0, n = horizon.getSlaves().size() - 1; i < n; i++) {

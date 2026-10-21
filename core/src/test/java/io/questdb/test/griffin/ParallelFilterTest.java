@@ -996,6 +996,124 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleBySubQueryFromToBounds() throws Exception {
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE t AS (
+                                SELECT timestamp_sequence('2024-01-01', 3_600_000_000) ts, x::DOUBLE v FROM long_sequence(200)
+                            )""", sqlExecutionContext);
+                    engine.execute("CREATE TABLE b AS (SELECT '2024-01-05'::TIMESTAMP hi FROM long_sequence(1))", sqlExecutionContext);
+                    final String expected = """
+                            ts\tc\ts
+                            2024-01-02T00:00:00.000000Z\t24\t876.0
+                            2024-01-03T00:00:00.000000Z\t24\t1452.0
+                            2024-01-04T00:00:00.000000Z\t24\t2028.0
+                            """;
+                    assertQuery("SELECT ts, count() c, sum(v) s FROM (t TIMESTAMP(ts)) SAMPLE BY 1d FROM '2024-01-02' TO (SELECT hi FROM b)")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .withPlan("""
+                                    Encode sort light
+                                      keys: [ts]
+                                        Async Group By workers: 4
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1d',ts,'2024-01-02T00:00:00.000Z')]
+                                          values: [count(*),sum(v)]
+                                          filter: (ts>=2024-01-02T00:00:00.000000Z and ts<cursor\s
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                    """)
+                            .returns(expected);
+                    assertQuery("""
+                            SELECT ts, count() c, sum(v) s FROM (t TIMESTAMP(ts))
+                            SAMPLE BY 1d FROM (SELECT hi - 3 * 86_400_000_000 FROM b) TO (SELECT hi FROM b)
+                            """)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .noRandomAccess()
+                            .withPlan("""
+                                    Sample By
+                                      fill: none
+                                      range: (cursor\s
+                                        VirtualRecord
+                                          functions: [hi-259200000000L]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b,cursor\s
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b)
+                                      values: [count(*),sum(v)]
+                                        Async Filter workers: 4
+                                          filter: (ts>=cursor\s
+                                            VirtualRecord
+                                              functions: [hi-259200000000L]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b and ts<cursor\s
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                    """)
+                            .returns(expected);
+                    assertQuery("""
+                            SELECT ts, count() c, sum(v) s FROM (t TIMESTAMP(ts))
+                            SAMPLE BY 1d FROM '2024-01-02' TO (SELECT hi + 86_400_000_000 FROM b) FILL(NULL)
+                            """)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .noRandomAccess()
+                            .withPlan("""
+                                    Sample By Fill
+                                      range: ('2024-01-02',cursor\s
+                                        VirtualRecord
+                                          functions: [hi+86400000000L]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b)
+                                      stride: '1d'
+                                      fill: null
+                                        Encode sort light
+                                          keys: [ts]
+                                            Async Group By workers: 4
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts,'2024-01-02T00:00:00.000Z')]
+                                              values: [count(*),sum(v)]
+                                              filter: (ts>=2024-01-02T00:00:00.000000Z and ts<cursor\s
+                                                VirtualRecord
+                                                  functions: [hi+86400000000L]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b)
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                                    """)
+                            .returns(expected + "2024-01-05T00:00:00.000000Z\t24\t2604.0\n");
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testStrBindVariable() throws Exception {
         testStrBindVariable("STRING", SqlJitMode.JIT_MODE_ENABLED);
     }

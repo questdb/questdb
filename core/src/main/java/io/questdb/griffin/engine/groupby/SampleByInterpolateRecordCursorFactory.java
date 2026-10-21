@@ -167,7 +167,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                             interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
                             break;
                         default:
-                            Misc.freeObjList(groupByScalarFunctions);
                             throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
                     }
                 } else {

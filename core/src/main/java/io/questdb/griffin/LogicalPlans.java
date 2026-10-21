@@ -338,11 +338,11 @@ public final class LogicalPlans {
     }
 
     /**
-     * True when the value of an aggregate function depends on the order of its input rows.
+     * True when the value of an aggregate function is defined by the table order of its input rows.
      */
-    public static boolean hasOrderSensitiveAggregate(ObjList<FunctionExpression> aggregates) {
+    public static boolean hasTableOrderAggregate(ObjList<FunctionExpression> aggregates) {
         for (int i = 0, n = aggregates.size(); i < n; i++) {
-            if (aggregates.getQuick(i).getOverload().isOrderSensitiveAggregate()) {
+            if (aggregates.getQuick(i).getOverload().getOrderDependence() == FunctionFactory.OrderDependence.TABLE_ORDER) {
                 return true;
             }
         }
@@ -1205,11 +1205,11 @@ public final class LogicalPlans {
     }
 
     /**
-     * True when the value of the aggregate function does not depend on the order of its input rows: it is not
-     * order-sensitive, and its arguments depend on no row order.
+     * True when the value of the aggregate function does not depend on the order of its input rows: the function
+     * has no order dependence, and its arguments depend on no row order.
      */
     private static boolean isOrderIndependentAggregate(FunctionExpression aggregate) {
-        return aggregate.isAggregate() && !aggregate.getOverload().isOrderSensitiveAggregate()
+        return aggregate.isAggregate() && aggregate.getOverload().getOrderDependence() == FunctionFactory.OrderDependence.NONE
                 && areOrderIndependent(aggregate.getArguments());
     }
 

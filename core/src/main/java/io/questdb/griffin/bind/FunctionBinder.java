@@ -836,7 +836,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return isWindowArgument(node) ? CallRole.WINDOW_ARGUMENT : CallRole.ARGUMENT;
     }
 
-    private Function canonicalizeTemporalBetween(ObjList<Function> args) {
+    private Function canonicalizeTemporalBetween(ObjList<Function> args) throws SqlException {
         final Function operand = args.getQuick(0);
         if (!isTemporalOperand(operand)) {
             return null;
@@ -845,6 +845,12 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final TimestampDriver driver = temporalDriver(operandType);
         final int loType = temporalConstantType(args, 1, driver);
         final int hiType = temporalConstantType(args, 2, driver);
+        if (loType != ColumnType.UNDEFINED) {
+            validateTemporalConstant(args, 1, driver);
+        }
+        if (hiType != ColumnType.UNDEFINED) {
+            validateTemporalConstant(args, 2, driver);
+        }
         try {
             if (loType != ColumnType.UNDEFINED && hiType != ColumnType.UNDEFINED) {
                 if (isOperandTyped(args, 1, operandType) && isOperandTyped(args, 2, operandType)) {
@@ -873,7 +879,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return null;
     }
 
-    private Function canonicalizeTemporalBinary(CharSequence operator, ObjList<Function> args) {
+    private Function canonicalizeTemporalBinary(CharSequence operator, ObjList<Function> args) throws SqlException {
         final int operandIndex = isTemporalOperand(args.getQuick(0)) ? 0 : isTemporalOperand(args.getQuick(1)) ? 1 : -1;
         if (operandIndex < 0) {
             return null;
@@ -885,6 +891,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         if (type == ColumnType.UNDEFINED || isOperandTyped(args, index, operandType)) {
             return null;
         }
+        validateTemporalConstant(args, index, driver);
         try {
             final long value = temporalConstantValue(args, index, type);
             if (value == Numbers.LONG_NULL) {
@@ -913,9 +920,10 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * same comparison at the operand's precision, so every consumer compares column-precision values.
      * The rounding is exact: a lower bound rounds up and an upper bound down (TimestampDriver.ceilFrom and
      * floorFrom), an equality with a value the operand cannot hold is false and its negation true, and an
-     * IN element it cannot hold drops out. Returns the boolean the comparison folds to, or null.
+     * IN element it cannot hold drops out. A constant outside the range of the operand's precision fails at its
+     * position, see {@link #validateTemporalConstant}. Returns the boolean the comparison folds to, or null.
      */
-    private Function canonicalizeTemporalComparison(CharSequence operator, ObjList<Function> args, IntList positions) {
+    private Function canonicalizeTemporalComparison(CharSequence operator, ObjList<Function> args, IntList positions) throws SqlException {
         final int count = args == null ? 0 : args.size();
         if (count == 2 && isTemporalComparisonOperator(operator)) {
             return canonicalizeTemporalBinary(operator, args);
@@ -929,7 +937,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return null;
     }
 
-    private Function canonicalizeTemporalIn(ObjList<Function> args, IntList positions) {
+    private Function canonicalizeTemporalIn(ObjList<Function> args, IntList positions) throws SqlException {
         final Function operand = args.getQuick(0);
         if (!isTemporalOperand(operand)) {
             return null;
@@ -944,6 +952,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 isMatchable = true;
                 continue;
             }
+            validateTemporalConstant(args, i, driver);
             try {
                 final long value = temporalConstantValue(args, i, type);
                 if (value == Numbers.LONG_NULL || driver.isExactFrom(value, type)) {
@@ -1970,6 +1979,23 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                     SubsampleValidator.validateSdtCompdev(args.getQuick(2), positions.getQuick(2));
                 }
             }
+        }
+    }
+
+    /**
+     * Raises, where the comparison binds, the error of a TIMESTAMP or DATE constant the precision of the temporal
+     * operand cannot hold, which the comparison would otherwise raise on the first row it reads.
+     */
+    private void validateTemporalConstant(ObjList<Function> args, int index, TimestampDriver driver) throws SqlException {
+        final Function constant = args.getQuick(index);
+        final int type = constant.getType();
+        if (ColumnType.tagOf(type) != ColumnType.TIMESTAMP && type != ColumnType.DATE) {
+            return;
+        }
+        try {
+            driver.ceilFrom(type == ColumnType.DATE ? constant.getDate(null) : constant.getTimestamp(null), type);
+        } catch (ImplicitCastException e) {
+            throw SqlException.$(arguments.getQuick(index).getPosition(), e.getFlyweightMessage());
         }
     }
 

@@ -25,9 +25,14 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.MutationStep;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -987,6 +992,127 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedCursorSymbolKeyedDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE items (sym SYMBOL, id INT)");
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2, '2024-01-01T01:00:00.000000Z'),
+                    ('a', 3, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("INSERT INTO items VALUES ('a', 1), ('a', 2), ('a', 3), ('b', 1), ('b', 2)");
+            assertQuery("""
+                    SELECT g.s, g.c, l.id
+                    FROM (SELECT sym s, count() c FROM trades GROUP BY sym) g
+                    CROSS JOIN LATERAL (
+                        SELECT i.id FROM items i WHERE i.sym = g.s AND i.id > g.c ORDER BY i.id LIMIT 1
+                    ) l
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("(Shared)")
+                    .returns("""
+                            s\tc\tid
+                            a\t2\t3
+                            b\t1\t2
+                            """);
+            assertQuery("""
+                    SELECT g.sym, g.c, l.id
+                    FROM (SELECT sym, count() c FROM trades GROUP BY sym) g
+                    CROSS JOIN LATERAL (
+                        SELECT i.id FROM items i WHERE i.sym = g.sym AND i.id > g.c ORDER BY i.id LIMIT 1
+                    ) l
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tc\tid
+                            a\t2\t3
+                            b\t1\t2
+                            """);
+            assertQuery("""
+                    SELECT g.ts, g.sym, g.c, l.id
+                    FROM (SELECT ts, sym, count() c FROM trades SAMPLE BY 1d) g
+                    CROSS JOIN LATERAL (
+                        SELECT i.id FROM items i WHERE i.sym = g.sym AND i.id > g.c ORDER BY i.id LIMIT 1
+                    ) l
+                    ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tc\tid
+                            2024-01-01T00:00:00.000000Z\ta\t1\t2
+                            2024-01-01T00:00:00.000000Z\tb\t1\t2
+                            2024-01-02T00:00:00.000000Z\ta\t1\t2
+                            """);
+            assertQuery("""
+                    SELECT g.sym, g.c, l.id
+                    FROM (SELECT sym, first(id) c FROM trades GROUP BY sym) g
+                    CROSS JOIN LATERAL (
+                        SELECT i.id FROM items i WHERE i.sym = g.sym AND i.id > g.c ORDER BY i.id LIMIT 1
+                    ) l
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tc\tid
+                            a\t1\t2
+                            """);
+            assertQuery("""
+                    SELECT g.k, g.s, l.id
+                    FROM (SELECT id k, last(sym) s FROM trades GROUP BY id) g
+                    CROSS JOIN LATERAL (
+                        SELECT i.id FROM items i WHERE i.sym = g.s AND i.id > g.k ORDER BY i.id LIMIT 1
+                    ) l
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\ts\tid
+                            1\ta\t2
+                            """);
+            assertQuery("""
+                    SELECT g.s, g.c, l.id
+                    FROM (SELECT last(sym) s, count() c FROM trades) g
+                    CROSS JOIN LATERAL (
+                        SELECT i.id FROM items i WHERE i.sym = g.s AND i.id >= g.c ORDER BY i.id LIMIT 1
+                    ) l
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            s\tc\tid
+                            a\t3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testSharedCursorSymbolKeyedDomainConsumerOpenFails() throws Exception {
+        assertMemoryLeak(() -> {
+            assertConsumerOpenFails("SELECT sym, count() c FROM trades GROUP BY sym", """
+                    sym\tc\tid
+                    a\t1\t1
+                    b\t1\t3
+                    c\t1\t4
+                    """);
+            assertConsumerOpenFails("SELECT sym, first(id) c FROM trades GROUP BY sym", """
+                    sym\tc\tid
+                    a\t1\t1
+                    b\t2\t3
+                    c\t1\t4
+                    """);
+            assertConsumerOpenFails("SELECT last(sym) sym, count() c FROM trades", """
+                    sym\tc\tid
+                    c\t3\t4
+                    """);
+        });
+    }
+
+    @Test
     public void testSharedCursorSymbolTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (category SYMBOL, status SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1263,5 +1389,35 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             300\t0.2
                             """);
         });
+    }
+
+    private void assertConsumerOpenFails(String source, String expected) throws Exception {
+        execute("CREATE TABLE trades (sym SYMBOL, id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE items (sym SYMBOL, id INT)");
+        execute("""
+                INSERT INTO trades VALUES
+                ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                ('b', 2, '2024-01-01T01:00:00.000000Z')
+                """);
+        execute("INSERT INTO items VALUES ('a', 1), ('a', 2), ('b', 3), ('c', 4)");
+        final String sql = "SELECT g.sym, g.c, l.id FROM (" + source + ") g CROSS JOIN LATERAL ("
+                + "SELECT i.id FROM items i WHERE i.sym = g.sym AND i.id >= g.c AND i.sym ~ $1 ORDER BY i.id LIMIT 1"
+                + ") l ORDER BY 1";
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "(");
+        try (RecordCursorFactory factory = select(sql)) {
+            try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                Assert.fail("expected an invalid regex");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Unclosed group");
+            }
+            execute("INSERT INTO trades VALUES ('c', 1, '2024-01-02T00:00:00.000000Z')");
+            bindVariableService.setStr(0, "a|b|c");
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+            }
+        }
+        execute("DROP TABLE trades");
+        execute("DROP TABLE items");
     }
 }

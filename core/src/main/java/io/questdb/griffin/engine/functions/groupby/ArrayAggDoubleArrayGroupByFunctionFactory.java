@@ -37,6 +37,11 @@ import io.questdb.std.Transient;
 public class ArrayAggDoubleArrayGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
     }

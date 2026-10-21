@@ -72,7 +72,6 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
-            @NotNull ObjList<Function> keyFunctions,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -95,7 +94,7 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
 
         try {
             // Store key functions for init() and close()
-            this.ownerKeyFunctions = keyFunctions;
+            this.ownerKeyFunctions = resources.takeKeyFunctions();
             this.perWorkerKeyFunctions = resources.takePerWorkerKeyFunctions();
 
             // Create per-worker map sinks to support expression keys
@@ -105,7 +104,7 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
                     asm,
                     markoutMetadata,
                     groupByColumnFilter,
-                    keyFunctions,
+                    ownerKeyFunctions,
                     null,
                     null,
                     null,
@@ -115,7 +114,7 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
                     sinkClass,
                     markoutMetadata,
                     groupByColumnFilter,
-                    keyFunctions,
+                    ownerKeyFunctions,
                     null,
                     null,
                     null,

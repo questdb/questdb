@@ -32,7 +32,6 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -93,6 +92,16 @@ final class ProjectionMerge implements OptimiserPass {
             }
         }
         return inner;
+    }
+
+    /**
+     * The projection that now reads a sort moved beneath it designates the column carrying the sort's designated
+     * timestamp, the sort's first key.
+     */
+    private static void designateSortTimestamp(ProjectPlan project, SortPlan sort) {
+        if (sort.getOutput().getTimestampIndex() >= 0) {
+            project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project, sort.getOutput().getTimestampColumnId()));
+        }
     }
 
     private static boolean isCompleteColumnPermutation(ProjectPlan project, IntHashSet columnIds) {
@@ -177,9 +186,7 @@ final class ProjectionMerge implements OptimiserPass {
         }
         sort.replaceInput(0, project.getChild());
         project.replaceInput(0, sort);
-        if (sort.getOutput().getTimestampIndex() >= 0) {
-            project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project, ids.getQuick(0)));
-        }
+        designateSortTimestamp(project, sort);
         return project;
     }
 
@@ -210,8 +217,7 @@ final class ProjectionMerge implements OptimiserPass {
      */
     private void absorbColumnProject(AggregatePlan aggregate) {
         final ProjectPlan inner = absorbableProject(aggregate.getChild());
-        // A query over a horizon stream is not the horizon block's fused aggregate.
-        if (inner == null || inner.getChild() instanceof HorizonJoinPlan) {
+        if (inner == null) {
             return;
         }
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
@@ -382,6 +388,9 @@ final class ProjectionMerge implements OptimiserPass {
         }
         limit.replaceInput(0, below);
         project.replaceInput(0, limit);
+        if (sort != null) {
+            designateSortTimestamp(project, sort);
+        }
         return project;
     }
 

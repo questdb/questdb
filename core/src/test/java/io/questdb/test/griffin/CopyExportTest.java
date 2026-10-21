@@ -2234,6 +2234,51 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueryWithComputedColumnsOverParquetPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pq_mixed (ts TIMESTAMP, x LONG, sym SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO pq_mixed VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 'a', 'one'),
+                    ('2024-01-01T12:00:00.000000Z', 2, 'b', NULL),
+                    ('2024-01-02T00:00:00.000000Z', 3, NULL, 'three is longer than inline'),
+                    ('2024-01-02T12:00:00.000000Z', 4, 'a', 'four'),
+                    ('2024-01-03T00:00:00.000000Z', 5, 'b', 'five')
+                    """);
+            execute("ALTER TABLE pq_mixed CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT ts, x, x * 10 AS x10, sym, v, concat(v, '!') AS v2 FROM pq_mixed) TO 'pq_mixed_output' WITH FORMAT parquet row_group_size 3",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "pq_mixed_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "pq_mixed_output.parquet')")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .expectSize()
+                                .returns("""
+                                        ts\tx\tx10\tsym\tv\tv2
+                                        2024-01-01T00:00:00.000000Z\t1\t10\ta\tone\tone!
+                                        2024-01-01T12:00:00.000000Z\t2\t20\tb\t\t!
+                                        2024-01-02T00:00:00.000000Z\t3\t30\t\tthree is longer than inline\tthree is longer than inline!
+                                        2024-01-02T12:00:00.000000Z\t4\t40\ta\tfour\tfour!
+                                        2024-01-03T00:00:00.000000Z\t5\t50\tb\tfive\tfive!
+                                        """);
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyQueryWithComputedNullValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (x INT, y DOUBLE, name STRING)");

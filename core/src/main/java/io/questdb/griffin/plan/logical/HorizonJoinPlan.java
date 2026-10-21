@@ -33,8 +33,8 @@ import java.util.Objects;
 /**
  * The HORIZON JOIN record stream: every master row repeated for each horizon offset, with each slave
  * ASOF-matched at the offset timestamp. Output is the master columns, the horizon offset and timestamp,
- * then every slave's columns. A projection reads the stream directly; an AggregatePlan consumes it
- * through a fused horizon aggregate without changing the grouping contract after column pruning.
+ * then every slave's columns. The binder records its {@link Consumer}: rows that a projection reads, or a
+ * fused aggregate that the AggregatePlan directly above it computes over every row.
  */
 public final class HorizonJoinPlan extends LogicalPlan {
     public static final ObjectFactory<HorizonJoinPlan> FACTORY = HorizonJoinPlan::new;
@@ -42,6 +42,7 @@ public final class HorizonJoinPlan extends LogicalPlan {
     private final ObjList<CharSequence> offsets = new ObjList<>();
     private final ObjList<HorizonJoinSlave> slaves = new ObjList<>();
     private Algorithm algorithm;
+    private Consumer consumer;
     private CharSequence horizonAlias;
     private CharSequence masterAlias;
     private LogicalPlan master;
@@ -53,6 +54,7 @@ public final class HorizonJoinPlan extends LogicalPlan {
         offsets.clear();
         slaves.clear();
         algorithm = null;
+        consumer = null;
         horizonAlias = null;
         masterAlias = null;
         master = null;
@@ -60,6 +62,10 @@ public final class HorizonJoinPlan extends LogicalPlan {
 
     public Algorithm getAlgorithm() {
         return algorithm;
+    }
+
+    public Consumer getConsumer() {
+        return consumer;
     }
 
     public CharSequence getHorizonAlias() {
@@ -123,6 +129,10 @@ public final class HorizonJoinPlan extends LogicalPlan {
         this.algorithm = algorithm;
     }
 
+    public void setConsumer(Consumer consumer) {
+        this.consumer = consumer;
+    }
+
     @Override
     public void visitReads(PlanExpressionVisitor visitor) {
         for (int i = 0, n = slaves.size(); i < n; i++) {
@@ -130,11 +140,23 @@ public final class HorizonJoinPlan extends LogicalPlan {
         }
     }
 
+    /**
+     * How the generator reads the master: by row id, or in parallel over its page frames or over the frames under
+     * the filter it steals from the master. Only a {@link Consumer#PROJECTION} records one; the fused aggregate
+     * records its own on the AggregatePlan.
+     */
     public enum Algorithm {
         SERIAL,
         PARALLEL,
-        PARALLEL_STOLEN_FILTER,
-        // The consuming AggregatePlan owns the physical choice and functions.
-        FUSED_AGGREGATE
+        PARALLEL_STOLEN_FILTER
+    }
+
+    /**
+     * What reads the rows of the join: a projection over the row stream, or the AggregatePlan directly above it,
+     * which the generator fuses with the join into one factory.
+     */
+    public enum Consumer {
+        PROJECTION,
+        AGGREGATE
     }
 }

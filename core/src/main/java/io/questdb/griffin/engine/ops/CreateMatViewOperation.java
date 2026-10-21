@@ -86,8 +86,9 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
     void updateOperationFutureTableToken(TableToken tableToken);
 
     /**
-     * Validates the bound query of the view and records its columns, named at {@code positions}, its sampling
-     * interval and the symbol capacities it takes from the base table, without retaining either input.
+     * Validates the bound query of the view and records its columns, named at {@code positions}, the designated
+     * timestamp its SAMPLE BY bucket or timestamp_floor() key defines, its sampling interval and the symbol
+     * capacities it takes from the base table, without retaining either input.
      */
     void validateAndUpdateMetadataFromPlan(SqlExecutionContext sqlExecutionContext, @Transient LogicalPlan root, @Transient IntList positions) throws SqlException;
 

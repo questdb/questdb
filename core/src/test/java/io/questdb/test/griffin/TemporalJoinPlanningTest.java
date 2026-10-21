@@ -52,6 +52,7 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
             for (boolean isParallel : new boolean[]{false, true}) {
                 sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
                 assertPlanned(engine, sqlExecutionContext, "SELECT h.offset" + from, HorizonJoinPlan.class, horizon -> {
+                    Assert.assertEquals(HorizonJoinPlan.Consumer.PROJECTION, horizon.getConsumer());
                     Assert.assertEquals(isParallel ? HorizonJoinPlan.Algorithm.PARALLEL : HorizonJoinPlan.Algorithm.SERIAL, horizon.getAlgorithm());
                     Assert.assertEquals(PhysicalProperties.Capability.NO, PhysicalProperties.supportsRandomAccess(horizon));
                     Assert.assertEquals(PhysicalProperties.ScanDirection.FORWARD, PhysicalProperties.scanDirection(horizon));
@@ -63,11 +64,19 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
                 assertPlanned(engine, sqlExecutionContext, "SELECT count() FROM (SELECT h.offset" + from + ")", AggregatePlan.class,
                         aggregate -> Assert.assertTrue(aggregate.getChild() instanceof ProjectPlan project && project.getChild() instanceof HorizonJoinPlan));
                 assertQuery("SELECT count() FROM (SELECT h.offset" + from + ")").noRandomAccess().expectSize().returns("count\n6\n");
-                assertPlanned(engine, sqlExecutionContext, "SELECT DISTINCT h.offset" + from, HorizonJoinPlan.class,
-                        horizon -> Assert.assertEquals(isParallel ? HorizonJoinPlan.Algorithm.PARALLEL : HorizonJoinPlan.Algorithm.SERIAL, horizon.getAlgorithm()));
+                assertPlanned(engine, sqlExecutionContext, "SELECT DISTINCT h.offset" + from, AggregatePlan.class, aggregate -> {
+                    Assert.assertTrue(aggregate.getChild() instanceof HorizonJoinPlan horizon && horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE
+                            && horizon.getAlgorithm() == null);
+                    Assert.assertEquals(1, aggregate.getGroupingExpressions().size());
+                    Assert.assertEquals(0, aggregate.getAggregates().size());
+                    Assert.assertEquals(isParallel ? AggregatePlan.Algorithm.PARALLEL : AggregatePlan.Algorithm.SERIAL, aggregate.getAlgorithm());
+                });
                 assertQuery("SELECT count() FROM (SELECT DISTINCT h.offset" + from + ")").noRandomAccess().expectSize().returns("count\n2\n");
                 assertPlanned(engine, sqlExecutionContext, "SELECT count() FROM (SELECT h.offset, avg(b.v)" + from + ")",
-                        HorizonJoinPlan.class, horizon -> Assert.assertEquals(HorizonJoinPlan.Algorithm.FUSED_AGGREGATE, horizon.getAlgorithm()));
+                        HorizonJoinPlan.class, horizon -> {
+                            Assert.assertEquals(HorizonJoinPlan.Consumer.AGGREGATE, horizon.getConsumer());
+                            Assert.assertNull(horizon.getAlgorithm());
+                        });
                 assertQuery("SELECT count() FROM (SELECT h.offset, avg(b.v)" + from + ")").noRandomAccess().expectSize().returns("count\n2\n");
                 assertQuery("SELECT count() FROM (SELECT h.offset" + from + " GROUP BY h.offset)").noRandomAccess().expectSize().returns("count\n2\n");
                 // The random values vary, but the alias must read the owner's same evaluation, so

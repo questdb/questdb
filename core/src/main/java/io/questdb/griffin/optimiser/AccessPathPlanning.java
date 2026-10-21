@@ -697,7 +697,8 @@ final class AccessPathPlanning {
     private void walk(LogicalPlan plan, boolean isTimestampRequired) throws SqlException {
         switch (plan) {
             case ScanPlan scan -> planScan(scan, null, null, isTimestampRequired);
-            case FilterPlan filter when PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan -> {
+            // A client-side WAL UPDATE does not fuse its predicate, yet raises the bound errors WAL application raises.
+            case FilterPlan filter when filter.getChild() instanceof ScanPlan scan -> {
                 planScan(scan, filter.getPredicate(), null, operatorPlanning.requiresInputTimestamp(filter, 0, isTimestampRequired));
                 planSubqueries(scan);
             }
@@ -719,7 +720,8 @@ final class AccessPathPlanning {
     }
 
     private void walkAggregate(AggregatePlan aggregate, boolean isTimestampRequired) throws SqlException {
-        if (aggregate.getChild() instanceof HorizonJoinPlan horizon) {
+        if (PlanToFactoryRules.aggregateFactory(aggregate) == PlanToFactoryRules.AggregateFactory.HORIZON) {
+            final HorizonJoinPlan horizon = (HorizonJoinPlan) aggregate.getChild();
             final boolean isHorizonTimestampRequired = operatorPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired);
             walkHorizon(horizon, isHorizonTimestampRequired);
             planSubqueries(horizon);

@@ -17,6 +17,7 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.jar.JarFile;
 import java.lang.reflect.Modifier;
 import java.util.zip.ZipFile;
@@ -79,17 +80,9 @@ public class FunctionFactoryScanner {
             }
 
 
-            var orderMap = new CharSequenceIntHashMap();
-            loadFunctionOrderMap(functionListFileName, classLoader, orderMap);
             // Function factories sometimes have conflict and have to be loaded in a specific order
             // For example RndSymbolFunctionFactory has to be before RndSymbolListFunctionFactory
-            if (initialSize > 0) {
-                functionFactories
-                        .subList(initialSize, functionFactories.size())
-                        .sort((f1, f2) -> compareFactories(f1, f2, orderMap));
-            } else {
-                functionFactories.sort((f1, f2) -> compareFactories(f1, f2, orderMap));
-            }
+            sort(functionFactories.subList(initialSize, functionFactories.size()), functionListFileName, classLoader);
 
             if (log != null) {
                 log.advisory().$("loaded ").$(functionFactories.size() - initialSize).$(" functions").$();
@@ -99,10 +92,20 @@ public class FunctionFactoryScanner {
         }
     }
 
+    /**
+     * Orders the factories as the function list file lists them, then the unlisted ones by descending signature
+     * length and by class name, so that the overload a call resolves to never depends on the order the classes
+     * were found in.
+     */
+    public static void sort(List<FunctionFactory> factories, String functionListFileName, ClassLoader classLoader) {
+        final CharSequenceIntHashMap orderMap = new CharSequenceIntHashMap();
+        loadFunctionOrderMap(functionListFileName, classLoader, orderMap);
+        factories.sort((f1, f2) -> compareFactories(f1, f2, orderMap));
+    }
+
     private static int compareFactories(FunctionFactory f1, FunctionFactory f2, CharSequenceIntHashMap orderMap) {
-        int o1 = getOrder(f1, orderMap);
-        int o2 = getOrder(f2, orderMap);
-        return Integer.compare(o1, o2);
+        final int order = Integer.compare(getOrder(f1, orderMap), getOrder(f2, orderMap));
+        return order != 0 ? order : f1.getClass().getName().compareTo(f2.getClass().getName());
     }
 
     private static void findAllClassesFromModules(ArrayList<FunctionFactory> factories, String packageName, ClassLoader classLoader, String moduleName, @Nullable Log log) {

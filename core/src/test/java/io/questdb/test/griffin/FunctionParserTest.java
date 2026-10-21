@@ -41,6 +41,7 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.FunctionFactoryScanner;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -95,6 +96,14 @@ import io.questdb.griffin.engine.functions.eq.EqDateFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMaxDoubleLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMaxLongDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMaxLongTimestampGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMaxTimestampLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMinDoubleLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMinLongDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMinLongTimestampGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMinTimestampLongGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
@@ -216,6 +225,48 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Function f = parseFunction("a + c", metadata, functionParser);
         assertEquals(123.123f, f.getFloat(null), 0.0001);
+    }
+
+    @Test
+    public void testArgMinMaxCastTieKeepsValueType() throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("i", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("l", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("d", ColumnType.DATE));
+            metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
+            for (boolean isValueTypeFirst : new boolean[]{true, false}) {
+                functions.clear();
+                if (isValueTypeFirst) {
+                    functions.add(new ArgMaxLongDoubleGroupByFunctionFactory());
+                    functions.add(new ArgMaxTimestampLongGroupByFunctionFactory());
+                    functions.add(new ArgMinLongDoubleGroupByFunctionFactory());
+                    functions.add(new ArgMinTimestampLongGroupByFunctionFactory());
+                }
+                functions.add(new ArgMaxDoubleLongGroupByFunctionFactory());
+                functions.add(new ArgMaxLongTimestampGroupByFunctionFactory());
+                functions.add(new ArgMinDoubleLongGroupByFunctionFactory());
+                functions.add(new ArgMinLongTimestampGroupByFunctionFactory());
+                if (!isValueTypeFirst) {
+                    functions.add(new ArgMaxLongDoubleGroupByFunctionFactory());
+                    functions.add(new ArgMaxTimestampLongGroupByFunctionFactory());
+                    functions.add(new ArgMinLongDoubleGroupByFunctionFactory());
+                    functions.add(new ArgMinTimestampLongGroupByFunctionFactory());
+                }
+                FunctionFactoryScanner.sort(functions, "function_list.txt", FunctionFactoryScanner.class.getClassLoader());
+                final FunctionParser functionParser = createFunctionParser();
+                for (String call : new String[]{"arg_max(i, i)", "arg_max(l, l)", "arg_min(i, i)", "arg_min(l, l)"}) {
+                    try (Function function = parseFunction(call, metadata, functionParser)) {
+                        assertEquals(call, ColumnType.LONG, function.getType());
+                    }
+                }
+                for (String call : new String[]{"arg_max(d, d)", "arg_max(ts, ts)", "arg_min(d, d)", "arg_min(ts, ts)"}) {
+                    try (Function function = parseFunction(call, metadata, functionParser)) {
+                        assertEquals(call, ColumnType.TIMESTAMP, function.getType());
+                    }
+                }
+            }
+        });
     }
 
     @Test

@@ -978,6 +978,34 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillFromGreaterThanToRejectedAtRuntime() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-05T00:00:00.000000Z')
+                    """);
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_704_844_800_000_000L);
+            bindVariableService.setTimestamp(1, 1_704_412_800_000_000L);
+            final String bindSql = "SELECT ts, sum(val) FROM t SAMPLE BY 1d FROM $1 TO $2 FILL(NULL)";
+            assertQuery(bindSql)
+                    .noLeakCheck()
+                    .fails(bindSql.indexOf("$2"), "TO timestamp must not be earlier than FROM timestamp");
+            final String functionSql = "SELECT ts, sum(val) FROM t SAMPLE BY 1d FROM dateadd('d', 4, now()) TO now() FILL(PREV)";
+            assertQuery(functionSql)
+                    .noLeakCheck()
+                    .fails(functionSql.indexOf("TO now()") + 3, "TO timestamp must not be earlier than FROM timestamp");
+            assertQuery("SELECT ts, sum(val) FROM t SAMPLE BY 1d FROM $1 TO $2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tsum\n");
+        });
+    }
+
+    @Test
     public void testFillFromWithOffsetOverSampleByCursor() throws Exception {
         // A SAMPLE BY cursor anchors its buckets at FROM plus OFFSET, as the GROUP BY path does, and its fill grid
         // does the same.

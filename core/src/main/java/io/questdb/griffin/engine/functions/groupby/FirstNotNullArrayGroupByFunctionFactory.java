@@ -33,6 +33,11 @@ import io.questdb.std.ObjList;
 
 public class FirstNotNullArrayGroupByFunctionFactory implements FunctionFactory {
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
     public int getResultType(IntList argTypes) {
         return argTypes.getQuick(0);
     }

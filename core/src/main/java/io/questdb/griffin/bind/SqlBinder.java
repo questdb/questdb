@@ -544,7 +544,7 @@ public final class SqlBinder implements Mutable {
 
         clearCursorColumns();
         if (ctx.hasAggregation(model, source)
-                || model.isDistinct() && !hasWindows && !isHorizonJoin && aggregateBinder.isDistinctRewritten(model, source)
+                || model.isDistinct() && !hasWindows && aggregateBinder.isDistinctRewritten(model, source)
                 && !windowBinder.hasProjectionReferences(model, sourcePlan.getOutput())) {
             if (!hasWindows && !isHorizonJoin && collectCursorColumns(model)) {
                 input = bindCursorColumns(input, sourceAlias(source), model.getModelPosition(), executionContext);
@@ -568,6 +568,9 @@ public final class SqlBinder implements Mutable {
             throw sampleByBinder.subsampleTimestampMissing(source, sourcePlan);
         }
         final HorizonJoinPlan horizon = isHorizonJoin ? (HorizonJoinPlan) sourcePlan : null;
+        if (horizon != null) {
+            horizon.setConsumer(HorizonJoinPlan.Consumer.PROJECTION);
+        }
         if (!hasWindows && collectCursorColumns(model)) {
             input = bindCursorColumns(input, sourceAlias(source), model.getModelPosition(), executionContext);
             sourcePlan = input;
@@ -598,7 +601,7 @@ public final class SqlBinder implements Mutable {
             if (expression.isWildcard()) {
                 boolean hasMatch = false;
                 for (int k = 0, count = output.getColumnCount(); k < count; k++) {
-                    final int index = horizon != null ? temporalJoinBinder.horizonWildcardIndex(horizon, k) : k;
+                    final int index = horizon != null ? TemporalJoinBinder.horizonWildcardIndex(horizon, k) : k;
                     if (isWildcardColumn(expression, output, index, sourceAlias(source))) {
                         ctx.addProjection(project, output, index, output.getColumnName(index), expression.position, true);
                         if (isHorizonJoin && index == output.getTimestampIndex()) {
