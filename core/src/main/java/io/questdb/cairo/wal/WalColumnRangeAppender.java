@@ -93,7 +93,8 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     }
 
     /**
-     * Discards the open block. Does nothing without one.
+     * Discards the open block. Does nothing without one. If the sink's cancel throws, the block stays open and
+     * the call may be repeated.
      */
     public void cancel() {
         if (!isInBlock) {
@@ -115,6 +116,8 @@ public final class WalColumnRangeAppender implements QuietCloseable {
 
     /**
      * Writes one symbol key, as {@link #resolveSymbol(int, CharSequence)} returned it, for every row of the block.
+     * Only a key {@link #resolveSymbol(int, CharSequence)} returned for this sink is valid; any other key is
+     * written as it is and the segment is silently wrong.
      */
     public void fillSymbolKey(int columnIndex, int key) {
         checkInBlock();
@@ -132,6 +135,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      * Checks that the minimum and maximum timestamp lie within the table's bounds and closes the block; the sink
      * NULL-fills the columns that received no range. The minimum, maximum and order are the client's claim about
      * the pairs it wrote and are not cross-checked against them.
+     * A refused finish leaves the block open, so that the client cancels it.
      */
     public void finish(long minTimestamp, long maxTimestamp, boolean outOfOrder) {
         checkInBlock();
@@ -207,8 +211,8 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     /**
      * Appends the block's designated timestamps from 16-byte (timestamp, row) pairs at {@code address}, whose rows
      * count from {@code sourceFirstRow}. The pairs are copied when {@code sourceFirstRow} is the block's first
-     * row, and rewritten with the block's rows otherwise. The range is {@code rowCount} pairs of 16 bytes, so it
-     * takes no size.
+     * row, and rewritten with the block's rows otherwise. The range is {@code rowCount} pairs of 16 bytes,
+     * read without a length, so it takes no size.
      */
     public void putTimestampRange(int columnIndex, long address, long sourceFirstRow) {
         checkInBlock();
@@ -239,9 +243,12 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      * {@code auxAddress} is the aux entry of the range's first row (STRING and BINARY: the entry holding its data
      * offset, of which the block's rows plus one are read; VARCHAR and ARRAY: its 16-byte entry),
      * {@code dataAddress} and {@code dataSize} the range's data bytes, and {@code dataOffset} the offset of
-     * {@code dataAddress} in the source data vector, which the aux entries are relative to. The entries are
-     * shifted to the sink's data append offset; a STRING or BINARY range continues from the entry the sink's aux
-     * column already holds.
+     * {@code dataAddress} in the source data vector, which the aux entries are relative to. The entries are read
+     * from {@code auxAddress} without a length: the block's rows plus one for STRING and BINARY, the block's rows
+     * for VARCHAR and ARRAY, and a shorter buffer is read past its end. The entries are shifted to the sink's data
+     * append offset; a STRING or BINARY range continues from the entry the sink's aux column already holds. The
+     * type driver shifts the entries and asserts their layout as it does so, so a malformed VARCHAR entry trips an
+     * assertion before any byte is written.
      */
     public void putVarSizeRange(int columnIndex, long auxAddress, long dataAddress, long dataOffset, long dataSize) {
         checkInBlock();
@@ -292,8 +299,9 @@ public final class WalColumnRangeAppender implements QuietCloseable {
 
     /**
      * Syncs the memories of the columns written in the open block, data and aux: synchronous, regardless of the
-     * writer's commit mode, and covering each memory's current append page; earlier pages of a block larger than
-     * one page were synced when they were released under a commit mode other than NOSYNC. What the block finish
+     * writer's commit mode, and covering each memory's current append page; an earlier page of a block larger than
+     * one page was synced when the memory released it under commit mode SYNC; under ASYNC that release-time msync
+     * is asynchronous, and a no-op on Linux. What the block finish
      * and the commit sync afterwards is unchanged.
      */
     public void syncWrittenColumns() {
@@ -347,8 +355,8 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      */
     public interface SymbolValues {
         /**
-         * Returns the value of a non-negative key, or null for a key the dictionary does not hold. The value is
-         * consumed before the call returns, so a reused buffer is fine.
+         * Returns the value of a non-negative key, or null for a key the dictionary does not hold. The appender
+         * consumes the value before it asks for the next key, so the method may return a reused buffer.
          */
         @Nullable
         CharSequence valueOf(int key);
