@@ -754,7 +754,7 @@ public class RecordToRowCopierUtils {
                 if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) {
                     timestampTypeRef = fromColumnType_0 + 2 * i;
                 } else if (toColumnTypeTag == ColumnType.TIMESTAMP && (fromColumnTypeTag == ColumnType.DATE ||
-                        fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING ||
+                        fromColumnTypeTag == ColumnType.SYMBOL || fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING ||
                         (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) {
                     timestampTypeRef = toColumnType_0 + 2 * i;
                 }
@@ -1218,6 +1218,10 @@ public class RecordToRowCopierUtils {
                                 break;
                             case ColumnType.VARCHAR:
                                 asm.invokeStatic(transferStrToVarcharCol);
+                                break;
+                            case ColumnType.TIMESTAMP:
+                                asm.invokeInterface(implicitCastStrAsTimestamp, 1);
+                                asm.invokeInterface(wPutTimestamp, 3);
                                 break;
                             default:
                                 assert false;
@@ -1905,7 +1909,7 @@ public class RecordToRowCopierUtils {
             if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) { // Timestamp -> Date
                 timestampTypeRef = fromColumnType_0 + 2 * i;
             } else if (toColumnTypeTag == ColumnType.TIMESTAMP && (fromColumnTypeTag == ColumnType.DATE || // Date -> Timestamp
-                    fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING || // Varchar -> Timestamp or String -> Timestamp
+                    fromColumnTypeTag == ColumnType.SYMBOL || fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING || // Varchar -> Timestamp or String -> Timestamp
                     (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) { // Timestamp -> Timestamp
                 timestampTypeRef = toColumnType_0 + 2 * i;
             }
@@ -2419,6 +2423,10 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.VARCHAR:
                             asm.invokeStatic(transferStrToVarcharCol);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.invokeInterface(implicitCastStrAsTimestamp, 1);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         default:
                             assert false;

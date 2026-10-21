@@ -112,6 +112,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
                     (fromColumnTypeTag == ColumnType.DATE ||
                             fromColumnTypeTag == ColumnType.VARCHAR ||
                             fromColumnTypeTag == ColumnType.STRING ||
+                            fromColumnTypeTag == ColumnType.SYMBOL ||
                             (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) {
                 timestampDriver = ColumnType.getTimestampDriver(toColumnType);
             }
@@ -190,7 +191,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.CHAR ->
                     copyFromChar(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.SYMBOL ->
-                    copyFromSymbol(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag);
+                    copyFromSymbol(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, timestampDriver);
             case ColumnType.VARCHAR ->
                     copyFromVarchar(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, timestampDriver);
             case ColumnType.STRING ->
@@ -495,12 +496,13 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         }
     }
 
-    private void copyFromSymbol(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag) {
+    private void copyFromSymbol(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, TimestampDriver timestampDriver) {
         CharSequence value = record.getSymA(fromIndex);
         switch (toTypeTag) {
             case ColumnType.SYMBOL -> row.putSym(toIndex, value);
             case ColumnType.STRING -> row.putStr(toIndex, value);
             case ColumnType.VARCHAR -> RecordToRowCopierUtils.transferStrToVarcharCol(row, toIndex, value);
+            case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, timestampDriver.implicitCast(value));
             default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }
