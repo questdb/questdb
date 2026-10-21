@@ -70,6 +70,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     static final ArrayColumnTypes STDDEV_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    // Live-view variant of STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES with the BYTE
+    // tombstone slot appended.
+    private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
 
     // Naive sum-of-squares formula, used by sliding-window (removable) frames.
     static double computeResult(double sum, double sumSq, long count, boolean isSample, boolean isSqrt) {
@@ -263,13 +266,15 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 }
                 // between [unbounded | x] preceding and [x preceding | current row]
                 else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES
+                                liveView ? STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -287,7 +292,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                                 mem,
                                 isSample,
                                 isSqrt,
-                                name
+                                name,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -764,6 +771,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private final int frameSize;
         private final boolean isSample;
         private final boolean isSqrt;
+        // Deep copy of the partition-by key column types for the snapshot codec. The
+        // factory reuses its partitionByKeyTypes buffer across compiles. Null outside LV.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout, tombstone slot included. Null outside LV.
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final String name;
         private double stddev;
@@ -778,7 +791,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 MemoryARW memory,
                 boolean isSample,
                 boolean isSqrt,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
 
@@ -797,6 +812,29 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             this.isSample = isSample;
             this.isSqrt = isSqrt;
             this.name = name;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 5;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
         }
 
         @Override
@@ -813,6 +851,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             // 2 - finite count in frame
             // 3 - (0-based) index of oldest value
             // 4 - native array start offset
+            // 5 - tombstone (live view only)
             // ring buffer stores raw values including NaN placeholders
 
             partitionByRecord.of(record);
@@ -828,6 +867,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             double d = arg.getDouble(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
@@ -879,6 +921,35 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             memory.putDouble(startOffset + loIdx * Double.BYTES, d);
         }
 
+        /**
+         * Writes {@code (sum, sumSq, count, loIdx)} followed by the partition's whole ring,
+         * NaN placeholders included. The ring is always {@code bufferSize} cells long, so the
+         * image width depends on the declared frame rather than on the partition.
+         */
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putDouble(value.getDouble(1));
+            sink.putLong(value.getLong(2));
+            sink.putLong(value.getLong(3));
+            final long startOffset = value.getLong(4);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putDouble(memory.getDouble(startOffset + (long) i * Double.BYTES));
+            }
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+        }
+
         @Override
         public double getDouble(Record rec) {
             return stddev;
@@ -890,8 +961,46 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and sum/sumSq/count accumulate over
+            // exactly those, so a warm-up of N predecessors reconstructs the state. The
+            // replayed ring starts at a different rotation and the replayed sums skip the
+            // rounding the dropped rows left behind, which the contract allows: the values
+            // emitted are the same, up to the documented floating drift.
+            return true;
+        }
+
+        @Override
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            // The flag goes unread: this function keeps no checkpoint dirty set, so every
+            // seal full-scans it.
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -903,6 +1012,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         @Override
         public void reopen() {
             super.reopen();
+            tombstoneCount = 0;
             // memory will allocate on first use
         }
 
@@ -910,12 +1020,73 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         public void reset() {
             super.reset();
             memory.close();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame to empty: sum, sumSq,
+            // count and loIdx go to zero and the ring back to NaN, so the next row
+            // re-anchors cleanly. The ring's startOffset (slot 4) stays allocated and the
+            // next row's write reuses it from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(4);
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+                value.putLong(3, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
+                }
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final long ringBytes = (long) bufferSize * Double.BYTES;
+            final double partitionSum = source.getDouble(offset);
+            offset += Double.BYTES;
+            final double partitionSumSq = source.getDouble(offset);
+            offset += Double.BYTES;
+            final long partitionCount = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putDouble(newStartOffset + (long) i * Double.BYTES, source.getDouble(offset));
+                offset += Double.BYTES;
+            }
+            value.putDouble(0, partitionSum);
+            value.putDouble(1, partitionSumSq);
+            value.putLong(2, partitionCount);
+            value.putLong(3, loIdx);
+            value.putLong(4, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
         }
 
         @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -945,6 +1116,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         public void toTop() {
             super.toTop();
             memory.truncate();
+            tombstoneCount = 0;
         }
     }
 
@@ -1843,6 +2015,14 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);   // finite count in frame
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);   // lo index
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);   // start offset
+
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // sum
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // sumSq
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);   // finite count in frame
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);   // lo index
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);   // start offset
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone
 
         STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
         STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.DOUBLE); // sum

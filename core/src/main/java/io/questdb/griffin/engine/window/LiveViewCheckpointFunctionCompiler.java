@@ -1125,13 +1125,20 @@ public final class LiveViewCheckpointFunctionCompiler {
 
     private static NumericConvergence numericConvergence(WindowFunction function) {
         // Floating accumulators may leave a sub-ULP difference after a localized replay; the same
-        // functions over DECIMAL are exact.
+        // functions over DECIMAL are exact. The stddev/variance family re-accumulates a floating
+        // (sum, sumSq) pair over a bounded frame, so it carries the same tolerance.
         final CharSequence name = function.getName();
         return ColumnType.tagOf(function.getType()) == ColumnType.DOUBLE
                 && (Chars.equalsIgnoreCase(name, "avg")
                 || Chars.equalsIgnoreCase(name, "sum")
                 || Chars.equalsIgnoreCase(name, "ksum")
-                || Chars.equalsIgnoreCase(name, "nsum"))
+                || Chars.equalsIgnoreCase(name, "nsum")
+                || Chars.equalsIgnoreCase(name, "stddev")
+                || Chars.equalsIgnoreCase(name, "stddev_samp")
+                || Chars.equalsIgnoreCase(name, "stddev_pop")
+                || Chars.equalsIgnoreCase(name, "variance")
+                || Chars.equalsIgnoreCase(name, "var_samp")
+                || Chars.equalsIgnoreCase(name, "var_pop"))
                 ? NumericConvergence.FLOATING_TOLERANCE
                 : NumericConvergence.EXACT;
     }
