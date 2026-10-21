@@ -46,7 +46,9 @@ import org.jetbrains.annotations.Nullable;
  * sink's rules for its client: it advances the not-null watermark of every written column, writes the designated
  * timestamp as (timestamp, row) pairs whose row is the segment's, continues a STRING or BINARY aux vector from
  * the entry already present, resolves symbols through the sink's own reader in first-row order, checks the
- * timestamp bounds before the block finishes, and leaves a refused call to be cancelled by the client.
+ * timestamp bounds before the block finishes, and leaves a refused call to be cancelled by the client. A call
+ * that throws after it began writing, from the sink or from the client's symbol lookup, marks the block failed:
+ * every further call is refused until the client cancels the block.
  * <p>
  * What each put validates, before it writes anything: that a block is open and the column exists; that the
  * column is of the kind the call takes and was not written in this block; for a fixed-size range, that its byte
@@ -64,6 +66,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     private final IntIntHashMap symbolKeys = new IntIntHashMap();
     private final IntList writtenColumns = new IntList();
     private long firstRow;
+    private boolean hasFailedWrite;
     private boolean isInBlock;
     private int rowCount;
     private long scratch;
@@ -102,6 +105,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
         }
         sink.cancelColumnarWrite();
         isInBlock = false;
+        hasFailedWrite = false;
     }
 
     /**
@@ -125,8 +129,13 @@ public final class WalColumnRangeAppender implements QuietCloseable {
         checkNotWritten(columnIndex);
         checkSymbol(columnIndex);
         final MemoryMA data = sink.getDataColumn(columnIndex);
-        for (int i = 0; i < rowCount; i++) {
-            data.putInt(key);
+        try {
+            for (int i = 0; i < rowCount; i++) {
+                data.putInt(key);
+            }
+        } catch (Throwable th) {
+            hasFailedWrite = true;
+            throw th;
         }
         written(columnIndex);
     }
@@ -163,7 +172,12 @@ public final class WalColumnRangeAppender implements QuietCloseable {
             throw CairoException.nonCritical().put("fixed-size range does not match the block [column=").put(columnIndex)
                     .put(", size=").put(size).put(", expected=").put(expected).put(']');
         }
-        sink.getDataColumn(columnIndex).putBlockOfBytes(address, size);
+        try {
+            sink.getDataColumn(columnIndex).putBlockOfBytes(address, size);
+        } catch (Throwable th) {
+            hasFailedWrite = true;
+            throw th;
+        }
         written(columnIndex);
     }
 
@@ -183,27 +197,32 @@ public final class WalColumnRangeAppender implements QuietCloseable {
         symbolKeys.clear();
         int nullKey = 0;
         boolean hasNullKey = false;
-        for (int i = 0; i < rowCount; i++) {
-            final int key = Unsafe.getInt(keysAddress + ((long) i << 2));
-            final int targetKey;
-            if (key < 0) {
-                // NULL, resolved once per block; a negative key never enters the map, whose empty marker is -1
-                if (!hasNullKey) {
-                    nullKey = sink.resolveSymbol(columnIndex, null, reader);
-                    hasNullKey = true;
-                }
-                targetKey = nullKey;
-            } else {
-                final int index = symbolKeys.keyIndex(key);
-                if (index > -1) {
-                    // first row of this key in the block: resolve once, in first-row order as the row API does
-                    targetKey = sink.resolveSymbol(columnIndex, values.valueOf(key), reader);
-                    symbolKeys.putAt(index, key, targetKey);
+        try {
+            for (int i = 0; i < rowCount; i++) {
+                final int key = Unsafe.getInt(keysAddress + ((long) i << 2));
+                final int targetKey;
+                if (key < 0) {
+                    // NULL, resolved once per block; a negative key never enters the map, whose empty marker is -1
+                    if (!hasNullKey) {
+                        nullKey = sink.resolveSymbol(columnIndex, null, reader);
+                        hasNullKey = true;
+                    }
+                    targetKey = nullKey;
                 } else {
-                    targetKey = symbolKeys.valueAt(index);
+                    final int index = symbolKeys.keyIndex(key);
+                    if (index > -1) {
+                        // first row of this key in the block: resolve once, in first-row order as the row API does
+                        targetKey = sink.resolveSymbol(columnIndex, values.valueOf(key), reader);
+                        symbolKeys.putAt(index, key, targetKey);
+                    } else {
+                        targetKey = symbolKeys.valueAt(index);
+                    }
                 }
+                data.putInt(targetKey);
             }
-            data.putInt(targetKey);
+        } catch (Throwable th) {
+            hasFailedWrite = true;
+            throw th;
         }
         written(columnIndex);
     }
@@ -229,10 +248,20 @@ public final class WalColumnRangeAppender implements QuietCloseable {
                 throw CairoException.nonCritical().put("timestamp pairs do not start at the source row [column=").put(columnIndex)
                         .put(", sourceFirstRow=").put(sourceFirstRow).put(", firstPairRow=").put(firstPairRow).put(']');
             }
-            data.putBlockOfBytes(address, (long) rowCount << 4);
+            try {
+                data.putBlockOfBytes(address, (long) rowCount << 4);
+            } catch (Throwable th) {
+                hasFailedWrite = true;
+                throw th;
+            }
         } else {
-            for (int i = 0; i < rowCount; i++) {
-                data.putLong128(Unsafe.getLong(address + ((long) i << 4)), firstRow + i);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    data.putLong128(Unsafe.getLong(address + ((long) i << 4)), firstRow + i);
+                }
+            } catch (Throwable th) {
+                hasFailedWrite = true;
+                throw th;
             }
         }
         written(columnIndex);
@@ -277,10 +306,15 @@ public final class WalColumnRangeAppender implements QuietCloseable {
             throw CairoException.nonCritical().put("var-size range does not match its aux entries [column=").put(columnIndex)
                     .put(", dataEnd=").put(dataEnd).put(", expected=").put(expectedEnd).put(']');
         }
-        // the leading entry of a STRING or BINARY vector is already present in the sink's aux column
-        aux.putBlockOfBytes(scratch + auxSize - appendBytes, appendBytes);
-        if (dataSize > 0) {
-            data.putBlockOfBytes(dataAddress, dataSize);
+        try {
+            // the leading entry of a STRING or BINARY vector is already present in the sink's aux column
+            aux.putBlockOfBytes(scratch + auxSize - appendBytes, appendBytes);
+            if (dataSize > 0) {
+                data.putBlockOfBytes(dataAddress, dataSize);
+            }
+        } catch (Throwable th) {
+            hasFailedWrite = true;
+            throw th;
         }
         written(columnIndex);
     }
@@ -329,6 +363,9 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     private void checkInBlock() {
         if (!isInBlock) {
             throw CairoException.nonCritical().put("no open block");
+        }
+        if (hasFailedWrite) {
+            throw CairoException.nonCritical().put("block failed, cancel it");
         }
     }
 

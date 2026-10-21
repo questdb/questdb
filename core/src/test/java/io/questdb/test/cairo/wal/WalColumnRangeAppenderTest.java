@@ -547,6 +547,74 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefusesEveryCallAfterAFailedWrite() throws Exception {
+        // a put that throws after it began writing leaves bytes the block cannot account for: every call is
+        // refused until the client cancels, and the next block is clean
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "failed", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final int rows = 2;
+            final long values = Unsafe.malloc(rows * 8L, MemoryTag.NATIVE_DEFAULT);
+            final long keys = Unsafe.malloc(rows * 4L, MemoryTag.NATIVE_DEFAULT);
+            final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                for (int i = 0; i < rows; i++) {
+                    Unsafe.putLong(values + i * 8L, i);
+                    Unsafe.putInt(keys + i * 4L, i);
+                    putPair(pairs, i, TS0 + i * SECOND, i);
+                }
+                appender.begin(rows);
+                appender.putFixedRange(0, values, rows * 8L);
+                try {
+                    // the first key resolves and is written; the second throws from the client's lookup
+                    appender.putSymbolRange(1, keys, key -> {
+                        if (key == 1) {
+                            throw new IllegalStateException("lookup failed");
+                        }
+                        return "v";
+                    });
+                    Assert.fail();
+                } catch (IllegalStateException e) {
+                    TestUtils.assertContains(e.getMessage(), "lookup failed");
+                }
+                assertRefused(() -> appender.putSymbolRange(1, keys, key -> "v"), "block failed");
+                assertRefused(() -> appender.putTimestampRange(2, pairs, 0), "block failed");
+                assertRefused(appender::syncWrittenColumns, "block failed");
+                assertRefused(() -> appender.finish(TS0, TS0 + SECOND, false), "block failed");
+                appender.cancel();
+                Assert.assertEquals(0, writer.getSegmentRowCount());
+                appender.begin(rows);
+                appender.putFixedRange(0, values, rows * 8L);
+                appender.putSymbolRange(1, keys, key -> "v" + key);
+                appender.putTimestampRange(2, pairs, 0);
+                appender.finish(TS0, TS0 + SECOND, false);
+                writer.commit();
+            } finally {
+                Unsafe.free(values, rows * 8L, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(keys, rows * 4L, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(pairs, rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, s, ts FROM failed")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\ts\tts
+                            0\tv0\t2026-01-01T00:00:00.000000Z
+                            1\tv1\t2026-01-01T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testRefusesEveryCallOutsideBlock() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = createTable(new TableModel(configuration, "outside", PartitionBy.HOUR)
