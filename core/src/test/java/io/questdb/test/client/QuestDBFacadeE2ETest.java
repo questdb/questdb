@@ -697,8 +697,9 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 // the buffer it is meant to transmit). WS rejects
                 // auto_flush_interval=off outright, so a 1h interval -- orders of
                 // magnitude beyond the test's runtime -- stands in for it. With
-                // that, rows=1000 (> both row counts) and bytes=0, exactly two
-                // non-empty flushes per table are guaranteed: the shared
+                // that, rows=1000 (> both row counts) and a byte trigger at 90
+                // percent of the advertised cap, far above these rows, exactly
+                // two non-empty flushes per table are guaranteed: the shared
                 // mid-flush and the final flush.
                 String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";auto_flush_interval=3600000;";
                 try (QuestDB db = QuestDB.builder()
@@ -867,6 +868,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                                     s.table("el")
                                             .longColumn("x", rowId)
                                             .at(((long) (rowId + 1)) * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
+                                    s.flush();
                                 }
                             } catch (Throwable th) {
                                 firstError.compareAndSet(null, th);
@@ -881,8 +883,10 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                         throw new AssertionError("burst writer failed", firstError.get());
                     }
 
-                    // Each of the 4 burst senders flushes once on close -> 4 WAL
-                    // txns. Wait for all to apply before counting.
+                    // Each burst lease flushes its own row: a pooled close() no
+                    // longer flushes, and LIFO reuse could otherwise put two
+                    // leases' rows into one frame and one WAL txn. Wait for all
+                    // four to apply before counting.
                     server.awaitTxn("el", 4);
                     AtomicInteger seen = new AtomicInteger();
                     try (Query q = db.borrowQuery()) {
