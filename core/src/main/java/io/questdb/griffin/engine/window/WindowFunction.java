@@ -1332,10 +1332,9 @@ public interface WindowFunction extends Function {
      * instead - they leave this false and override only the whole-state pair above.
      * <p>
      * The running-aggregate families leave it false for a different reason: they hold no ring
-     * to share. {@code ema}/{@code vwema}, {@code stddev}/{@code variance} over an unbounded
-     * frame and the bivariate stats over an unbounded frame (the bounded RANGE frame of
-     * each is ring-shaped), {@code ksum},
-     * {@code count} over an unbounded frame, {@code row_number} and
+     * to share. {@code ema}/{@code vwema}; {@code stddev}/{@code variance}, the bivariate
+     * stats and {@code ksum} over an unbounded frame (the bounded RANGE frame of each is
+     * ring-shaped); {@code count} over an unbounded frame, {@code row_number} and
      * {@code rank} each carry a fixed handful of accumulator words per partition however long
      * the view has run, so one complete image per root is already the smallest thing a root
      * can write - a chunk reference costs more metadata than the image it would replace, and
