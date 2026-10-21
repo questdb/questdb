@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -282,6 +281,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
+        // Re-checked here, not only on first resolve: an entry left in state 1 by a failed
+        // cacheWriter re-resolves the token, and the table may since have been re-created as WAL.
+        if (tableToken != null && tableToken.isWal()) {
+            rejectWalTable(entry, tableToken);
+            return;
+        }
         try {
             entry.writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
             this.tableToken = tableToken;
@@ -332,6 +337,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 false,
                 TableUtils.TABLE_KIND_REGULAR_TABLE
         );
+        // The adapter always creates a non-WAL table, but createTable() is IF NOT EXISTS: if another
+        // path created the table as WAL in the meantime, this is that table's token.
+        if (tableToken.isWal()) {
+            rejectWalTable(writerCache.valueAtQuick(cacheEntryIndex), tableToken);
+            return;
+        }
         appendFirstRowAndCacheWriter(cache);
     }
 
@@ -518,6 +529,20 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     /**
+     * ILP over UDP writes through a TableWriter directly, bypassing the WAL, the sequencer and
+     * replication, so it must never write a WAL table. The rejection is logged as critical once per
+     * cache entry; the entry is parked in the skip state, so every later line for the table is
+     * dropped without flooding the log at datagram rate.
+     */
+    private void rejectWalTable(CacheEntry entry, TableToken tableToken) {
+        entry.state = 3;
+        switchModeToSkipLine();
+        LOG.critical().$("ILP over UDP cannot write to a WAL table, the table's rows will be dropped; ")
+                .$("use ILP over TCP/HTTP, or convert the table to non-WAL [table=").$(tableToken)
+                .I$();
+    }
+
+    /**
      * Releases every cached writer on the read-only (demoting) branch, mirroring ILP-TCP's
      * closeNoLock. The parser caches a TableWriter per table under the "ilpUdp" lock for the
      * receiver's lifetime; that lock is correctly NOT classified as an internal lock reason, so
@@ -596,6 +621,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         this.cacheEntryIndex = entryIndex;
+        // The previous table's writer, if any, is on the commit list now. Drop it as the current
+        // writer: if the new table is skipped (WAL, view, wrong type) no createState() replaces it,
+        // and onEvent() would take the stale writer as "this table is cached" on the next line of
+        // the new table and append that line to the previous table.
+        this.writer = null;
+        this.metadata = null;
 
         if (entry.writer == null) {
             initCacheEntry(tableName, entry);
@@ -706,7 +737,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
         @Override
         public boolean isWalEnabled() {
-            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
+            // ILP over UDP writes through a TableWriter, which cannot write a WAL table.
+            return false;
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {

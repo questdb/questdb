@@ -155,9 +155,10 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void test1RowCommitEqualSize() throws Exception {
-        // Force 1 by 1 commit application
+        // Force 1 by 1 commit application: a 1-byte adaptive block holds a single row
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
         setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
 
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, id)");
@@ -1156,6 +1157,8 @@ public class WalWriterTest extends AbstractCairoTest {
         // job invocations must still drain the entire backlog correctly.
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
+        // The adaptive block sizes the lookahead to its rows; 1 byte keeps it at one row
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
 
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -1374,13 +1377,34 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartition() throws Exception {
+        // Classic (non-composite) O3 rewrite: physical row space equals logical row space, so the
+        // index's max row is the live row count minus one.
+        testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartition0(false, 19);
+    }
+
+    @Test
+    public void testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartitionMergeAppend() throws Exception {
+        // Merge-append relocates the merged piece to the files' physical tail (10 old + 20 merged
+        // rows land at physical offset 10), so the index's max row is the physical tail, not the
+        // live row count. The backdated batch ties the existing piece's tsHi exactly, and that tie
+        // needs to actually be claimed by a MERGE rather than spared into a plain in-place APPEND
+        // (O3CompositeMergeStrategy.computeActions spares a tail-piece tie whenever the commit
+        // cannot need a dedup comparison) - DEDUP UPSERT KEYS forces the comparison so the tie is
+        // claimed, without changing which rows are live since (ts, val) is unique per row.
+        testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartition0(true, 29);
+    }
+
+    private void testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartition0(
+            boolean mergeAppendEnabled, long expectedMaxRow
+    ) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, mergeAppendEnabled);
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("CREATE TABLE " + tableName + " (" +
                     "sym SYMBOL NOCACHE INDEX CAPACITY 4," +
                     "val INT," +
                     "ts TIMESTAMP" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, val)");
 
             execute("INSERT INTO " + tableName +
                     " SELECT 'sym_' || x, x::INT, '2022-01-01T00:00:00.000000Z'" +
@@ -1399,7 +1423,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\n21\n");
-            assertBitmapIndexMaxValue(tableName);
+            assertBitmapIndexMaxValue(tableName, expectedMaxRow);
         });
     }
 
@@ -2490,6 +2514,9 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testMaxLagTxnCount() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
         configOverrideWalMaxLagTxnCount();
+        // Merge-append refuses WAL lag for the whole table, which defeats this test's premise of
+        // rows sitting invisible in the writer's lag buffer.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
@@ -3199,6 +3226,8 @@ public class WalWriterTest extends AbstractCairoTest {
         final int batchSize = 3;
         final int totalTxns = 20;
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, batchSize);
+        // An adaptive block would make the look-ahead load a whole block past the deadline
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 0);
 
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -4899,39 +4928,44 @@ public class WalWriterTest extends AbstractCairoTest {
                     .wal();
             tableToken = createTable(model);
 
-            try (TableWriter tableWriter = getWriter(tableToken)) {
+            final String walName;
+            final IntList walSymbolCounts = new IntList();
+            // Seed the table's symbol maps with keys 0-4, so the segment under test has to start its
+            // symbol diff at key 5. A WAL table takes no direct TableWriter row appends, so the seed goes
+            // through a WAL of its own. It stays open while the segment under test is written, which keeps
+            // that segment on a second WAL at segment 0, the shape the WalReader assertions below expect.
+            try (WalWriter seedWriter = engine.getWalWriter(tableToken)) {
                 for (int i = 0; i < 5; i++) {
-                    TableWriter.Row row = tableWriter.newRow(0);
+                    TableWriter.Row row = seedWriter.newRow(0);
                     row.putByte(0, (byte) i);
                     row.putSym(1, "sym" + i);
                     row.putSym(2, "s" + i % 2);
                     row.putSym(3, "symbol" + i % 2);
                     row.append();
                 }
-                tableWriter.commit();
-            }
+                seedWriter.commit();
+                drainWalQueue();
 
-            final String walName;
-            final IntList walSymbolCounts = new IntList();
-            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                walName = walWriter.getWalName();
-                for (int i = 0; i < 10; i++) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putByte(0, (byte) i);
-                    row.putSym(1, "sym" + i);
-                    row.putSym(2, "s" + i % 2);
-                    row.putSym(3, "symbol" + i % 3);
-                    row.append();
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    for (int i = 0; i < 10; i++) {
+                        TableWriter.Row row = walWriter.newRow(0);
+                        row.putByte(0, (byte) i);
+                        row.putSym(1, "sym" + i);
+                        row.putSym(2, "s" + i % 2);
+                        row.putSym(3, "symbol" + i % 3);
+                        row.append();
+                    }
+
+                    assertNull(walWriter.getSymbolMapReader(0));
+                    walSymbolCounts.add(walWriter.getSymbolMapReader(1).getSymbolCount());
+                    walSymbolCounts.add(walWriter.getSymbolMapReader(2).getSymbolCount());
+                    walSymbolCounts.add(walWriter.getSymbolMapReader(3).getSymbolCount());
+
+                    assertNull(walWriter.getSymbolMapReader(1).valueOf(10));
+
+                    walWriter.commit();
                 }
-
-                assertNull(walWriter.getSymbolMapReader(0));
-                walSymbolCounts.add(walWriter.getSymbolMapReader(1).getSymbolCount());
-                walSymbolCounts.add(walWriter.getSymbolMapReader(2).getSymbolCount());
-                walSymbolCounts.add(walWriter.getSymbolMapReader(3).getSymbolCount());
-
-                assertNull(walWriter.getSymbolMapReader(1).valueOf(10));
-
-                walWriter.commit();
             }
 
             try (
@@ -6669,7 +6703,7 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
-    private void assertBitmapIndexMaxValue(String tableName) {
+    private void assertBitmapIndexMaxValue(String tableName, long expectedMaxRow) {
         try (
                 Path path = new Path().of(configuration.getDbRoot())
                         .concat(engine.verifyTableName(tableName))
@@ -6689,7 +6723,7 @@ public class WalWriterTest extends AbstractCairoTest {
             );
             assertEquals(
                     "bitmap index max row must be inclusive",
-                    19,
+                    expectedMaxRow,
                     keyMem.getLong(BITMAP_INDEX_MAX_VALUE_OFFSET)
             );
         }
