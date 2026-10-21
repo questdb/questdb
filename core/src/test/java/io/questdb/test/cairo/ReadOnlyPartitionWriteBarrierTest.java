@@ -113,6 +113,43 @@ public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3InsertAboveMaxIntoReadOnlyLastPartitionKeepsMaxTimestamp() throws Exception {
+        // One O3 commit carries a row for a writable earlier partition and a row above the max
+        // timestamp that lands in the read-only last partition. The O3 read-only skip drops the
+        // second row, so it must not raise the table's max timestamp either.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_rw_o3_max (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_rw_o3_max VALUES (1, '2019-12-31T00:00:00'), (2, '2020-01-01T00:00:00')");
+            final TableToken tt = engine.verifyTableName("t_rw_o3_max");
+            final long readOnlyTs = 1_577_836_800_000_000L; // 2020-01-01
+            try (TableWriter writer = getWriter(tt)) {
+                writer.getTxWriter().setPartitionReadOnlyByTimestamp(readOnlyTs, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+
+                // The first row is O3, which switches the writer to O3 mode, so the second row
+                // joins the same O3 batch instead of taking the in-order NOOP_ROW path.
+                TableWriter.Row row = writer.newRow(readOnlyTs - 23 * 3_600_000_000L); // 2019-12-31T01:00
+                row.putLong(0, 3L);
+                row.append();
+                row = writer.newRow(readOnlyTs + 5 * 3_600_000_000L); // 2020-01-01T05:00
+                row.putLong(0, 4L);
+                row.append();
+                writer.commit();
+
+                Assert.assertEquals("dropped row must not raise the max timestamp",
+                        readOnlyTs, writer.getMaxTimestamp());
+            }
+            assertQuery("t_rw_o3_max").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    x\tts
+                    1\t2019-12-31T00:00:00.000000Z
+                    3\t2019-12-31T01:00:00.000000Z
+                    2\t2020-01-01T00:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testO3InsertReadOnlyPartitionDropped() throws Exception {
         // The O3 path's per-partition loop continues past read-only
         // partitions (TableWriter.java line ~7803). row count and the
@@ -200,6 +237,64 @@ public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
                 Assert.assertTrue("read_only bit preserved",
                         writer.getTxWriter().isPartitionReadOnly(0));
             }
+        });
+    }
+
+    @Test
+    public void testWalDedupInsertAboveMaxIntoReadOnlyLastPartitionKeepsMaxTimestamp() throws Exception {
+        assertWalInsertAboveMaxIntoReadOnlyLastPartitionKeepsMaxTimestamp(
+                "CREATE TABLE t_rw_wal_max (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)"
+        );
+    }
+
+    @Test
+    public void testWalInsertAboveMaxIntoReadOnlyLastPartitionKeepsMaxTimestamp() throws Exception {
+        assertWalInsertAboveMaxIntoReadOnlyLastPartitionKeepsMaxTimestamp(
+                "CREATE TABLE t_rw_wal_max (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
+        );
+    }
+
+    @Test
+    public void testWalInsertSpanningReadOnlyLastPartitionAndNewPartitionTakesWrittenMax() throws Exception {
+        // A row dropped by the read-only last partition shares the commit with a row that opens a
+        // new, writable partition. The max timestamp comes from the written row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_rw_wal_span_max (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_rw_wal_span_max VALUES (1, '2020-01-01T00:00:00')");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t_rw_wal_span_max");
+            try (TableWriter writer = getWriter(tt)) {
+                writer.getTxWriter().setPartitionReadOnlyByTimestamp(1_577_836_800_000_000L, true); // 2020-01-01
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+
+            execute("INSERT INTO t_rw_wal_span_max VALUES (2, '2020-01-01T05:00:00'), (3, '2020-01-02T01:00:00')");
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+            assertQuery("t_rw_wal_span_max").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    x\tts
+                    1\t2020-01-01T00:00:00.000000Z
+                    3\t2020-01-02T01:00:00.000000Z
+                    """);
+            assertQuery("SELECT table_max_timestamp FROM tables() WHERE table_name = 't_rw_wal_span_max'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            table_max_timestamp
+                            2020-01-02T01:00:00.000000Z
+                            """);
+
+            // The written row's partition is the new writable last partition and takes later rows.
+            execute("INSERT INTO t_rw_wal_span_max VALUES (4, '2020-01-02T02:00:00')");
+            drainWalQueue();
+            assertQuery("t_rw_wal_span_max").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    x\tts
+                    1\t2020-01-01T00:00:00.000000Z
+                    3\t2020-01-02T01:00:00.000000Z
+                    4\t2020-01-02T02:00:00.000000Z
+                    """);
         });
     }
 
@@ -295,6 +390,43 @@ public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
                     "x\tts\n" +
                             "1\t2020-01-01T00:00:00.000000Z\n" +
                             "2\t2020-01-03T00:00:00.000000Z\n");
+        });
+    }
+
+    private void assertWalInsertAboveMaxIntoReadOnlyLastPartitionKeepsMaxTimestamp(String createTableSql) throws Exception {
+        // WAL rows aimed at a read-only last partition go down the O3 path, whose read-only skip
+        // drops them. Rows that never reached the table must not raise its max timestamp.
+        assertMemoryLeak(() -> {
+            execute(createTableSql);
+            execute("INSERT INTO t_rw_wal_max VALUES (1, '2020-01-01T00:00:00')");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t_rw_wal_max");
+            final long readOnlyTs = 1_577_836_800_000_000L; // 2020-01-01
+            try (TableWriter writer = getWriter(tt)) {
+                writer.getTxWriter().setPartitionReadOnlyByTimestamp(readOnlyTs, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+
+            execute("INSERT INTO t_rw_wal_max VALUES (2, '2020-01-01T05:00:00')");
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+            assertQuery("SELECT count(), max(ts) FROM t_rw_wal_max").noLeakCheck().noRandomAccess().expectSize().returns("""
+                    count\tmax
+                    1\t2020-01-01T00:00:00.000000Z
+                    """);
+            assertQuery("SELECT table_max_timestamp FROM tables() WHERE table_name = 't_rw_wal_max'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            table_max_timestamp
+                            2020-01-01T00:00:00.000000Z
+                            """);
+            try (TableWriter writer = getWriter(tt)) {
+                Assert.assertEquals("dropped row must not raise the max timestamp",
+                        readOnlyTs, writer.getMaxTimestamp());
+            }
         });
     }
 }

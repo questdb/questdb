@@ -71,6 +71,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TableWriterTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -848,6 +849,57 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
             Assert.assertEquals(numOfColumns + 1, reader.getMetadata().getColumnCount());
         }
+    }
+
+    @Test
+    public void testNewColumnAfterActivePartitionSwitchedToParquet() throws Exception {
+        // The first line after a storage-policy switch of the active partition opens the next partition
+        // and adds a column, so the writer cancels that row before it adds the column. The cancel must
+        // restore the parquet last partition: it used to throw, the writer was closed as distressed, and
+        // every batch starting with such a line was lost.
+        runInContext((_) -> {
+            execute("CREATE TABLE t (s SYMBOL, vc VARCHAR, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 'v1', 1, '2024-01-01T01:00:00.000000Z'),
+                        ('b', 'v2', 2, '2024-01-01T01:10:00.000000Z')
+                    """);
+            try (TableWriter writer = getWriter("t")) {
+                TableWriterTest.switchLastPartitionToParquet(writer);
+            }
+
+            // A distressed writer is closed instead of returned, so count either release.
+            final CountDownLatch released = new CountDownLatch(1);
+            engine.setPoolListener((factoryType, _, name, event, _, _) -> {
+                if (name != null && Chars.equalsNc(name.getTableName(), "t") && PoolListener.isWalOrWriter(factoryType)
+                        && (event == PoolListener.EV_RETURN || event == PoolListener.EV_LOCK_CLOSE)) {
+                    released.countDown();
+                }
+            });
+            try {
+                send("t", WAIT_NO_WAIT, () -> sendToSocket("""
+                        t,s=c vc="v3",x=3i,y=10i 1704074400000000000
+                        t,s=d vc="v4",x=4i 1704074401000000000
+                        t,s=e vc="v5",x=5i,y=11i 1704074402000000000
+                        """));
+                Assert.assertTrue("writer was not released", released.await(TEST_TIMEOUT_IN_MS, TimeUnit.MILLISECONDS));
+            } finally {
+                engine.setPoolListener(null);
+            }
+
+            assertQuery("SELECT s, vc, x, y, ts FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tvc\tx\ty\tts
+                            a\tv1\t1\tnull\t2024-01-01T01:00:00.000000Z
+                            b\tv2\t2\tnull\t2024-01-01T01:10:00.000000Z
+                            c\tv3\t3\t10\t2024-01-01T02:00:00.000000Z
+                            d\tv4\t4\tnull\t2024-01-01T02:00:01.000000Z
+                            e\tv5\t5\t11\t2024-01-01T02:00:02.000000Z
+                            """);
+        }, false, 250);
     }
 
     @Test
