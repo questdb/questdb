@@ -470,7 +470,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 }
                 final long safeToPurgeTxn = Math.min(
                         getSafeToPurgeUpToTxn(txReader.getSeqTxn()),
-                        getExternalConsumerFloor(tableToken)
+                        Math.max(0, getExternalConsumerFloor(tableToken))
                 );
                 LOG.debug().$("checking outstanding WAL transactions [table=").$(tableToken)
                         .$(", writerTxn=").$(safeToPurgeTxn)
@@ -722,10 +722,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * consumer of this table no longer needs. The sweep purges a table up to the lower of this value and the
      * table's own purge floor (its applied transaction and the floors of its dependent views), so a subclass that
      * returns a lower value holds every segment and sequencer part that carries a later transaction.
-     * {@code Long.MAX_VALUE}, the default, holds nothing. The sweep calls this method once per table from its own
-     * thread, after it read the table's committed transaction; an override returns a value of 0 or more, must not
-     * block, and must have made a value durable before it returns it, so that a restart cannot purge what the
-     * consumer still needs.
+     * {@code Long.MAX_VALUE}, the default, holds nothing; a negative value holds everything. A value lower than an
+     * earlier one brings back nothing a sweep has already removed. The sweep calls this method at most once per
+     * table per sweep, never for a dropped table, from its own thread, after it read the table's applied
+     * transaction. An override must not block, must have made a value durable before it returns it, so that a
+     * restart cannot purge what the consumer still needs, and throws only {@link CairoException}, which skips the
+     * table for this sweep.
      */
     protected long getExternalConsumerFloor(TableToken tableToken) {
         return Long.MAX_VALUE;

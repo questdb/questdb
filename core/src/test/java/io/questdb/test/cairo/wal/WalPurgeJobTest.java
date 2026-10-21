@@ -398,6 +398,16 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 Assert.assertEquals(2, writer.getSegmentId());
                 drainWalQueue();
 
+                // a negative value (the LONG_NULL idiom) holds everything too, and never reaches the sequencer
+                floor.set(Long.MIN_VALUE);
+                sweep(job, interval);
+                assertSegmentExistence(true, tableToken, 1, 0);
+                assertSegmentExistence(true, tableToken, 1, 1);
+                assertSegmentExistence(true, tableToken, 1, 2);
+                assertSeqPartExistence(true, tableToken, 0);
+                assertSeqPartExistence(true, tableToken, 1);
+                assertSeqPartExistence(true, tableToken, 2);
+
                 // a floor of 0 holds every segment and every part
                 floor.set(0);
                 sweep(job, interval);
