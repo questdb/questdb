@@ -29,6 +29,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.StringTypeDriver;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
@@ -40,9 +42,12 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Drives {@link WalColumnRangeAppender} with ranges already in WAL layout, such as the rows of another table's
@@ -191,6 +196,104 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                             a value longer than nine bytes\t2026-01-01T00:00:03.000000Z
                             ef\t2026-01-01T00:00:04.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testFillsConstantSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "filled", PartitionBy.HOUR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final int rows = 3;
+            final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                for (int i = 0; i < rows; i++) {
+                    putPair(pairs, i, TS0 + i * SECOND, i);
+                }
+                appender.begin(rows);
+                final int key = appender.resolveSymbol(0, "x");
+                appender.fillSymbolKey(0, key);
+                try {
+                    appender.fillSymbolKey(0, key);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "column already written in this block [column=0]");
+                }
+                appender.putTimestampRange(1, pairs, 0);
+                appender.finish(TS0, TS0 + 2 * SECOND, false);
+                writer.commit();
+            } finally {
+                Unsafe.free(pairs, rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT s, ts FROM filled")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            s\tts
+                            x\t2026-01-01T00:00:00.000000Z
+                            x\t2026-01-01T00:00:01.000000Z
+                            x\t2026-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testNullValueForAKeyMarksNull() throws Exception {
+        // a key the lookup cannot resolve becomes a NULL symbol, and the column carries the null flag
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "gap", PartitionBy.HOUR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final int rows = 2;
+            final long keys = Unsafe.malloc(rows * 4L, MemoryTag.NATIVE_DEFAULT);
+            final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                Unsafe.putInt(keys, 7);
+                Unsafe.putInt(keys + 4, 2);
+                for (int i = 0; i < rows; i++) {
+                    putPair(pairs, i, TS0 + i * SECOND, i);
+                }
+                appender.begin(rows);
+                appender.putSymbolRange(0, keys, key -> key == 2 ? "two" : null);
+                try {
+                    appender.putSymbolRange(0, keys, key -> null);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "column already written in this block [column=0]");
+                }
+                appender.putTimestampRange(1, pairs, 0);
+                appender.finish(TS0, TS0 + SECOND, false);
+                writer.commit();
+            } finally {
+                Unsafe.free(keys, rows * 4L, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(pairs, rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT s, ts FROM gap")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            s\tts
+                            \t2026-01-01T00:00:00.000000Z
+                            two\t2026-01-01T00:00:01.000000Z
+                            """);
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue(reader.getSymbolMapReader(0).containsNullValue());
+            }
         });
     }
 
@@ -443,6 +546,63 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResolvesSymbolKeysInFirstRowOrder() throws Exception {
+        // source keys 1, 0, 1, -1 with values b, a: "b" is resolved first and takes the table's key 0, as the row
+        // API would give it; a negative source key is NULL without a lookup
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "symbols", PartitionBy.HOUR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final int rows = 4;
+            final long keys = Unsafe.malloc(rows * 4L, MemoryTag.NATIVE_DEFAULT);
+            final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            final AtomicInteger lookups = new AtomicInteger();
+            try (
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                final int[] sourceKeys = {1, 0, 1, -1};
+                for (int i = 0; i < rows; i++) {
+                    Unsafe.putInt(keys + i * 4L, sourceKeys[i]);
+                    putPair(pairs, i, TS0 + i * SECOND, i);
+                }
+                appender.begin(rows);
+                appender.putSymbolRange(0, keys, key -> {
+                    lookups.incrementAndGet();
+                    return key == 0 ? "a" : "b";
+                });
+                appender.putTimestampRange(1, pairs, 0);
+                appender.finish(TS0, TS0 + 3 * SECOND, false);
+                writer.commit();
+            } finally {
+                Unsafe.free(keys, rows * 4L, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(pairs, rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            Assert.assertEquals("one lookup per distinct non-negative key", 2, lookups.get());
+            drainWalQueue();
+            assertQuery("SELECT s, ts FROM symbols")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            s\tts
+                            b\t2026-01-01T00:00:00.000000Z
+                            a\t2026-01-01T00:00:01.000000Z
+                            b\t2026-01-01T00:00:02.000000Z
+                            \t2026-01-01T00:00:03.000000Z
+                            """);
+            try (TableReader reader = engine.getReader(token)) {
+                final SymbolMapReader symbols = reader.getSymbolMapReader(0);
+                Assert.assertEquals("b", symbols.valueOf(0).toString());
+                Assert.assertEquals("a", symbols.valueOf(1).toString());
+                Assert.assertTrue(symbols.containsNullValue());
+            }
+        });
+    }
+
+    @Test
     public void testRewritesTimestampRowsOfASourceRangeStartingLater() throws Exception {
         // the source segment's rows 100 to 102 land at segment row 0: the pairs must carry rows 0 to 2, which the
         // out-of-order apply reads to find each timestamp's value
@@ -484,6 +644,83 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                             1\t2026-01-01T00:00:02.000000Z
                             """);
         });
+    }
+
+    @Test
+    public void testSyncsWrittenColumnsInsideBlockOnly() throws Exception {
+        final AtomicInteger msyncs = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                msyncs.incrementAndGet();
+                super.msync(addr, len, async);
+            }
+        };
+        try {
+            assertMemoryLeak(() -> {
+                final TableToken token = createTable(new TableModel(configuration, "synced", PartitionBy.HOUR)
+                        .col("a", ColumnType.LONG)
+                        .col("v", ColumnType.VARCHAR)
+                        .timestamp("ts")
+                        .wal()
+                );
+                final int rows = 2;
+                final long values = Unsafe.malloc(rows * 8L, MemoryTag.NATIVE_DEFAULT);
+                final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
+                try (
+                        MemoryCARW aux = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW data = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        WalWriter writer = engine.getWalWriter(token);
+                        WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+                ) {
+                    final ColumnTypeDriver driver = ColumnType.getDriver(ColumnType.VARCHAR);
+                    driver.configureAuxMemO3RSS(aux);
+                    // values longer than nine bytes, so that the column's data page is written and mapped
+                    VarcharTypeDriver.appendValue(aux, data, new Utf8String("the first value, not inlined"));
+                    VarcharTypeDriver.appendValue(aux, data, new Utf8String("the second value, not inlined"));
+                    for (int i = 0; i < rows; i++) {
+                        Unsafe.putLong(values + i * 8L, i);
+                        putPair(pairs, i, TS0 + i * SECOND, i);
+                    }
+                    try {
+                        appender.syncWrittenColumns();
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "no open block");
+                    }
+                    appender.begin(rows);
+                    appender.putFixedRange(0, values, rows * 8L);
+                    appender.putVarSizeRange(1, aux.addressOf(0), data.addressOf(0), 0, driver.getDataVectorSize(aux.addressOf(0), 0, 1));
+                    try {
+                        appender.putVarSizeRange(1, aux.addressOf(0), data.addressOf(0), 0, driver.getDataVectorSize(aux.addressOf(0), 0, 1));
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "column already written in this block [column=1]");
+                    }
+                    appender.putTimestampRange(2, pairs, 0);
+                    msyncs.set(0);
+                    appender.syncWrittenColumns();
+                    // one msync per memory with a mapped page: the data memories of a, v and ts, and the aux memory of v
+                    Assert.assertEquals(4, msyncs.get());
+                    appender.finish(TS0, TS0 + SECOND, false);
+                    writer.commit();
+                } finally {
+                    Unsafe.free(values, rows * 8L, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(pairs, rows * 16L, MemoryTag.NATIVE_DEFAULT);
+                }
+                drainWalQueue();
+                assertQuery("SELECT a, v FROM synced")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tv
+                                0\tthe first value, not inlined
+                                1\tthe second value, not inlined
+                                """);
+            });
+        } finally {
+            ff = null;
+        }
     }
 
     static void putPair(long pairs, int i, long timestamp, long row) {
