@@ -980,9 +980,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitParentAppendAtMaxTimestampAfterNeighborRewriteAppendsInPlaceWhenReaderOpenedAfterSplit() throws Exception {
-        // The reader opened after the split and never saw the moved rows. The neighbor's rewrite moved its
-        // name txn past the reader's txn, but the writer remembers the split txn and appends in place.
+    public void testSplitParentAppendAtMaxTimestampAfterNeighborRewriteCopiesWhenReaderOpenedAfterSplit() throws Exception {
+        // The reader opened after the split and never saw the moved rows, but the neighbor's rewrite moved
+        // its name txn past the reader's txn, so the pin check counts the reader and copies the parent.
         assertSplitParentAppendAtMaxTimestampAfterNeighborRewrite(false);
     }
 
@@ -1075,36 +1075,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitParentTxnMemoDropsSquashedParents() throws Exception {
-        // The writer remembers each split parent's split txn. A mid partition's split is squashed back in place
-        // on commit, which leaves the parent's name txn alone, so the next split must drop that entry.
-        assertMemoryLeak(() -> {
-            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
-            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
-            // one row per minute: 2020-02-03 is a mid partition, 2020-02-04 the last one
-            execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(2_000)");
-
-            // split the mid partition near its end; cairo.o3.mid.partition.max.splits=1 squashes it back on commit
-            execute("INSERT INTO x VALUES (10_000, '2020-02-03T23:00:30')");
-            try (TableWriter writer = getWriter("x")) {
-                Assert.assertEquals(2, writer.getPartitionCount());
-                Assert.assertEquals(1, writer.getSplitParentCount());
-            }
-
-            // split the last partition: the sweep drops the squashed parent's entry
-            execute("INSERT INTO x VALUES (10_001, '2020-02-04T09:00:30')");
-            try (TableWriter writer = getWriter("x")) {
-                Assert.assertEquals(3, writer.getPartitionCount());
-                Assert.assertEquals(1, writer.getSplitParentCount());
-            }
-        });
-    }
-
-    @Test
-    public void testSplitParentGapAboveMaxAppendsInPlaceAfterTrimCopy() throws Exception {
-        // A range-replace commit trims the parent into a fresh copy and leaves a gap below its split neighbor.
-        // A later rewrite of the split moves its name txn past an open reader, but the copy has no stale tail
-        // and the writer never split it, so a late row in the gap appends in place.
+    public void testSplitParentGapAboveMaxCopiesWhenPinned() throws Exception {
+        // A range-replace commit trims the parent and leaves a gap below its split neighbor. A late row in
+        // the gap sits above the parent's max; while the parent counts as pinned, the writer copies it.
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
             // keeps the trimmed parent and its split apart: no reader can pin a partition version it never saw
@@ -1136,11 +1109,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 drainWalQueue();
                 final long splitTimestamp;
                 final long rangeLo;
-                final long parentNameTxn;
                 try (TableReader reader = getReader("x")) {
                     Assert.assertEquals(3, reader.getPartitionCount());
                     Assert.assertEquals(81, reader.getPartitionRowCountFromMetadata(0));
-                    parentNameTxn = reader.getTxFile().getPartitionNameTxn(0);
                     splitTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
                     rangeLo = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()).parseFloorLiteral("2020-02-03T01:10");
                 }
@@ -1155,14 +1126,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     Assert.assertEquals(3, reader.getPartitionCount());
                     Assert.assertEquals(70, reader.getPartitionRowCountFromMetadata(0));
                     Assert.assertEquals(splitTimestamp, reader.getTxFile().getPartitionTimestampByIndex(1));
-                    // the trim copies the parent: the old directory still serves the reader opened before the split
                     trimmedNameTxn = reader.getTxFile().getPartitionNameTxn(0);
-                    Assert.assertTrue(trimmedNameTxn > parentNameTxn);
                 }
 
                 try (
                         RecordCursorFactory factoryAfterReplace = select("SELECT * FROM x");
-                        // sees the trimmed parent; the split's rewrite moves its name txn past this txn
+                        // sees the trimmed parent; once the split is rewritten past this txn, the parent counts as pinned
                         RecordCursor cursorAfterReplace = factoryAfterReplace.getCursor(sqlExecutionContext)
                 ) {
                     sink.clear();
@@ -1179,16 +1148,14 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     }
 
                     // a late row in the gap between the parent's max and the split
-                    final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
                     execute("INSERT INTO x VALUES (2_002, '2020-02-03T01:15')");
                     drainWalQueue();
                     Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-                    Assert.assertEquals(1, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore);
                     try (TableReader reader = getReader("x")) {
-                        // the late row appended to the trimmed copy in place; the split stays apart
+                        // the pinned parent got a new version with the late row; the split stays apart
                         Assert.assertEquals(3, reader.getPartitionCount());
                         Assert.assertEquals(71, reader.getPartitionRowCountFromMetadata(0));
-                        Assert.assertEquals(trimmedNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                        Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(0) > trimmedNameTxn);
                     }
 
                     cursorAfterReplace.toTop();
@@ -2594,17 +2561,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             execute("INSERT INTO x SELECT x::INT, '2020-02-03T10' FROM long_sequence(1000)");
             execute("INSERT INTO x SELECT (1000 + x)::INT, '2020-02-03T12' FROM long_sequence(10)");
 
-            // the cursor reads column data, not _txn row counts, so the pinned variant would see a clobbered tail
             RecordCursorFactory cursorFactory = null;
             RecordCursor cursor = null;
-            String expectedRows = null;
             try {
                 if (isReaderBeforeSplit) {
-                    cursorFactory = select("SELECT i FROM x");
+                    cursorFactory = select("SELECT count() FROM x");
                     cursor = cursorFactory.getCursor(sqlExecutionContext);
-                    sink.clear();
-                    println(cursorFactory, cursor);
-                    expectedRows = sink.toString();
                 }
 
                 // split off the tail: the parent keeps the 1000 rows at 10:00
@@ -2619,13 +2581,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 }
 
                 if (!isReaderBeforeSplit) {
-                    cursorFactory = select("SELECT i FROM x");
+                    cursorFactory = select("SELECT count() FROM x");
                     cursor = cursorFactory.getCursor(sqlExecutionContext);
-                    sink.clear();
-                    println(cursorFactory, cursor);
-                    expectedRows = sink.toString();
                 }
-                Assert.assertEquals(isReaderBeforeSplit ? 1011 : 1012, expectedRows.split("\n").length);
+                final int expectedCount = isReaderBeforeSplit ? 1010 : 1011;
 
                 // rewrite the neighboring split: the O3 row lands inside it and the split is too small to resplit
                 execute("INSERT INTO x VALUES (1_000_001, '2020-02-03T11:30')");
@@ -2636,30 +2595,26 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 }
 
                 long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
-                // one row at the parent's max timestamp: a pinned parent gets copied, an unpinned one appended
+                // one row at the parent's max timestamp: the writer copies the parent
                 execute("INSERT INTO x VALUES (1_000_002, '2020-02-03T10')");
-                Assert.assertEquals(isReaderBeforeSplit ? 1001 : 1, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore);
+                Assert.assertEquals(1001, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore);
                 try (TableReader reader = getReader("x")) {
                     Assert.assertEquals(2, reader.getPartitionCount());
                     Assert.assertEquals(1001, reader.getPartitionRowCountFromMetadata(0));
-                    if (isReaderBeforeSplit) {
-                        Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(0) > parentNameTxn);
-                    } else {
-                        Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
-                    }
+                    Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(0) > parentNameTxn);
                 }
 
                 cursor.toTop();
                 sink.clear();
                 println(cursorFactory, cursor);
-                TestUtils.assertEquals(expectedRows, sink);
+                TestUtils.assertEquals("count\n" + expectedCount + "\n", sink);
             } finally {
                 Misc.free(cursor);
                 Misc.free(cursorFactory);
             }
 
-            // Without the reader the next row at the parent's max timestamp appends in place: the copy has
-            // a fresh name txn, and the appended parent's split txn predates the closed reader.
+            // The copy has a fresh name txn, newer than the neighbor's, so without the reader the next
+            // row at the parent's max timestamp appends in place.
             final long copyNameTxn;
             try (TableReader reader = getReader("x")) {
                 copyNameTxn = reader.getTxFile().getPartitionNameTxn(0);

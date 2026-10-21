@@ -311,9 +311,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
-    // (parent partition timestamp, txn of its latest split) pairs, see isPartitionTailPinned().
-    // Bounded by the attached split parents; recordSplitParentTxn() drops the rest.
-    private final LongList splitParentTxns = new LongList();
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
     private final TableWriterSegmentFileCache segmentFileCache;
     private final TxReader slaveTxReader;
@@ -2650,11 +2647,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return columns.getQuick(index);
     }
 
-    @TestOnly
-    public int getSplitParentCount() {
-        return splitParentTxns.size() / 2;
-    }
-
     @Override
     public int getSymbolCountWatermark(int columnIndex) {
         // We don't need the watermark for non-WAL tables.
@@ -2810,11 +2802,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * An O3 split shrinks the parent's row count but leaves the moved rows in its column files.
-     * Returns true while a reader locked in [parentNameTxn + 1, splitTxn] can still read them,
-     * so the parent's tail must not be written in place. The split txn comes from splitParentTxns
-     * when this writer performed the split; otherwise the neighbor's name txn stands in for it.
-     * Rewrites of the neighbor move its name txn forward, so the fallback may count readers that
-     * never saw the moved rows: a needless merge, never a missed reader.
+     * Returns true while a reader locked in [parentNameTxn + 1, splitNameTxn] can still read them,
+     * so the parent's tail must not be written in place. Rewrites of the split move its name txn
+     * forward, so the range may include readers that never saw the moved rows: a needless merge,
+     * never a missed reader.
      */
     public boolean isPartitionTailPinnedByReaders(long partitionTimestamp) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
@@ -8417,20 +8408,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean isPartitionTailPinned(int partitionIndex) {
-        if (!isSplitParent(partitionIndex)) {
+        if (partitionIndex + 1 >= txWriter.getPartitionCount()) {
             return false;
         }
         final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex + 1);
+        if (txWriter.getLogicalPartitionTimestamp(partitionTimestamp) != txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp)) {
+            return false;
+        }
         // A partition named N is first visible to readers at txn N + 1, since the writer stamps
         // the name txn before the commit bumps it. Readers in [parentNameTxn + 1, splitNameTxn]
         // see the parent's files but not the split.
         final long fromTxn = txWriter.getPartitionNameTxn(partitionIndex) + 1;
-        long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1);
-        final int splitIndex = splitParentTxnIndex(partitionTimestamp);
-        if (splitIndex > -1) {
-            toTxn = Math.min(toTxn, splitParentTxns.getQuick(splitIndex + 1));
-        }
-        return !txnScoreboard.isRangeAvailable(fromTxn, toTxn + 1);
+        final long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1) + 1;
+        return !txnScoreboard.isRangeAvailable(fromTxn, toTxn);
     }
 
     /**
@@ -8452,15 +8443,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         return io.questdb.cairo.idx.PostingIndexUtils.readSealTxnFromKeyFile(ff, keyFile) >= 0;
-    }
-
-    private boolean isSplitParent(int partitionIndex) {
-        if (partitionIndex + 1 >= txWriter.getPartitionCount()) {
-            return false;
-        }
-        final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-        final long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex + 1);
-        return txWriter.getLogicalPartitionTimestamp(partitionTimestamp) == txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp);
     }
 
     /**
@@ -9174,7 +9156,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, newPartitionTimestamp);
                     txWriter.bumpPartitionTableVersion();
                     txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn);
-                    recordSplitParentTxn(partitionTimestamp, txWriter.txn);
                     if (partitionTimestamp == lastPartitionTimestamp) {
                         // Close the last partition without truncating it.
                         long committedLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
@@ -9474,7 +9455,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 insertPartitionIndex = txWriter.removeAttachedPartitions(prevPartitionTimestamp);
                             } else {
                                 txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
-                                recordSplitParentTxn(prevPartitionTimestamp, txWriter.txn);
                             }
 
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
@@ -13021,29 +13001,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
-    private void recordSplitParentTxn(long parentTimestamp, long splitTxn) {
-        // Compact out the dead entries first: the parent is gone, has no split any more (squashed
-        // back in place), or was rewritten past the split. The pin range is empty in each case.
-        int w = 0;
-        for (int r = 0, n = splitParentTxns.size(); r < n; r += 2) {
-            final long ts = splitParentTxns.getQuick(r);
-            final long txn = splitParentTxns.getQuick(r + 1);
-            final int rawIndex = txWriter.findAttachedPartitionRawIndexByLoTimestamp(ts);
-            if (
-                    ts != parentTimestamp
-                            && rawIndex > -1
-                            && txWriter.getPartitionNameTxnByRawIndex(rawIndex) < txn
-                            && isSplitParent(rawIndex / LONGS_PER_TX_ATTACHED_PARTITION)
-            ) {
-                splitParentTxns.setQuick(w, ts);
-                splitParentTxns.setQuick(w + 1, txn);
-                w += 2;
-            }
-        }
-        splitParentTxns.setPos(w);
-        splitParentTxns.add(parentTimestamp, splitTxn);
-    }
-
     private void recoverFromMetaRenameFailure() {
         openMetaFile(ff, path, pathSize, ddlMem, metadata);
     }
@@ -14592,15 +14549,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Misc.free(mem);
             path.trimTo(pathSize);
         }
-    }
-
-    private int splitParentTxnIndex(long parentTimestamp) {
-        for (int i = 0, n = splitParentTxns.size(); i < n; i += 2) {
-            if (splitParentTxns.getQuick(i) == parentTimestamp) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private void squashPartitionForce(int partitionIndex) {
