@@ -195,6 +195,17 @@ public class InsertAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelectColumnListInconvertibleTypesNamesTargetColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, c CHAR)");
+            // The list targets column c, so the error must name c, not the
+            // table column that happens to sit at the same list position.
+            assertQuery("INSERT INTO t (c, a) SELECT 1 x, 2 y FROM long_sequence(1)")
+                    .fails(15, "inconvertible types: INT -> CHAR [from=x, to=c]");
+        });
+    }
+
+    @Test
     public void testSelectAsInsertManyColumns() throws Exception {
         createTableManyCols("main");
         createTableManyCols("temp");
