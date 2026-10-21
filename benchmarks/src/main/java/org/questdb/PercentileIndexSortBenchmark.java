@@ -48,7 +48,7 @@ import java.util.concurrent.TimeUnit;
  * entries per group; the current Arrays.sort call is O(k log k).
  * Both methods include the same input copy and return the sorted array for JMH to consume.
  * This measures the index sort, not the full SQL query or value selection.
- *
+ * <p>
  * Run: java -jar benchmarks/target/benchmarks.jar PercentileIndexSortBenchmark -f 1 -wi 2 -i 3
  */
 @State(Scope.Thread)

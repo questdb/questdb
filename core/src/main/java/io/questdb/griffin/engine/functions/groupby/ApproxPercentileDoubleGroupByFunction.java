@@ -170,7 +170,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-public void setEmpty(MapValue mapValue) {
+    public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
     }
 
