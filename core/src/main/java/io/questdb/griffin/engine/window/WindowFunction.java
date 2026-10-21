@@ -1333,7 +1333,8 @@ public interface WindowFunction extends Function {
      * <p>
      * The running-aggregate families leave it false for a different reason: they hold no ring
      * to share. {@code ema}/{@code vwema}, {@code stddev}/{@code variance} over an unbounded
-     * frame (their bounded RANGE frame is ring-shaped), the bivariate stats, {@code ksum},
+     * frame and the bivariate stats over an unbounded frame (the bounded RANGE frame of
+     * each is ring-shaped), {@code ksum},
      * {@code count} over an unbounded frame, {@code row_number} and
      * {@code rank} each carry a fixed handful of accumulator words per partition however long
      * the view has run, so one complete image per root is already the smallest thing a root
