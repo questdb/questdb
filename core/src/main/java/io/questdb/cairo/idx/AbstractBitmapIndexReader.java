@@ -188,7 +188,8 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
 
     public void updateKeyCount() {
         int keyCount;
-        final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        long deadline = 0;
+        boolean hasDeadline = false;
         while (true) {
             long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
 
@@ -202,7 +203,10 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
                 }
             }
 
-            if (clock.getTicks() > deadline) {
+            if (!hasDeadline) {
+                deadline = clock.getTicks() + spinLockTimeoutMs;
+                hasDeadline = true;
+            } else if (clock.getTicks() > deadline) {
                 this.keyCount = 0;
                 LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
                 throw CairoException.critical(0).put(INDEX_CORRUPT);
@@ -220,7 +224,8 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
     private void readIndexMetadataAtomically() {
         // Triple check atomic read. We read the first and last sequences. If they match - there is a chance at stable
         // read. Confirm the start sequence hasn't changed after values read. If it has changed - retry the whole thing.
-        final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        long deadline = 0;
+        boolean hasDeadline = false;
         while (true) {
             long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             int keyCount;
@@ -246,7 +251,10 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
                 }
             }
 
-            if (clock.getTicks() > deadline) {
+            if (!hasDeadline) {
+                deadline = clock.getTicks() + spinLockTimeoutMs;
+                hasDeadline = true;
+            } else if (clock.getTicks() > deadline) {
                 LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
                 throw CairoException.critical(0).put(INDEX_CORRUPT);
             }

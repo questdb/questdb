@@ -77,6 +77,40 @@ public class Utf8StringSink implements MutableUtf8Sink {
         this.ascii = ascii;
     }
 
+    @Override
+    public Utf8Sink escapeJsonStr(@NotNull CharSequence cs, int lo, int hi) {
+        if (hi - (long) lo < 4 || pos < 0 || cs.getClass() != DirectString.class
+                || lo < 0 || hi > cs.length() || hi - (long) lo > buffer.length - pos) {
+            return MutableUtf8Sink.super.escapeJsonStr(cs, lo, hi);
+        }
+        final byte[] bytes = buffer;
+        long source = ((DirectString) cs).lo() + ((long) lo << 1);
+        int p = pos;
+        int i = lo;
+        try {
+            while (i <= hi - 4) {
+                final long word = Unsafe.getLong(source);
+                if ((word & 0xff80ff80ff80ff80L) != 0) {
+                    break;
+                }
+                final long controls = word - 0x0020002000200020L;
+                final long quotes = (word ^ 0x0022002200220022L) - 0x0001000100010001L;
+                final long backslashes = (word ^ 0x005c005c005c005cL) - 0x0001000100010001L;
+                if (((controls | quotes | backslashes) & 0x8000800080008000L) != 0) {
+                    break;
+                }
+                final long packed = (word | (word >>> 8)) & 0x0000ffff0000ffffL;
+                Unsafe.getUnsafe().putInt(bytes, Unsafe.BYTE_OFFSET + p, (int) (packed | (packed >>> 16)));
+                source += Long.BYTES;
+                p += Integer.BYTES;
+                i += 4;
+            }
+        } finally {
+            pos = p;
+        }
+        return MutableUtf8Sink.super.escapeJsonStr(cs, i, hi);
+    }
+
     @TestOnly
     public long getCapacity() {
         return buffer.length;

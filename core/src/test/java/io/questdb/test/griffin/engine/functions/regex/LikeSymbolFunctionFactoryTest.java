@@ -24,11 +24,17 @@
 
 package io.questdb.test.griffin.engine.functions.regex;
 
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.regex.AbstractLikeSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.regex.SymbolKeySet;
 import io.questdb.std.Chars;
+import io.questdb.std.NativeMemoryBudget;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectString;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -298,6 +304,77 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                 );
             } finally {
                 sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
+    public void testDictionaryScansFillAndReuseSharedCache() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE scan_symbols (s SYMBOL CAPACITY 8192 CACHE)");
+            execute("INSERT INTO scan_symbols SELECT 'symbol' || x FROM long_sequence(5000)");
+            ObjList<String> predicates = new ObjList<>(
+                    "s LIKE 'symbol%'",
+                    "s LIKE '%4999'",
+                    "s LIKE '%499%'",
+                    "s LIKE 'sym_ol%'",
+                    "s ILIKE 'SYMBOL%'",
+                    "s ILIKE '%4999'",
+                    "s ILIKE '%499%'",
+                    "s ~ '^symbol'"
+            );
+            int[] counts = {5000, 1, 15, 5000, 5000, 1, 15, 5000};
+            NativeMemoryBudget budget = engine.getSymbolMapCachePool().getBudget();
+            long originalLimit = budget.getLimit();
+            try {
+                for (long limit : new long[]{1024, 1024 * 1024}) {
+                    budget.setLimit(limit);
+                    for (int i = 0; i < predicates.size(); i++) {
+                        engine.releaseAllReaders();
+                        Assert.assertEquals(0, budget.getUsedBytes());
+                        try (TableReader reader = engine.getReader("scan_symbols")) {
+                            SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
+                            Assert.assertEquals(4096, symbols.getLowCacheSize());
+                            Assert.assertEquals(0, symbols.getCacheSize());
+                            String query = "SELECT count() FROM scan_symbols WHERE " + predicates.getQuick(i);
+                            String expected = "count\n" + counts[i] + "\n";
+                            assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+
+                            int cachedCount = symbols.getCacheSize();
+                            if (limit == 1024) {
+                                Assert.assertTrue(predicates.getQuick(i), cachedCount > 0 && cachedCount < 904);
+                            } else {
+                                Assert.assertEquals(predicates.getQuick(i), 904, cachedCount);
+                            }
+                            long cachedBytes = budget.getUsedBytes();
+                            Assert.assertEquals(symbols.getCacheAllocatedBytes(), cachedBytes);
+                            Assert.assertTrue(cachedBytes > 0 && cachedBytes <= limit);
+                            long lowAddress = ((DirectString) symbols.valueOf(0)).lo();
+                            long cachedAddress = ((DirectString) symbols.valueOf(4096)).lo();
+                            DirectString mapped = new DirectString();
+                            Assert.assertNotEquals(lowAddress, ((DirectString) symbols.valueOf(0, mapped)).lo());
+                            Assert.assertNotEquals(cachedAddress, ((DirectString) symbols.valueOf(4096, mapped)).lo());
+                            if (limit == 1024) {
+                                Assert.assertEquals(
+                                        ((DirectString) symbols.valueOf(4999, mapped)).lo(),
+                                        ((DirectString) symbols.valueOf(4999)).lo()
+                                );
+                            }
+
+                            assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+                            Assert.assertEquals(cachedCount, symbols.getCacheSize());
+                            Assert.assertEquals(cachedBytes, budget.getUsedBytes());
+                            Assert.assertEquals(lowAddress, ((DirectString) symbols.valueOf(0)).lo());
+                            Assert.assertEquals(cachedAddress, ((DirectString) symbols.valueOf(4096)).lo());
+                            TestUtils.assertEquals("symbol1", symbols.valueOf(0));
+                            TestUtils.assertEquals("symbol4097", symbols.valueOf(4096));
+                            TestUtils.assertEquals("symbol5000", symbols.valueOf(4999));
+                        }
+                    }
+                }
+            } finally {
+                engine.releaseAllReaders();
+                budget.setLimit(originalLimit);
             }
         });
     }
@@ -788,6 +865,111 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertLike("s\n", "select * from x where s like '%\\%'");
             assertLike("s\n", "select * from x where s like '\\_'");
         });
+    }
+
+    @Test
+    public void testSymbolKeySetAddRequiresNonnegativeSortedUniqueKeys() {
+        SymbolKeySet keys = new SymbolKeySet();
+        Assert.assertThrows(AssertionError.class, () -> keys.add(-1));
+        keys.add(1);
+        Assert.assertThrows(AssertionError.class, () -> keys.add(1));
+        Assert.assertThrows(AssertionError.class, () -> keys.add(0));
+        Assert.assertEquals(1, keys.getKeys().size());
+    }
+
+    @Test
+    public void testSymbolKeySetBuildAndInvalidation() {
+        SymbolKeySet keys = new SymbolKeySet();
+        keys.build();
+        Assert.assertFalse(keys.contains(0));
+        int[] values = {0, 63, 64, 127, 128};
+        for (int key : values) {
+            keys.add(key);
+        }
+        for (int key : values) {
+            Assert.assertTrue(keys.contains(key));
+        }
+        keys.build();
+        for (int key = -2; key <= 129; key++) {
+            Assert.assertEquals(key == 0 || key == 63 || key == 64 || key == 127 || key == 128, keys.contains(key));
+        }
+        keys.add(256);
+        Assert.assertTrue(keys.contains(256));
+        keys.build();
+        Assert.assertTrue(keys.contains(256));
+        keys.clear();
+        Assert.assertFalse(keys.contains(0));
+        Assert.assertFalse(keys.contains(256));
+        keys.add(63);
+        keys.add(64);
+        keys.build();
+        Assert.assertFalse(keys.contains(0));
+        Assert.assertFalse(keys.contains(62));
+        Assert.assertTrue(keys.contains(63));
+        Assert.assertTrue(keys.contains(64));
+        Assert.assertFalse(keys.contains(65));
+        Assert.assertFalse(keys.contains(126));
+        Assert.assertFalse(keys.contains(127));
+        Assert.assertFalse(keys.contains(191));
+    }
+
+    @Test
+    public void testSymbolKeySetCopiesRemainIndependent() {
+        SymbolKeySet source = new SymbolKeySet();
+        source.add(0);
+        source.add(63);
+        source.build();
+        SymbolKeySet target = new SymbolKeySet();
+        target.add(100);
+        target.build();
+        target.copyFrom(source);
+        Assert.assertTrue(target.contains(0));
+        Assert.assertTrue(target.contains(63));
+        Assert.assertFalse(target.contains(100));
+        source.add(64);
+        source.build();
+        Assert.assertTrue(source.contains(64));
+        Assert.assertFalse(target.contains(64));
+        target.clear();
+        target.add(128);
+        target.build();
+        Assert.assertTrue(source.contains(0));
+        Assert.assertFalse(source.contains(128));
+        target.copyFrom(target);
+        Assert.assertEquals(1, target.getKeys().size());
+        Assert.assertTrue(target.contains(128));
+        source.clear();
+        target.copyFrom(source);
+        Assert.assertFalse(target.contains(128));
+        Assert.assertEquals(0, target.getKeys().size());
+    }
+
+    @Test
+    public void testSymbolKeySetSparseAndHighKeys() {
+        SymbolKeySet keys = new SymbolKeySet();
+        keys.add(0);
+        keys.add(Integer.MAX_VALUE);
+        keys.build();
+        Assert.assertTrue(keys.contains(0));
+        Assert.assertTrue(keys.contains(Integer.MAX_VALUE));
+        Assert.assertFalse(keys.contains(-1));
+        Assert.assertFalse(keys.contains(Integer.MIN_VALUE));
+        Assert.assertFalse(keys.contains(1));
+        Assert.assertFalse(keys.contains(Integer.MAX_VALUE - 1));
+        keys.clear();
+        int base = Integer.MAX_VALUE - 65;
+        int[] offsets = {0, 2, 63, 64, 65};
+        for (int offset : offsets) {
+            keys.add(base + offset);
+        }
+        keys.build();
+        for (int offset = -1; offset <= 65; offset++) {
+            Assert.assertEquals(offset == 0 || offset == 2 || offset >= 63, keys.contains(base + offset));
+        }
+        Assert.assertFalse(keys.contains(-1));
+        Assert.assertFalse(keys.contains(0));
+        Assert.assertEquals(base, keys.getKeys().getQuick(0));
+        Assert.assertEquals(Integer.MAX_VALUE, keys.getKeys().getQuick(4));
     }
 
     private void assertBoundLike(RecordCursorFactory factory, CharSequence expected) throws SqlException {

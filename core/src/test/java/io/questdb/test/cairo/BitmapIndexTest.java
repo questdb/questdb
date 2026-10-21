@@ -65,6 +65,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rows;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -995,6 +996,92 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 );
             }
         });
+    }
+
+    @Test
+    public void testConcurrentReaderDoesNotReadClockOnSuccess() throws Exception {
+        assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 1024);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                writer.add(0, 10);
+            }
+            CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public MillisecondClock getMillisecondClock() {
+                    return () -> {
+                        throw new AssertionError("consistent index read must not read the clock");
+                    };
+                }
+            };
+            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(testConfiguration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                reader.updateKeyCount();
+                RowCursor cursor = reader.initCursor(null, 0, 0, Long.MAX_VALUE);
+                assertTrue(cursor.hasNext());
+                Assert.assertEquals(10, cursor.next());
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentReaderStartsTimeoutOnRetry() throws Exception {
+        for (int phase = 0; phase < 3; phase++) {
+            for (boolean isRepair : new boolean[]{false, true}) {
+                final int testPhase = phase;
+                assertMemoryLeak(() -> {
+                    create(configuration, path.trimTo(plen), "x", 1024);
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                        writer.add(0, 10);
+                    }
+                    try (
+                            Path indexPath = new Path().of(root).concat("x.k");
+                            MemoryCMARW mem = Vm.getSmallCMARWInstance(configuration.getFilesFacade(), indexPath.$(), MemoryTag.MMAP_DEFAULT, configuration.getWriterFileOpenOpts())
+                    ) {
+                        long offset = testPhase == 2
+                                ? BitmapIndexUtils.getKeyEntryOffset(0) + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK
+                                : BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK;
+                        long original = mem.getLong(offset);
+                        AtomicInteger clockReads = new AtomicInteger();
+                        CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
+                            @Override
+                            public MillisecondClock getMillisecondClock() {
+                                return () -> {
+                                    int call = clockReads.getAndIncrement();
+                                    if (isRepair && call == 0) {
+                                        mem.putLong(offset, original);
+                                    }
+                                    return call * 2L;
+                                };
+                            }
+
+                            @Override
+                            public long getSpinLockTimeout() {
+                                return 0;
+                            }
+                        };
+                        if (testPhase == 0) {
+                            mem.putLong(offset, original + 1);
+                        }
+                        try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(testConfiguration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            if (testPhase != 0) {
+                                mem.putLong(offset, original + 1);
+                            }
+                            reader.updateKeyCount();
+                            RowCursor cursor = reader.initCursor(null, 0, 0, Long.MAX_VALUE);
+                            assertTrue(cursor.hasNext());
+                            Assert.assertEquals(10, cursor.next());
+                            Assert.assertFalse(cursor.hasNext());
+                            assertTrue(isRepair);
+                            Assert.assertEquals(1, clockReads.get());
+                        } catch (CairoException e) {
+                            Assert.assertFalse(isRepair);
+                            assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
+                            Assert.assertEquals(2, clockReads.get());
+                        }
+                    }
+                });
+            }
+        }
     }
 
     @Test

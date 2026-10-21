@@ -26,10 +26,13 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -46,6 +49,7 @@ import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
@@ -1299,6 +1303,192 @@ public class TableReaderTest extends AbstractCairoTest {
     @After
     public void tearDownFsCache() {
         Files.FS_CACHE_ENABLED = savedFsCacheEnabled;
+    }
+
+    @Test
+    public void testSharedSymbolCacheFlagChangeOnReload() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table cache_flag (s symbol cache)");
+            execute("insert into cache_flag values ('value')");
+            try (TableReader reader = engine.getReader("cache_flag")) {
+                SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
+                TestUtils.assertEquals("value", symbols.valueOf(0));
+                Assert.assertEquals(1, symbols.getLowCacheSize());
+
+                execute("alter table cache_flag alter column s nocache");
+                Assert.assertTrue(reader.reload());
+                symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
+                Assert.assertFalse(symbols.isCached());
+                Assert.assertEquals(0, symbols.getCacheAllocatedBytes());
+                Assert.assertEquals(0, engine.getSymbolMapCachePool().getEntryCount());
+                TestUtils.assertEquals("value", symbols.valueOf(0));
+
+                execute("alter table cache_flag alter column s cache");
+                Assert.assertTrue(reader.reload());
+                symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
+                Assert.assertTrue(symbols.isCached());
+                TestUtils.assertEquals("value", symbols.valueOf(0));
+                Assert.assertEquals(1, symbols.getLowCacheSize());
+            }
+        });
+    }
+
+    @Test
+    public void testSharedSymbolCacheReaderCopyAndTxnVisibility() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table cache_copy (s symbol cache)");
+            execute("insert into cache_copy values ('old')");
+            try (TableReader old = engine.getReader("cache_copy")) {
+                TestUtils.assertEquals("old", old.getSymbolMapReader(0).valueOf(0));
+                execute("insert into cache_copy values ('new')");
+                try (
+                        TableReader latest = engine.getReader("cache_copy");
+                        TableReader copy = engine.getReaderAtTxn(old, sqlExecutionContext)
+                ) {
+                    SymbolMapReaderImpl latestSymbols = (SymbolMapReaderImpl) latest.getSymbolMapReader(0);
+                    TestUtils.assertEquals("new", latestSymbols.valueOf(1));
+                    Assert.assertEquals(1, ((SymbolMapReaderImpl) old.getSymbolMapReader(0)).getLowCacheSize());
+                    Assert.assertEquals(1, ((SymbolMapReaderImpl) copy.getSymbolMapReader(0)).getLowCacheSize());
+                    Assert.assertEquals(2, latestSymbols.getLowCacheSize());
+                    Assert.assertNull(copy.getSymbolMapReader(0).valueOf(1));
+                    Assert.assertNull(old.getSymbolMapReader(0).valueOf(1));
+                    Assert.assertEquals(1, engine.getSymbolMapCachePool().getEntryCount());
+                }
+                TestUtils.assertEquals("old", old.getSymbolMapReader(0).valueOf(0));
+            }
+            engine.releaseAllReaders();
+            Assert.assertEquals(0, engine.getSymbolMapCachePool().getEntryCount());
+        });
+    }
+
+    @Test
+    public void testSharedSymbolCacheDropRecreateAndRename() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table cache_rename (s symbol cache)");
+            execute("insert into cache_rename values ('before')");
+            try (TableReader reader = engine.getReader("cache_rename")) {
+                TestUtils.assertEquals("before", reader.getSymbolMapReader(0).valueOf(0));
+            }
+            Assert.assertEquals(1, engine.getSymbolMapCachePool().getEntryCount());
+            execute("drop table cache_rename");
+            Assert.assertEquals(0, engine.getSymbolMapCachePool().getEntryCount());
+            execute("create table cache_rename (s symbol cache)");
+            execute("insert into cache_rename values ('after')");
+            try (TableReader reader = engine.getReader("cache_rename")) {
+                TestUtils.assertEquals("after", reader.getSymbolMapReader(0).valueOf(0));
+            }
+            execute("rename table cache_rename to cache_renamed");
+            Assert.assertEquals(0, engine.getSymbolMapCachePool().getEntryCount());
+            try (TableReader reader = engine.getReader("cache_renamed")) {
+                TestUtils.assertEquals("after", reader.getSymbolMapReader(0).valueOf(0));
+            }
+            engine.releaseAllReaders();
+            Assert.assertEquals(0, engine.getSymbolMapCachePool().getEntryCount());
+        });
+    }
+
+    @Test
+    public void testSharedSymbolCacheTruncateAndColumnTypeChanges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table cache_truncate (s symbol cache)");
+            execute("insert into cache_truncate values ('before')");
+            try (TableReader reader = engine.getReader("cache_truncate")) {
+                TestUtils.assertEquals("before", reader.getSymbolMapReader(0).valueOf(0));
+                reader.goPassive();
+                try (TableWriter writer = getWriter("cache_truncate")) {
+                    writer.truncate();
+                    TableWriter.Row row = writer.newRow();
+                    row.putSym(0, "after");
+                    row.append();
+                    writer.commit();
+                }
+                Assert.assertTrue(reader.reload());
+                TestUtils.assertEquals("after", reader.getSymbolMapReader(0).valueOf(0));
+                Assert.assertEquals(1, engine.getSymbolMapCachePool().getEntryCount());
+            }
+            for (int i = 0; i < 5; i++) {
+                execute("truncate table cache_truncate keep symbol maps");
+                execute("insert into cache_truncate values ('value" + i + "')");
+                try (TableReader reader = engine.getReader("cache_truncate")) {
+                    TestUtils.assertEquals("value" + i, reader.getSymbolMapReader(0).valueOf(reader.getSymbolMapReader(0).keyOf("value" + i)));
+                }
+                execute("alter table cache_truncate alter column s type varchar");
+                try (TableReader reader = engine.getReader("cache_truncate")) {
+                    Assert.assertEquals(ColumnType.VARCHAR, reader.getMetadata().getColumnType(0));
+                }
+                execute("alter table cache_truncate alter column s type symbol cache");
+                try (TableReader reader = engine.getReader("cache_truncate")) {
+                    TestUtils.assertEquals("value" + i, reader.getSymbolMapReader(0).valueOf(0));
+                }
+                engine.releaseAllReaders();
+                Assert.assertEquals(0, engine.getSymbolMapCachePool().getEntryCount());
+            }
+        });
+    }
+
+    @Test
+    public void testSharedSymbolCacheZeroAndTinyBudget() throws Exception {
+        for (long budget : new long[]{0, 1}) {
+            assertMemoryLeak(() -> TestUtils.execute(
+                    null,
+                    (localEngine, _, context) -> {
+                        localEngine.getSymbolMapCachePool().getBudget().setLimit(budget);
+                        localEngine.execute("create table cache_disabled (s symbol cache)", context);
+                        localEngine.execute("insert into cache_disabled values ('value')", context);
+                        try (TableReader reader = localEngine.getReader("cache_disabled")) {
+                            SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
+                            TestUtils.assertEquals("value", symbols.valueOf(0));
+                            Assert.assertEquals(0, symbols.getCacheAllocatedBytes());
+                        }
+                        localEngine.execute("drop table cache_disabled", context);
+                    },
+                    configuration,
+                    LOG
+            ));
+        }
+    }
+
+    @Test
+    public void testSharedSymbolCacheShutdownWithLiveReader() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine localEngine = new CairoEngine(configuration);
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(localEngine, 1)
+            ) {
+                context.with(securityContext, null, null, -1, null);
+                localEngine.execute("create table cache_shutdown (s symbol cache)", context);
+                localEngine.execute("insert into cache_shutdown values ('retained')", context);
+                long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SYMBOL_CACHE);
+                try (TableReader reader = localEngine.getReader("cache_shutdown")) {
+                    SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
+                    symbols.valueOf(0);
+                    CharSequence retained = symbols.valueOf(0);
+                    try {
+                        localEngine.close();
+                        Assert.fail();
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "table is left behind");
+                    }
+                    Assert.assertTrue(reader.isOpen());
+                    Assert.assertEquals(0, localEngine.getSymbolMapCachePool().getEntryCount());
+                    TestUtils.assertEquals("retained", retained);
+                    TestUtils.assertEquals("retained", symbols.valueOf(0));
+                    Assert.assertTrue(Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SYMBOL_CACHE) > baseline);
+                    localEngine.getSymbolMapCachePool().clear();
+                    try (
+                            Path path = new Path().of(configuration.getDbRoot()).concat(reader.getTableToken().getDirName());
+                            SymbolMapReaderImpl uncached = new SymbolMapReaderImpl(
+                                    configuration, path, "s", TableUtils.COLUMN_NAME_TXN_NONE, 1,
+                                    localEngine.getSymbolMapCachePool(), 0
+                            )
+                    ) {
+                        TestUtils.assertEquals("retained", uncached.valueOf(0));
+                        Assert.assertEquals(0, uncached.getCacheAllocatedBytes());
+                    }
+                }
+                Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SYMBOL_CACHE));
+            }
+        });
     }
 
     @Test

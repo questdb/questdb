@@ -26,16 +26,658 @@ package io.questdb.test.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntCharSequenceHashMap;
 import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.NativeMemoryBudget;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.DirectString;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class DirectSymbolMapTest {
+
+    @Test
+    public void testConcurrentCachesShareOneBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            NativeMemoryBudget budget = new NativeMemoryBudget(32 * 1024);
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            CountDownLatch start = new CountDownLatch(1);
+            CountDownLatch filled = new CountDownLatch(8);
+            ObjList<Thread> threads = new ObjList<>();
+            for (int t = 0; t < 8; t++) {
+                Thread thread = new Thread(() -> {
+                    try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                        try {
+                            start.await();
+                            DirectString view = new DirectString();
+                            for (int key = 0; key < 1000; key++) {
+                                if (put(map, key, "value")) {
+                                    TestUtils.assertEquals("value", map.get(key, view));
+                                }
+                                Assert.assertTrue(budget.getUsedBytes() <= budget.getLimit());
+                            }
+                        } finally {
+                            // Hold every map until all writers finish so closing one map
+                            // cannot mask an overshoot by concurrent reservations.
+                            filled.countDown();
+                            filled.await();
+                        }
+                    } catch (Throwable e) {
+                        failure.compareAndSet(null, e);
+                    }
+                });
+                threads.add(thread);
+                thread.start();
+            }
+            start.countDown();
+            for (int t = 0; t < threads.size(); t++) {
+                threads.getQuick(t).join();
+            }
+            if (failure.get() != null) {
+                throw new AssertionError(failure.get());
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheDenseGrowth() throws Exception {
+        assertMemoryLeak(() -> {
+            NativeMemoryBudget budget = new NativeMemoryBudget(Long.MAX_VALUE);
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(96, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                for (int key = 0; key < 96; key++) {
+                    Assert.assertTrue(put(map, key, ""));
+                }
+                DirectString retained = new DirectString();
+                map.get(0, retained);
+                long address = retained.lo();
+                long before = map.allocatedBytes();
+                Assert.assertTrue(put(map, 256, ""));
+                Assert.assertEquals(before + 16 + 512L * Long.BYTES, map.allocatedBytes());
+                Assert.assertEquals(map.allocatedBytes(), budget.getUsedBytes());
+                Assert.assertEquals(97, map.size());
+                Assert.assertTrue(map.isFilling());
+                DirectString view = new DirectString();
+                for (int key = 0; key < 96; key++) {
+                    TestUtils.assertEquals("", map.get(key, view));
+                }
+                TestUtils.assertEquals("", map.get(256, view));
+                Assert.assertNull(map.get(512, view));
+                Assert.assertEquals(address, retained.lo());
+                TestUtils.assertEquals("", retained);
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheDenseGrowthBudgetFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            NativeMemoryBudget budget = new NativeMemoryBudget(Long.MAX_VALUE);
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(96, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                for (int key = 0; key < 96; key++) {
+                    Assert.assertTrue(put(map, key, ""));
+                }
+                long before = map.allocatedBytes();
+                budget.setLimit(before + 16 + 256L * Long.BYTES);
+                Assert.assertTrue(put(map, 256, ""));
+                Assert.assertTrue(put(map, 257, ""));
+                Assert.assertEquals(budget.getLimit(), map.allocatedBytes());
+                Assert.assertEquals(map.allocatedBytes(), budget.getUsedBytes());
+                Assert.assertEquals(98, map.size());
+                Assert.assertTrue(map.isFilling());
+                Assert.assertEquals(0, map.getStopReason());
+                DirectString view = new DirectString();
+                for (int key = 0; key < 96; key++) {
+                    TestUtils.assertEquals("", map.get(key, view));
+                }
+                TestUtils.assertEquals("", map.get(256, view));
+                TestUtils.assertEquals("", map.get(257, view));
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheDenseGrowthOomReleasesReservation() throws Exception {
+        assertMemoryLeak(() -> {
+            long rssLimit = Unsafe.getRssMemLimit();
+            NativeMemoryBudget budget = new NativeMemoryBudget(Long.MAX_VALUE);
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(96, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                for (int key = 0; key < 96; key++) {
+                    Assert.assertTrue(put(map, key, ""));
+                }
+                long before = map.allocatedBytes();
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 16 + 256L * Long.BYTES);
+                Assert.assertEquals(DirectIntCharSequenceHashMap.STOPPED, map.tryPutIfAbsent(256, 0, 0));
+                Unsafe.setRssMemLimit(rssLimit);
+                Assert.assertEquals(DirectIntCharSequenceHashMap.STOP_OOM, map.getStopReason());
+                Assert.assertFalse(map.isFilling());
+                Assert.assertEquals(96, map.size());
+                Assert.assertEquals(before, map.allocatedBytes());
+                Assert.assertEquals(before, budget.getUsedBytes());
+                DirectString view = new DirectString();
+                for (int key = 0; key < 96; key++) {
+                    TestUtils.assertEquals("", map.get(key, view));
+                }
+                Assert.assertNull(map.get(256, view));
+                Assert.assertEquals(DirectIntCharSequenceHashMap.NOT_INSERTED, map.tryPutIfAbsent(256, 0, 0));
+                Assert.assertEquals(before, budget.getUsedBytes());
+            } finally {
+                Unsafe.setRssMemLimit(rssLimit);
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheDenseGrowthSlotLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(96, 0.7, MemoryTag.NATIVE_DEFAULT, null)) {
+                map.setMaxSlots(256);
+                for (int key = 0; key < 96; key++) {
+                    Assert.assertTrue(put(map, key, ""));
+                }
+                long before = map.allocatedBytes();
+                Assert.assertTrue(put(map, 256, ""));
+                Assert.assertEquals(before + 16 + 256L * Long.BYTES, map.allocatedBytes());
+                Assert.assertEquals(97, map.size());
+                Assert.assertTrue(map.isFilling());
+                DirectString view = new DirectString();
+                for (int key = 0; key < 96; key++) {
+                    TestUtils.assertEquals("", map.get(key, view));
+                }
+                TestUtils.assertEquals("", map.get(256, view));
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheDenseGrowthSpanLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(96, 0.7, MemoryTag.NATIVE_DEFAULT, null)) {
+                for (int key = 0; key < 96; key++) {
+                    Assert.assertTrue(put(map, key, ""));
+                }
+                long before = map.allocatedBytes();
+                Assert.assertTrue(put(map, 512, ""));
+                Assert.assertEquals(before + 16 + 256L * Long.BYTES, map.allocatedBytes());
+                Assert.assertEquals(97, map.size());
+                Assert.assertTrue(map.isFilling());
+                DirectString view = new DirectString();
+                for (int key = 0; key < 96; key++) {
+                    TestUtils.assertEquals("", map.get(key, view));
+                }
+                TestUtils.assertEquals("", map.get(512, view));
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheDenseGrowthSparseJumps() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(96, 0.7, MemoryTag.NATIVE_DEFAULT, null)) {
+                for (int key = 0; key < 96; key++) {
+                    Assert.assertTrue(put(map, key, ""));
+                }
+                long before = map.allocatedBytes();
+                for (int key = 256; key <= 32_768; key *= 2) {
+                    Assert.assertTrue(put(map, key, ""));
+                    Assert.assertEquals(before + (key == 256 ? 1 : 2) * (16 + 512L * Long.BYTES), map.allocatedBytes());
+                }
+                Assert.assertEquals(104, map.size());
+                Assert.assertTrue(map.isFilling());
+                DirectString view = new DirectString();
+                for (int key = 0; key < 96; key++) {
+                    TestUtils.assertEquals("", map.get(key, view));
+                }
+                for (int key = 256; key <= 32_768; key *= 2) {
+                    TestUtils.assertEquals("", map.get(key, view));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheDirectIndexAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int base : new int[]{Integer.MIN_VALUE, -65, 65, Integer.MAX_VALUE - 95}) {
+                try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(96, 0.7, MemoryTag.NATIVE_DEFAULT, null)) {
+                    for (int i = 95; i > 0; i -= 2) {
+                        Assert.assertTrue(put(map, base + i, "value" + i));
+                    }
+                    DirectString view = new DirectString();
+                    for (int i = 0; i < 96; i++) {
+                        if ((i & 1) == 0) {
+                            Assert.assertNull(map.get(base + i, view));
+                        } else {
+                            TestUtils.assertEquals("value" + i, map.get(base + i, view));
+                        }
+                        Assert.assertNull(map.get((base + i) ^ 256, view));
+                    }
+                    int alias = (base + 1) ^ 256;
+                    Assert.assertTrue(put(map, alias, "alias"));
+                    TestUtils.assertEquals("alias", map.get(alias, view));
+                    for (int i = 1; i < 96; i += 2) {
+                        TestUtils.assertEquals("value" + i, map.get(base + i, view));
+                    }
+                    Assert.assertEquals(49, map.size());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheReindexBudgetLimit() throws Exception {
+        for (boolean isRssFailure : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                long rssLimit = Unsafe.getRssMemLimit();
+                NativeMemoryBudget budget = new NativeMemoryBudget(Long.MAX_VALUE);
+                try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                    for (int key = 0; key < 1024; key++) {
+                        Assert.assertTrue(put(map, key, "value" + key));
+                    }
+                    if (isRssFailure) {
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                    } else {
+                        budget.setLimit(budget.getUsedBytes());
+                    }
+                    Assert.assertEquals(DirectIntCharSequenceHashMap.STOPPED, map.tryPutIfAbsent(Integer.MAX_VALUE, 0, 0));
+                    Unsafe.setRssMemLimit(rssLimit);
+                    Assert.assertEquals(isRssFailure ? DirectIntCharSequenceHashMap.STOP_OOM : DirectIntCharSequenceHashMap.STOP_BUDGET, map.getStopReason());
+                    Assert.assertFalse(map.isFilling());
+                    Assert.assertEquals(1024, map.size());
+                    Assert.assertEquals(map.allocatedBytes(), budget.getUsedBytes());
+                    DirectString view = new DirectString();
+                    for (int key = 0; key < 1024; key++) {
+                        TestUtils.assertEquals("value" + key, map.get(key, view));
+                    }
+                    Assert.assertNull(map.get(Integer.MAX_VALUE, view));
+                } finally {
+                    Unsafe.setRssMemLimit(rssLimit);
+                }
+                Assert.assertEquals(0, budget.getUsedBytes());
+            });
+        }
+    }
+
+    @Test
+    public void testConcurrentCacheSparseKeyRanges() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, null)) {
+                DirectString view = new DirectString();
+                DirectString retained = new DirectString();
+                for (int key = 0; key < 1024; key++) {
+                    Assert.assertTrue(put(map, key, "value" + key));
+                }
+                map.get(0, retained);
+                long address = retained.lo();
+                for (int i = 1; i < 32; i++) {
+                    for (int key = 0; key < 1024; key++) {
+                        int sparseKey = (i << 20) + key;
+                        Assert.assertTrue(put(map, sparseKey, "value" + sparseKey));
+                    }
+                }
+                Assert.assertTrue(put(map, Integer.MIN_VALUE, "min"));
+                Assert.assertTrue(put(map, Integer.MAX_VALUE, "max"));
+                for (int i = 0; i < 32; i++) {
+                    for (int key = 0; key < 1024; key++) {
+                        int sparseKey = (i << 20) + key;
+                        TestUtils.assertEquals("value" + sparseKey, map.get(sparseKey, view));
+                    }
+                    Assert.assertNull(map.get((i << 20) + 1024, view));
+                }
+                TestUtils.assertEquals("min", map.get(Integer.MIN_VALUE, view));
+                TestUtils.assertEquals("max", map.get(Integer.MAX_VALUE, view));
+                Assert.assertEquals(32_770, map.size());
+                Assert.assertEquals(address, retained.lo());
+                TestUtils.assertEquals("value0", retained);
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheStoppedKeyRange() throws Exception {
+        assertMemoryLeak(() -> {
+            NativeMemoryBudget budget = new NativeMemoryBudget(512);
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                for (int key = -10; key <= 10; key += 5) {
+                    Assert.assertTrue(put(map, key, "v"));
+                }
+                Assert.assertEquals(DirectIntCharSequenceHashMap.STOPPED, putResult(map, 1000, "v"));
+                DirectString view = new DirectString();
+                for (int key = -10; key <= 10; key += 5) {
+                    TestUtils.assertEquals("v", map.get(key, view));
+                }
+                for (int key : new int[]{Integer.MIN_VALUE, -11, -1, 1, 11, 1000, Integer.MAX_VALUE}) {
+                    Assert.assertNull(map.get(key, view));
+                }
+                budget.setLimit(1024 * 1024);
+                Assert.assertEquals(DirectIntCharSequenceHashMap.NOT_INSERTED, putResult(map, 1000, "v"));
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheUnsignedChunkReferences() throws Exception {
+        assertMemoryLeak(() -> {
+            String prefix = "x".repeat(120);
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, null)) {
+                for (int key = 0; key < 16_383; key++) {
+                    map.setNextChunkSize(256);
+                    Assert.assertTrue(put(map, key, prefix + (100_000 + key)));
+                }
+                Assert.assertEquals(DirectIntCharSequenceHashMap.STOPPED, putResult(map, 16_383, "next"));
+                Assert.assertEquals(DirectIntCharSequenceHashMap.STOP_LIMIT, map.getStopReason());
+                Assert.assertTrue(map.allocatedBytes() < 6 * 1024 * 1024);
+                DirectString view = new DirectString();
+                for (int key = 0; key < 16_383; key++) {
+                    TestUtils.assertEquals(prefix + (100_000 + key), map.get(key, view));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheStructuralLimits() throws Exception {
+        for (boolean isChunkLimit : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, null)) {
+                    if (isChunkLimit) {
+                        map.setMaxChunks(3);
+                    } else {
+                        map.setMaxSlots(8);
+                    }
+                    String value = "x".repeat(isChunkLimit ? 4094 : 1);
+                    int count = isChunkLimit ? 7 : 5;
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertTrue(put(map, i, value));
+                    }
+                    Assert.assertEquals(DirectIntCharSequenceHashMap.STOPPED, putResult(map, count, value));
+                    Assert.assertFalse(map.isFilling());
+                    Assert.assertEquals(DirectIntCharSequenceHashMap.STOP_LIMIT, map.getStopReason());
+                    Assert.assertEquals(count, map.size());
+                    DirectString view = new DirectString();
+                    TestUtils.assertEquals(value, map.get(0, view));
+                    TestUtils.assertEquals(value, map.get(count - 1, view));
+                    Assert.assertEquals(DirectIntCharSequenceHashMap.NOT_INSERTED, putResult(map, count, value));
+                    try {
+                        map.setMaxChunks(16_384);
+                        Assert.fail();
+                    } catch (IllegalArgumentException expected) {
+                        Assert.assertEquals("invalid chunk limit", expected.getMessage());
+                    }
+                }
+            });
+        }
+    }
+
+    @Test
+    public void testConcurrentCacheOversizedValuesDoNotAllocateOrStop() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, null)) {
+                for (int count : new int[]{0, 5}) {
+                    while (map.size() < count) {
+                        Assert.assertTrue(put(map, map.size(), "small"));
+                    }
+                    long bytes = map.allocatedBytes();
+                    Assert.assertEquals(DirectIntCharSequenceHashMap.NOT_INSERTED, putResult(map, 42, "x".repeat(4095)));
+                    Assert.assertEquals(DirectIntCharSequenceHashMap.NOT_INSERTED, map.tryPutIfAbsent(42, 1, Integer.MAX_VALUE));
+                    Assert.assertEquals(bytes, map.allocatedBytes());
+                    Assert.assertEquals(count, map.size());
+                    Assert.assertTrue(map.isFilling());
+                }
+                Assert.assertTrue(put(map, 42, "x".repeat(4094)));
+                Assert.assertEquals(4094, map.get(42, new DirectString()).length());
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheAllocationFailures() throws Exception {
+        assertCacheAllocationFailure(new ObjList<>("a"), 1);
+        assertCacheAllocationFailure(new ObjList<>("a"), 2);
+        assertCacheAllocationFailure(new ObjList<>("a"), 3);
+        assertCacheAllocationFailure(new ObjList<>("a", "b", "c", "d", "e", "f"), 4);
+        assertCacheAllocationFailure(new ObjList<>("x".repeat(126), "y"), 4);
+        ObjList<String> values = new ObjList<>();
+        for (int i = 0; i < 8; i++) {
+            values.add("x".repeat(4094));
+        }
+        assertCacheAllocationFailure(values, 8);
+    }
+
+    @Test
+    public void testConcurrentCacheChunkBoundariesAndStableViews() throws Exception {
+        assertMemoryLeak(() -> {
+            NativeMemoryBudget budget = new NativeMemoryBudget(16 * 1024 * 1024);
+            long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                DirectString retained = new DirectString();
+                DirectString view = new DirectString();
+                Assert.assertTrue(put(map, -1, "retained"));
+                map.get(-1, retained);
+                long address = retained.lo();
+                int[] lengths = {0, 1, 125, 126, 127, 4093, 4094};
+                for (int i = 0; i < lengths.length; i++) {
+                    String value = "界".repeat(lengths[i]);
+                    Assert.assertTrue(put(map, i, value));
+                    TestUtils.assertEquals(value, map.get(i, view));
+                }
+                for (int i = 10; i < 20_000; i++) {
+                    Assert.assertTrue(put(map, i, "value" + i));
+                }
+                for (int i = 10; i < 20_000; i++) {
+                    TestUtils.assertEquals("value" + i, map.get(i, view));
+                }
+                TestUtils.assertEquals("retained", retained);
+                Assert.assertEquals(address, retained.lo());
+                Assert.assertEquals(budget.getUsedBytes(), map.allocatedBytes());
+                Assert.assertEquals(map.allocatedBytes(), Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT) - before);
+                // Includes every retired index; even sparse keys need no dense key array.
+                Assert.assertTrue(map.allocatedBytes() < 2 * 1024 * 1024);
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheKeysAndLazyAllocation() throws Exception {
+        assertMemoryLeak(() -> {
+            NativeMemoryBudget budget = new NativeMemoryBudget(Long.MAX_VALUE);
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                DirectString view = new DirectString();
+                Assert.assertNull(map.get(0, view));
+                Assert.assertEquals(0, map.allocatedBytes());
+                int[] keys = {0, -1, Integer.MIN_VALUE, Integer.MAX_VALUE};
+                for (int key : keys) {
+                    String value = "symbol" + key;
+                    Assert.assertTrue(put(map, key, value));
+                    long bytes = map.allocatedBytes();
+                    Assert.assertFalse(put(map, key, "replacement"));
+                    Assert.assertEquals(bytes, map.allocatedBytes());
+                    TestUtils.assertEquals(value, map.get(key, view));
+                }
+                Assert.assertEquals(keys.length, map.size());
+                map.get(Integer.MAX_VALUE, view);
+                Assert.assertEquals(DirectIntCharSequenceHashMap.INSERTED, map.tryPutIfAbsent(42, view.lo(), view.length()));
+                TestUtils.assertEquals("symbol" + Integer.MAX_VALUE, map.get(42, view));
+                map.close();
+                Assert.assertEquals(0, map.allocatedBytes());
+                Assert.assertNull(map.get(0, view));
+                Assert.assertFalse(put(map, 0, "closed"));
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheReadersAndWriters() throws Exception {
+        assertMemoryLeak(() -> {
+            NativeMemoryBudget budget = new NativeMemoryBudget(8 * 1024 * 1024);
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                AtomicReference<Throwable> failure = new AtomicReference<>();
+                AtomicInteger inserts = new AtomicInteger();
+                CountDownLatch start = new CountDownLatch(1);
+                ObjList<Thread> threads = new ObjList<>();
+                for (int t = 0; t < 8; t++) {
+                    final int id = t;
+                    Thread thread = new Thread(() -> {
+                        try {
+                            start.await();
+                            DirectString view = new DirectString();
+                            for (int i = 0; i < 20_000; i++) {
+                                int key = (i * 31 + id) % 4000;
+                                String value = "symbol" + key;
+                                if (id < 4 && put(map, key, value)) {
+                                    inserts.incrementAndGet();
+                                }
+                                CharSequence result = map.get(key, view);
+                                if (result != null) {
+                                    TestUtils.assertEquals(value, result);
+                                }
+                            }
+                        } catch (Throwable e) {
+                            failure.compareAndSet(null, e);
+                        }
+                    });
+                    threads.add(thread);
+                    thread.start();
+                }
+                start.countDown();
+                for (int t = 0; t < threads.size(); t++) {
+                    threads.getQuick(t).join();
+                }
+                if (failure.get() != null) {
+                    throw new AssertionError(failure.get());
+                }
+                Assert.assertEquals(inserts.get(), map.size());
+                Assert.assertTrue(map.size() > 1000);
+                Assert.assertTrue(map.size() <= 4000);
+                Assert.assertEquals(budget.getUsedBytes(), map.allocatedBytes());
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheStopRacingWriters() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger reservations = new AtomicInteger();
+            AtomicInteger stops = new AtomicInteger();
+            NativeMemoryBudget budget = new NativeMemoryBudget(4096) {
+                @Override
+                public boolean tryReserve(long bytes) {
+                    reservations.incrementAndGet();
+                    return super.tryReserve(bytes);
+                }
+            };
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                AtomicReference<Throwable> failure = new AtomicReference<>();
+                CountDownLatch start = new CountDownLatch(1);
+                ObjList<Thread> threads = new ObjList<>();
+                for (int t = 0; t < 16; t++) {
+                    final int id = t;
+                    Thread thread = new Thread(() -> {
+                        try {
+                            start.await();
+                            DirectString view = new DirectString();
+                            int lastInserted = -1;
+                            for (int i = 0; i < 10_000; i++) {
+                                int key = i * 16 + id;
+                                int result = putResult(map, key, "value");
+                                if (result == DirectIntCharSequenceHashMap.INSERTED) {
+                                    lastInserted = key;
+                                } else if (result == DirectIntCharSequenceHashMap.STOPPED) {
+                                    stops.incrementAndGet();
+                                }
+                                if (lastInserted != -1) {
+                                    TestUtils.assertEquals("value", map.get(lastInserted, view));
+                                }
+                            }
+                            Assert.assertFalse(map.isFilling());
+                            int calls = reservations.get();
+                            for (int i = 0; i < 10_000; i++) {
+                                Assert.assertFalse(put(map, -i, "value"));
+                            }
+                            Assert.assertEquals(calls, reservations.get());
+                        } catch (Throwable e) {
+                            failure.compareAndSet(null, e);
+                        }
+                    });
+                    threads.add(thread);
+                    thread.start();
+                }
+                start.countDown();
+                for (int t = 0; t < threads.size(); t++) {
+                    threads.getQuick(t).join();
+                }
+                if (failure.get() != null) {
+                    throw new AssertionError(failure.get());
+                }
+                Assert.assertTrue(map.size() > 0);
+                Assert.assertEquals(1, stops.get());
+                Assert.assertEquals(DirectIntCharSequenceHashMap.STOP_BUDGET, map.getStopReason());
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheUnexpectedFailureReleasesUnpublishedBlocks() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger calls = new AtomicInteger();
+            NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024) {
+                @Override
+                public boolean tryReserve(long bytes) {
+                    if (calls.incrementAndGet() == 3) {
+                        throw new IllegalStateException("allocation failed");
+                    }
+                    return super.tryReserve(bytes);
+                }
+            };
+            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                try {
+                    put(map, 0, "value");
+                    Assert.fail();
+                } catch (IllegalStateException expected) {
+                    Assert.assertEquals("allocation failed", expected.getMessage());
+                }
+                Assert.assertEquals(0, map.size());
+                Assert.assertEquals(80, map.allocatedBytes());
+                Assert.assertEquals(map.allocatedBytes(), budget.getUsedBytes());
+                Assert.assertTrue(map.isFilling());
+                Assert.assertTrue(put(map, 0, "success"));
+                TestUtils.assertEquals("success", map.get(0, new DirectString()));
+            }
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testNativeMemoryBudgetOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            NativeMemoryBudget budget = new NativeMemoryBudget(Long.MAX_VALUE);
+            Assert.assertTrue(budget.tryReserve(Long.MAX_VALUE - 1));
+            Assert.assertFalse(budget.tryReserve(2));
+            Assert.assertTrue(budget.tryReserve(1));
+            Assert.assertFalse(budget.tryReserve(1));
+            budget.release(Long.MAX_VALUE);
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
 
     @Test
     public void testClearResetsStateButKeepsBuffer() throws Exception {
@@ -162,7 +804,7 @@ public class DirectSymbolMapTest {
                     map.put(i, "value-" + i);
                 }
 
-                final class CountingCharSequence implements CharSequence {
+                final class CountingCharSequence extends AbstractCharSequence {
                     private int accesses;
                     private final String value = "absent-value";
 
@@ -179,7 +821,7 @@ public class DirectSymbolMapTest {
                     }
 
                     @Override
-                    public CharSequence subSequence(int start, int end) {
+                    protected CharSequence _subSequence(int start, int end) {
                         return value.subSequence(start, end);
                     }
                 }
@@ -421,11 +1063,11 @@ public class DirectSymbolMapTest {
         // and used again. Prior state must not leak into the reopened instance.
         assertMemoryLeak(() -> {
             DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT);
-            try {
+            try (map) {
                 map.intern("before");
                 map.intern("close");
-                map.close();
-
+            }
+            try (map) {
                 map.reopen();
                 Assert.assertEquals(0, map.size());
                 Assert.assertNull(map.valueOf(0));
@@ -436,9 +1078,65 @@ public class DirectSymbolMapTest {
                 Assert.assertEquals(1, map.intern("reopen"));
                 Assert.assertEquals("after", Chars.toString(map.valueOf(0)));
                 Assert.assertEquals(0, map.keyOf("after"));
-            } finally {
-                map.close();
             }
         });
     }
+
+    private static boolean put(DirectIntCharSequenceHashMap map, int key, CharSequence value) {
+        return putResult(map, key, value) == DirectIntCharSequenceHashMap.INSERTED;
+    }
+
+    private static int putResult(DirectIntCharSequenceHashMap map, int key, CharSequence value) {
+        long bytes = Math.max(2, 2L * value.length());
+        long address = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Chars.copyStrChars(value, 0, value.length(), address);
+            return map.tryPutIfAbsent(key, address, value.length());
+        } finally {
+            Unsafe.free(address, bytes, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void assertCacheAllocationFailure(ObjList<String> values, int failAt) throws Exception {
+        for (boolean isRssFailure : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                long rssLimit = Unsafe.getRssMemLimit();
+                AtomicInteger calls = new AtomicInteger();
+                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024) {
+                    @Override
+                    public boolean tryReserve(long bytes) {
+                        if (calls.incrementAndGet() == failAt) {
+                            if (!isRssFailure) {
+                                return false;
+                            }
+                            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                        }
+                        return super.tryReserve(bytes);
+                    }
+                };
+                try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, budget)) {
+                    for (int i = 0; i < values.size() - 1; i++) {
+                        Assert.assertTrue(put(map, i, values.getQuick(i)));
+                    }
+                    Assert.assertEquals(DirectIntCharSequenceHashMap.STOPPED, putResult(map, values.size() - 1, values.getQuick(values.size() - 1)));
+                    Unsafe.setRssMemLimit(rssLimit);
+                    Assert.assertFalse(map.isFilling());
+                    Assert.assertEquals(isRssFailure ? DirectIntCharSequenceHashMap.STOP_OOM : DirectIntCharSequenceHashMap.STOP_BUDGET, map.getStopReason());
+                    Assert.assertEquals(values.size() - 1, map.size());
+                    Assert.assertEquals(map.allocatedBytes(), budget.getUsedBytes());
+                    DirectString view = new DirectString();
+                    for (int i = 0; i < values.size() - 1; i++) {
+                        TestUtils.assertEquals(values.getQuick(i), map.get(i, view));
+                    }
+                    int before = calls.get();
+                    Assert.assertFalse(put(map, 42, "small"));
+                    Assert.assertEquals(before, calls.get());
+                } finally {
+                    Unsafe.setRssMemLimit(rssLimit);
+                }
+                Assert.assertEquals(0, budget.getUsedBytes());
+            });
+        }
+    }
+
 }

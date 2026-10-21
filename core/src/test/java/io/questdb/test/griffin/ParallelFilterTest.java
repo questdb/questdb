@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -179,6 +180,42 @@ public class ParallelFilterTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         super.setUp();
         inputRoot = root;
+    }
+
+    @Test
+    public void testSharedSymbolCacheParallelFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (localEngine, _, context) -> {
+                        localEngine.execute("create table cache_parallel (s symbol cache)", context);
+                        localEngine.execute("insert into cache_parallel select cast(x as string) from long_sequence(10000)", context);
+                        localEngine.execute("create table nocache_parallel (s symbol nocache)", context);
+                        localEngine.execute("insert into nocache_parallel select s from cache_parallel", context);
+                        localEngine.releaseAllReaders();
+                        try (TableReader reader = localEngine.getReader("cache_parallel")) {
+                            SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
+                            Assert.assertEquals(0, symbols.getCacheSize());
+                            // Length is evaluated through worker symbol-table views; the owner
+                            // does not resolve any symbol values before checking the shared map.
+                            for (String table : new String[]{"cache_parallel", "nocache_parallel", "cache_parallel"}) {
+                                assertQuery("select count() from " + table + " where length(s) > 3")
+                                        .withEngine(localEngine)
+                                        .withContext(context)
+                                        .noLeakCheck()
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .returns("count\n9001\n");
+                            }
+                            Assert.assertTrue(symbols.getCacheSize() > 0);
+                            Assert.assertTrue(symbols.getCacheSize() <= 10000);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test

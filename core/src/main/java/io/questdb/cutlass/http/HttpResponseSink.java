@@ -46,6 +46,7 @@ import io.questdb.std.bytes.Bytes;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.ex.ZLibException;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
@@ -688,6 +689,41 @@ public class HttpResponseSink implements Closeable, Mutable {
     private class ResponseSinkImpl implements Utf8Sink {
 
         private int[] ryuE10;
+
+        @Override
+        public Utf8Sink escapeJsonStr(@NotNull CharSequence cs, int lo, int hi) {
+            if (hi - (long) lo < 4 || cs.getClass() != DirectString.class
+                    || lo < 0 || hi > cs.length() || hi - (long) lo > buffer.getWriteNAvailable()) {
+                return Utf8Sink.super.escapeJsonStr(cs, lo, hi);
+            }
+            long source = ((DirectString) cs).lo() + ((long) lo << 1);
+            long destination = buffer._wptr;
+            assert destination != 0;
+            int i = lo;
+            try {
+                while (i <= hi - 4) {
+                    final long word = Unsafe.getLong(source);
+                    if ((word & 0xff80ff80ff80ff80L) != 0) {
+                        break;
+                    }
+                    // ASCII lanes cannot borrow unless a forbidden character is present.
+                    final long controls = word - 0x0020002000200020L;
+                    final long quotes = (word ^ 0x0022002200220022L) - 0x0001000100010001L;
+                    final long backslashes = (word ^ 0x005c005c005c005cL) - 0x0001000100010001L;
+                    if (((controls | quotes | backslashes) & 0x8000800080008000L) != 0) {
+                        break;
+                    }
+                    final long packed = (word | (word >>> 8)) & 0x0000ffff0000ffffL;
+                    Unsafe.putInt(destination, (int) (packed | (packed >>> 16)));
+                    source += Long.BYTES;
+                    destination += Integer.BYTES;
+                    i += 4;
+                }
+            } finally {
+                buffer._wptr = destination;
+            }
+            return Utf8Sink.super.escapeJsonStr(cs, i, hi);
+        }
 
         @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {

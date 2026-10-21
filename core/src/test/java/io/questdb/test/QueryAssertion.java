@@ -2118,6 +2118,7 @@ public class QueryAssertion {
         FACTORY_TAGS[MemoryTag.NATIVE_OFFLOAD] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_TABLE_READER] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_SYMBOL_CACHE] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WRITER] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_IMPORT] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_PARALLEL_IMPORT] = false;
