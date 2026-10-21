@@ -27,12 +27,15 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Appends column ranges that are already in WAL layout, such as the rows of another table's WAL segment, as
@@ -50,6 +53,7 @@ import io.questdb.std.Unsafe;
  */
 public final class WalColumnRangeAppender implements QuietCloseable {
     private final WalColumnSink sink;
+    private final IntIntHashMap symbolKeys = new IntIntHashMap();
     private final IntList writtenColumns = new IntList();
     private long firstRow;
     private boolean isInBlock;
@@ -97,6 +101,20 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     }
 
     /**
+     * Writes one symbol key, as {@link #resolveSymbol(int, CharSequence)} returned it, for every row of the block.
+     */
+    public void fillSymbolKey(int columnIndex, int key) {
+        checkInBlock();
+        checkNotWritten(columnIndex);
+        checkSymbol(columnIndex);
+        final MemoryMA data = sink.getDataColumn(columnIndex);
+        for (int i = 0; i < rowCount; i++) {
+            data.putInt(key);
+        }
+        written(columnIndex);
+    }
+
+    /**
      * Checks the timestamp bounds and closes the block; the sink NULL-fills the columns that received no range.
      */
     public void finish(long minTimestamp, long maxTimestamp, boolean outOfOrder) {
@@ -125,6 +143,34 @@ public final class WalColumnRangeAppender implements QuietCloseable {
                     .put(", size=").put(size).put(", expected=").put(expected).put(']');
         }
         sink.getDataColumn(columnIndex).putBlockOfBytes(address, size);
+        written(columnIndex);
+    }
+
+    /**
+     * Appends the block's values of a SYMBOL column from 4-byte keys of another dictionary at {@code keysAddress}:
+     * each distinct key is looked up once, in the order of its first row, and resolved through the sink; a
+     * negative key, or a key {@code values} does not know, is NULL.
+     */
+    public void putSymbolRange(int columnIndex, long keysAddress, SymbolValues values) {
+        checkInBlock();
+        checkNotWritten(columnIndex);
+        checkSymbol(columnIndex);
+        final SymbolMapReader reader = sink.getSymbolMapReader(columnIndex);
+        final MemoryMA data = sink.getDataColumn(columnIndex);
+        symbolKeys.clear();
+        for (int i = 0; i < rowCount; i++) {
+            final int key = Unsafe.getInt(keysAddress + ((long) i << 2));
+            final int index = symbolKeys.keyIndex(key);
+            final int targetKey;
+            if (index > -1) {
+                // first row of this key in the block: resolve once, in first-row order as the row API does
+                targetKey = sink.resolveSymbol(columnIndex, key < 0 ? null : values.valueOf(key), reader);
+                symbolKeys.putAt(index, key, targetKey);
+            } else {
+                targetKey = symbolKeys.valueAt(index);
+            }
+            data.putInt(targetKey);
+        }
         written(columnIndex);
     }
 
@@ -185,6 +231,31 @@ public final class WalColumnRangeAppender implements QuietCloseable {
         written(columnIndex);
     }
 
+    /**
+     * Returns the key of a symbol value in the sink's dictionary, for {@link #fillSymbolKey(int, int)}.
+     */
+    public int resolveSymbol(int columnIndex, @Nullable CharSequence value) {
+        checkInBlock();
+        checkSymbol(columnIndex);
+        return sink.resolveSymbol(columnIndex, value, sink.getSymbolMapReader(columnIndex));
+    }
+
+    /**
+     * Syncs the memories of the columns written in the open block, data and aux; what the block finish and the
+     * commit sync afterwards is unchanged.
+     */
+    public void syncWrittenColumns() {
+        checkInBlock();
+        final TableRecordMetadata metadata = sink.getMetadata();
+        for (int i = 0, n = writtenColumns.size(); i < n; i++) {
+            final int column = writtenColumns.getQuick(i);
+            sink.getDataColumn(column).sync(false);
+            if (ColumnType.isVarSize(metadata.getColumnType(column))) {
+                sink.getAuxColumn(column).sync(false);
+            }
+        }
+    }
+
     private void checkInBlock() {
         if (!isInBlock) {
             throw CairoException.nonCritical().put("no open block");
@@ -197,8 +268,25 @@ public final class WalColumnRangeAppender implements QuietCloseable {
         }
     }
 
+    private void checkSymbol(int columnIndex) {
+        if (!ColumnType.isSymbol(sink.getMetadata().getColumnType(columnIndex))) {
+            throw CairoException.nonCritical().put("not a SYMBOL column [column=").put(columnIndex).put(']');
+        }
+    }
+
     private void written(int columnIndex) {
         sink.setRowValueNotNullColumnar(columnIndex, firstRow + rowCount - 1);
         writtenColumns.add(columnIndex);
+    }
+
+    /**
+     * The values of the dictionary a symbol range's keys belong to.
+     */
+    public interface SymbolValues {
+        /**
+         * Returns the value of a non-negative key, or null for a key the dictionary does not hold.
+         */
+        @Nullable
+        CharSequence valueOf(int key);
     }
 }
