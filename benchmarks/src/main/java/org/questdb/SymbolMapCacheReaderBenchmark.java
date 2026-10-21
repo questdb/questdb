@@ -31,7 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
+import io.questdb.std.str.DirectString;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -56,7 +56,7 @@ import java.util.concurrent.TimeUnit;
  * Run the same benchmark bytecode with baseline or candidate core classes first
  * on the classpath. Each worker owns a real engine-backed TableReader: a standalone
  * SymbolMapReaderImpl does not acquire the candidate's shared cache.
- * The stopped scenario is for candidate CACHE versus NOCACHE, not baseline CACHE.
+ * The stopped scenarios are for candidate CACHE versus NOCACHE, not baseline CACHE.
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -87,33 +87,161 @@ public class SymbolMapCacheReaderBenchmark {
 
         @Setup(Level.Trial)
         public void setup(ReaderState state, ThreadParams threads) throws Exception {
-            table = state.engine.getReader("symbols");
-            symbols = (SymbolMapReaderImpl) table.getSymbolMapReader(0);
-            keyBase = state.keyBase;
-            keys = state.data.keys;
-            mask = keys.length - 1;
-            position = threads.getThreadIndex() * 17 & mask;
-            nextKey = keys[position];
-            int cacheSize = SymbolMapCacheBenchmarkData.cacheSize(symbols);
-            for (int i = 0; i < state.symbolCount; i++) {
-                if (!Chars.equals(state.data.values.getQuick(i), symbols.valueOf(keyBase + i))) {
-                    throw new AssertionError("symbol key or value changed: " + i);
+            try {
+                table = state.engine.getReader("symbols");
+                symbols = (SymbolMapReaderImpl) table.getSymbolMapReader(0);
+                keyBase = state.keyBase;
+                keys = state.data.keys;
+                mask = keys.length - 1;
+                position = threads.getThreadIndex() * 17 & mask;
+                nextKey = keys[position];
+                int cacheSize = SymbolMapCacheBenchmarkData.cacheSize(symbols);
+                for (int i = 0; i < state.symbolCount; i++) {
+                    if (!Chars.equals(state.data.values.getQuick(i), symbols.valueOf(keyBase + i))) {
+                        throw new AssertionError("symbol key or value changed: " + i);
+                    }
                 }
-            }
-            if (state.cacheMode.equals("CACHE")) {
-                if (state.scenario.equals("hit") && SymbolMapCacheBenchmarkData.cacheSize(symbols) != state.symbolCount) {
-                    throw new AssertionError("resident lookup is not fully cached");
+                if (state.cacheMode.equals("CACHE")) {
+                    if (state.scenario.equals("hit") && SymbolMapCacheBenchmarkData.cacheSize(symbols) != state.symbolCount) {
+                        throw new AssertionError("resident lookup is not fully cached");
+                    }
+                    if (state.scenario.equals("stopped") && (cacheSize == 0 || cacheSize >= keyBase || SymbolMapCacheBenchmarkData.cacheSize(symbols) != cacheSize)) {
+                        throw new AssertionError("stopped lookup admitted measured keys");
+                    }
                 }
-                if (state.scenario.equals("stopped") && (cacheSize == 0 || cacheSize >= keyBase || SymbolMapCacheBenchmarkData.cacheSize(symbols) != cacheSize)) {
-                    throw new AssertionError("stopped lookup admitted measured keys");
+                if (state.hole != null) {
+                    state.hole.check(symbols, state);
                 }
+            } catch (Exception | Error e) {
+                try {
+                    tearDown();
+                } catch (Exception | Error cleanup) {
+                    e.addSuppressed(cleanup);
+                }
+                throw e;
             }
         }
 
         @TearDown(Level.Trial)
-        public void tearDown() {
-            table = Misc.free(table);
-            io.questdb.std.str.Path.clearThreadLocals();
+        public void tearDown() throws Exception {
+            try (TableReader closeTable = table) {
+                table = null;
+            } finally {
+                io.questdb.std.str.Path.clearThreadLocals();
+            }
+        }
+    }
+
+    // Reflection keeps the identical fixture loadable on the baseline, which has no native map.
+    // Only stopped-hole uses these checks; no reflection or assertions enter keys()/chain().
+    private static class HoleState {
+        private static final String SENTINEL = "hole-anchor";
+        private final long bytes;
+        private final int count;
+        private final int low;
+        private final long lowBytes;
+        private final Object map;
+        private final SymbolMapReaderImpl pinned;
+
+        private HoleState(SymbolMapReaderImpl pinned) throws Exception {
+            this.pinned = pinned;
+            map = field(pinned, "cache");
+            count = pinned.getCacheSize();
+            low = (int) call(pinned, "getLowCacheSize");
+            bytes = map == null ? 0 : (long) call(map, "allocatedBytes");
+            lowBytes = (long) call(pinned, "getLowCacheAllocatedBytes");
+        }
+
+        private static Object call(Object target, String name) throws Exception {
+            return target.getClass().getMethod(name).invoke(target);
+        }
+
+        private static Object field(Object target, String name) throws Exception {
+            for (Class<?> owner = target.getClass(); owner != null; owner = owner.getSuperclass()) {
+                try {
+                    var field = owner.getDeclaredField(name);
+                    field.setAccessible(true);
+                    return field.get(target);
+                } catch (NoSuchFieldException ignored) {
+                    // The map can declare padded fields in a superclass.
+                }
+            }
+            throw new NoSuchFieldException(name);
+        }
+
+        private void check(SymbolMapReaderImpl reader, ReaderState state) throws Exception {
+            int sentinel = state.keyBase + state.symbolCount;
+            if (reader.getSymbolCount() != sentinel + 1 || reader.keyOf(SENTINEL) != sentinel
+                    || !Chars.equals(SENTINEL, reader.valueOf(sentinel))) {
+                throw new AssertionError("hole sentinel dictionary key/value changed");
+            }
+            if (field(reader, "cache") != map || field(pinned, "cache") != map) {
+                throw new AssertionError("hole reader does not share the pinned map");
+            }
+            if (state.cacheMode.equals("CACHE")) {
+                if (map == null || low != 4096 || count <= 1 || low + count >= state.keyBase
+                        || bytes <= 0 || bytes > 256 * 1024 || lowBytes <= 0
+                        || (boolean) call(map, "isFilling")
+                        || (int) call(map, "getStopReason") != map.getClass().getField("STOP_BUDGET").getInt(null)
+                        || (int) field(map, "minKey") != low || (int) field(map, "maxKey") != sentinel) {
+                    throw new AssertionError("hole map did not stop at its budget with the intended bounds");
+                }
+                if (!field(reader, "lowOffsets").equals(field(pinned, "lowOffsets"))
+                        || !field(reader, "lowCharsBase").equals(field(pinned, "lowCharsBase"))) {
+                    throw new AssertionError("hole reader does not share the low slice");
+                }
+                var get = map.getClass().getMethod("get", int.class, DirectString.class);
+                DirectString view = new DirectString();
+                if (get.invoke(map, sentinel, view) == null || !Chars.equals(SENTINEL, view)) {
+                    throw new AssertionError("hole map lost its sentinel hit");
+                }
+                // One native entry is the sentinel; all others must be the ascending cold prefix.
+                for (int key = low; key < low + count - 1; key++) {
+                    if (get.invoke(map, key, view) == null || !Chars.equals("cold" + key, view)) {
+                        throw new AssertionError("hole map lost native prefix hit: " + key);
+                    }
+                }
+                if (get.invoke(map, low + count - 1, view) != null) {
+                    throw new AssertionError("hole native prefix has an unexpected extra hit");
+                }
+                int min = (int) field(map, "minKey");
+                int max = (int) field(map, "maxKey");
+                for (int key = state.keyBase; key < sentinel; key++) {
+                    if (key <= min || key >= max || get.invoke(map, key, view) != null) {
+                        throw new AssertionError("measured key is not an absent in-range hole: " + key);
+                    }
+                }
+                for (int key = 0; key < low; key++) {
+                    if (!Chars.equals("cold" + key, reader.valueOf(key))) {
+                        throw new AssertionError("hole reader lost low-slice hit: " + key);
+                    }
+                }
+            } else if (map != null || count != 0 || low != 0 || bytes != 0 || lowBytes != 0) {
+                throw new AssertionError("NOCACHE hole reader acquired a cache");
+            }
+            for (int i = 0; i < state.symbolCount; i++) {
+                int key = state.data.keys[i];
+                CharSequence actual = reader.valueOf(state.keyBase + key);
+                // The shuffled key cycle supplies the oracle independently of decoding the stored value.
+                if (!Chars.equals(state.data.values.getQuick(key), actual)
+                        || SymbolMapCacheBenchmarkData.nextKey(actual) != state.data.keys[(i + 1) & (state.symbolCount - 1)]) {
+                    throw new AssertionError("hole value/next key changed: " + key);
+                }
+            }
+            if (reader.getCacheSize() != count || (int) call(reader, "getLowCacheSize") != low
+                    || (long) call(reader, "getLowCacheAllocatedBytes") != lowBytes
+                    || (map != null && ((int) call(map, "size") != count || (long) call(map, "allocatedBytes") != bytes))) {
+                throw new AssertionError("hole lookup changed retained count or allocated bytes");
+            }
+        }
+
+        private void report(String phase, ReaderState state) throws Exception {
+            System.out.printf(java.util.Locale.ROOT,
+                    "SYMBOL_READER hole phase=%s mode=%s keys=%d base=%d sentinel=%d cached=%d low=%d bytes=%d lowBytes=%d min=%d max=%d shared=%b filling=%b stopReason=%d verified=%d%n",
+                    phase, state.cacheMode, state.symbolCount, state.keyBase, state.keyBase + state.symbolCount,
+                    count, low, bytes, lowBytes, map == null ? -1 : (int) field(map, "minKey"),
+                    map == null ? -1 : (int) field(map, "maxKey"), map != null,
+                    map != null && (boolean) call(map, "isFilling"), map == null ? 0 : (int) call(map, "getStopReason"), state.symbolCount);
         }
     }
 
@@ -128,17 +256,22 @@ public class SymbolMapCacheReaderBenchmark {
         private SqlExecutionContextImpl context;
         private SymbolMapCacheBenchmarkData data;
         private CairoEngine engine;
+        private HoleState hole;
+        private boolean isSetupComplete;
         private int keyBase;
         private TableReader pinned;
         private Path root;
 
         @Setup(Level.Trial)
         public void setup() throws Exception {
-            if ((!cacheMode.equals("CACHE") && !cacheMode.equals("NOCACHE")) || (!scenario.equals("hit") && !scenario.equals("stopped"))) {
-                throw new IllegalArgumentException("expected CACHE/NOCACHE and hit/stopped");
+            boolean isHole = scenario.equals("stopped-hole");
+            if ((!cacheMode.equals("CACHE") && !cacheMode.equals("NOCACHE"))
+                    || (!scenario.equals("hit") && !scenario.equals("stopped") && !isHole)
+                    || (isHole && symbolCount != 65_536)) {
+                throw new IllegalArgumentException("expected CACHE/NOCACHE and hit/stopped/stopped-hole (65536 keys)");
             }
             data = new SymbolMapCacheBenchmarkData(symbolCount);
-            keyBase = scenario.equals("stopped") ? 20000 : 0;
+            keyBase = scenario.equals("hit") ? 0 : 20_000;
             root = Files.createTempDirectory("symbol-cache-reader-");
             try {
                 DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root.toString());
@@ -153,33 +286,86 @@ public class SymbolMapCacheReaderBenchmark {
                         row.putSym(0, i < keyBase ? "cold" + i : data.values.getQuick(i - keyBase));
                         row.append();
                     }
+                    if (isHole) {
+                        TableWriter.Row row = writer.newRow();
+                        row.putSym(0, HoleState.SENTINEL);
+                        row.append();
+                    }
                     writer.commit();
                 }
                 pinned = engine.getReader("symbols");
+                if (isHole) {
+                    pinned.getSymbolMapReader(0).valueOf(0);
+                    pinned.getSymbolMapReader(0).valueOf(4095);
+                    pinned.getSymbolMapReader(0).valueOf(keyBase + symbolCount);
+                }
                 // Prefill shared hits before workers race on the non-blocking insertion lock.
                 int warmKeys = keyBase == 0 ? symbolCount : keyBase;
                 for (int i = 0; i < warmKeys; i++) {
                     pinned.getSymbolMapReader(0).valueOf(i);
+                    if (isHole && cacheMode.equals("CACHE")
+                            && !(boolean) HoleState.call(HoleState.field(pinned.getSymbolMapReader(0), "cache"), "isFilling")) {
+                        break;
+                    }
                 }
+                if (isHole) {
+                    hole = new HoleState((SymbolMapReaderImpl) pinned.getSymbolMapReader(0));
+                    hole.check(hole.pinned, this);
+                    hole.report("prepared", this);
+                }
+                isSetupComplete = true;
             } catch (Exception | Error e) {
-                tearDown();
+                try {
+                    tearDown();
+                } catch (Exception | Error cleanup) {
+                    e.addSuppressed(cleanup);
+                }
                 throw e;
             }
         }
 
         @TearDown(Level.Trial)
         public void tearDown() throws Exception {
-            pinned = Misc.free(pinned);
-            context = Misc.free(context);
-            engine = Misc.free(engine);
-            io.questdb.std.str.Path.clearThreadLocals();
-            if (root != null) {
-                try (var paths = Files.walk(root)) {
-                    for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-                        Files.delete(path);
-                    }
+            Throwable failure = null;
+            // Reverse-order resource close also runs when a setup/check fails; retain that first failure.
+            try (CairoEngine closeEngine = engine;
+                 SqlExecutionContextImpl closeContext = context;
+                 TableReader closePinned = pinned) {
+                engine = null;
+                context = null;
+                pinned = null;
+                if (isSetupComplete && hole != null) {
+                    hole.check(hole.pinned, this);
+                    hole.report("finished", this);
                 }
-                root = null;
+            } catch (Exception | Error e) {
+                failure = e;
+            } finally {
+                isSetupComplete = false;
+                hole = null;
+                io.questdb.std.str.Path.clearThreadLocals();
+            }
+            try {
+                if (root != null) {
+                    try (var paths = Files.walk(root)) {
+                        for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                            Files.delete(path);
+                        }
+                    }
+                    root = null;
+                }
+            } catch (Exception | Error e) {
+                if (failure == null) {
+                    failure = e;
+                } else {
+                    failure.addSuppressed(e);
+                }
+            }
+            if (failure instanceof Exception e) {
+                throw e;
+            }
+            if (failure instanceof Error e) {
+                throw e;
             }
         }
     }

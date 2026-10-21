@@ -55,6 +55,10 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
     private static final int MIN_DIRECT_SLOTS = 128;
     private static final int OFFSET_BITS = 18;
     private static final int OFFSET_MASK = (1 << OFFSET_BITS) - 1;
+    private static final int RETIRED_TABLE_OFFSET = 8;
+    private static final int TABLE_MASK_OFFSET = 4;
+    private static final int TABLE_SHIFT_OFFSET = 0;
+    // Publishing this bit makes the final plain key bounds visible to readers.
     private static final long TABLE_STOPPED = 1;
     private final @Nullable NativeMemoryBudget budget;
     private final int initialSlots;
@@ -63,6 +67,7 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
     private final int memoryTag;
     private volatile long allocatedBytes;
     private int chunkCount;
+    private int chunkTableCapacity;
     private volatile boolean isFilling = true;
     private int maxChunks = MAX_CHUNKS;
     private int maxKey = Integer.MIN_VALUE;
@@ -100,26 +105,30 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
         isFilling = false;
         if (chunks != 0) {
             for (int i = 1; i <= chunkCount; i++) {
-                long address = Unsafe.getLong(chunks + HEADER_SIZE + (long) i * Long.BYTES) - CHUNK_HEADER_SIZE;
+                long address = Unsafe.getLong(chunks + (long) i * Long.BYTES) - CHUNK_HEADER_SIZE;
                 free(address, Unsafe.getLong(address));
             }
             long current = chunks;
+            int capacity = chunkTableCapacity;
             chunks = 0;
+            // Each directory generation doubles capacity.
             while (current != 0) {
-                long next = Unsafe.getLong(current + 8);
-                free(current, HEADER_SIZE + (long) Unsafe.getInt(current) * Long.BYTES);
+                long next = Unsafe.getLong(current);
+                free(current, (long) capacity * Long.BYTES);
+                capacity /= 2;
                 current = next;
             }
         }
         long current = table & ~TABLE_STOPPED;
         table = 0;
         while (current != 0) {
-            long next = Unsafe.getLong(current + 8);
-            free(current, HEADER_SIZE + ((long) Unsafe.getInt(current + 4) + 1) * Long.BYTES);
+            long next = Unsafe.getLong(current + RETIRED_TABLE_OFFSET);
+            free(current, HEADER_SIZE + ((long) Unsafe.getInt(current + TABLE_MASK_OFFSET) + 1) * Long.BYTES);
             current = next;
         }
         size = 0;
         chunkCount = 0;
+        chunkTableCapacity = 0;
         sharedChunk = 0;
     }
 
@@ -134,7 +143,7 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
         if (t == 0) {
             return null;
         }
-        final int shift = Unsafe.getInt(t);
+        final int shift = Unsafe.getInt(t + TABLE_SHIFT_OFFSET);
         int h = hash(key, shift);
         for (;;) {
             final long slot = Unsafe.getLongVolatile(t + HEADER_SIZE + (long) h * Long.BYTES);
@@ -143,21 +152,20 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
             }
             if ((int) (slot >>> 32) == key) {
                 final int ref = (int) slot;
-                // Read after the slot: this table must contain the published chunk.
+                // Read chunks after the slot so they include the slot's chunk.
                 final long c = chunks;
-                final long record = Unsafe.getLong(c + HEADER_SIZE + (long) (ref >>> OFFSET_BITS) * Long.BYTES)
+                final long record = Unsafe.getLong(c + (long) (ref >>> OFFSET_BITS) * Long.BYTES)
                         + ((long) (ref & OFFSET_MASK) << 1);
                 return view.of(record + Integer.BYTES, Unsafe.getInt(record));
             }
             if (shift < 0) {
                 return null;
             }
-            h = (h + 1) & Unsafe.getInt(t + 4);
+            h = (h + 1) & Unsafe.getInt(t + TABLE_MASK_OFFSET);
         }
     }
 
     public int getMaxKeyIfStopped() {
-        // The stopped table publication makes the final plain key bound visible.
         return (table & TABLE_STOPPED) != 0 ? maxKey : Integer.MAX_VALUE;
     }
 
@@ -198,7 +206,7 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
     /** Returns STOPPED only to the inserter that stops admission. */
     public int tryPutIfAbsent(int key, long charsAddr, int len) {
         assert len >= 0 && (len == 0 || charsAddr != 0);
-        if (Integer.BYTES + 2L * len > MAX_RECORD_BYTES || !isFilling || !lock.compareAndSet(false, true)) {
+        if (Integer.BYTES + 2L * len > MAX_RECORD_BYTES || !isFilling || lock.get() || !lock.compareAndSet(false, true)) {
             return NOT_INSERTED;
         }
         try {
@@ -206,8 +214,8 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
                 return NOT_INSERTED;
             }
             long t = table;
-            if (t != 0 && Unsafe.getInt(t) < 0
-                    && Math.max(maxKey, key) - (long) Math.min(minKey, key) > Unsafe.getInt(t + 4)) {
+            if (t != 0 && Unsafe.getInt(t + TABLE_SHIFT_OFFSET) < 0
+                    && Math.max(maxKey, key) - (long) Math.min(minKey, key) > Unsafe.getInt(t + TABLE_MASK_OFFSET)) {
                 if (!resize(key)) {
                     return STOPPED;
                 }
@@ -245,8 +253,8 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
     }
 
     private static long findSlot(long t, int key) {
-        final int mask = Unsafe.getInt(t + 4);
-        int h = hash(key, Unsafe.getInt(t));
+        final int mask = Unsafe.getInt(t + TABLE_MASK_OFFSET);
+        int h = hash(key, Unsafe.getInt(t + TABLE_SHIFT_OFFSET));
         for (;;) {
             final long address = t + HEADER_SIZE + (long) h * Long.BYTES;
             final long slot = Unsafe.getLong(address);
@@ -305,8 +313,8 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
             stop(STOP_LIMIT);
             return 0;
         }
-        final long capacity = Math.max(nextChunkSize, Numbers.ceilPow2((int) recordBytes));
-        final long chunkBytes = CHUNK_HEADER_SIZE + capacity;
+        final long chunkBytes = Math.max(nextChunkSize, Numbers.ceilPow2((int) recordBytes + CHUNK_HEADER_SIZE));
+        final long capacity = chunkBytes - CHUNK_HEADER_SIZE;
         long allocation = allocate(chunkBytes);
         if (allocation == 0) {
             return 0;
@@ -316,29 +324,27 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
         try {
             final int index = chunkCount + 1;
             final long oldChunks = chunks;
-            final int oldCapacity = oldChunks == 0 ? 0 : Unsafe.getInt(oldChunks);
+            final int oldCapacity = chunkTableCapacity;
+            int newCapacity = oldCapacity;
             if (index >= oldCapacity) {
-                final int newCapacity = oldCapacity == 0 ? 4 : oldCapacity * 2;
-                tableBytes = HEADER_SIZE + (long) newCapacity * Long.BYTES;
+                newCapacity = oldCapacity == 0 ? 4 : oldCapacity * 2;
+                tableBytes = (long) newCapacity * Long.BYTES;
                 newChunks = allocate(tableBytes);
                 if (newChunks == 0) {
                     return 0;
                 }
-                Unsafe.putInt(newChunks, newCapacity);
-                Unsafe.putLong(newChunks + 8, oldChunks);
                 if (oldChunks != 0) {
-                    Vect.memcpy(newChunks + HEADER_SIZE, oldChunks + HEADER_SIZE, (long) oldCapacity * Long.BYTES);
-                } else {
-                    Unsafe.putLong(newChunks + HEADER_SIZE, 0);
+                    Vect.memcpy(newChunks + Long.BYTES, oldChunks + Long.BYTES, (long) (oldCapacity - 1) * Long.BYTES);
                 }
+                Unsafe.putLong(newChunks, oldChunks);
             }
             Unsafe.putLong(allocation, chunkBytes);
             long record = allocation + CHUNK_HEADER_SIZE;
             copyValue(record, charsAddr, len);
             long c = newChunks == 0 ? oldChunks : newChunks;
-            Unsafe.putLong(c + HEADER_SIZE + (long) index * Long.BYTES, record);
-            Unsafe.putInt(c + 4, index);
+            Unsafe.putLong(c + (long) index * Long.BYTES, record);
             if (newChunks != 0) {
+                chunkTableCapacity = newCapacity;
                 chunks = newChunks;
                 newChunks = 0;
             }
@@ -347,7 +353,7 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
             sharedChunkIndex = index;
             sharedChunkLimit = (int) capacity;
             sharedChunkPosition = (int) recordBytes;
-            nextChunkSize = Math.min((int) capacity * 2, MAX_SHARED_CHUNK_SIZE);
+            nextChunkSize = Math.min((int) chunkBytes * 2, MAX_SHARED_CHUNK_SIZE);
             allocation = 0;
             return index << OFFSET_BITS;
         } finally {
@@ -371,7 +377,7 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
 
     private boolean resize(int key) {
         final long oldTable = table;
-        int slots = oldTable == 0 ? initialSlots : (Unsafe.getInt(oldTable + 4) + 1) * (size == maxSize ? 2 : 1);
+        int slots = oldTable == 0 ? initialSlots : (Unsafe.getInt(oldTable + TABLE_MASK_OFFSET) + 1) * (size == maxSize ? 2 : 1);
         if (slots > maxSlots || slots <= 0) {
             stop(STOP_LIMIT);
             return false;
@@ -393,11 +399,11 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
         if (slots >= MIN_DIRECT_SLOTS && span < slots) {
             shift |= Integer.MIN_VALUE;
         }
-        Unsafe.putInt(newTable, shift);
-        Unsafe.putInt(newTable + 4, slots - 1);
-        Unsafe.putLong(newTable + 8, oldTable);
+        Unsafe.putInt(newTable + TABLE_SHIFT_OFFSET, shift);
+        Unsafe.putInt(newTable + TABLE_MASK_OFFSET, slots - 1);
+        Unsafe.putLong(newTable + RETIRED_TABLE_OFFSET, oldTable);
         if (oldTable != 0) {
-            final long end = oldTable + HEADER_SIZE + ((long) Unsafe.getInt(oldTable + 4) + 1) * Long.BYTES;
+            final long end = oldTable + HEADER_SIZE + ((long) Unsafe.getInt(oldTable + TABLE_MASK_OFFSET) + 1) * Long.BYTES;
             for (long address = oldTable + HEADER_SIZE; address < end; address += Long.BYTES) {
                 long slot = Unsafe.getLong(address);
                 if (slot != 0) {
@@ -413,7 +419,6 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
     private void stop(int reason) {
         stopReason = reason;
         isFilling = false;
-        // Publish the final key bounds through the existing table acquire on reads.
         table |= TABLE_STOPPED;
     }
 }

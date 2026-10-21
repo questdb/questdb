@@ -2397,6 +2397,11 @@ public class CairoEngine implements Closeable, WriterSource {
         return sqlCompilerPool;
     }
 
+    @TestOnly
+    public SymbolMapCachePool getSymbolMapCachePool() {
+        return symbolMapCachePool;
+    }
+
     public TableFlagResolver getTableFlagResolver() {
         return tableFlagResolver;
     }
@@ -2559,11 +2564,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TxnScoreboard getTxnScoreboard(@NotNull TableToken tableToken) {
         return scoreboardPool.getTxnScoreboard(tableToken);
-    }
-
-    @TestOnly
-    public SymbolMapCachePool getSymbolMapCachePool() {
-        return symbolMapCachePool;
     }
 
     public TxnScoreboardPool getTxnScoreboardPool() {

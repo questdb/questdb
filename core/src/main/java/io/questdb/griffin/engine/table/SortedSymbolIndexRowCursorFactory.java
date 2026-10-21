@@ -33,13 +33,13 @@ import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.str.StringSink;
 
 import java.util.Comparator;
 
@@ -76,35 +76,38 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     @Override
     public void prepareCursor(PageFrameCursor pageFrameCursor) {
         symbolKeys.clear();
+        symbolKeyLimit = 0;
 
         final StaticSymbolTable staticSymbolTable = pageFrameCursor.getSymbolTable(columnIndex);
-        int count = staticSymbolTable.getSymbolCount();
-
+        final int count = staticSymbolTable.getSymbolCount();
         final SortHelper sortHelper = TL_SORT_HELPER.get();
-        final ObjList<SymbolTableEntry> entries = sortHelper.getEntries();
-        symbolKeyLimit = count + 1;
+        final ObjList<SymbolTableEntry> entries = sortHelper.entries;
+        final ObjList<SymbolTableEntry> sortedEntries = sortHelper.sortedEntries;
+        sortHelper.fillEntries(count + 1);
 
-        sortHelper.fillEntries(symbolKeyLimit);
+        int copied = 0;
+        try {
+            final SymbolTableEntry nullEntry = entries.getQuick(0);
+            nullEntry.value.clear();
+            sortedEntries.add(nullEntry);
+            for (int i = 0; i < count; i++) {
+                final SymbolTableEntry e = entries.getQuick(TableUtils.toIndexKey(i));
+                e.value.clear();
+                e.value.put(staticSymbolTable.valueOf(i));
+                sortedEntries.add(e);
+            }
 
-        for (int i = 0; i < count; i++) {
-            final SymbolTableEntry e = entries.getQuick(i);
-            e.key = TableUtils.toIndexKey(i);
-            e.value = Chars.toString(staticSymbolTable.valueOf(i));
-        }
-
-        // add NULL
-        final SymbolTableEntry e = entries.getQuick(count);
-        e.key = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
-        e.value = null;
-
-        if (columnOrderDirectionAsc) {
-            sortHelper.sort(symbolKeyLimit, sortHelper.ascComparator);
-        } else {
-            sortHelper.sort(symbolKeyLimit, sortHelper.dscComparator);
-        }
-        // populate our list
-        for (int i = 0; i < symbolKeyLimit; i++) {
-            symbolKeys.add(entries.getQuick(i).key);
+            sortedEntries.sort(columnOrderDirectionAsc ? sortHelper.ascComparator : sortHelper.dscComparator);
+            for (; copied < sortedEntries.size(); copied++) {
+                symbolKeys.add(sortedEntries.getQuick(copied).key);
+                sortedEntries.setQuick(copied, null);
+            }
+            symbolKeyLimit = count + 1;
+        } finally {
+            for (int i = copied, n = sortedEntries.size(); i < n; i++) {
+                sortedEntries.setQuick(i, null);
+            }
+            sortedEntries.setPos(0);
         }
     }
 
@@ -117,44 +120,32 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     private static class SortHelper {
         private final Comparator<SymbolTableEntry> ascComparator = this::compareAsc;
         private final Comparator<SymbolTableEntry> dscComparator = this::compareDesc;
+        // Keep each sink at its index key; sorting the pool would spread large capacities across keys.
         private final ObjList<SymbolTableEntry> entries = new ObjList<>();
+        private final ObjList<SymbolTableEntry> sortedEntries = new ObjList<>();
 
         public void fillEntries(int max) {
-            int size = entries.size();
-            if (max > entries.size()) {
-                while (size++ < max) {
-                    entries.add(new SymbolTableEntry());
-                }
+            for (int i = entries.size(); i < max; i++) {
+                entries.add(new SymbolTableEntry(i));
             }
         }
 
-        public ObjList<SymbolTableEntry> getEntries() {
-            return entries;
-        }
-
-        public void sort(int max, Comparator<SymbolTableEntry> comparator) {
-            entries.sort(0, max, comparator);
-        }
-
         private int compareAsc(SymbolTableEntry e1, SymbolTableEntry e2) {
-            return (e1.value == null && e2.value == null) ? 0
-                    : e1.value == null ? -1
-                      : e2.value == null ? 1
-                        : e1.value.compareTo(e2.value);
+            return Chars.compare(e1.key == 0 ? null : e1.value, e2.key == 0 ? null : e2.value);
         }
 
         private int compareDesc(SymbolTableEntry e1, SymbolTableEntry e2) {
-            return (e1.value == null && e2.value == null) ? 0
-                    : e1.value == null ? 1
-                      : e2.value == null ? -1
-                        : e2.value.compareTo(e1.value);
+            return compareAsc(e2, e1);
         }
     }
 
-    // this is a thread-local contraption used for sorting symbol values. We ought to think of something better
     private static class SymbolTableEntry {
-        private int key;
-        private String value;
+        private final int key;
+        private final StringSink value = new StringSink();
+
+        private SymbolTableEntry(int key) {
+            this.key = key;
+        }
     }
 
     private class ListBasedSymbolIndexRowCursor implements RowCursor {

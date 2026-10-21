@@ -28,6 +28,7 @@ import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
 
 public final class SymbolKeySet {
+    private static final long MAX_SPAN_PER_KEY = 32L;
     private final BitSet bits = new BitSet(64);
     private final IntList keys = new IntList();
     private int base;
@@ -45,7 +46,7 @@ public final class SymbolKeySet {
         if (size > 0) {
             int min = keys.getQuick(0);
             long span = keys.getQuick(size - 1) - (long) min + 1;
-            if (span <= 32L * size) {
+            if (span <= MAX_SPAN_PER_KEY * size) {
                 bits.clear();
                 base = min;
                 for (int i = 0; i < size; i++) {

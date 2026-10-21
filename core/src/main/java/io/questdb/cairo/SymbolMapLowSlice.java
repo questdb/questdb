@@ -29,16 +29,29 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.TestOnly;
 
+/**
+ * Native copy of the offsets and chars of the first {@link #MAX_KEYS} keys of one dictionary
+ * version, guarded by the owning entry's lock. Bytes below a published key count never change
+ * and retired blocks stay allocated until close, so bound readers read without the lock.
+ */
 final class SymbolMapLowSlice implements QuietCloseable {
     static final int MAX_KEYS = 4096;
+    private static final int CHARS_BASE_OFFSET = 8;
+    private static final int CHARS_CAPACITY_OFFSET = 16;
+    private static final int CHARS_USED_OFFSET = 24;
     private static final int HEADER_SIZE = 40;
+    private static final int KEY_CAPACITY_OFFSET = 0;
+    private static final int KEY_COUNT_OFFSET = 4;
+    private static final int RETIRED_BLOCK_OFFSET = 32;
     private long block;
 
+    @TestOnly
     public long allocatedBytes() {
         long bytes = 0;
-        for (long b = block; b != 0; b = Unsafe.getLong(b + 32)) {
-            bytes += blockSize(Unsafe.getInt(b), Unsafe.getLong(b + 16));
+        for (long b = block; b != 0; b = Unsafe.getLong(b + RETIRED_BLOCK_OFFSET)) {
+            bytes += blockSize(Unsafe.getInt(b + KEY_CAPACITY_OFFSET), Unsafe.getLong(b + CHARS_CAPACITY_OFFSET));
         }
         return bytes;
     }
@@ -48,8 +61,8 @@ final class SymbolMapLowSlice implements QuietCloseable {
             reader.bindLow(0, 0, 0, 0);
         } else {
             long offsets = block + HEADER_SIZE;
-            reader.bindLow(offsets, offsets + (long) Unsafe.getInt(block) * Long.BYTES,
-                    Unsafe.getLong(block + 8), Math.min(want, Unsafe.getInt(block + 4)));
+            reader.bindLow(offsets, offsets + (long) Unsafe.getInt(block + KEY_CAPACITY_OFFSET) * Long.BYTES,
+                    Unsafe.getLong(block + CHARS_BASE_OFFSET), Math.min(want, Unsafe.getInt(block + KEY_COUNT_OFFSET)));
         }
     }
 
@@ -58,8 +71,12 @@ final class SymbolMapLowSlice implements QuietCloseable {
         long b = block;
         block = 0;
         while (b != 0) {
-            long next = Unsafe.getLong(b + 32);
-            Unsafe.free(b, blockSize(Unsafe.getInt(b), Unsafe.getLong(b + 16)), MemoryTag.NATIVE_SYMBOL_CACHE);
+            long next = Unsafe.getLong(b + RETIRED_BLOCK_OFFSET);
+            Unsafe.free(
+                    b,
+                    blockSize(Unsafe.getInt(b + KEY_CAPACITY_OFFSET), Unsafe.getLong(b + CHARS_CAPACITY_OFFSET)),
+                    MemoryTag.NATIVE_SYMBOL_CACHE
+            );
             b = next;
         }
     }
@@ -67,14 +84,14 @@ final class SymbolMapLowSlice implements QuietCloseable {
     public boolean ensure(MemoryR offsetMem, MemoryR charMem, int want) {
         assert want >= 0 && want <= MAX_KEYS;
         long b = block;
-        int count = b == 0 ? 0 : Unsafe.getInt(b + 4);
+        int count = b == 0 ? 0 : Unsafe.getInt(b + KEY_COUNT_OFFSET);
         if (want <= count) {
             return true;
         }
         long base = offsetMem.getLong(SymbolMapWriter.keyToOffset(0));
         long charsNeeded = offsetMem.getLong(SymbolMapWriter.keyToOffset(want)) - base;
-        int keyCapacity = b == 0 ? 0 : Unsafe.getInt(b);
-        long charCapacity = b == 0 ? 0 : Unsafe.getLong(b + 16);
+        int keyCapacity = b == 0 ? 0 : Unsafe.getInt(b + KEY_CAPACITY_OFFSET);
+        long charCapacity = b == 0 ? 0 : Unsafe.getLong(b + CHARS_CAPACITY_OFFSET);
         if (want <= keyCapacity && charsNeeded <= charCapacity) {
             append(b, count, want, charsNeeded, offsetMem, charMem);
             return true;
@@ -92,13 +109,13 @@ final class SymbolMapLowSlice implements QuietCloseable {
             throw e;
         }
         try {
-            long charsUsed = b == 0 ? 0 : Unsafe.getLong(b + 24);
-            Unsafe.putInt(next, newKeyCapacity);
-            Unsafe.putInt(next + 4, count);
-            Unsafe.putLong(next + 8, base);
-            Unsafe.putLong(next + 16, newCharCapacity);
-            Unsafe.putLong(next + 24, charsUsed);
-            Unsafe.putLong(next + 32, b);
+            long charsUsed = b == 0 ? 0 : Unsafe.getLong(b + CHARS_USED_OFFSET);
+            Unsafe.putInt(next + KEY_CAPACITY_OFFSET, newKeyCapacity);
+            Unsafe.putInt(next + KEY_COUNT_OFFSET, count);
+            Unsafe.putLong(next + CHARS_BASE_OFFSET, base);
+            Unsafe.putLong(next + CHARS_CAPACITY_OFFSET, newCharCapacity);
+            Unsafe.putLong(next + CHARS_USED_OFFSET, charsUsed);
+            Unsafe.putLong(next + RETIRED_BLOCK_OFFSET, b);
             if (b != 0) {
                 Vect.memcpy(next + HEADER_SIZE, b + HEADER_SIZE, (long) count * Long.BYTES);
                 Vect.memcpy(next + HEADER_SIZE + (long) newKeyCapacity * Long.BYTES,
@@ -115,13 +132,13 @@ final class SymbolMapLowSlice implements QuietCloseable {
 
     private static void append(long b, int count, int want, long charsNeeded, MemoryR offsetMem, MemoryR charMem) {
         long offsets = b + HEADER_SIZE;
-        long chars = offsets + (long) Unsafe.getInt(b) * Long.BYTES;
-        long charsUsed = Unsafe.getLong(b + 24);
+        long chars = offsets + (long) Unsafe.getInt(b + KEY_CAPACITY_OFFSET) * Long.BYTES;
+        long charsUsed = Unsafe.getLong(b + CHARS_USED_OFFSET);
         Vect.memcpy(offsets + (long) count * Long.BYTES,
                 offsetMem.addressOf(SymbolMapWriter.keyToOffset(count)), (long) (want - count) * Long.BYTES);
-        Vect.memcpy(chars + charsUsed, charMem.addressOf(Unsafe.getLong(b + 8) + charsUsed), charsNeeded - charsUsed);
-        Unsafe.putLong(b + 24, charsNeeded);
-        Unsafe.putInt(b + 4, want);
+        Vect.memcpy(chars + charsUsed, charMem.addressOf(Unsafe.getLong(b + CHARS_BASE_OFFSET) + charsUsed), charsNeeded - charsUsed);
+        Unsafe.putLong(b + CHARS_USED_OFFSET, charsNeeded);
+        Unsafe.putInt(b + KEY_COUNT_OFFSET, want);
     }
 
     private static long blockSize(int keyCapacity, long charCapacity) {

@@ -127,7 +127,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         this(id, configuration, tableToken, scoreboardFactory, null, null);
     }
 
-    // Don't forget to change TableReader srcReader overload when changing this constructor.
     public TableReader(
             int id,
             CairoConfiguration configuration,
@@ -139,6 +138,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this(id, configuration, tableToken, scoreboardPool, null, messageBus, partitionOverwriteControl);
     }
 
+    // Don't forget to change TableReader srcReader overload when changing this constructor.
     public TableReader(
             int id,
             CairoConfiguration configuration,
@@ -191,7 +191,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    // copyOf constructor.
     public TableReader(
             int id,
             CairoConfiguration configuration,
@@ -203,6 +202,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this(id, configuration, srcReader, scoreboardPool, null, messageBus, partitionOverwriteControl);
     }
 
+    // copyOf constructor.
     public TableReader(
             int id,
             CairoConfiguration configuration,
@@ -1858,12 +1858,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         path.trimTo(rootLen);
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-                SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
-                if (symbolMapReader instanceof SymbolMapReaderImpl) {
+                if (symbolMapReaders.getQuick(columnIndex) instanceof SymbolMapReaderImpl symbolMapReader) {
                     final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
                     final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
                     int symbolCount = txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(columnIndex));
-                    ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), symbolTableNameTxn, symbolCount, symbolMapCachePool, txFile.getTruncateVersion());
+                    symbolMapReader.of(configuration, path, metadata.getColumnName(columnIndex), symbolTableNameTxn, symbolCount, symbolMapCachePool, txFile.getTruncateVersion());
                 }
             }
         }

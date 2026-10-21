@@ -183,42 +183,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSharedSymbolCacheParallelFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(
-                    pool,
-                    (localEngine, _, context) -> {
-                        localEngine.execute("create table cache_parallel (s symbol cache)", context);
-                        localEngine.execute("insert into cache_parallel select cast(x as string) from long_sequence(10000)", context);
-                        localEngine.execute("create table nocache_parallel (s symbol nocache)", context);
-                        localEngine.execute("insert into nocache_parallel select s from cache_parallel", context);
-                        localEngine.releaseAllReaders();
-                        try (TableReader reader = localEngine.getReader("cache_parallel")) {
-                            SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
-                            Assert.assertEquals(0, symbols.getCacheSize());
-                            // Length is evaluated through worker symbol-table views; the owner
-                            // does not resolve any symbol values before checking the shared map.
-                            for (String table : new String[]{"cache_parallel", "nocache_parallel", "cache_parallel"}) {
-                                assertQuery("select count() from " + table + " where length(s) > 3")
-                                        .withEngine(localEngine)
-                                        .withContext(context)
-                                        .noLeakCheck()
-                                        .noRandomAccess()
-                                        .expectSize()
-                                        .returns("count\n9001\n");
-                            }
-                            Assert.assertTrue(symbols.getCacheSize() > 0);
-                            Assert.assertTrue(symbols.getCacheSize() <= 10000);
-                        }
-                    },
-                    configuration,
-                    LOG
-            );
-        });
-    }
-
-    @Test
     public void testArrayFilter() throws Exception {
         WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
@@ -907,6 +871,45 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 configuration,
                 LOG
         );
+    }
+
+    @Test
+    public void testSharedSymbolCacheParallelFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (localEngine, _, context) -> {
+                        localEngine.execute("CREATE TABLE cache_parallel (s SYMBOL CACHE)", context);
+                        localEngine.execute("""
+                                INSERT INTO cache_parallel
+                                SELECT x::STRING FROM long_sequence(10_000)
+                                """, context);
+                        localEngine.execute("CREATE TABLE nocache_parallel (s SYMBOL NOCACHE)", context);
+                        localEngine.execute("INSERT INTO nocache_parallel SELECT s FROM cache_parallel", context);
+                        localEngine.releaseAllReaders();
+                        try (TableReader reader = localEngine.getReader("cache_parallel")) {
+                            SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
+                            Assert.assertEquals(0, symbols.getCacheSize());
+                            // This reader resolves no values, so map entries come from the query's readers.
+                            for (String table : new String[]{"cache_parallel", "nocache_parallel", "cache_parallel"}) {
+                                assertQuery("SELECT count() FROM " + table + " WHERE length(s) > 3")
+                                        .withEngine(localEngine)
+                                        .withContext(context)
+                                        .noLeakCheck()
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .returns("count\n9001\n");
+                            }
+                            Assert.assertEquals(4096, symbols.getLowCacheSize());
+                            Assert.assertTrue(symbols.getCacheSize() > 0);
+                            Assert.assertTrue(symbols.getCacheSize() <= 10_000 - symbols.getLowCacheSize());
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test

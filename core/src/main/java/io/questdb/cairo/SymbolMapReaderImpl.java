@@ -74,7 +74,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private long lowCharsBase;
     private int lowCount;
     private long lowOffsets;
-    // A stale hint only adds a lookup; it never publishes native cache contents.
+    // Racy hint: a stale value only costs extra map calls.
     private int maxCachedKey = Integer.MAX_VALUE;
     private int maxHash;
     private long maxOffset;
@@ -113,10 +113,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public void close() {
         Misc.free(indexReader);
         Misc.free(charMem);
-        cacheEntry = Misc.free(cacheEntry);
-        cache = null;
-        maxCachedKey = Integer.MAX_VALUE;
-        bindLow(0, 0, 0, 0);
+        releaseCache();
         long fd = offsetMem.getFd();
         Misc.free(offsetMem);
         Misc.free(path);
@@ -233,10 +230,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             @Nullable SymbolMapCachePool cachePool,
             long truncateVersion
     ) {
-        cacheEntry = Misc.free(cacheEntry);
-        cache = null;
-        maxCachedKey = Integer.MAX_VALUE;
-        bindLow(0, 0, 0, 0);
+        releaseCache();
         final FilesFacade ff = configuration.getFilesFacade();
         this.configuration = configuration;
         this.path.of(pathToTableDir);
@@ -380,6 +374,36 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 .$(", column=").$(columnNameSink).$(", cachedKeys=").$(lowCount).I$();
     }
 
+    private CharSequence cachedValueOf(int key, DirectString view) {
+        if (key > maxCachedKey) {
+            return valueOf(key, view);
+        }
+        // Shared entries may contain keys committed after this reader's transaction.
+        if (key < 0 || key >= symbolCount) {
+            return null;
+        }
+        if (key < lowCount) {
+            long record = lowCharsBase + Unsafe.getLong(lowOffsets + ((long) key << 3));
+            return view.of(record + Integer.BYTES, Unsafe.getInt(record));
+        }
+        final DirectIntCharSequenceHashMap cache = this.cache;
+        if (cache != null && cache.get(key, view) != null) {
+            return view;
+        }
+        DirectString value = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
+        assert value != null;
+        if (cache != null && maxCachedKey == Integer.MAX_VALUE) {
+            int result = cache.tryPutIfAbsent(key, value.lo(), value.length());
+            if (result != DirectIntCharSequenceHashMap.INSERTED) {
+                updateMaxCachedKey(cache);
+                if (result == DirectIntCharSequenceHashMap.STOPPED) {
+                    logCacheStopped();
+                }
+            }
+        }
+        return value;
+    }
+
     private void logCacheStopped() {
         NativeMemoryBudget budget = cacheEntry.getBudget();
         String reason = switch (cache.getStopReason()) {
@@ -401,41 +425,20 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
     }
 
-    private void updateMaxCachedKey(DirectIntCharSequenceHashMap cache) {
-        int maxKey = cache.getMaxKeyIfStopped();
-        if (maxKey != Integer.MAX_VALUE) {
-            maxCachedKey = Math.max(SymbolMapLowSlice.MAX_KEYS - 1, maxKey);
-        }
+    private void releaseCache() {
+        cacheEntry = Misc.free(cacheEntry);
+        cache = null;
+        maxCachedKey = Integer.MAX_VALUE;
+        bindLow(0, 0, 0, 0);
     }
 
-    private CharSequence cachedValueOf(int key, DirectString view) {
-        if (key > maxCachedKey) {
-            return valueOf(key, view);
-        }
-        // Shared entries may contain keys committed after this reader's transaction.
-        if (key < 0 || key >= symbolCount) {
-            return null;
-        }
-        if (key < lowCount) {
-            long record = lowCharsBase + Unsafe.getLong(lowOffsets + ((long) key << 3));
-            return view.of(record + Integer.BYTES, Unsafe.getInt(record));
-        }
-        final DirectIntCharSequenceHashMap cache = this.cache;
-        if (cache != null && cache.get(key, view) != null) {
-            return view;
-        }
-        DirectString value = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
-        assert value != null;
-        if (cache != null) {
-            int result = cache.tryPutIfAbsent(key, value.lo(), value.length());
-            if (result != DirectIntCharSequenceHashMap.INSERTED) {
-                updateMaxCachedKey(cache);
-                if (result == DirectIntCharSequenceHashMap.STOPPED) {
-                    logCacheStopped();
-                }
+    private void updateMaxCachedKey(DirectIntCharSequenceHashMap cache) {
+        if (maxCachedKey == Integer.MAX_VALUE) {
+            int maxKey = cache.getMaxKeyIfStopped();
+            if (maxKey != Integer.MAX_VALUE) {
+                maxCachedKey = Math.max(SymbolMapLowSlice.MAX_KEYS - 1, maxKey);
             }
         }
-        return value;
     }
 
     private class SymbolTableView implements StaticSymbolTable {

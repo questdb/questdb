@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
 /**
- * Shares immutable symbol dictionaries until their last reader closes.
+ * Shares symbol caches between readers of the same dictionary version until the last reader releases them.
  */
 public class SymbolMapCachePool implements QuietCloseable {
     private final NativeMemoryBudget budget;
