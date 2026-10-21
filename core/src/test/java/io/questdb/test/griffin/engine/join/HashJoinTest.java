@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
@@ -38,6 +39,49 @@ import org.junit.Test;
 
 
 public class HashJoinTest extends AbstractCairoTest {
+
+    @Test
+    public void testHashFullJoinMapResizeDuringProbe() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 3 * 24);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (a LONG, b LONG, v INT)");
+            execute("CREATE TABLE s (a LONG, b LONG, w INT)");
+            execute("INSERT INTO m VALUES (1, 1, 10), (2, 2, 20), (4, 4, 40)");
+            execute("INSERT INTO s VALUES (1, 1, 100), (2, 2, 200), (3, 3, 300)");
+            assertQuery("SELECT m.v, s.w FROM m FULL JOIN s ON m.a = s.a AND m.b = s.b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Full Outer Join Light")
+                    .returns("""
+                            v\tw
+                            10\t100
+                            20\t200
+                            40\tnull
+                            null\t300
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashFullJoinMapResizeDuringProbeFullFat() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 3 * 24);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (a LONG, b LONG, v INT)");
+            execute("CREATE TABLE s (a LONG, b LONG, w INT)");
+            execute("INSERT INTO m VALUES (1, 1, 10), (2, 2, 20), (4, 4, 40)");
+            execute("INSERT INTO s VALUES (1, 1, 100), (2, 2, 200), (3, 3, 300)");
+            assertQuery("SELECT m.v, s.w FROM m FULL JOIN s ON m.a = s.a AND m.b = s.b ORDER BY m.v, s.w")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns("""
+                            v\tw
+                            null\t300
+                            10\t100
+                            20\t200
+                            40\tnull
+                            """);
+        });
+    }
 
     @Test
     public void testHashFullJoinSymbolAndStringKeyIndexCollision() throws Exception {

@@ -261,7 +261,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain, keyRecord);
                 isMapBuilt = true;
                 record.hasMaster(true);
-                mapCursor = joinKeyMap.getCursor();
             }
 
             if (useSlaveCursor && slaveChain.hasNext()) {
@@ -311,6 +310,10 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
             record.hasMaster(false);
             record.hasSlave(true);
+            if (mapCursor == null) {
+                // Take the cursor only after the last probe: withKey() can resize the key map heap.
+                mapCursor = joinKeyMap.getCursor();
+            }
             while (mapCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
@@ -332,9 +335,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         public void toTop() {
             super.toTop();
             filter.toTop();
-            if (mapCursor != null) {
-                mapCursor.toTop();
-            }
+            mapCursor = Misc.free(mapCursor);
             record.hasMaster(true);
             if (!isMapBuilt) {
                 matchIdsMap.clear();
@@ -479,7 +480,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain, keyRecord);
                 isMapBuilt = true;
                 record.hasMaster(true);
-                mapCursor = joinKeyMap.getCursor();
             }
 
             if (useSlaveCursor) {
@@ -522,6 +522,10 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
 
             record.hasMaster(false);
+            if (mapCursor == null) {
+                // Take the cursor only after the last probe: withKey() can resize the key map heap.
+                mapCursor = joinKeyMap.getCursor();
+            }
             while (mapCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
@@ -543,9 +547,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         public void toTop() {
             super.toTop();
             filter.toTop();
-            if (mapCursor != null) {
-                mapCursor.toTop();
-            }
+            mapCursor = Misc.free(mapCursor);
             record.hasMaster(true);
             if (!isMapBuilt) {
                 matchIdsMap.clear();
