@@ -32,6 +32,8 @@ import io.questdb.log.LogFactory;
 
 public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFrameCursor {
     private static final Log LOG = LogFactory.getLog(IntervalFwdPartitionFrameCursor.class);
+    private long searchLo;
+    private int searchPartitionIndex = -1;
 
     /**
      * Cursor for partition frames that chronologically intersect collection of intervals.
@@ -53,6 +55,8 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         int intervalsHi1 = this.intervalsHi;
         int partitionLo1 = this.partitionLo;
         int partitionHi1 = this.partitionHi;
+        long searchLo1 = this.searchLo;
+        int searchPartitionIndex1 = this.searchPartitionIndex;
         long size = 0;
 
         while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
@@ -96,9 +100,12 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
             reader.openPartition(partitionLo1);
             timestampFinder.prepare();
-            final long lo = timestampFinder.countBefore(intervalLo);
-            final long hi = timestampFinder.countThrough(intervalHi);
+            final long limitLo = searchPartitionIndex1 == partitionLo1 ? searchLo1 : 0;
+            final long lo = timestampFinder.countBefore(intervalLo, limitLo, logicalRowCount - 1);
+            final long hi = timestampFinder.countThrough(intervalHi, lo, logicalRowCount - 1);
             validateIntervalBounds(partitionLo1, lo, hi);
+            searchPartitionIndex1 = partitionLo1;
+            searchLo1 = hi;
             if (lo < hi) {
                 size = Math.addExact(size, hi - lo);
             }
@@ -164,9 +171,13 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
             reader.openPartition(partitionLo);
             timestampFinder.prepare();
-            final long lo = timestampFinder.countBefore(intervalLo);
-            final long hi = timestampFinder.countThrough(intervalHi);
+            final long limitLo = searchPartitionIndex == partitionLo ? searchLo : 0;
+            final long lo = timestampFinder.countBefore(intervalLo, limitLo, logicalRowCount - 1);
+            final long hi = timestampFinder.countThrough(intervalHi, lo, logicalRowCount - 1);
             validateIntervalBounds(partitionLo, lo, hi);
+            // Later intervals cannot contain rows at or below this interval's upper bound.
+            searchPartitionIndex = partitionLo;
+            searchLo = hi;
             final int framePartition = partitionLo;
             if (hi == logicalRowCount) {
                 partitionLo++;
@@ -180,5 +191,11 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             }
         }
         return null;
+    }
+
+    @Override
+    public void toTop() {
+        super.toTop();
+        searchPartitionIndex = -1;
     }
 }

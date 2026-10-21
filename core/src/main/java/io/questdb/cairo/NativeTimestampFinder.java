@@ -59,6 +59,11 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
         if (rowCount == 0 || timestamp == Long.MIN_VALUE || minTimestampExact() >= timestamp) {
             return 0;
         }
+        // The window's last row is before the bound, e.g. an interval after the partition's
+        // rows: every row through rowHi counts.
+        if (timestampAt(rowHi) < timestamp) {
+            return rowHi + 1;
+        }
         return findTimestamp(timestamp - 1, rowLo, rowHi) + 1;
     }
 
@@ -78,6 +83,11 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
         // The last row is at or before the bound: skip the binary search.
         if (maxTimestampExact() <= timestamp) {
             return rowCount;
+        }
+        // The window's first row is after the bound, e.g. an interval in a gap before the
+        // rows: no row from rowLo on counts.
+        if (timestampAt(rowLo) > timestamp) {
+            return rowLo;
         }
         return findTimestamp(timestamp, rowLo, rowHi) + 1;
     }

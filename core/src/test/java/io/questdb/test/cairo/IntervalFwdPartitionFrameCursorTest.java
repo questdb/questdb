@@ -37,6 +37,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampFinder;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
@@ -49,6 +50,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.model.RuntimeIntervalModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -699,6 +701,47 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSearchStartsAfterInterval() throws Exception {
+        // Each later interval in a partition searches from the previous interval's end, not from row 0.
+        assertMemoryLeak(() -> {
+            AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.DAY)
+                    .timestamp(timestampType.getTimestampType()));
+            final long start = timestampType.getDriver().parseFloorLiteral("2020-01-01T00:00");
+            final long hour = timestampType.getDriver().fromHours(1);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int h = 0; h < 10; h++) {
+                    writer.newRow(start + h * hour).append();
+                }
+                writer.newRow(start + timestampType.getDriver().fromDays(1)).append();
+                writer.commit();
+            }
+            if (convertToParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
+            }
+            intervals.clear();
+            intervals.add(start + hour, start + 2 * hour);
+            intervals.add(start + 4 * hour, start + 5 * hour);
+            intervals.add(start + 7 * hour, start + 8 * hour);
+
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    SearchRecordingCursor cursor = new SearchRecordingCursor(
+                            configuration,
+                            new RuntimeIntervalModel(timestampType.getDriver(), reader.getPartitionedBy(), intervals),
+                            reader.getMetadata().getTimestampIndex()
+                    )
+            ) {
+                cursor.of(reader, null);
+                assertFrameRows(cursor.next(), 1, 3);
+                assertFrameRows(cursor.next(), 4, 6);
+                assertFrameRows(cursor.next(), 7, 9);
+                Assert.assertNull(cursor.next());
+                TestUtils.assertEquals("[0,3,6]", cursor.finder.searchLows.toString());
+            }
+        });
+    }
+
+    @Test
     public void testSingleIntervalWholeTable() throws Exception {
         // day partition
         // two hour interval between timestamps
@@ -1096,5 +1139,66 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         private boolean borrowerCreated;
         private boolean borrowerOpen;
         private boolean ownerClosedWithBorrowerOpen;
+    }
+
+    private static class SearchRecordingCursor extends IntervalFwdPartitionFrameCursor {
+        private final SearchRecordingFinder finder = new SearchRecordingFinder();
+
+        private SearchRecordingCursor(CairoConfiguration configuration, RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
+            super(configuration, intervalModel, timestampIndex);
+        }
+
+        @Override
+        protected TimestampFinder initTimestampFinder(int partitionIndex, long baseRowCount) {
+            return finder.of(super.initTimestampFinder(partitionIndex, baseRowCount));
+        }
+    }
+
+    // Records the first row of each countBefore() search window; the unbounded form starts at row 0.
+    private static class SearchRecordingFinder implements TimestampFinder {
+        private final LongList searchLows = new LongList();
+        private TimestampFinder delegate;
+
+        @Override
+        public long countBefore(long timestamp) {
+            searchLows.add(0);
+            return delegate.countBefore(timestamp);
+        }
+
+        @Override
+        public long countBefore(long timestamp, long rowLo, long rowHi) {
+            searchLows.add(rowLo);
+            return delegate.countBefore(timestamp, rowLo, rowHi);
+        }
+
+        @Override
+        public long countThrough(long timestamp) {
+            return delegate.countThrough(timestamp);
+        }
+
+        @Override
+        public long countThrough(long timestamp, long rowLo, long rowHi) {
+            return delegate.countThrough(timestamp, rowLo, rowHi);
+        }
+
+        @Override
+        public long maxTimestampUpperBound() {
+            return delegate.maxTimestampUpperBound();
+        }
+
+        @Override
+        public long minTimestampLowerBound() {
+            return delegate.minTimestampLowerBound();
+        }
+
+        @Override
+        public void prepare() {
+            delegate.prepare();
+        }
+
+        private SearchRecordingFinder of(TimestampFinder delegate) {
+            this.delegate = delegate;
+            return this;
+        }
     }
 }

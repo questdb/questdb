@@ -256,6 +256,52 @@ public class TimestampFinderTest extends AbstractCairoTest {
         testFuzz(100);
     }
 
+    @Test
+    public void testGapBoundsSkipSearch() throws Exception {
+        // A bound outside the searched rows needs no binary search, e.g. an interval in a data gap.
+        assertMemoryLeak(() -> {
+            final int timestampType = ColumnType.TIMESTAMP_MICRO;
+            final long start = ColumnType.getTimestampDriver(timestampType).parseFloorLiteral("1980-01-01T00:00:00.000Z");
+            final long[] timestamps = new long[10];
+            for (int i = 0; i < timestamps.length; i++) {
+                timestamps[i] = start + 100L * (i + 1);
+            }
+            createTables(timestampType, timestamps, "gap_native", "gap_parquet");
+
+            final CountingNativeFinder nativeFinder = new CountingNativeFinder();
+            try (
+                    TableReader nativeReader = newOffPoolReader(configuration, "gap_native");
+                    TableReader parquetReader = newOffPoolReader(configuration, "gap_parquet");
+                    ParquetPartitionDecoder partitionDecoder = new ParquetPartitionDecoder();
+                    CountingParquetFinder parquetFinder = new CountingParquetFinder(partitionDecoder)
+            ) {
+                nativeReader.openPartition(0);
+                parquetReader.openPartition(0);
+                nativeFinder.of(nativeReader, 0, 0, timestamps.length);
+                parquetFinder.of(parquetReader, 0, 0);
+                nativeFinder.prepare();
+                parquetFinder.prepare();
+
+                // Bounds before the first row and after the last row.
+                Assert.assertEquals(0, nativeFinder.countThrough(start + 50));
+                Assert.assertEquals(10, nativeFinder.countBefore(start + 2_000));
+                Assert.assertEquals(0, parquetFinder.countThrough(start + 50));
+                Assert.assertEquals(10, parquetFinder.countBefore(start + 2_000));
+                // Bounds outside a search window, e.g. a backward scan below a later interval.
+                Assert.assertEquals(4, nativeFinder.countBefore(start + 450, 0, 3));
+                Assert.assertEquals(4, nativeFinder.countThrough(start + 450, 4, 9));
+                Assert.assertEquals(0, nativeFinder.searchCount);
+                Assert.assertEquals(0, parquetFinder.searchCount);
+
+                // A bound between rows still searches.
+                Assert.assertEquals(4, nativeFinder.countBefore(start + 450));
+                Assert.assertEquals(4, parquetFinder.countBefore(start + 450));
+                Assert.assertEquals(1, nativeFinder.searchCount);
+                Assert.assertEquals(1, parquetFinder.searchCount);
+            }
+        });
+    }
+
     private static void assertBoundedCounts(TimestampFinder finder, long timestamp, long before, long through, int rowCount) {
         Assert.assertEquals(before, finder.countBefore(timestamp, Math.max(0, before - 1), Math.min(rowCount - 1, before + 1)));
         Assert.assertEquals(through, finder.countThrough(timestamp, Math.max(0, through - 1), Math.min(rowCount - 1, through + 1)));
@@ -268,30 +314,7 @@ public class TimestampFinderTest extends AbstractCairoTest {
         final String suffix = timestampType == ColumnType.TIMESTAMP_MICRO ? "micro" : "nano";
         final String oracleTable = "oracle_" + suffix;
         final String parquetTable = "x_" + suffix;
-        AbstractCairoTest.create(
-                new TableModel(configuration, oracleTable, PartitionBy.YEAR).timestamp(timestampType)
-        );
-        AbstractCairoTest.create(
-                new TableModel(configuration, parquetTable, PartitionBy.YEAR).timestamp(timestampType)
-        );
-
-        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
-        final long newerTimestamp = driver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
-        try (
-                TableWriter oracleWriter = newOffPoolWriter(configuration, oracleTable);
-                TableWriter parquetWriter = newOffPoolWriter(configuration, parquetTable)
-        ) {
-            for (long timestamp : timestamps) {
-                oracleWriter.newRow(timestamp).append();
-                parquetWriter.newRow(timestamp).append();
-            }
-            oracleWriter.newRow(newerTimestamp).append();
-            parquetWriter.newRow(newerTimestamp).append();
-            oracleWriter.commit();
-            parquetWriter.commit();
-        }
-
-        execute("ALTER TABLE " + parquetTable + " CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
+        createTables(timestampType, timestamps, oracleTable, parquetTable);
 
         final NativeTimestampFinder nativeFinder = new NativeTimestampFinder();
         try (
@@ -353,6 +376,35 @@ public class TimestampFinderTest extends AbstractCairoTest {
             count++;
         }
         return count;
+    }
+
+    // Writes the timestamps to a native table and a parquet table. A newer row keeps partition 0
+    // off the active partition, so it converts to parquet.
+    private void createTables(int timestampType, long[] timestamps, String oracleTable, String parquetTable) throws Exception {
+        AbstractCairoTest.create(
+                new TableModel(configuration, oracleTable, PartitionBy.YEAR).timestamp(timestampType)
+        );
+        AbstractCairoTest.create(
+                new TableModel(configuration, parquetTable, PartitionBy.YEAR).timestamp(timestampType)
+        );
+
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final long newerTimestamp = driver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
+        try (
+                TableWriter oracleWriter = newOffPoolWriter(configuration, oracleTable);
+                TableWriter parquetWriter = newOffPoolWriter(configuration, parquetTable)
+        ) {
+            for (long timestamp : timestamps) {
+                oracleWriter.newRow(timestamp).append();
+                parquetWriter.newRow(timestamp).append();
+            }
+            oracleWriter.newRow(newerTimestamp).append();
+            parquetWriter.newRow(newerTimestamp).append();
+            oracleWriter.commit();
+            parquetWriter.commit();
+        }
+
+        execute("ALTER TABLE " + parquetTable + " CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
     }
 
     private void testFuzz(int duplicatesPerTick) throws Exception {
@@ -492,5 +544,29 @@ public class TimestampFinderTest extends AbstractCairoTest {
                 System.out.println("average call latency: " + ((System.nanoTime() - start) / calls) + "ns");
             }
         });
+    }
+
+    private static class CountingNativeFinder extends NativeTimestampFinder {
+        private int searchCount;
+
+        @Override
+        public long findTimestamp(long value, long rowLo, long rowHi) {
+            searchCount++;
+            return super.findTimestamp(value, rowLo, rowHi);
+        }
+    }
+
+    private static class CountingParquetFinder extends ParquetTimestampFinder {
+        private int searchCount;
+
+        private CountingParquetFinder(ParquetPartitionDecoder partitionDecoder) {
+            super(partitionDecoder);
+        }
+
+        @Override
+        public long findTimestamp(long value, long rowLo, long rowHi) {
+            searchCount++;
+            return super.findTimestamp(value, rowLo, rowHi);
+        }
     }
 }

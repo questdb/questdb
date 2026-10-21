@@ -85,6 +85,37 @@ public class PageFrameAddressCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNativeRepeatVisit() throws Exception {
+        // A record already on a native frame needs no frame-state check, e.g. each row of a scan.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, timestamp_sequence('2000-01-01', 86_400_000_000L) ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
+            try (
+                    CountingAddressCache cache = new CountingAddressCache();
+                    RecordCursorFactory factory = select("SELECT * FROM t");
+                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                    PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
+                    PageFrameMemoryRecord record = new PageFrameMemoryRecord()
+            ) {
+                cache.of(factory.getMetadata(), cursor);
+                pool.of(cache);
+                record.of(cursor);
+                final PageFrame frame = cursor.next();
+                Assert.assertNotNull(frame);
+                cache.add(0, frame);
+                cache.updateAddresses(0, frame);
+                pool.navigateTo(0, record);
+                final int checks = cache.decodedFrameChecks;
+                for (int i = 0; i < 10; i++) {
+                    pool.navigateTo(0, record);
+                }
+                Assert.assertEquals(checks, cache.decodedFrameChecks);
+                record.setRowIndex(0);
+                Assert.assertEquals(1, record.getLong(0));
+            }
+        });
+    }
+
+    @Test
     public void testSkipOnlyParquetFrameIsCached() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final GuardDecoder decoder = new GuardDecoder();
@@ -98,6 +129,16 @@ public class PageFrameAddressCacheTest extends AbstractCairoTest {
                 decoder.close();
             }
         });
+    }
+
+    private static class CountingAddressCache extends PageFrameAddressCache {
+        private int decodedFrameChecks;
+
+        @Override
+        public boolean hasDecodedFrames() {
+            decodedFrameChecks++;
+            return super.hasDecodedFrames();
+        }
     }
 
     private static class GuardDecoder extends ParquetPartitionDecoder {

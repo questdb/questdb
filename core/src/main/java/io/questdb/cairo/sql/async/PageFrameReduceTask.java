@@ -94,7 +94,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         try {
             this.frameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
             this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
-            this.accumulatedRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
+            // Only a run of several sub-frames fills it, so it allocates on first use.
+            this.accumulatedRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag, true);
             this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
@@ -157,7 +158,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         subFrameCount = 0;
         isCountOnly = false;
         filteredRows.resetCapacity();
-        accumulatedRows.resetCapacity();
+        accumulatedRows.close();
         subFrameRowCounts.clear();
         subFrameRowOffsets.clear();
         dataAddresses.resetCapacity();

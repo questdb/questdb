@@ -82,6 +82,9 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
         if (rowCount == 0 || timestamp == Long.MIN_VALUE || minTimestampExact() >= timestamp) {
             return 0;
         }
+        if (maxTimestampExact() < timestamp) {
+            return rowCount;
+        }
         return findTimestamp(timestamp - 1, rowLo, rowHi) + 1;
     }
 
@@ -100,6 +103,10 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
         }
         if (maxTimestampExact() <= timestamp) {
             return rowCount;
+        }
+        // Row group statistics show no row at or before the bound, e.g. an interval before the rows.
+        if (minTimestampExact() > timestamp) {
+            return 0;
         }
         return findTimestamp(timestamp, rowLo, rowHi) + 1;
     }

@@ -287,6 +287,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * any row within the frame.
      */
     public void navigateTo(int frameIndex, PageFrameMemoryRecord record) {
+        // Repeat visit, e.g. each row of a scan: the record already reads this frame through the
+        // query-stable address-cache arrays, or through this pool's live buffers. Skips the
+        // per-frame state checks below.
+        if (record.getFrameIndex() == frameIndex
+                && (record.pageAddresses == addressCache.getPageAddresses()
+                || (record.getBoundPool() == this && record.getBoundGeneration() == bindGeneration))) {
+            return;
+        }
         final byte format = addressCache.getFrameFormat(frameIndex);
         final boolean hasCustomDecode = usesCustomDecode(frameIndex);
         if (format == PartitionFormat.NATIVE && !hasCustomDecode) {
