@@ -350,6 +350,28 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseBranchOrderDoesNotChangeOutcome() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (b boolean, c char, s symbol, ip ipv4, u uuid)");
+            // both branch orders used to differ: one was rejected at compile time,
+            // the other compiled and crashed while reading rows; now both fail
+            // the same way at compile time
+            assertQuery("select case when b then c when not b then s else ip end r from t")
+                    .noLeakCheck()
+                    .fails(24, "inconvertible types: CHAR -> IPv4 [from=CHAR, to=IPv4]");
+            assertQuery("select case when b then s when not b then c else ip end r from t")
+                    .noLeakCheck()
+                    .fails(24, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+            assertQuery("select case when b then c when not b then s else u end r from t")
+                    .noLeakCheck()
+                    .fails(24, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+            assertQuery("select case when b then s when not b then c else u end r from t")
+                    .noLeakCheck()
+                    .fails(24, "inconvertible types: SYMBOL -> UUID [from=SYMBOL, to=UUID]");
+        });
+    }
+
+    @Test
     public void testByteToVarcharCast() throws Exception {
         execute(
                 "create table tanc as (" +

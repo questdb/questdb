@@ -1077,6 +1077,27 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         """);
     }
 
+    @Test
+    public void testCoalesceArgOrderDoesNotChangeOutcome() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (c char, s symbol, ip ipv4, u uuid)");
+            // argument order used to decide between a compile-time error and a
+            // crash while reading rows; now both orders fail the same way
+            assertQuery("select coalesce(c, s, ip) r from t")
+                    .noLeakCheck()
+                    .fails(16, "inconvertible types: CHAR -> IPv4 [from=CHAR, to=IPv4]");
+            assertQuery("select coalesce(s, c, ip) r from t")
+                    .noLeakCheck()
+                    .fails(16, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+            assertQuery("select coalesce(c, s, u) r from t")
+                    .noLeakCheck()
+                    .fails(16, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+            assertQuery("select coalesce(s, c, u) r from t")
+                    .noLeakCheck()
+                    .fails(16, "inconvertible types: SYMBOL -> UUID [from=SYMBOL, to=UUID]");
+        });
+    }
+
     private void assertCoalesce(String value, String expected) throws Exception {
         assertQuery("select coalesce(" + value + ", '')")
                 .expectSize()

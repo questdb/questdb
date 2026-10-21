@@ -85,7 +85,35 @@ public class CaseCommon {
             return factory.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
         }
 
+        if (!isReadableWithoutCast(argType, toType)) {
+            throw SqlException.inconvertibleTypes(argPosition, argType, ColumnType.nameOf(argType), toType, ColumnType.nameOf(toType));
+        }
         return arg;
+    }
+
+    // Returns true when a function of argType can be read through the common-type
+    // accessor without a cast wrapper: same storage tag, numeric getters shared
+    // by all numeric functions, or string-family arguments into a string-family
+    // result. Everything else reaches the caller unconverted and fails while
+    // reading rows, so reject it at compile time instead.
+    private static boolean isReadableWithoutCast(int argType, int toType) {
+        final short argTag = ColumnType.tagOf(argType);
+        final short toTag = ColumnType.tagOf(toType);
+        if (argTag == toTag || ColumnType.isBuiltInWideningCast(argType, toType)) {
+            return true;
+        }
+        if (argTag >= ColumnType.BYTE && argTag <= ColumnType.DOUBLE
+                && toTag >= ColumnType.BYTE && toTag <= ColumnType.DOUBLE) {
+            return true;
+        }
+        if ((argTag == ColumnType.LONG || argTag == ColumnType.DATE || argTag == ColumnType.TIMESTAMP)
+                && (toTag == ColumnType.LONG || toTag == ColumnType.DATE || toTag == ColumnType.TIMESTAMP)) {
+            return true;
+        }
+        return (toTag == ColumnType.STRING || toTag == ColumnType.VARCHAR || toTag == ColumnType.VARCHAR_SLICE
+                || toTag == ColumnType.SYMBOL)
+                && (argTag == ColumnType.STRING || argTag == ColumnType.VARCHAR || argTag == ColumnType.VARCHAR_SLICE
+                || argTag == ColumnType.SYMBOL || argTag == ColumnType.CHAR);
     }
 
     // public for testing
@@ -250,7 +278,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, CHAR), CHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, STRING), STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, VARCHAR), VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, BYTE), SHORT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, SHORT), SHORT);

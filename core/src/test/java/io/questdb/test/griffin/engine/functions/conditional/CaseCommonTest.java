@@ -136,6 +136,30 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
         });
     }
 
+    @Test
+    public void testCommonTypeIsSymmetric() throws Exception {
+        // the common type of two branch types must not depend on their order
+        for (short l = MIN_COLUMN_TYPE_ID; l <= MAX_COLUMN_TYPE_ID; l++) {
+            for (short r = MIN_COLUMN_TYPE_ID; r <= MAX_COLUMN_TYPE_ID; r++) {
+                int lr;
+                try {
+                    lr = CaseCommon.getCommonType(l, r, 0, "UNDEFINED is not expected");
+                } catch (SqlException e) {
+                    lr = ColumnType.UNDEFINED;
+                }
+                int rl;
+                try {
+                    rl = CaseCommon.getCommonType(r, l, 0, "UNDEFINED is not expected");
+                } catch (SqlException e) {
+                    rl = ColumnType.UNDEFINED;
+                }
+                Assert.assertEquals("l = " + l + ", r = " + r, lr, rl);
+            }
+        }
+        Assert.assertEquals(ColumnType.STRING, CaseCommon.getCommonType(ColumnType.CHAR, ColumnType.SYMBOL, 0, "UNDEFINED is not expected"));
+        Assert.assertEquals(ColumnType.STRING, CaseCommon.getCommonType(ColumnType.SYMBOL, ColumnType.CHAR, 0, "UNDEFINED is not expected"));
+    }
+
     private static void addGlobalExceptions(Map<Short, Set<Short>> map) {
         for (short i = MIN_COLUMN_TYPE_ID; i <= MAX_COLUMN_TYPE_ID; i++) {
             Set<Short> ignored = map.get(i);
