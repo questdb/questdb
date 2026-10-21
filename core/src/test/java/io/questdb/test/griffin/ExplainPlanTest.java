@@ -5835,17 +5835,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 ? fusedCountPlan(false, "postJoinFilter: T2.value=T2.value", false)
                                 : isSwapped
                                   ? """
-                                    Count
-                                        Hash Right Outer Join Light
-                                          condition: T2.created=T1.created
+                                Count
+                                    Hash Right Outer Join Light
+                                      condition: T2.created=T1.created
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                        Hash
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab
-                                    """
+                                """
                                   : "Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value=1")
@@ -5854,19 +5854,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 ? fusedCountPlan(false, "postJoinFilter: T2.value!=1", false)
                                 : isSwapped
                                   ? """
-                                    Count
-                                        Hash Right Outer Join Light
-                                          condition: T2.created=T1.created
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
-                                            Hash
-                                                Async JIT Filter workers: 1
-                                                  filter: value!=1
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: tab
-                                    """
+                                Count
+                                    Hash Right Outer Join Light
+                                      condition: T2.created=T1.created
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                        Hash
+                                            Async JIT Filter workers: 1
+                                              filter: value!=1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                """
                                   : "Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 // Push the predicate down to the 'left' table for joins that keep every left
@@ -5919,18 +5919,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 ? fusedCountPlan(false, "postJoinFilter: T2.value=T2.value", false)
                                 : isSwapped
                                   ? """
-                                    Count
-                                        SelectedRecord
-                                            Hash Right Outer Join Light
-                                              condition: T2.created=T1.created
+                                Count
+                                    SelectedRecord
+                                        Hash Right Outer Join Light
+                                          condition: T2.created=T1.created
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                            Hash
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: tab
-                                    """
+                                """
                                   : "Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
 
                 // value is T1 (the master): RIGHT/FULL OUTER NULL-extend it, so the tautological
