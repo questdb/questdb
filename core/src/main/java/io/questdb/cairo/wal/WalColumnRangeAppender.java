@@ -46,8 +46,16 @@ import org.jetbrains.annotations.Nullable;
  * sink's rules for its client: it advances the not-null watermark of every written column, writes the designated
  * timestamp as (timestamp, row) pairs whose row is the segment's, continues a STRING or BINARY aux vector from
  * the entry already present, resolves symbols through the sink's own reader in first-row order, checks the
- * timestamp bounds before the block finishes, and leaves a refused call to be cancelled by the client. The
- * ranges are not validated beyond their sizes: the client owns their layout.
+ * timestamp bounds before the block finishes, and leaves a refused call to be cancelled by the client.
+ * <p>
+ * What each call validates, before it writes anything: that a block is open; that the column is of the kind the
+ * call takes and was not written in this block; for a fixed-size range, that its byte count is the block's rows
+ * times the column's WAL width; for timestamp pairs that are copied, that the first pair carries the source row
+ * the client names; for a var-size range, that its shifted aux entries end where its data bytes end; for the
+ * block's finish, that the minimum and maximum timestamp lie within the table's bounds. Everything else is
+ * trusted: the layout of the bytes, the pairs' rows and timestamps once rebased, the symbol keys and the values
+ * the lookup returns, and the agreement between the pairs written and the minimum, maximum and order given to
+ * {@link #finish(long, long, boolean)}. The client owns the layout; a wrong layout is a wrong segment.
  * <p>
  * Not thread-safe; one instance per sink. {@link #close()} frees the buffer the var-size aux shift uses.
  */
@@ -66,7 +74,8 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     }
 
     /**
-     * Opens a block of {@code rowCount} rows. The block's first row is the segment's row count at this call.
+     * Opens a block of {@code rowCount} rows. The sink may roll its segment first (a commit or a structure change
+     * can leave a roll pending); the block's first row is the segment's row count read after that.
      */
     public void begin(int rowCount) {
         sink.checkDistressed();
@@ -94,6 +103,10 @@ public final class WalColumnRangeAppender implements QuietCloseable {
         isInBlock = false;
     }
 
+    /**
+     * Frees the buffer the var-size aux shift uses. Does not end an open block; the appender stays usable, and
+     * the buffer is allocated again when needed.
+     */
     @Override
     public void close() {
         scratch = Unsafe.free(scratch, scratchSize, MemoryTag.NATIVE_DEFAULT);
@@ -115,7 +128,9 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     }
 
     /**
-     * Checks the timestamp bounds and closes the block; the sink NULL-fills the columns that received no range.
+     * Checks that the minimum and maximum timestamp lie within the table's bounds and closes the block; the sink
+     * NULL-fills the columns that received no range. The minimum, maximum and order are the client's claim about
+     * the pairs it wrote and are not cross-checked against them.
      */
     public void finish(long minTimestamp, long maxTimestamp, boolean outOfOrder) {
         checkInBlock();
@@ -149,7 +164,8 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     /**
      * Appends the block's values of a SYMBOL column from 4-byte keys of another dictionary at {@code keysAddress}:
      * each distinct key is looked up once, in the order of its first row, and resolved through the sink; a
-     * negative key, or a key {@code values} does not know, is NULL.
+     * negative key, or a key {@code values} does not know, is NULL. The range is {@code rowCount} keys of 4 bytes,
+     * so it takes no size.
      */
     public void putSymbolRange(int columnIndex, long keysAddress, SymbolValues values) {
         checkInBlock();
@@ -188,7 +204,8 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     /**
      * Appends the block's designated timestamps from 16-byte (timestamp, row) pairs at {@code address}, whose rows
      * count from {@code sourceFirstRow}. The pairs are copied when {@code sourceFirstRow} is the block's first
-     * row, and rewritten with the block's rows otherwise.
+     * row, and rewritten with the block's rows otherwise. The range is {@code rowCount} pairs of 16 bytes, so it
+     * takes no size.
      */
     public void putTimestampRange(int columnIndex, long address, long sourceFirstRow) {
         checkInBlock();
@@ -198,6 +215,12 @@ public final class WalColumnRangeAppender implements QuietCloseable {
         }
         final MemoryMA data = sink.getDataColumn(columnIndex);
         if (sourceFirstRow == firstRow) {
+            // the pairs are copied as they are, so their first row must be the one the client claims
+            final long firstPairRow = Unsafe.getLong(address + 8);
+            if (firstPairRow != sourceFirstRow) {
+                throw CairoException.nonCritical().put("timestamp pairs do not start at the source row [column=").put(columnIndex)
+                        .put(", sourceFirstRow=").put(sourceFirstRow).put(", firstPairRow=").put(firstPairRow).put(']');
+            }
             data.putBlockOfBytes(address, (long) rowCount << 4);
         } else {
             for (int i = 0; i < rowCount; i++) {
@@ -234,6 +257,14 @@ public final class WalColumnRangeAppender implements QuietCloseable {
             scratchSize = auxSize;
         }
         driver.shiftCopyAuxVector(shift, auxAddress, 0, rowCount - 1, scratch, auxSize);
+        // the shifted entries end where the sink's data will end after this range; a client mismatch is refused
+        // before any write
+        final long dataEnd = driver.getDataVectorSizeAt(scratch, rowCount - 1);
+        final long expectedEnd = data.getAppendOffset() + dataSize;
+        if (dataEnd != expectedEnd) {
+            throw CairoException.nonCritical().put("var-size range does not match its aux entries [column=").put(columnIndex)
+                    .put(", dataEnd=").put(dataEnd).put(", expected=").put(expectedEnd).put(']');
+        }
         // the leading entry of a STRING or BINARY vector is already present in the sink's aux column
         aux.putBlockOfBytes(scratch + auxSize - appendBytes, appendBytes);
         if (dataSize > 0) {
@@ -243,7 +274,9 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     }
 
     /**
-     * Returns the key of a symbol value in the sink's dictionary, for {@link #fillSymbolKey(int, int)}.
+     * Returns the key of a symbol value in the sink's dictionary, for {@link #fillSymbolKey(int, int)}. The value
+     * is consumed before the call returns, so a reused buffer is fine. A cancel of the block does not take back a
+     * resolved value or a null mark: they enter the table's dictionary when the transaction commits rows.
      */
     public int resolveSymbol(int columnIndex, @Nullable CharSequence value) {
         checkInBlock();
@@ -252,8 +285,10 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     }
 
     /**
-     * Syncs the memories of the columns written in the open block, data and aux; what the block finish and the
-     * commit sync afterwards is unchanged.
+     * Syncs the memories of the columns written in the open block, data and aux: synchronous, regardless of the
+     * writer's commit mode, and covering each memory's current append page; earlier pages of a block larger than
+     * one page were synced when they were released under a commit mode other than NOSYNC. What the block finish
+     * and the commit sync afterwards is unchanged.
      */
     public void syncWrittenColumns() {
         checkInBlock();
@@ -295,7 +330,8 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      */
     public interface SymbolValues {
         /**
-         * Returns the value of a non-negative key, or null for a key the dictionary does not hold.
+         * Returns the value of a non-negative key, or null for a key the dictionary does not hold. The value is
+         * consumed before the call returns, so a reused buffer is fine.
          */
         @Nullable
         CharSequence valueOf(int key);

@@ -126,8 +126,8 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                 StringTypeDriver.appendValue(aux, data, "v5");
                 final long auxBase = aux.addressOf(0);
 
-                appendStringBlock(appender, driver, auxBase, data, pairs, 0, 3, TS0);
-                appendStringBlock(appender, driver, auxBase, data, pairs, 4, 6, TS0 + 3 * SECOND);
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 0, 3, TS0);
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 4, 6, TS0 + 3 * SECOND);
                 writer.commit();
             } finally {
                 Unsafe.free(pairs, 3 * 16L, MemoryTag.NATIVE_DEFAULT);
@@ -177,8 +177,8 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                 final long auxBase = aux.addressOf(0);
                 Assert.assertEquals("the first three values are inlined", 0, driver.getDataVectorSize(auxBase, 0, 2));
 
-                appendStringBlock(appender, driver, auxBase, data, pairs, 0, 3, TS0);
-                appendStringBlock(appender, driver, auxBase, data, pairs, 4, 6, TS0 + 3 * SECOND);
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 0, 3, TS0);
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 4, 6, TS0 + 3 * SECOND);
                 writer.commit();
             } finally {
                 Unsafe.free(pairs, 3 * 16L, MemoryTag.NATIVE_DEFAULT);
@@ -492,6 +492,57 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefusesTimestampPairsNotStartingAtSourceRow() throws Exception {
+        // the client claims the pairs start at source row 0, which is the segment's row, so they would be copied;
+        // the pairs carry rows 5 to 7, which the copy would write as the segment's row indexes
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "pairs", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final int rows = 3;
+            final long values = Unsafe.malloc(rows * 8L, MemoryTag.NATIVE_DEFAULT);
+            final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                for (int i = 0; i < rows; i++) {
+                    Unsafe.putLong(values + i * 8L, 30L + i);
+                    putPair(pairs, i, TS0 + i * SECOND, 5 + i);
+                }
+                appender.begin(rows);
+                appender.putFixedRange(0, values, rows * 8L);
+                try {
+                    appender.putTimestampRange(1, pairs, 0);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "timestamp pairs do not start at the source row [column=1, sourceFirstRow=0, firstPairRow=5]");
+                }
+                // the honest claim takes the rewrite branch and lands
+                appender.putTimestampRange(1, pairs, 5);
+                appender.finish(TS0, TS0 + 2 * SECOND, false);
+                writer.commit();
+            } finally {
+                Unsafe.free(values, rows * 8L, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(pairs, rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, ts FROM pairs")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            30\t2026-01-01T00:00:00.000000Z
+                            31\t2026-01-01T00:00:01.000000Z
+                            32\t2026-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testRefusesTimestampRangeOnOtherColumn() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = createTable(new TableModel(configuration, "other", PartitionBy.HOUR)
@@ -542,6 +593,58 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                 }
                 appender.cancel();
             }
+        });
+    }
+
+    @Test
+    public void testRefusesVarSizeRangeWhoseDataSizeDisagrees() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "mismatch", PartitionBy.HOUR)
+                    .col("s", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final ColumnTypeDriver driver = ColumnType.getDriver(ColumnType.STRING);
+            final long pairs = Unsafe.malloc(3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MemoryCARW aux = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW data = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                driver.configureAuxMemO3RSS(aux);
+                StringTypeDriver.appendValue(aux, data, "one");
+                StringTypeDriver.appendValue(aux, data, "two");
+                StringTypeDriver.appendValue(aux, data, "three");
+                final long auxBase = aux.addressOf(0);
+                final long dataSize = driver.getDataVectorSize(auxBase, 0, 2);
+                for (int i = 0; i < 3; i++) {
+                    putPair(pairs, i, TS0 + i * SECOND, i);
+                }
+                appender.begin(3);
+                try {
+                    appender.putVarSizeRange(0, auxBase, data.addressOf(0), 0, dataSize - 2);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "var-size range does not match its aux entries [column=0, dataEnd=" + dataSize + ", expected=" + (dataSize - 2) + "]");
+                }
+                appender.putVarSizeRange(0, auxBase, data.addressOf(0), 0, dataSize);
+                appender.putTimestampRange(1, pairs, 0);
+                appender.finish(TS0, TS0 + 2 * SECOND, false);
+                writer.commit();
+            } finally {
+                Unsafe.free(pairs, 3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT s FROM mismatch")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            one
+                            two
+                            three
+                            """);
         });
     }
 
@@ -730,7 +833,7 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     // rows [rowLo, rowHi) of the source vectors as one block, with one timestamp per row from firstTimestamp
-    private static void appendStringBlock(
+    private static void appendVarSizeBlock(
             WalColumnRangeAppender appender,
             ColumnTypeDriver driver,
             long auxBase,
