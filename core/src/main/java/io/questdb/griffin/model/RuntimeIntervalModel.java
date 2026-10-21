@@ -27,6 +27,7 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -496,7 +497,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             final CharSequence value = dynamicFunction.getStrA(null);
             if (value != null) {
                 try {
-                    return timestampDriver.parseFloorLiteral(value);
+                    // a bound past the range saturates, as a literal bound does
+                    return timestampDriver.parseFloorSaturated(value, 0, value.length());
                 } catch (NumericException e) {
                     return Numbers.LONG_NULL;
                 }
@@ -518,7 +520,26 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     ColumnType.getTimestampType(factory.getMetadata().getColumnType(0))
             );
         } else {
-            return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
+            try {
+                return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
+            } catch (ImplicitCastException e) {
+                if (ColumnType.isVarchar(functionType)) {
+                    // VARCHAR text converts with the TIMESTAMP_NS parser, which rejects text past 2262 that
+                    // a TIMESTAMP column holds; parse it with the column's driver, as the STRING branch does
+                    final CharSequence value = dynamicFunction.getStrA(null);
+                    try {
+                        return timestampDriver.parseFloorSaturated(value, 0, value.length());
+                    } catch (NumericException ignore) {
+                        throw e;
+                    }
+                }
+                // a bound past the range saturates, as a literal bound does
+                final int side = timestampDriver.compareToRange(dynamicFunction);
+                if (side == 0) {
+                    throw e;
+                }
+                return side > 0 ? Long.MAX_VALUE : Long.MIN_VALUE + 1;
+            }
         }
     }
 

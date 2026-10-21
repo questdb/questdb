@@ -76,8 +76,14 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         TimestampDriver driver = ColumnType.getTimestampDriver(argType);
 
         if (fromFn.isConstant() && toFn.isConstant()) {
-            long fromFnTimestamp = driver.from(fromFn.getTimestamp(null), fromType);
-            long toFnTimestamp = driver.from(toFn.getTimestamp(null), toType);
+            final int fromSide = driver.compareToRange(fromFn.getTimestamp(null), fromType);
+            final int toSide = driver.compareToRange(toFn.getTimestamp(null), toType);
+            if (fromSide != 0 && fromSide == toSide) {
+                // both bounds lie past the same end of the range of the argument's type
+                return BooleanConstant.FALSE;
+            }
+            long fromFnTimestamp = saturatingFrom(driver, fromFn.getTimestamp(null), fromType, fromSide);
+            long toFnTimestamp = saturatingFrom(driver, toFn.getTimestamp(null), toType, toSide);
             if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
                 return BooleanConstant.FALSE;
             }
@@ -95,6 +101,15 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         } else {
             return new RightConvertFunction(arg, fromFn, toFn, driver, fromType, toType);
         }
+    }
+
+    // a bound past the range of the argument's type is inclusive, so the nearest end of the range
+    // matches the same non-NULL values
+    private static long saturatingFrom(TimestampDriver driver, long timestamp, int timestampType, int side) {
+        if (side != 0) {
+            return side > 0 ? Long.MAX_VALUE : Long.MIN_VALUE + 1;
+        }
+        return driver.from(timestamp, timestampType);
     }
 
     private static class BothConvertFunction extends VarBetweenFunction {

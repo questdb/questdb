@@ -64,11 +64,26 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
         assert ColumnType.isTimestamp(timestampType);
         if (leftType == rightType) {
             return new Func(args.getQuick(0), args.getQuick(1));
-        } else if (leftType != timestampType) {
-            return new LeftConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(timestampType), leftType);
-        } else {
-            return new RightConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(timestampType), rightType);
         }
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        if (leftType != timestampType) {
+            if (left.isConstant()) {
+                final int side = driver.compareToRange(left.getTimestamp(null), leftType);
+                if (side != 0) {
+                    return new OutOfRangeConstFunc(left, right, right, side < 0);
+                }
+            }
+            return new LeftConvertFunc(left, right, driver, leftType);
+        }
+        if (right.isConstant()) {
+            final int side = driver.compareToRange(right.getTimestamp(null), rightType);
+            if (side != 0) {
+                return new OutOfRangeConstFunc(left, right, left, side > 0);
+            }
+        }
+        return new RightConvertFunc(left, right, driver, rightType);
     }
 
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {
@@ -131,6 +146,49 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
                     rightFunc.getTimestamp(rec),
                     negated
             );
+        }
+
+        @Override
+        public Function getLeft() {
+            return leftFunc;
+        }
+
+        @Override
+        public Function getRight() {
+            return rightFunc;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(leftFunc);
+            if (negated) {
+                sink.val(">=");
+            } else {
+                sink.val('<');
+            }
+            sink.val(rightFunc);
+        }
+    }
+
+    // The constant side lies past the range of the other side's timestamp type, so it is before or
+    // after every value there: left < right holds either for every non-NULL value or for none.
+    private static class OutOfRangeConstFunc extends NegatableBooleanFunction implements BinaryFunction {
+        private final boolean isLess;
+        private final Function leftFunc;
+        private final Function rightFunc;
+        private final Function valueFunc;
+
+        public OutOfRangeConstFunc(Function leftFunc, Function rightFunc, Function valueFunc, boolean isLess) {
+            this.leftFunc = leftFunc;
+            this.rightFunc = rightFunc;
+            this.valueFunc = valueFunc;
+            this.isLess = isLess;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            // Numbers.lessThan() is false for a NULL operand, negated or not
+            return valueFunc.getTimestamp(rec) != Numbers.LONG_NULL && negated != isLess;
         }
 
         @Override

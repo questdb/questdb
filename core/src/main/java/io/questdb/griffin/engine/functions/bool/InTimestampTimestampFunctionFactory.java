@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.bool;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -50,6 +51,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
 
@@ -138,6 +140,27 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return new InTimestampVarFunction(new ObjList<>(args), timestampType);
     }
 
+    // Text past the range of the column type equals no value of the column, so the list leaves it out.
+    private static void addParsedOrDie(TimestampDriver driver, CharSequence seq, int position, LongList out) throws SqlException {
+        try {
+            out.add(driver.parseFloorLiteral(seq));
+        } catch (NumericException e) {
+            if (driver.compareToRange(seq, 0, seq.length()) == 0) {
+                throw SqlException.invalidDate(seq, position);
+            }
+        }
+    }
+
+    private static void addParsedOrDie(TimestampDriver driver, Utf8Sequence seq, int position, LongList out) throws SqlException {
+        try {
+            out.add(driver.parseFloorLiteral(seq));
+        } catch (NumericException e) {
+            if (!Utf8s.isAscii(seq) || driver.compareToRange(seq.asAsciiCharSequence(), 0, seq.size()) == 0) {
+                throw SqlException.invalidDate(seq, position);
+            }
+        }
+    }
+
     private static boolean containsDateVariable(CharSequence seq) {
         int lim = seq.length();
         for (int i = 0; i < lim - 1; i++) {
@@ -160,24 +183,28 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             throws SqlException {
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         LongList res = new LongList(args.size() - 1);
-        res.extendAndSet(args.size() - 2, 0);
 
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
-            long val;
             int funcType = func.getType();
-            val = switch (ColumnType.tagOf(funcType)) {
-                case ColumnType.DATE -> driver.fromDate(func.getDate(null));
-                case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(null), funcType);
-                case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(null);
+            switch (ColumnType.tagOf(funcType)) {
+                case ColumnType.DATE -> res.add(driver.fromDate(func.getDate(null)));
+                case ColumnType.TIMESTAMP -> {
+                    final long timestamp = func.getTimestamp(null);
+                    // a value past the range of the column type equals no value of the column
+                    if (driver.compareToRange(timestamp, funcType) == 0) {
+                        res.add(driver.from(timestamp, funcType));
+                    }
+                }
+                case ColumnType.LONG, ColumnType.INT -> res.add(func.getTimestamp(null));
                 case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.NULL ->
-                        parseFloorOrDie(driver, func.getStrA(null), argPositions.getQuick(i));
-                case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(null), argPositions.getQuick(i));
+                        addParsedOrDie(driver, func.getStrA(null), argPositions.getQuick(i), res);
+                case ColumnType.VARCHAR ->
+                        addParsedOrDie(driver, func.getVarcharA(null), argPositions.getQuick(i), res);
                 default -> throw SqlException.inconvertibleTypes(argPositions.getQuick(i), func.getType(),
                         ColumnType.nameOf(func.getType()), timestampType,
                         ColumnType.nameOf(timestampType));
-            };
-            res.setQuick(i - 1, val);
+            }
         }
 
         res.sort();
@@ -197,22 +224,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return driver.parseFloorLiteral(value);
         } catch (NumericException e) {
             throw CairoException.nonCritical().put("Invalid timestamp: ").put(value);
-        }
-    }
-
-    private static long parseFloorOrDie(TimestampDriver driver, CharSequence seq, int position) throws SqlException {
-        try {
-            return driver.parseFloorLiteral(seq);
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(seq, position);
-        }
-    }
-
-    private static long parseFloorOrDie(TimestampDriver driver, Utf8Sequence seq, int position) throws SqlException {
-        try {
-            return driver.parseFloorLiteral(seq);
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(seq, position);
         }
     }
 
@@ -271,8 +282,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 CairoConfiguration configuration
         ) throws SqlException {
             this.left = left;
-            final StringSink sink = new StringSink();
-            IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(leftTimestampType), configuration, right, intervals, rightPosition, sink, true);
+            final TimestampDriver driver = ColumnType.getTimestampDriver(leftTimestampType);
+            // an interval past the range of the column type matches no value, as in a list of several items
+            if (right == null || driver.compareIntervalToRange(right, 0, right.length()) == 0) {
+                final StringSink sink = new StringSink();
+                IntervalUtils.parseTickExprAndIntersect(driver, configuration, right, intervals, rightPosition, sink, true);
+            }
         }
 
         @Override
@@ -423,14 +438,23 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 Function func = args.getQuick(i);
                 long val = Numbers.LONG_NULL;
                 int funcType = func.getType();
-                val = switch (ColumnType.tagOf(funcType)) {
-                    case ColumnType.DATE -> driver.fromDate(func.getDate(null));
-                    case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(null), funcType);
-                    case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(null);
-                    case ColumnType.STRING, ColumnType.SYMBOL -> parseFloorOrDie(driver, func.getStrA(null));
-                    case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(null));
-                    default -> val;
-                };
+                try {
+                    val = switch (ColumnType.tagOf(funcType)) {
+                        case ColumnType.DATE -> driver.fromDate(func.getDate(null));
+                        case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(null), funcType);
+                        case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(null);
+                        case ColumnType.STRING, ColumnType.SYMBOL -> parseFloorOrDie(driver, func.getStrA(null));
+                        case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(null));
+                        default -> val;
+                    };
+                } catch (CairoException | ImplicitCastException e) {
+                    // a value past the range of the column type, such as a bind variable holding
+                    // '9999-12-31', equals no value of the column, as a constant past the range does
+                    if (driver.compareToRange(func) != 0) {
+                        continue;
+                    }
+                    throw e;
+                }
                 timestampValues.add(val);
             }
         }
@@ -491,7 +515,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
-                    IntervalUtils.parseTickExprAndIntersect(driver, executionContext.getCairoEngine().getConfiguration(), intervalFunc.getStrA(null), intervals, 0, sink, true);
+                    final CharSequence interval = intervalFunc.getStrA(null);
+                    // an interval past the range of the column type matches no value, as in a list of several items
+                    if (interval == null || driver.compareIntervalToRange(interval, 0, interval.length()) == 0) {
+                        IntervalUtils.parseTickExprAndIntersect(driver, executionContext.getCairoEngine().getConfiguration(), interval, intervals, 0, sink, true);
+                    }
                     break;
                 default:
                     throw SqlException

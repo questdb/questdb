@@ -522,7 +522,14 @@ public final class WhereClauseParser implements Mutable {
         } else if (ColumnType.tagOf(type) == ColumnType.INT) {
             return Numbers.intToLong(function.getInt(null));
         } else {
-            return timestampDriver.from(function.getTimestamp(null), ColumnType.getTimestampType(type));
+            final long timestamp = function.getTimestamp(null);
+            final int timestampType = ColumnType.getTimestampType(type);
+            final int side = timestampDriver.compareToRange(timestamp, timestampType);
+            if (side != 0) {
+                // saturates like TimestampDriver.parseFloorSaturated()
+                return side > 0 ? Long.MAX_VALUE : Long.MIN_VALUE + 1;
+            }
+            return timestampDriver.from(timestamp, timestampType);
         }
     }
 
@@ -580,7 +587,7 @@ public final class WhereClauseParser implements Mutable {
             boolean detectIntervals
     ) throws SqlException {
         try {
-            return timestampDriver.parseFloorLiteral(str);
+            return str == null ? Numbers.LONG_NULL : timestampDriver.parseFloorSaturated(str, 0, str.length());
         } catch (NumericException ignore) {
             if (detectIntervals && str != null) {
                 for (int i = 0, lim = str.length(); i < lim; i++) {
@@ -596,7 +603,7 @@ public final class WhereClauseParser implements Mutable {
     private static long parseTokenAsTimestamp(TimestampDriver timestampDriver, ExpressionNode lo) throws SqlException {
         try {
             if (!isNullKeyword(lo.token)) {
-                return timestampDriver.parseQuotedLiteral(lo.token);
+                return timestampDriver.parseFloorSaturated(lo.token, 1, lo.token.length() - 1);
             }
             return Numbers.LONG_NULL;
         } catch (NumericException e1) {
@@ -3345,7 +3352,7 @@ public final class WhereClauseParser implements Mutable {
         long ts;
         try {
             // Timestamp string
-            ts = timestampDriver.parseQuotedLiteral(node.token);
+            ts = timestampDriver.parseFloorSaturated(node.token, 1, node.token.length() - 1);
         } catch (NumericException e) {
             try {
                 // Timestamp epoch (long)

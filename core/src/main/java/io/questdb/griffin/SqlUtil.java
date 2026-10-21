@@ -184,7 +184,7 @@ public class SqlUtil {
 
     public static long castPGDates(CharSequence value, int fromColumnType, TimestampDriver driver) {
         try {
-            return driver.fromDate(parsePGDate(value));
+            return fromPGDate(parsePGDate(value), driver);
         } catch (NumericException ignore) {
             throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
         }
@@ -193,7 +193,7 @@ public class SqlUtil {
     public static long castPGDates(Utf8Sequence value, int fromColumnType, TimestampDriver driver) {
         try {
             // The common case needs neither an ASCII scan nor UTF-16 decoding.
-            return driver.fromDate(parsePGDate(value.asAsciiCharSequence()));
+            return fromPGDate(parsePGDate(value.asAsciiCharSequence()), driver);
         } catch (NumericException ignore) {
         }
         // A failed parse may still be a valid localized time-zone name.
@@ -203,7 +203,7 @@ public class SqlUtil {
             utf16Sink.clear();
             if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
                 try {
-                    return driver.fromDate(parsePGDate(utf16Sink));
+                    return fromPGDate(parsePGDate(utf16Sink), driver);
                 } catch (NumericException ignore) {
                 }
             }
@@ -2166,6 +2166,16 @@ public class SqlUtil {
             throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
         }
         return k;
+    }
+
+    // TimestampDriver.fromDate() does not check for overflow: past the end of the TIMESTAMP_NS
+    // range, the product wraps around and the round trip back to millis does not match
+    private static long fromPGDate(long millis, TimestampDriver driver) throws NumericException {
+        final long timestamp = driver.fromDate(millis);
+        if (driver.toDate(timestamp) != millis) {
+            throw NumericException.instance();
+        }
+        return timestamp;
     }
 
     /**

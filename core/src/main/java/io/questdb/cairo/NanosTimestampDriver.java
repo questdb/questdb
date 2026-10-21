@@ -35,7 +35,9 @@ import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.WeekTimestampNanosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
+import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -96,6 +98,9 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorMM, NanosFormatUtils.MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorYYYY, NanosFormatUtils.YEAR_FORMAT);
+    // Start of 1677 in nanos, wrapped around the long range like the sum of the parts of a 1677 text
+    private static final long YEAR_1677_WRAPPED_NANOS = Nanos.yearNanos(1678, false) - 365 * Nanos.DAY_NANOS;
+    private static final FiberLocal<LongList> tlIntervalBeforeRange = new FiberLocal<>(LongList::new);
 
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
     private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = (addr, sink, unused1, unused2) -> append(addr, sink);
@@ -237,6 +242,58 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public long ceilYYYY(long timestamp) {
         return Nanos.ceilYYYY(timestamp);
+    }
+
+    @Override
+    public int compareIntervalToRange(CharSequence str, int lo, int hi) {
+        try {
+            parseFloor(str, lo, hi);
+            // the interval starts inside the range
+            return 0;
+        } catch (NumericException ignore) {
+        }
+        try {
+            final long micros = MicrosTimestampDriver.INSTANCE.parseFloor(str, lo, hi);
+            if (micros >= Long.MAX_VALUE / Nanos.MICRO_NANOS) {
+                // the interval starts past the end of the range
+                return 1;
+            }
+            if (micros < Long.MIN_VALUE / Nanos.MICRO_NANOS && isIntervalBeforeRange(str, lo, hi)) {
+                return -1;
+            }
+        } catch (NumericException ignore) {
+        }
+        return 0;
+    }
+
+    @Override
+    public int compareToRange(long timestamp, int fromTimestampType) {
+        if (ColumnType.isTimestampMicro(fromTimestampType) && timestamp != Numbers.LONG_NULL) {
+            if (timestamp > Long.MAX_VALUE / Nanos.MICRO_NANOS) {
+                return 1;
+            }
+            if (timestamp < Long.MIN_VALUE / Nanos.MICRO_NANOS) {
+                return -1;
+            }
+        }
+        return 0;
+    }
+
+    @Override
+    public int compareToRange(CharSequence str, int lo, int hi) {
+        try {
+            // the parse of this driver rejected the text, so the micro holding either end of the
+            // range counts as outside it as well
+            final long micros = MicrosTimestampDriver.INSTANCE.parseFloor(str, lo, hi);
+            if (micros >= Long.MAX_VALUE / Nanos.MICRO_NANOS) {
+                return 1;
+            }
+            if (micros < Long.MIN_VALUE / Nanos.MICRO_NANOS) {
+                return -1;
+            }
+        } catch (NumericException ignore) {
+        }
+        return 0;
     }
 
     @Override
@@ -881,7 +938,7 @@ public class NanosTimestampDriver implements TimestampDriver {
             CommonUtils.checkChar(str, p++, hi, '-');
             // Check for ISO week format: YYYY-Www[-D]
             if (p < hi && str.byteAt(p) == 'W') {
-                return parseIsoWeekFloor(str, p, hi, year);
+                return checkNanosRange(year, parseIsoWeekFloor(str, p, hi, year));
             }
             int month = Numbers.parseInt(str, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
@@ -967,7 +1024,7 @@ public class NanosTimestampDriver implements TimestampDriver {
             // year
             ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l));
         }
-        return ts;
+        return checkNanosRange(year, ts);
     }
 
     @Override
@@ -983,7 +1040,7 @@ public class NanosTimestampDriver implements TimestampDriver {
             CommonUtils.checkChar(str, p++, hi, '-');
             // Check for ISO week format: YYYY-Www[-D]
             if (p < hi && str.charAt(p) == 'W') {
-                return parseIsoWeekFloor(str, p, hi, year);
+                return checkNanosRange(year, parseIsoWeekFloor(str, p, hi, year));
             }
             int month = Numbers.parseInt(str, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
@@ -1070,7 +1127,7 @@ public class NanosTimestampDriver implements TimestampDriver {
             // year
             ts = (Nanos.yearNanos(year, l) + Nanos.monthOfYearNanos(1, l));
         }
-        return ts;
+        return checkNanosRange(year, ts);
     }
 
     public void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException {
@@ -1654,6 +1711,35 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
     }
 
+    /**
+     * Rejects text outside the TIMESTAMP_NS range, Long.MIN_VALUE + 1 (1677-09-21T00:12:43.145224193Z)
+     * to Long.MAX_VALUE (2262-04-11T23:47:16.854775807Z). The parser adds up the parts of the text in a
+     * long, which wraps around silently past either end of the range.
+     *
+     * @param year the year of the text
+     * @param ts   the sum of the parts of the text
+     * @return the timestamp of the text
+     * @throws NumericException when the text is outside the range
+     */
+    private static long checkNanosRange(int year, long ts) throws NumericException {
+        if (year > 1677 && year < 2262) {
+            return ts;
+        }
+        // Every text in 1677 or 2262 lies within about a year of an end of the long range, so its
+        // sum wraps around to the sign of the other end exactly when the text is outside the range.
+        if (year == 2262 && ts >= 0) {
+            return ts;
+        }
+        if (year == 1677) {
+            // Nanos.yearNanos(1677) saturates at Long.MIN_VALUE; swap in the wrapped start of the year
+            ts = ts - Nanos.yearNanos(1677, false) + YEAR_1677_WRAPPED_NANOS;
+            if (ts < 0 && ts != Numbers.LONG_NULL) {
+                return ts;
+            }
+        }
+        throw NumericException.instance();
+    }
+
     private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
         if (lim == p) {
             return 0;
@@ -1714,6 +1800,21 @@ public class NanosTimestampDriver implements TimestampDriver {
             }
         }
         throw NumericException.instance();
+    }
+
+    // Tells whether text that starts before the range also ends before it.
+    private static boolean isIntervalBeforeRange(CharSequence str, int lo, int hi) {
+        final LongList interval = tlIntervalBeforeRange.get();
+        interval.clear();
+        try {
+            // the micros parser does not overflow in 1677
+            MicrosTimestampDriver.INSTANCE.parseInterval(str, lo, hi, IntervalOperation.INTERSECT, interval);
+        } catch (NumericException e) {
+            // the tick parser reads text that is not an interval, such as text with a time zone, as a point
+            return true;
+        }
+        // the last micro of the interval lies before the micro that holds the start of the range
+        return IntervalUtils.decodeIntervalHi(interval, 0) < Long.MIN_VALUE / Nanos.MICRO_NANOS - 1;
     }
 
     private static long partitionCeilDD(long nanos) {
