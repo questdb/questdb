@@ -32,13 +32,17 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.WalEventCursor;
+import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -48,7 +52,7 @@ import org.junit.Test;
 
 import static io.questdb.PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT;
 import static io.questdb.PropertyKey.CAIRO_WAL_MAX_LAG_SIZE;
-import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
@@ -368,6 +372,52 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     @Test
     public void testReplaceRangeBeforeFirstPartitionAndDataNoRowsCommit() throws Exception {
         testReplaceRangeBeforeFirstPartitionAndData(true);
+    }
+
+    @Test
+    public void testReplaceRangeBoundaryControls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE bounds (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken token = engine.verifyTableName("bounds");
+            try (WalWriter writer = engine.getWalWriter(token)) {
+                writer.newRow(0).append();
+                writer.newRow(9).append();
+                writer.commitWithParams(0, 10, WAL_DEDUP_MODE_REPLACE_RANGE);
+                writer.commitWithParams(10, 11, WAL_DEDUP_MODE_REPLACE_RANGE);
+                for (byte mode = WAL_DEDUP_MODE_DEFAULT; mode <= WAL_DEDUP_MODE_UPSERT_NEW; mode++) {
+                    writer.newRow(20 + mode).append();
+                    writer.commitWithParams(0, 0, mode);
+                }
+            }
+            try (Path path = new Path(); WalEventReader reader = new WalEventReader(configuration);
+                 TransactionLogCursor txns = engine.getTableSequencerAPI().getCursor(token, 0)) {
+                for (int txn = 0; txn < 5; txn++) {
+                    Assert.assertTrue(txns.hasNext());
+                    path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(WAL_NAME_BASE)
+                            .put(txns.getWalId()).slash().put(txns.getSegmentId());
+                    WalEventCursor cursor = reader.of(path, txns.getSegmentTxn());
+                    Assert.assertEquals(txn, cursor.getTxn());
+                    Assert.assertEquals(WalTxnType.DATA, cursor.getType());
+                    WalEventCursor.DataInfo data = cursor.getDataInfo();
+                    if (txn < 2) {
+                        Assert.assertEquals(WAL_DEDUP_MODE_REPLACE_RANGE, data.getDedupMode());
+                        Assert.assertEquals(txn == 0 ? 0 : 10, data.getReplaceRangeTsLow());
+                        Assert.assertEquals(txn == 0 ? 10 : 11, data.getReplaceRangeTsHi());
+                        Assert.assertEquals(txn == 0 ? 0 : Long.MAX_VALUE, data.getMinTimestamp());
+                        Assert.assertEquals(txn == 0 ? 9 : -1, data.getMaxTimestamp());
+                    } else {
+                        Assert.assertEquals(txn - 2, data.getDedupMode());
+                        Assert.assertEquals(20 + txn - 2, data.getMinTimestamp());
+                        Assert.assertEquals(20 + txn - 2, data.getMaxTimestamp());
+                    }
+                }
+                Assert.assertFalse(txns.hasNext());
+            }
+            drainWalQueue();
+            assertQuery("SELECT ts::LONG AS ts FROM bounds ORDER BY ts").noLeakCheck().expectSize()
+                    .returns("ts\n0\n9\n20\n21\n22\n");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+        });
     }
 
     @Test
@@ -2021,6 +2071,81 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     // The complete final row set in ts order. Commit B and the oracle both write exactly this.
+    @Test
+    public void testReplaceRangeRewriteValidationPreservesEvents() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 100_000);
+            execute("CREATE TABLE rewrite (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken token = engine.verifyTableName("rewrite");
+            try (Path path = new Path()) {
+                try (WalWriter writer = engine.getWalWriter(token)) {
+                    // Keep the first event empty: currentTxnStartRowNum must stay zero.
+                    writer.commitWithParams(0, 1, WAL_DEDUP_MODE_REPLACE_RANGE);
+                    try (TransactionLogCursor txns = engine.getTableSequencerAPI().getCursor(token, 0)) {
+                        Assert.assertTrue(txns.hasNext());
+                        Assert.assertEquals(0, txns.getSegmentId());
+                        Assert.assertEquals(0, txns.getSegmentTxn());
+                        path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(WAL_NAME_BASE)
+                                .put(txns.getWalId()).slash().put(txns.getSegmentId());
+                        Assert.assertFalse(txns.hasNext());
+                    }
+                    writer.newRow(2).append();
+                    execute("ALTER TABLE rewrite ADD COLUMN s SYMBOL");
+                    try {
+                        writer.goActive();
+                        Assert.fail("expected rewrite range rejection");
+                    } catch (CairoException e) {
+                        TestUtils.assertEquals("Replace range high timestamp must be greater than the maximum timestamp.", e.getFlyweightMessage());
+                    }
+                    Assert.assertTrue(writer.isDistressed());
+                }
+                try (WalEventReader reader = new WalEventReader(configuration)) {
+                    WalEventCursor cursor = reader.of(path, 0);
+                    Assert.assertEquals(0, cursor.getTxn());
+                    Assert.assertEquals(WalTxnType.DATA, cursor.getType());
+                    WalEventCursor.DataInfo data = cursor.getDataInfo();
+                    Assert.assertEquals(0, data.getStartRowID());
+                    Assert.assertEquals(0, data.getEndRowID());
+                    Assert.assertEquals(Long.MAX_VALUE, data.getMinTimestamp());
+                    Assert.assertEquals(-1, data.getMaxTimestamp());
+                    Assert.assertEquals(WAL_DEDUP_MODE_REPLACE_RANGE, data.getDedupMode());
+                    Assert.assertEquals(0, data.getReplaceRangeTsLow());
+                    Assert.assertEquals(1, data.getReplaceRangeTsHi());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT count() FROM rewrite").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+            try (WalWriter writer = engine.getWalWriter(token)) {
+                TableWriter.Row row = writer.newRow(3);
+                row.putSym(1, "ok");
+                row.append();
+                writer.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT ts::LONG AS ts, s FROM rewrite").noLeakCheck().expectSize().returns("ts\ts\n3\tok\n");
+        });
+    }
+
+    @Test
+    public void testReplaceRangeValidationPreservesEvents() throws Exception {
+        assertMemoryLeak(() -> {
+            assertRejectedRangePreservesEvents("reversed", WalTxnType.DATA, 2, 1,
+                    "Replace range low timestamp must be less than replace range high timestamp.");
+            assertRejectedRangePreservesEvents("empty_range", WalTxnType.DATA, 1, 1,
+                    "Replace range low timestamp must be less than replace range high timestamp.");
+            assertRejectedRangePreservesEvents("below", WalTxnType.DATA, 2, 3,
+                    "Replace range low timestamp must be less than or equal to the minimum timestamp.");
+            assertRejectedRangePreservesEvents("high", WalTxnType.DATA, 0, 1,
+                    "Replace range high timestamp must be greater than the maximum timestamp.");
+            assertRejectedRangePreservesEvents("mv_high", WalTxnType.MAT_VIEW_DATA, 0, 1,
+                    "Replace range high timestamp must be greater than the maximum timestamp.");
+            assertRejectedRangePreservesEvents("lv_high", WalTxnType.LIVE_VIEW_DATA, 0, 1,
+                    "Replace range high timestamp must be greater than the maximum timestamp.");
+        });
+    }
+
     private static void appendFinalDataset(WalWriter ww) throws NumericException {
         long id = 1;
         for (int day = 0; day < 5; day++) {
@@ -2177,6 +2302,63 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("count\n0\n");
         });
+    }
+
+    private void assertRejectedRangePreservesEvents(String table, byte type, long lo, long hi, String error) throws Exception {
+        execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        TableToken token = engine.verifyTableName(table);
+        try (WalWriter writer = engine.getWalWriter(token)) {
+            writer.newRow(0).append();
+            writer.commit();
+            writer.newRow(1).append();
+            try {
+                switch (type) {
+                    case WalTxnType.MAT_VIEW_DATA -> writer.commitMatView(1, 2, 3, lo, hi);
+                    case WalTxnType.LIVE_VIEW_DATA -> writer.commitLiveViewWithReplaceRange(1, lo, hi);
+                    default -> writer.commitWithParams(lo, hi, WAL_DEDUP_MODE_REPLACE_RANGE);
+                }
+                Assert.fail("expected range rejection");
+            } catch (CairoException e) {
+                TestUtils.assertEquals(error, e.getFlyweightMessage());
+            }
+            Assert.assertTrue(writer.isDistressed());
+            // Refresh failure handling appends invalidation even on a distressed writer.
+            writer.resetMatViewState(1, 2, true, "rejected range", Numbers.LONG_NULL, null, -1);
+        }
+        try (Path path = new Path(); WalEventReader reader = new WalEventReader(configuration);
+             TransactionLogCursor txns = engine.getTableSequencerAPI().getCursor(token, 0)) {
+            for (int txn = 0; txn < 2; txn++) {
+                Assert.assertTrue(txns.hasNext());
+                Assert.assertEquals(txn, txns.getSegmentTxn());
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(WAL_NAME_BASE)
+                        .put(txns.getWalId()).slash().put(txns.getSegmentId());
+                WalEventCursor cursor = reader.of(path, txns.getSegmentTxn());
+                Assert.assertEquals(txn, cursor.getTxn());
+                if (txn == 0) {
+                    Assert.assertEquals(WalTxnType.DATA, cursor.getType());
+                    Assert.assertEquals(0, cursor.getDataInfo().getStartRowID());
+                    Assert.assertEquals(1, cursor.getDataInfo().getEndRowID());
+                    Assert.assertEquals(0, cursor.getDataInfo().getMinTimestamp());
+                    Assert.assertEquals(0, cursor.getDataInfo().getMaxTimestamp());
+                } else {
+                    Assert.assertEquals(WalTxnType.MAT_VIEW_INVALIDATE, cursor.getType());
+                    Assert.assertTrue(cursor.getMatViewInvalidationInfo().isInvalid());
+                    TestUtils.assertEquals("rejected range", cursor.getMatViewInvalidationInfo().getInvalidationReason());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+            Assert.assertFalse(txns.hasNext());
+        }
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+        assertQuery("SELECT ts::LONG AS ts FROM " + table).noLeakCheck().expectSize().returns("ts\n0\n");
+        try (WalWriter writer = engine.getWalWriter(token)) {
+            writer.newRow(2).append();
+            writer.commit();
+        }
+        drainWalQueue();
+        assertQuery("SELECT ts::LONG AS ts FROM " + table + " ORDER BY ts").noLeakCheck().expectSize().returns("ts\n0\n2\n");
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
     }
 
     private void insertRowWithReplaceRange(

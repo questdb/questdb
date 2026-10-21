@@ -69,6 +69,7 @@ import io.questdb.std.ObjectPool;
 final class ColumnPruning implements OptimiserPass {
     private final AggregateInputOrder aggregateInputOrder;
     private final ObjList<LogicalPlan> alignedPath;
+    private final IntHashSet childInputIds = new IntHashSet();
     private final ColumnReads columnReads;
     private final ObjectPool<ColumnExpression> narrowingColumns;
     private final ObjectPool<ProjectPlan> narrowingProjects;
@@ -78,6 +79,7 @@ final class ColumnPruning implements OptimiserPass {
     private final IntList remappedSymbolColumns;
     private final IntList retainedColumnIndexes;
     private final BitSet retainedColumns = new BitSet();
+    private final IntHashSet retainedProjectOutputIds = new IntHashSet();
     private final ObjList<BoundExpression> tmpExpressions;
     private final OutputSchema tmpSchema;
     private LogicalPlan joinInputPlan;
@@ -120,6 +122,8 @@ final class ColumnPruning implements OptimiserPass {
     public void clear() {
         joinInputPlan = null;
         columnReads.clear();
+        childInputIds.clear();
+        retainedProjectOutputIds.clear();
     }
 
     @Override
@@ -385,9 +389,9 @@ final class ColumnPruning implements OptimiserPass {
                 final int inputTimestampId = project.getChild().getOutput().getTimestampColumnId();
                 columnReads.retainOutputs(project);
                 retainGroupingKeys(project);
-                columnReads.collectInputReads(project);
+                selectProjectOutputs(project);
                 final boolean isComputed = !LogicalPlans.isColumnProjection(project);
-                pruneOutput(project);
+                pruneOutput(project, retainedProjectOutputIds);
                 project.setPrunedComputedColumns(isComputed && LogicalPlans.isColumnProjection(project));
                 final LogicalPlan projectInput = project.getChild();
                 // A computing projection reads a table function in place; narrowing
@@ -477,10 +481,14 @@ final class ColumnPruning implements OptimiserPass {
     }
 
     private void pruneOutput(LogicalPlan plan) {
+        pruneOutput(plan, requiredColumnIds);
+    }
+
+    private void pruneOutput(LogicalPlan plan, IntHashSet selectedIds) {
         final OutputSchema output = plan.getOutput();
         retainedColumnIndexes.clear();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            if (requiredColumnIds.contains(output.getColumnId(i))) {
+            if (selectedIds.contains(output.getColumnId(i))) {
                 retainedColumnIndexes.add(i);
             }
         }
@@ -536,6 +544,32 @@ final class ColumnPruning implements OptimiserPass {
                 aggregates.popLast();
             }
         }
+    }
+
+    private void selectProjectOutputs(ProjectPlan project) {
+        childInputIds.clear();
+        retainedProjectOutputIds.clear();
+        final OutputSchema input = project.getChild().getOutput();
+        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+            childInputIds.add(input.getColumnId(i));
+        }
+        final OutputSchema output = project.getOutput();
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            final int columnId = output.getColumnId(i);
+            if (requiredColumnIds.contains(columnId)) {
+                retainedProjectOutputIds.add(columnId);
+            }
+        }
+        columnReads.collectInputReads(project);
+        // Closure adds both input reads and projection aliases. Only aliases need extra output slots;
+        // keep raw inputs in requiredColumnIds for the child, without forwarding unused copies.
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            final int columnId = output.getColumnId(i);
+            if (requiredColumnIds.contains(columnId) && !childInputIds.contains(columnId)) {
+                retainedProjectOutputIds.add(columnId);
+            }
+        }
+        // pruneOutput consumes this selection before recursion reuses either scratch set.
     }
 
     private void pruneUnionAll(SetOperationPlan plan) {

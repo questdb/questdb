@@ -24,12 +24,26 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.ParanoiaState;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class LateralCorrelationTest extends AbstractCairoTest {
+    private static final String COMMA_FULL_FROM = " FROM a, LATERAL (SELECT a.k AS k FROM long_sequence(1)) b FULL JOIN c ON b.k=c.k";
+    private static final String COMMA_FULL_ROWS = "k\tbk\tck\n7\tnull\t1\n7\tnull\t2\n7\t7\tnull\n";
     private static final String FULL_JOIN_CARRIER_ROWS = """
             id\taid\tbid
             1\tnull\t21
@@ -370,6 +384,251 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             7\t10\t7\t7\t31
                             7\t20\t7\t7\t41
                             """);
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralFullOutputIdentity() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            final String original = "SELECT a.k,b.k bk,c.k ck FROM a, LATERAL (SELECT a.k AS k FROM long_sequence(1)) b FULL JOIN c ON b.k=c.k";
+            final boolean isParanoia = ParanoiaState.PLAN_PARANOIA_MODE;
+            ParanoiaState.PLAN_PARANOIA_MODE = false;
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                // Compile the verbatim production reproducer without assuming unordered row order.
+                try (RecordCursorFactory factory = compiler.compile(original, sqlExecutionContext).getRecordCursorFactory()) {
+                    Assert.assertEquals(3, factory.getMetadata().getColumnCount());
+                }
+            } finally {
+                ParanoiaState.PLAN_PARANOIA_MODE = isParanoia;
+            }
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int mode = 0; mode < 4; mode++) {
+                    sqlExecutionContext.setJitMode(mode < 2 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                    try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                        compiler.setFullFatJoins((mode & 1) != 0);
+                        assertFullOutput(compiler, original + " ORDER BY bk,ck", COMMA_FULL_ROWS);
+                        assertFullOutput(compiler, original.replace("FULL JOIN", "RIGHT JOIN") + " ORDER BY ck", "k\tbk\tck\n7\tnull\t1\n7\tnull\t2\n");
+                        assertFullOutput(compiler, original.replace("SELECT a.k AS k", "SELECT 7 AS k") + " ORDER BY bk,ck", COMMA_FULL_ROWS);
+                        assertFullOutput(compiler, original.replace("FROM a,", "FROM a CROSS JOIN") + " ORDER BY bk,ck", "k\tbk\tck\nnull\tnull\t1\nnull\tnull\t2\n7\t7\tnull\n");
+                        assertFullOutput(compiler, "SELECT b.k" + COMMA_FULL_FROM + " ORDER BY b.k", "k\nnull\nnull\n7\n");
+                        assertFullOutput(compiler, "SELECT c.k" + COMMA_FULL_FROM + " ORDER BY c.k", "k\nnull\n1\n2\n");
+                        assertFullOutput(compiler, "SELECT a.k+0 k,b.k+0 bk,c.k+0 ck" + COMMA_FULL_FROM + " ORDER BY bk,ck", COMMA_FULL_ROWS);
+                        assertFullOutput(compiler, "SELECT *" + COMMA_FULL_FROM + " ORDER BY b.k,c.k", "k\tk1\tk2\n7\tnull\t1\n7\tnull\t2\n7\t7\tnull\n");
+                        assertFullOutput(compiler, "SELECT a.k,b.k bk,c.k ck" + COMMA_FULL_FROM + " WHERE c.k=1", "k\tbk\tck\n7\tnull\t1\n");
+                        assertFullOutput(compiler, "SELECT a.k,b.k bk,c.k ck" + COMMA_FULL_FROM + " WHERE b.k IS NULL ORDER BY ck", "k\tbk\tck\n7\tnull\t1\n7\tnull\t2\n");
+                        assertFullOutput(compiler, "SELECT a.k,COUNT(*) n,COUNT(b.k) nb,COUNT(c.k) nc,SUM(coalesce(b.k,0)+coalesce(c.k,0)) total" + COMMA_FULL_FROM,
+                                "k\tn\tnb\tnc\ttotal\n7\t3\t1\t2\t10\n");
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralFullDeferredEqualityCarrierWidths() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            execute("INSERT INTO c VALUES (7)");
+            execute("CREATE TABLE d (k INT)");
+            execute("INSERT INTO d VALUES (2),(3)");
+            for (int mode = 0; mode < 2; mode++) {
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    final boolean isFullFat = mode == 1;
+                    compiler.setFullFatJoins(isFullFat);
+                    for (int alias = 0; alias < 2; alias++) {
+                        final String key = alias == 0 ? "k" : "exposed";
+                        final String slave = "(SELECT k AS " + key + " FROM c WHERE k=a.k) s";
+                        final String body = " FROM (SELECT a.k k FROM long_sequence(1)) b FULL JOIN " + slave + " ON b.k=s." + key;
+                        final String wrapper = " FROM a CROSS JOIN LATERAL (SELECT b.k bk,s." + key + " ck" + body + ") l";
+                        assertFullOutput(compiler, "SELECT a.k,l.bk,l.ck" + wrapper, "k\tbk\tck\n7\t7\t7\n");
+                        assertCarrierWidths(compiler, "SELECT COUNT(*) n" + wrapper, "n\n1\n", 1, true, false, isFullFat);
+                        assertCarrierWidths(compiler, "SELECT a.k" + wrapper, "k\n7\n", 1, true, false, isFullFat);
+                        final String rightThenFull = " FROM a CROSS JOIN LATERAL (SELECT b.k bk,s." + key + " ck,d.k dk"
+                                + body.replace("FULL JOIN", "RIGHT JOIN") + " FULL JOIN d ON s." + key + "=d.k) l";
+                        assertCarrierWidths(compiler, "SELECT COUNT(*) n" + rightThenFull, "n\n3\n", 1, true, false, isFullFat);
+                        assertFullOutput(compiler, "SELECT a.k,l.bk,l.ck,l.dk" + rightThenFull + " ORDER BY bk,ck,dk",
+                                "k\tbk\tck\tdk\n7\tnull\tnull\t2\n7\tnull\tnull\t3\n7\t7\t7\tnull\n");
+                        assertFullOutput(compiler, "SELECT a.k,l.bk,l.ck,l.dk FROM a CROSS JOIN LATERAL (SELECT b.k bk,s." + key + " ck,d.k dk"
+                                        + body + " RIGHT JOIN d ON s." + key + "=d.k) l ORDER BY dk",
+                                "k\tbk\tck\tdk\n7\tnull\tnull\t2\n7\tnull\tnull\t3\n");
+                    }
+                    assertFullOutput(compiler, "SELECT a.k,b.k bk,c.k ck" + COMMA_FULL_FROM + " WHERE c.k=a.k", "k\tbk\tck\n7\t7\t7\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralFullLaterReferences() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            execute("CREATE TABLE d AS (SELECT 2 k)");
+            for (int mode = 0; mode < 2; mode++) {
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    compiler.setFullFatJoins(mode == 1);
+                    assertFullOutput(compiler, "SELECT a.k,b.k bk,c.k ck,d.k dk,s.v" + COMMA_FULL_FROM + """
+                             LEFT JOIN d ON d.k=c.k,
+                             LATERAL (SELECT a.k+coalesce(b.k,0)+coalesce(c.k,0) v FROM long_sequence(1)) s
+                             ORDER BY bk,ck
+                            """, "k\tbk\tck\tdk\tv\n7\tnull\t1\tnull\t8\n7\tnull\t2\t2\t9\n7\t7\tnull\tnull\t14\n");
+                    assertFullOutput(compiler, "SELECT a.k,b.k bk,c.k ck,s.v" + COMMA_FULL_FROM + """
+                            , LATERAL (SELECT a.k+coalesce(b.k,0)+coalesce(c.k,0) v FROM (SELECT 99 k) a) s
+                             ORDER BY bk,ck
+                            """, "k\tbk\tck\tv\n7\tnull\t1\t100\n7\tnull\t2\t101\n7\t7\tnull\t106\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralFullNullsAndDuplicates() throws Exception {
+        assertMemoryLeak(() -> {
+            createAKeyOnly("(1,7),(2,7),(3,NULL),(4,8)");
+            execute("CREATE TABLE c (id INT,k INT)");
+            execute("INSERT INTO c VALUES (10,7),(11,7),(12,1),(13,NULL)");
+            final String sql = """
+                    SELECT a.id,b.k bk,b.present,c.id cid,c.k ck
+                    FROM a, LATERAL (SELECT a.k k,1 present FROM long_sequence(1)) b
+                    FULL JOIN c ON b.k=c.k ORDER BY a.id,c.id
+                    """;
+            final String expected = """
+                    id\tbk\tpresent\tcid\tck
+                    1\t7\t1\t10\t7
+                    1\t7\t1\t11\t7
+                    1\tnull\tnull\t12\t1
+                    1\tnull\tnull\t13\tnull
+                    2\t7\t1\t10\t7
+                    2\t7\t1\t11\t7
+                    2\tnull\tnull\t12\t1
+                    2\tnull\tnull\t13\tnull
+                    3\tnull\tnull\t10\t7
+                    3\tnull\tnull\t11\t7
+                    3\tnull\tnull\t12\t1
+                    3\tnull\t1\t13\tnull
+                    4\t8\t1\tnull\tnull
+                    4\tnull\tnull\t10\t7
+                    4\tnull\tnull\t11\t7
+                    4\tnull\tnull\t12\t1
+                    4\tnull\tnull\t13\tnull
+                    """;
+            for (int mode = 0; mode < 2; mode++) {
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    compiler.setFullFatJoins(mode == 1);
+                    assertFullOutput(compiler, sql, expected);
+                    assertFullOutput(compiler, sql.replace("FROM a,", "FROM (SELECT * FROM a WHERE k<0) a,"), "id\tbk\tpresent\tcid\tck\n");
+                    assertFullOutput(compiler, "SELECT COUNT(*) n" + COMMA_FULL_FROM.replace("long_sequence(1)", "long_sequence(1) WHERE a.k<0"), "n\n16\n");
+                    assertFullOutput(compiler, sql.replace("FULL JOIN c", "FULL JOIN (SELECT * FROM c WHERE id<0) c"),
+                            "id\tbk\tpresent\tcid\tck\n1\t7\t1\tnull\tnull\n2\t7\t1\tnull\tnull\n3\tnull\t1\tnull\tnull\n4\t8\t1\tnull\tnull\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralMultipleFullOutputIdentity() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            execute("CREATE TABLE d (k INT)");
+            execute("INSERT INTO d VALUES (2),(3)");
+            final String from = COMMA_FULL_FROM + " FULL JOIN d ON c.k=d.k";
+            final String expected = "k\tbk\tck\tdk\n7\tnull\tnull\t3\n7\tnull\t1\tnull\n7\tnull\t2\t2\n7\t7\tnull\tnull\n";
+            for (int mode = 0; mode < 2; mode++) {
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    compiler.setFullFatJoins(mode == 1);
+                    assertFullOutput(compiler, "SELECT a.k,b.k bk,c.k ck,d.k dk" + from + " ORDER BY bk,ck,dk", expected);
+                    assertFullOutput(compiler, "SELECT a.k,b.k bk,c.k ck,d.k dk" + COMMA_FULL_FROM + " RIGHT JOIN d ON c.k=d.k ORDER BY dk",
+                            "k\tbk\tck\tdk\n7\tnull\t2\t2\n7\tnull\tnull\t3\n");
+                    assertFullOutput(compiler, "SELECT z.k,l.bk,l.ck,l.dk FROM a z CROSS JOIN LATERAL (SELECT b.k bk,c.k ck,d.k dk"
+                                    + from.replace("FROM a,", "FROM (SELECT z.k k) a,") + ") l ORDER BY bk,ck,dk", expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralFullMetadataAndTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT,s SYMBOL,v STRING,ts TIMESTAMP,d DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE c (k INT,ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO a VALUES (7,'tag','value','2020-01-01',1.5)");
+            execute("INSERT INTO c VALUES (1,'2020-01-02')");
+            final String from = " FROM a, LATERAL (SELECT a.k k,a.s s,a.v v,a.ts ts,a.d d FROM long_sequence(1)) b FULL JOIN c ON b.k=c.k";
+            for (int mode = 0; mode < 2; mode++) {
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    compiler.setFullFatJoins(mode == 1);
+                    final String sql = "SELECT a.ts,b.s,b.v,b.ts bts,b.d,c.ts cts" + from + " ORDER BY a.ts,b.k";
+                    try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                        Assert.assertEquals(ColumnType.SYMBOL, factory.getMetadata().getColumnType(1));
+                        Assert.assertEquals(ColumnType.STRING, factory.getMetadata().getColumnType(2));
+                        Assert.assertEquals(ColumnType.TIMESTAMP, factory.getMetadata().getColumnType(3));
+                        Assert.assertEquals(ColumnType.DOUBLE, factory.getMetadata().getColumnType(4));
+                        assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").inferRandomAccess().sizeMayVary().returns("""
+                                ts\ts\tv\tbts\td\tcts
+                                2020-01-01T00:00:00.000000Z\t\t\t\tnull\t2020-01-02T00:00:00.000000Z
+                                2020-01-01T00:00:00.000000Z\ttag\tvalue\t2020-01-01T00:00:00.000000Z\t1.5\t
+                                """);
+                    }
+                    try (RecordCursorFactory factory = compiler.compile("SELECT c.ts" + from, sqlExecutionContext).getRecordCursorFactory()) {
+                        Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+                    }
+                    try (RecordCursorFactory factory = compiler.compile("SELECT l.ts FROM a CROSS JOIN LATERAL (SELECT c.ts FROM (SELECT a.k k) b FULL JOIN c ON b.k=c.k) l", sqlExecutionContext).getRecordCursorFactory()) {
+                        Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralFullCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            execute("CREATE TABLE d AS (SELECT 2 k)");
+            final String sql = "SELECT a.k,b.k bk,c.k ck" + COMMA_FULL_FROM + " ORDER BY bk,ck";
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                assertFullOutput(compiler, sql, COMMA_FULL_ROWS);
+                assertFullOutput(compiler, "SELECT COUNT(*) n" + COMMA_FULL_FROM + " FULL JOIN d ON c.k=d.k", "n\n3\n");
+                assertQuery("SELECT missing FROM a").withCompiler(compiler).noLeakCheck().fails(7, "Invalid column: missing");
+                assertFullOutput(compiler, sql, COMMA_FULL_ROWS);
+            }
+            assertQuery(sql).noLeakCheck().expectSize()
+                    .mutateWith("INSERT INTO c VALUES (7)")
+                    .returns(COMMA_FULL_ROWS, "k\tbk\tck\n7\tnull\t1\n7\tnull\t2\n7\t7\t7\n");
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralFullCarrierWidths() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            execute("CREATE TABLE d (k INT)");
+            execute("INSERT INTO d VALUES (2),(3)");
+            for (int mode = 0; mode < 2; mode++) {
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    final boolean isFullFat = mode == 1;
+                    compiler.setFullFatJoins(isFullFat);
+                    for (int fullCount = 1; fullCount <= 2; fullCount++) {
+                        final String tail = fullCount == 1 ? "" : " FULL JOIN d ON c.k=d.k";
+                        final String columns = fullCount == 1 ? "b.k bk,c.k ck" : "b.k bk,c.k ck,d.k dk";
+                        final String wrapper = " FROM a CROSS JOIN LATERAL (SELECT " + columns
+                                + " FROM (SELECT a.k AS k FROM long_sequence(1)) b FULL JOIN c ON b.k=c.k" + tail + ") l";
+                        final String prefixRows = fullCount == 1 ? "k\n7\n7\n7\n" : "k\n7\n7\n7\n7\n";
+                        final String countRows = "n\n" + (fullCount + 2) + "\n";
+                        assertCarrierWidths(compiler, "SELECT a.k" + COMMA_FULL_FROM + tail, prefixRows, fullCount, false, false, isFullFat);
+                        assertCarrierWidths(compiler, "SELECT COUNT(*) n" + COMMA_FULL_FROM + tail, countRows, fullCount, false, false, isFullFat);
+                        assertCarrierWidths(compiler, "SELECT a.k" + wrapper, prefixRows, fullCount, true, false, isFullFat);
+                        assertCarrierWidths(compiler, "SELECT COUNT(*) n" + wrapper, countRows, fullCount, true, false, isFullFat);
+                        final String rows = fullCount == 1 ? COMMA_FULL_ROWS : "k\tbk\tck\tdk\n7\tnull\tnull\t3\n7\tnull\t1\tnull\n7\tnull\t2\t2\n7\t7\tnull\tnull\n";
+                        final String order = fullCount == 1 ? " ORDER BY bk,ck" : " ORDER BY bk,ck,dk";
+                        assertCarrierWidths(compiler, "SELECT a.k," + columns + COMMA_FULL_FROM + tail + order, rows, fullCount, false, true, isFullFat);
+                        assertCarrierWidths(compiler, "SELECT a.k,l.bk,l.ck" + (fullCount == 1 ? "" : ",l.dk") + wrapper + order, rows, fullCount, true, true, isFullFat);
+                    }
+                }
+            }
         });
     }
 
@@ -1607,7 +1866,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                                   INNER l
                                     keys: [l.__qdb_outer_ref__0_k = o.k]
                                     Project
-                                      columns: [id AS tid, id1 AS rid, __qdb_outer_ref__0_k]
+                                      columns: [t.id AS tid, r.id AS rid, __qdb_outer_ref__0_k]
                                       Project
                                         columns: [t.id, r.id AS id1, case(t.__qdb_outer_ref__marker_0 = null, r.__qdb_outer_ref__0_k, t.__qdb_outer_ref__0_k) AS __qdb_outer_ref__0_k]
                                         Filter
@@ -4719,7 +4978,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                                   INNER m
                                     keys: [m.__qdb_outer_ref__0_id = p.id]
                                     Project
-                                      columns: [id AS aid, id1 AS bid, __qdb_outer_ref__0_id]
+                                      columns: [a.id AS aid, b.id AS bid, __qdb_outer_ref__0_id]
                                       Project
                                         columns: [a.id, b.id AS id1, case(__qdb_outer_ref__0.__qdb_outer_ref__marker_0 = null, b.__qdb_outer_ref__0_id, __qdb_outer_ref__0.__qdb_outer_ref__0_id) AS __qdb_outer_ref__0_id]
                                         Join
@@ -6579,6 +6838,61 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             """
             );
         });
+    }
+
+    private static void collectCarrierProjects(LogicalPlan plan, ObjList<ProjectPlan> carriers) {
+        if (plan instanceof ProjectPlan project) {
+            for (int i = 0; i < project.getExpressions().size(); i++) {
+                if (project.getExpressions().getQuick(i) instanceof FunctionExpression function && function.getName().equals("case")) {
+                    carriers.add(project);
+                    break;
+                }
+            }
+        }
+        for (int i = 0; i < plan.inputCount(); i++) {
+            collectCarrierProjects(plan.inputAt(i), carriers);
+        }
+    }
+
+    private void assertCarrierWidths(SqlCompilerImpl compiler, String sql, String rows, int fullCount, boolean hasWrapper, boolean hasOutputs, boolean isFullFat) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            final ObjList<ProjectPlan> carriers = new ObjList<>();
+            final LogicalPlan root = compiler.getPlanForTesting();
+            collectCarrierProjects(root, carriers);
+            Assert.assertEquals(sql, fullCount, carriers.size());
+            final ProjectPlan last = carriers.getQuick(0);
+            final int width = hasOutputs ? fullCount + 2 : 1;
+            Assert.assertEquals(sql, width, last.getOutput().getColumnCount());
+            Assert.assertEquals(-1, last.getOutput().getTimestampIndex());
+            LogicalPlan parent = root;
+            while (!(parent instanceof JoinPlan)) {
+                Assert.assertEquals(1, parent.inputCount());
+                parent = parent.inputAt(0);
+            }
+            Assert.assertEquals(sql, width + 1, parent.getOutput().getColumnCount());
+            if (hasWrapper) {
+                Assert.assertEquals(sql, width, parent.inputAt(1).getOutput().getColumnCount());
+            }
+            if (fullCount == 2) {
+                // The first split keeps c's later join key, its combined carrier and the next marker.
+                Assert.assertEquals(sql, hasOutputs ? 4 : 3, carriers.getQuick(1).getOutput().getColumnCount());
+                Assert.assertEquals(sql, hasOutputs ? 6 : 5, last.getChild().getOutput().getColumnCount());
+            }
+            if (isFullFat) {
+                final TextPlanSink plan = new TextPlanSink();
+                plan.of(factory, sqlExecutionContext);
+                TestUtils.assertContains(plan.getSink(), "Hash Join");
+                TestUtils.assertContains(plan.getSink(), "Hash Full Outer Join");
+                Assert.assertFalse(plan.getSink().toString().contains("Hash Join Light"));
+            }
+            assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(rows);
+        }
+    }
+
+    private void assertFullOutput(SqlCompiler compiler, String sql, String rows) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(rows);
+        }
     }
 
     private void assertFullJoinCarrier(String type, String value1, String value2) throws Exception {

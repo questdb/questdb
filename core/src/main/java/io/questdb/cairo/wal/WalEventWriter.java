@@ -102,6 +102,20 @@ class WalEventWriter implements Closeable {
         return eventMem.getAppendOffset();
     }
 
+    private static void validateReplaceRange(long minTimestamp, long maxTimestamp, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            if (replaceRangeLowTs >= replaceRangeHiTs) {
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than replace range high timestamp.");
+            }
+            if (replaceRangeLowTs > minTimestamp) {
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than or equal to the minimum timestamp.");
+            }
+            if (replaceRangeHiTs <= maxTimestamp) {
+                throw CairoException.nonCritical().put("Replace range high timestamp must be greater than the maximum timestamp.");
+            }
+        }
+    }
+
     private void appendBindVariableValuesByIndex(BindVariableService bindVariableService) {
         final int count = bindVariableService != null ? bindVariableService.getIndexedVariableCount() : 0;
         eventMem.putInt(count);
@@ -308,6 +322,7 @@ class WalEventWriter implements Closeable {
             long replaceRangeHiTs,
             byte dedupMode
     ) {
+        validateReplaceRange(minTimestamp, maxTimestamp, replaceRangeLowTs, replaceRangeHiTs, dedupMode);
         assert txnType == WalTxnType.MAT_VIEW_DATA || txnType == WalTxnType.DATA || txnType == WalTxnType.LIVE_VIEW_DATA
                 : "unexpected txn type: " + txnType;
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
@@ -327,18 +342,6 @@ class WalEventWriter implements Closeable {
             // maxBaseSeqTxnInBlock (highest base sequencer txn this commit reflects).
             assert lastRefreshBaseTxn != Numbers.LONG_NULL;
             eventMem.putLong(lastRefreshBaseTxn);
-        }
-
-        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-            if (replaceRangeLowTs >= replaceRangeHiTs) {
-                throw CairoException.nonCritical().put("Replace range low timestamp must be less than replace range high timestamp.");
-            }
-            if (replaceRangeLowTs > minTimestamp) {
-                throw CairoException.nonCritical().put("Replace range low timestamp must be less than or equal to the minimum timestamp.");
-            }
-            if (replaceRangeHiTs <= maxTimestamp) {
-                throw CairoException.nonCritical().put("Replace range high timestamp must be greater than the maximum timestamp.");
-            }
         }
 
         writeSymbolMapDiffs();
@@ -536,6 +539,7 @@ class WalEventWriter implements Closeable {
             long replaceRangeHiTs,
             byte dedupMode
     ) {
+        validateReplaceRange(minTimestamp, maxTimestamp, replaceRangeLowTs, replaceRangeHiTs, dedupMode);
         // Jump back to the start of the last event and write the -1 sentinel
         // so that appendData finds it at the expected position.
         // NB: if appendData() throws, the event file is left in a partially

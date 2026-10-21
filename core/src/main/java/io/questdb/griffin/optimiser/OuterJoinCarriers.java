@@ -59,11 +59,9 @@ final class OuterJoinCarriers implements Mutable {
     private final OuterColumnMapping mapping;
     private final OptimiserContext context;
     private final PlanNodePools planNodes;
-    private final ObjList<LogicalPlan> chain;
     private final IntIntHashMap substitution;
     private final DecorrelationContext ctx;
     private final DecorrelationDomains domains;
-    private final IntIntHashMap forwardedIds = new IntIntHashMap();
     private final CorrelationKeys keys;
     private final IntList slaveIds;
     private int markerId;
@@ -76,7 +74,6 @@ final class OuterJoinCarriers implements Mutable {
             OuterColumnMapping mapping,
             OptimiserContext context,
             PlanNodePools planNodes,
-            ObjList<LogicalPlan> chain,
             IntIntHashMap substitution,
             IntList slaveIds
     ) {
@@ -84,7 +81,6 @@ final class OuterJoinCarriers implements Mutable {
         this.mapping = mapping;
         this.context = context;
         this.planNodes = planNodes;
-        this.chain = chain;
         this.substitution = substitution;
         this.domains = domains;
         this.keys = keys;
@@ -94,7 +90,6 @@ final class OuterJoinCarriers implements Mutable {
     @Override
     public void clear() {
         carrierIds.clear();
-        forwardedIds.clear();
         markerId = -1;
         slaveMarkerId = -1;
     }
@@ -227,7 +222,7 @@ final class OuterJoinCarriers implements Mutable {
      * columns and computes each carrier, and the step's post-join filter above the projection. Returns the projection,
      * or the filter, when the FULL step is the last step; otherwise the join, which leads with that plan.
      */
-    private LogicalPlan split(JoinPlan join, int full, int base, int chainBase, boolean isMarked, int position) throws SqlException {
+    private LogicalPlan split(JoinPlan join, int full, int base, boolean isMarked, int position) throws SqlException {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         final ObjList<JoinInput> inputs = join.getInputs();
         final JoinInput fullStep = ordered.getQuick(full);
@@ -244,9 +239,15 @@ final class OuterJoinCarriers implements Mutable {
             }
         }
         final OutputSchema nestedOutput = nested.getOutput();
-        forwardedIds.clear();
-        final ProjectPlan project = ctx.forwardingProjection(nested, forwardedIds, position);
+        final ProjectPlan project = planNodes.projects.next().of(nested, position);
         final OutputSchema output = project.getOutput();
+        // Consumers outside this block already bind these IDs. Only computed carriers need new identities.
+        for (int i = 0, n = nestedOutput.getColumnCount(); i < n; i++) {
+            final int columnId = nestedOutput.getColumnId(i);
+            final int type = nestedOutput.getColumnType(i);
+            project.getExpressions().add(planNodes.columns.next().of(columnId, type, position));
+            output.add(columnId, nestedOutput.getColumnName(i), type, nestedOutput.getMetadata(i), nestedOutput.isVisible(i), nestedOutput.getColumnQualifier(i));
+        }
         ctx.uniqueNames(output);
         final IntList outerIds = domains.outerIds();
         for (int i = 0, n = outerIds.size(); i < n; i++) {
@@ -265,7 +266,6 @@ final class OuterJoinCarriers implements Mutable {
             markerId = context.newColumnId();
             output.add(markerId, markerName(), ColumnType.LONG, false);
         }
-        mapping.remapColumns(base, forwardedIds);
 
         LogicalPlan top = project;
         final BoundExpression where = fullStep.getPostJoinFilter();
@@ -275,11 +275,8 @@ final class OuterJoinCarriers implements Mutable {
             for (int i = 0, n = outerIds.size(); i < n; i++) {
                 substitution.put(outerIds.getQuick(i), carrierIds.getQuick(i));
             }
-            final BoundExpression predicate = context.getRewriter().remapColumns(context.getRewriter().remapColumns(where, forwardedIds), substitution);
+            final BoundExpression predicate = context.getRewriter().remapColumns(where, substitution);
             top = planNodes.filters.next().of(project, predicate, position);
-        }
-        for (int i = chainBase, n = chain.size(); i < n; i++) {
-            ctx.remap(chain.getQuick(i), forwardedIds);
         }
         if (full == ordered.size() - 1) {
             return top;
@@ -293,7 +290,6 @@ final class OuterJoinCarriers implements Mutable {
         final JoinInput leading = planNodes.joinInputs.next().of(top, JoinKind.CROSS, null, position);
         inputs.insert(0, 1, leading);
         ordered.insert(0, 1, leading);
-        ctx.remap(join, forwardedIds);
         join.addMissingInputColumns();
         return join;
     }
@@ -303,7 +299,7 @@ final class OuterJoinCarriers implements Mutable {
      * a block and keys the block's deferred inputs on them; the mapping stack then maps each outer column to its
      * carrier at the join's output. Returns the block's new source.
      */
-    LogicalPlan place(JoinPlan join, int base, int deferredBase, int chainBase) throws SqlException {
+    LogicalPlan place(JoinPlan join, int base, int deferredBase) throws SqlException {
         final IntList outerIds = domains.outerIds();
         final int position = join.getPosition();
         carrierIds.setAll(outerIds.size(), -1);
@@ -369,7 +365,7 @@ final class OuterJoinCarriers implements Mutable {
                 p++;
                 continue;
             }
-            source = split(join, p, base, chainBase, isMarked, position);
+            source = split(join, p, base, isMarked, position);
             if (source != join) {
                 break;
             }

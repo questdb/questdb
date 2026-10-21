@@ -171,7 +171,7 @@ final class Decorrelation implements OptimiserPass {
         domains = new DecorrelationDomains(ctx, mapping, context, planNodes, tmpSteps);
         final IntList ids = new IntList();
         keys = new CorrelationKeys(ctx, mapping, context, tmpPairs, ids);
-        carriers = new OuterJoinCarriers(ctx, domains, keys, mapping, context, planNodes, chain, substitution, ids);
+        carriers = new OuterJoinCarriers(ctx, domains, keys, mapping, context, planNodes, substitution, ids);
         compensation = new ScalarCompensation(ctx, domains, mapping, context, planNodes, chain, tmpIndexes, substitution, outerColumnReads, consumerRemap);
         rewriter = new CorrelatedChainRewriter(ctx, keys, compensation, mapping, context, planNodes, chain, substitution);
     }
@@ -926,7 +926,7 @@ final class Decorrelation implements OptimiserPass {
         }
         if (source instanceof JoinPlan join && LogicalPlans.lastMasterNullingStep(join) > -1
                 && (domains.outerIds().size() > 0 || keys.deferredMark() > deferredBase)) {
-            return carriers.place(join, base, deferredBase, chainBase);
+            return carriers.place(join, base, deferredBase);
         }
         if (domains.outerIds().size() == 0) {
             return source;

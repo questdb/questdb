@@ -37,7 +37,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
@@ -287,6 +290,57 @@ public class ProjectionTest extends AbstractCairoTest {
             assertProjection("SELECT id+1 AS v FROM lp_projection ORDER BY 1", "v\nnull\n2\n2\n3\n4\n");
             assertProjection("SELECT id+1 AS v,label FROM lp_projection ORDER BY v,ts DESC", "v\tlabel\nnull\t\n2\ta2\n2\ta\n3\tb\n4\tc\n");
             assertProjection("SELECT id+1 AS v FROM lp_projection ORDER BY id+2 DESC", "v\n4\n3\n2\n2\nnull\n");
+        });
+    }
+
+    @Test
+    public void testPruningKeepsProjectionAliasClosure() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows(engine, sqlExecutionContext);
+            assertQuery("""
+                    SELECT diamond FROM (
+                        SELECT p.id AS base, base+1 AS left_value, base+2 AS right_value,
+                               left_value+right_value AS diamond
+                        FROM lp_projection p CROSS JOIN (SELECT 99 AS id) q
+                    ) ORDER BY diamond
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("diamond\nnull\n5\n7\n9\n");
+            // The random value varies, but two reads of its alias must agree on every cursor pass.
+            assertQuery("SELECT same FROM (SELECT rnd_int() AS r, r AS r2, r=r2 AS same FROM long_sequence(5))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("memoize(")
+                    .returns("same\ntrue\ntrue\ntrue\ntrue\ntrue\n");
+        });
+    }
+
+    @Test
+    public void testPruningWindowInputOnlyForward() throws Exception {
+        assertMemoryLeak(() -> {
+            final String sql = "SELECT prev FROM (SELECT x, x+1 AS adjusted, lag(adjusted) OVER () AS prev FROM long_sequence(3))";
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                LogicalPlan plan = compiler.getPlanForTesting();
+                while (!(plan instanceof WindowPlan) && plan.inputCount() == 1) {
+                    plan = plan.inputAt(0);
+                }
+                Assert.assertTrue(plan instanceof WindowPlan);
+                Assert.assertTrue(plan.inputAt(0) instanceof ProjectPlan);
+                final ProjectPlan input = (ProjectPlan) plan.inputAt(0);
+                // The window reads adjusted1, which aliases adjusted; neither is an input-only forward.
+                Assert.assertEquals(2, input.getOutput().getColumnCount());
+                Assert.assertEquals("adjusted", input.getOutput().getColumnName(0).toString());
+                Assert.assertTrue(input.getExpressions().getQuick(1) instanceof ColumnExpression);
+                Assert.assertEquals(input.getOutput().getColumnId(0), ((ColumnExpression) input.getExpressions().getQuick(1)).getColumnId());
+                Assert.assertEquals(-1, input.getOutput().getColumnIndexQuiet("x"));
+                Assert.assertTrue(input.getChild().getOutput().getColumnIndexQuiet("x") >= 0);
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("prev\nnull\n2\n3\n");
+            }
         });
     }
 

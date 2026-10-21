@@ -3369,6 +3369,26 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloorExclusiveHighMicros() throws Exception {
+        assertMemoryLeak(() -> assertFloorExclusiveHigh(false));
+    }
+
+    @Test
+    public void testFloorExclusiveHighNanos() throws Exception {
+        assertMemoryLeak(() -> assertFloorExclusiveHigh(true));
+    }
+
+    @Test
+    public void testFloorUnshiftedControlMicros() throws Exception {
+        assertMemoryLeak(() -> assertFloorUnshiftedControl(false));
+    }
+
+    @Test
+    public void testFloorUnshiftedControlNanos() throws Exception {
+        assertMemoryLeak(() -> assertFloorUnshiftedControl(true));
+    }
+
+    @Test
     public void testFullRefresh() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -10529,6 +10549,78 @@ public class MatViewTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    private void assertFloorExclusiveHigh(boolean isNanos) throws Exception {
+        // Recovery needs one query over the widened envelope, not randomized one-day batches.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        createFloorBase(isNanos);
+        final String suffix = isNanos ? ".000000000Z" : ".000000Z";
+        final String query = "SELECT timestamp_floor('1d', to_timezone(ts, 'Europe/Berlin')) bucket, count() c FROM t";
+        final String initial = "bucket\tc\n2024-03-01T00:00:00" + suffix + "\t46\n2024-03-02T00:00:00" + suffix + "\t2\n";
+        assertQuery(query + " ORDER BY bucket").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(initial);
+        execute("CREATE MATERIALIZED VIEW mv WITH BASE t AS (" + query + ") PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        assertFloorRangeError();
+        assertQuery("SELECT count() FROM mv").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        execute("ALTER MATERIALIZED VIEW mv RESUME WAL");
+        execute("REFRESH MATERIALIZED VIEW mv FULL");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        assertFloorRangeError();
+        assertQuery("SELECT count() FROM mv").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+        // Real source data widens the FULL envelope so that every output bucket fits.
+        execute("INSERT INTO t VALUES (99, '2024-03-03T12:00:00Z')");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        execute("REFRESH MATERIALIZED VIEW mv FULL");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("valid");
+        final String recovered = initial + "2024-03-03T00:00:00" + suffix + "\t1\n";
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(recovered);
+
+        // RANGE rounds the high to March 2; rejection must preserve the recovered rows.
+        execute("REFRESH MATERIALIZED VIEW mv RANGE FROM '2024-03-01' TO '2024-03-01T23:59:59."
+                + (isNanos ? "999999999" : "999999") + "Z'");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        assertFloorRangeError();
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(recovered);
+    }
+
+    private void assertFloorRangeError() throws Exception {
+        assertQuery("SELECT invalidation_reason LIKE '[-1]: timestamp out of replace range%' has_range_error FROM materialized_views() WHERE view_name = 'mv'")
+                .noLeakCheck().inferRandomAccess().sizeMayVary().returns("has_range_error\ntrue\n");
+    }
+
+    private void assertFloorUnshiftedControl(boolean isNanos) throws Exception {
+        createFloorBase(isNanos);
+        final String suffix = isNanos ? ".000000000Z" : ".000000Z";
+        execute("CREATE MATERIALIZED VIEW mv WITH BASE t AS (SELECT timestamp_floor('1d', ts) bucket, count() c FROM t) PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("valid");
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize()
+                .returns("bucket\tc\n2024-03-01T00:00:00" + suffix + "\t48\n");
+        execute("INSERT INTO t VALUES (99, '2024-03-01T12:00:00Z'), (100, '2024-03-02T12:00:00Z')");
+        drainWalAndMatViewQueues();
+        final String expected = "bucket\tc\n2024-03-01T00:00:00" + suffix + "\t49\n2024-03-02T00:00:00" + suffix + "\t1\n";
+        assertFloorViewState("valid");
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(expected);
+        execute("REFRESH MATERIALIZED VIEW mv FULL");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("valid");
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(expected);
+    }
+
+    private void assertFloorViewState(String status) throws Exception {
+        assertQuery("SELECT suspended, writerTxn = sequencerTxn caught_up FROM wal_tables() WHERE name = 'mv'")
+                .noLeakCheck().inferRandomAccess().sizeMayVary().returns("suspended\tcaught_up\nfalse\ttrue\n");
+        assertQuery("SELECT view_status FROM materialized_views() WHERE view_name = 'mv'")
+                .noLeakCheck().inferRandomAccess().sizeMayVary().returns("view_status\n" + status + "\n");
+    }
+
     private void assertGroupByTimestampFloorViews(int viewCount, String expected) throws Exception {
         assertQuery("SELECT view_name, invalidation_reason FROM materialized_views() WHERE view_status <> 'valid'")
                 .noRandomAccess()
@@ -10571,6 +10663,14 @@ public class MatViewTest extends AbstractCairoTest {
         return "create table " + tableName + " as (" + generateSelectSql(columns, startTs, step, 0, count) + ")" +
                 indexStr +
                 " timestamp(k) partition by DAY WAL";
+    }
+
+    private void createFloorBase(boolean isNanos) throws SqlException {
+        final String type = isNanos ? "TIMESTAMP_NS" : "TIMESTAMP";
+        execute("CREATE TABLE t (v DOUBLE, ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO t SELECT x, " + (isNanos ? "timestamp_sequence_ns" : "timestamp_sequence")
+                + "('2024-03-01T00:00:00Z'::" + type + ", " + (isNanos ? "1_800_000_000_000L" : "1_800_000_000L") + ") FROM long_sequence(48)");
+        drainWalAndMatViewQueues();
     }
 
     private void createNonDeterministicFunctionBase() throws SqlException {
