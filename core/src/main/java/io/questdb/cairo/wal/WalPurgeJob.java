@@ -468,7 +468,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                     throw ex;
                 }
-                final long safeToPurgeTxn = getSafeToPurgeUpToTxn(txReader.getSeqTxn());
+                final long safeToPurgeTxn = Math.min(
+                        getSafeToPurgeUpToTxn(txReader.getSeqTxn()),
+                        getExternalConsumerFloor(tableToken)
+                );
                 LOG.debug().$("checking outstanding WAL transactions [table=").$(tableToken)
                         .$(", writerTxn=").$(safeToPurgeTxn)
                         .I$();
@@ -711,6 +714,20 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
         // V1 sequencer (txnPartSize == 0) has no seq part files, so return MAX_VALUE
         // to make `seqPart < currentSeqPart` always true, purging any stray V2 parts.
+        return Long.MAX_VALUE;
+    }
+
+    /**
+     * Returns the highest sequencer transaction, inclusive, whose WAL segments and sequencer parts an external
+     * consumer of this table no longer needs. The sweep purges a table up to the lower of this value and the
+     * table's own purge floor (its applied transaction and the floors of its dependent views), so a subclass that
+     * returns a lower value holds every segment and sequencer part that carries a later transaction.
+     * {@code Long.MAX_VALUE}, the default, holds nothing. The sweep calls this method once per table from its own
+     * thread, after it read the table's committed transaction; an override returns a value of 0 or more, must not
+     * block, and must have made a value durable before it returns it, so that a restart cannot purge what the
+     * consumer still needs.
+     */
+    protected long getExternalConsumerFloor(TableToken tableToken) {
         return Long.MAX_VALUE;
     }
 
