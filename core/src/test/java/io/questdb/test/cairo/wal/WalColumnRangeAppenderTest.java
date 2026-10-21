@@ -224,6 +224,64 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefusesSecondRangeForSameColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "twice", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final int rows = 3;
+            final long values = Unsafe.malloc(rows * 8L, MemoryTag.NATIVE_DEFAULT);
+            final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (WalWriter writer = engine.getWalWriter(token)) {
+                for (int i = 0; i < rows; i++) {
+                    Unsafe.putLong(values + i * 8L, 20L + i);
+                    putPair(pairs, i, TS0 + i * SECOND, i);
+                }
+                try (WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)) {
+                    appender.begin(rows);
+                    appender.putFixedRange(0, values, rows * 8L);
+                    try {
+                        appender.putFixedRange(0, values, rows * 8L);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "column already written in this block [column=0]");
+                    }
+                    appender.putTimestampRange(1, pairs, 0);
+                    try {
+                        appender.putTimestampRange(1, pairs, 0);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "column already written in this block [column=1]");
+                    }
+                    appender.cancel();
+                    Assert.assertEquals(0, writer.getSegmentRowCount());
+
+                    appender.begin(rows);
+                    appender.putFixedRange(0, values, rows * 8L);
+                    appender.putTimestampRange(1, pairs, 0);
+                    appender.finish(TS0, TS0 + 2 * SECOND, false);
+                }
+                writer.commit();
+            } finally {
+                Unsafe.free(values, rows * 8L, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(pairs, rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT a FROM twice")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            20
+                            21
+                            22
+                            """);
+        });
+    }
+
+    @Test
     public void testRefusesTimestampRangeOnOtherColumn() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = createTable(new TableModel(configuration, "other", PartitionBy.HOUR)
@@ -250,6 +308,50 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                 }
                 appender.cancel();
             }
+        });
+    }
+
+    @Test
+    public void testRewritesTimestampRowsOfASourceRangeStartingLater() throws Exception {
+        // the source segment's rows 100 to 102 land at segment row 0: the pairs must carry rows 0 to 2, which the
+        // out-of-order apply reads to find each timestamp's value
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "later", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final int rows = 3;
+            final long values = Unsafe.malloc(rows * 8L, MemoryTag.NATIVE_DEFAULT);
+            final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (WalWriter writer = engine.getWalWriter(token)) {
+                final long[] timestamps = {TS0 + 2 * SECOND, TS0, TS0 + SECOND};
+                for (int i = 0; i < rows; i++) {
+                    Unsafe.putLong(values + i * 8L, 1L + i);
+                    putPair(pairs, i, timestamps[i], 100 + i);
+                }
+                try (WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)) {
+                    appender.begin(rows);
+                    appender.putFixedRange(0, values, rows * 8L);
+                    appender.putTimestampRange(1, pairs, 100);
+                    appender.finish(TS0, TS0 + 2 * SECOND, true);
+                }
+                writer.commit();
+            } finally {
+                Unsafe.free(values, rows * 8L, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(pairs, rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, ts FROM later")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            2\t2026-01-01T00:00:00.000000Z
+                            3\t2026-01-01T00:00:01.000000Z
+                            1\t2026-01-01T00:00:02.000000Z
+                            """);
         });
     }
 
