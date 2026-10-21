@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
@@ -46,6 +47,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
@@ -688,6 +690,122 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testInsertAsSelectNulls0);
     }
 
+    @Test(timeout = 120_000)
+    public void testLastPartitionAppendMapFailOnLastLiveColumnContended() throws Exception {
+        // O3 append to the last partition of a table without a dropped column; mapping the destination
+        // of the designated timestamp, the last live column, fails. That column's own task releases the
+        // last unit of the partition's column counter and clocks the partition down. A second clock-down
+        // by the append loop's error path would leave rollback() seeing O3 partition updates in flight,
+        // and the writer distressed.
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        final AtomicBoolean isArmed = new AtomicBoolean(false);
+        final AtomicLong tsFd = new AtomicLong(-1);
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> {
+                    engine.execute(
+                            "CREATE TABLE x (a INT, b LONG, ts " + timestampTypeName + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                            sqlExecutionContext
+                    );
+                    engine.execute(
+                            """
+                                    INSERT INTO x VALUES
+                                    (1, 1, '1970-01-01T00:00:00.000000Z'),
+                                    (2, 2, '1970-01-01T02:00:00.000000Z')
+                                    """,
+                            sqlExecutionContext
+                    );
+                    try (TableWriter w = TestUtils.getWriter(engine, "x")) {
+                        appendO3RowsToLastPartition(w);
+                        isArmed.set(true);
+                        try {
+                            w.commit();
+                            Assert.fail("the commit must fail");
+                        } catch (CairoException e) {
+                            Assert.assertFalse("the injected failure did not fire", isArmed.get());
+                        }
+                        w.rollback();
+                        Assert.assertFalse(w.isDistressed());
+                        new QueryAssertion(engine, sqlExecutionContext, () -> {
+                        }, "SELECT count(), sum(a), sum(b) FROM x")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("""
+                                        count\tsum\tsum1
+                                        2\t3\t3
+                                        """);
+
+                        appendO3RowsToLastPartition(w);
+                        w.commit();
+                    }
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "SELECT count(), sum(a), sum(b) FROM x")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count\tsum\tsum1
+                                    2002\t2001003\t2001003
+                                    """);
+                },
+                new TestFilesFacadeImpl() {
+                    @Override
+                    public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                        if (fd == tsFd.get() && memoryTag == MemoryTag.MMAP_O3 && (flags & Files.MAP_RW) != 0 && isArmed.compareAndSet(true, false)) {
+                            return -1;
+                        }
+                        return super.mmap(fd, len, offset, flags, memoryTag);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name, int opts) {
+                        final long fd = super.openRW(name, opts);
+                        if (Utf8s.containsAscii(name, "1970-01-01") && Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")) {
+                            tsFd.set(fd);
+                        }
+                        return fd;
+                    }
+                }
+        );
+    }
+
+    @Test(timeout = 120_000)
+    public void testLastPartitionAppendMapFailWithDroppedColumnContended() throws Exception {
+        // non-WAL twin of testWalLastPartitionAppendMapFailWithDroppedColumnContended: the commit runs
+        // the same O3 append inside TableWriter.commit() and must fail, not wait forever
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        final AtomicBoolean isArmed = new AtomicBoolean(false);
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testLastPartitionAppendMapFailWithDroppedColumn0(
+                        engine,
+                        sqlExecutionContext,
+                        timestampTypeName,
+                        isArmed,
+                        false
+                ),
+                newO3MapRwFailureFF(isArmed)
+        );
+    }
+
+    @Test(timeout = 120_000)
+    public void testMidMergeOpenRwFailBeforeDroppedColumnContended() throws Exception {
+        // non-WAL twin of testWalMidMergeOpenRwFailBeforeDroppedColumnContended
+        final AtomicBoolean isArmed = new AtomicBoolean(false);
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testMidMergeOpenRwFailBeforeDroppedColumn0(
+                        engine,
+                        sqlExecutionContext,
+                        timestampTypeName,
+                        isArmed,
+                        false
+                ),
+                newMidPartitionOpenRwFailureFF(isArmed)
+        );
+    }
+
     @Test
     public void testOOOFollowedByAnotherOOO() throws Exception {
         counter.set(1);
@@ -1069,6 +1187,121 @@ public class O3FailureTest extends AbstractO3Test {
         );
     }
 
+    @Test(timeout = 120_000)
+    public void testWalLastPartitionAppendMapFailWithDroppedColumnContended() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        final AtomicBoolean isArmed = new AtomicBoolean(false);
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testLastPartitionAppendMapFailWithDroppedColumn0(
+                        engine,
+                        sqlExecutionContext,
+                        timestampTypeName,
+                        isArmed,
+                        true
+                ),
+                newO3MapRwFailureFF(isArmed)
+        );
+    }
+
+    @Test(timeout = 120_000)
+    public void testWalLastPartitionAppendMapFailWithDroppedColumnParallel() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        final AtomicBoolean isArmed = new AtomicBoolean(false);
+        executeWithPool(
+                4,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testLastPartitionAppendMapFailWithDroppedColumn0(
+                        engine,
+                        sqlExecutionContext,
+                        timestampTypeName,
+                        isArmed,
+                        true
+                ),
+                newO3MapRwFailureFF(isArmed)
+        );
+    }
+
+    @Test(timeout = 120_000)
+    public void testWalMidMergeOpenRwFailBeforeDroppedColumnContended() throws Exception {
+        final AtomicBoolean isArmed = new AtomicBoolean(false);
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testMidMergeOpenRwFailBeforeDroppedColumn0(
+                        engine,
+                        sqlExecutionContext,
+                        timestampTypeName,
+                        isArmed,
+                        true
+                ),
+                newMidPartitionOpenRwFailureFF(isArmed)
+        );
+    }
+
+    @Test(timeout = 120_000)
+    public void testWalMidMergeOpenRwFailBeforeDroppedColumnParallel() throws Exception {
+        // The open-column queue has no capacity, so the thread that merges 1970-01-01 (a worker, or the
+        // writer, which runs queued partition tasks while it waits) opens its columns inline and runs the
+        // publisher's error path while the merge of 1970-01-02, part of the same commit, can be in flight
+        // on another thread
+        o3OpenColumnQueueCapacity = 0;
+        final AtomicBoolean isArmed = new AtomicBoolean(false);
+        executeWithPool(
+                4,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> {
+                    engine.execute(
+                            "CREATE TABLE x (a INT, b INT, c INT, ts " + timestampTypeName + ") TIMESTAMP(ts) PARTITION BY DAY WAL",
+                            sqlExecutionContext
+                    );
+                    engine.execute(
+                            """
+                                    INSERT INTO x VALUES
+                                    (1, 1, 1, '1970-01-01T00:00:00.000000Z'),
+                                    (2, 2, 2, '1970-01-01T02:00:00.000000Z'),
+                                    (3, 3, 3, '1970-01-02T00:00:00.000000Z'),
+                                    (4, 4, 4, '1970-01-02T02:00:00.000000Z'),
+                                    (5, 5, 5, '1970-01-03T00:00:00.000000Z')
+                                    """,
+                            sqlExecutionContext
+                    );
+                    engine.execute("ALTER TABLE x DROP COLUMN c", sqlExecutionContext);
+                    assertO3InsertFailsAndRecovers(
+                            engine,
+                            sqlExecutionContext,
+                            isArmed,
+                            true,
+                            "INSERT INTO x VALUES (6, 6, '1970-01-01T01:00:00.000000Z'), (7, 7, '1970-01-02T01:00:00.000000Z')"
+                    );
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "SELECT a, b FROM x")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    a\tb
+                                    1\t1
+                                    6\t6
+                                    2\t2
+                                    3\t3
+                                    7\t7
+                                    4\t4
+                                    5\t5
+                                    """);
+                },
+                newMidPartitionOpenRwFailureFF(isArmed)
+        );
+    }
+
+    // one batch newer than the table's last row, in descending timestamp order, so the commit runs the
+    // O3 append to the last partition
+    private static void appendO3RowsToLastPartition(TableWriter w) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(w.getTimestampType());
+        for (int i = 1; i <= 2_000; i++) {
+            final TableWriter.Row row = w.newRow(driver.fromMicros(18_000_000_000L - (i - 1) * 1_000_000L));
+            row.putInt(0, i);
+            row.putLong(1, i);
+            row.append();
+        }
+    }
+
     private static void assertO3DataConsistency(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -1095,6 +1328,44 @@ public class O3FailureTest extends AbstractO3Test {
                 null,
                 null
         );
+    }
+
+    /**
+     * Runs an out-of-order insert into table x while the file failure armed by {@code isArmed} fires
+     * once, then checks that the table recovers: a WAL table suspends and applies the insert after
+     * RESUME WAL, a non-WAL table fails the insert and accepts it again.
+     */
+    private static void assertO3InsertFailsAndRecovers(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            AtomicBoolean isArmed,
+            boolean isWal,
+            String o3Insert
+    ) throws SqlException {
+        if (isWal) {
+            drainWalQueue(engine);
+            final TableToken tableToken = engine.verifyTableName("x");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            isArmed.set(true);
+            engine.execute(o3Insert, sqlExecutionContext);
+            drainWalQueue(engine);
+            Assert.assertFalse("the injected failure did not fire", isArmed.get());
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            engine.execute("ALTER TABLE x RESUME WAL", sqlExecutionContext);
+            drainWalQueue(engine);
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        } else {
+            isArmed.set(true);
+            try {
+                engine.execute(o3Insert, sqlExecutionContext);
+                Assert.fail("the insert must fail");
+            } catch (CairoException e) {
+                Assert.assertFalse("the injected failure did not fire", isArmed.get());
+            }
+            engine.execute(o3Insert, sqlExecutionContext);
+        }
     }
 
     private static void assertXCountAndMax(
@@ -3142,6 +3413,91 @@ public class O3FailureTest extends AbstractO3Test {
         assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
+    private static void testLastPartitionAppendMapFailWithDroppedColumn0(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName,
+            AtomicBoolean isArmed,
+            boolean isWal
+    ) throws Exception {
+        // O3 append to the last partition of a table with a dropped column; mapping the destination of
+        // column 'a' fails. The small append page makes the append map the column file instead of
+        // writing into the already mapped page.
+        engine.execute(
+                "CREATE TABLE x (a INT, b INT, c INT, ts " + timestampTypeName + ") TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                sqlExecutionContext
+        );
+        engine.execute(
+                """
+                        INSERT INTO x VALUES
+                        (1, 1, 1, '1970-01-01T00:00:00.000000Z'),
+                        (2, 2, 2, '1970-01-01T02:00:00.000000Z')
+                        """,
+                sqlExecutionContext
+        );
+        engine.execute("ALTER TABLE x DROP COLUMN c", sqlExecutionContext);
+        // one batch newer than the table's last row, in descending timestamp order
+        assertO3InsertFailsAndRecovers(
+                engine,
+                sqlExecutionContext,
+                isArmed,
+                isWal,
+                "INSERT INTO x SELECT x::INT, x::INT, timestamp_sequence(18_000_000_000L, -1_000_000L)::" + timestampTypeName + " FROM long_sequence(2_000)"
+        );
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "SELECT count(), sum(a), sum(b) FROM x")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count\tsum\tsum1
+                        2002\t2001003\t2001003
+                        """);
+    }
+
+    private static void testMidMergeOpenRwFailBeforeDroppedColumn0(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName,
+            AtomicBoolean isArmed,
+            boolean isWal
+    ) throws Exception {
+        // O3 merge into the mid partition 1970-01-01; opening column 'a', which sits before the
+        // dropped column 'c', fails
+        engine.execute(
+                "CREATE TABLE x (a INT, b INT, c INT, ts " + timestampTypeName + ") TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                sqlExecutionContext
+        );
+        engine.execute(
+                """
+                        INSERT INTO x VALUES
+                        (1, 1, 1, '1970-01-01T00:00:00.000000Z'),
+                        (2, 2, 2, '1970-01-01T02:00:00.000000Z'),
+                        (3, 3, 3, '1970-01-02T00:00:00.000000Z')
+                        """,
+                sqlExecutionContext
+        );
+        engine.execute("ALTER TABLE x DROP COLUMN c", sqlExecutionContext);
+        assertO3InsertFailsAndRecovers(
+                engine,
+                sqlExecutionContext,
+                isArmed,
+                isWal,
+                "INSERT INTO x VALUES (4, 4, '1970-01-01T01:00:00.000000Z')"
+        );
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "SELECT a, b FROM x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        a\tb
+                        1\t1
+                        4\t4
+                        2\t2
+                        3\t3
+                        """);
+    }
+
     private static void testOooFollowedByAnotherOOO0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -3827,6 +4183,32 @@ public class O3FailureTest extends AbstractO3Test {
                     LOG
             );
         });
+    }
+
+    // fails, once, the open of column 'a' in a new version of partition 1970-01-01, as an O3 merge does
+    private static FilesFacade newMidPartitionOpenRwFailureFF(AtomicBoolean isArmed) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (Utf8s.containsAscii(name, "1970-01-01.") && Utf8s.endsWithAscii(name, Files.SEPARATOR + "a.d") && isArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+    }
+
+    // fails, once, the first read-write O3 mapping, as an O3 append to the last partition does for column 'a'
+    private static FilesFacade newO3MapRwFailureFF(AtomicBoolean isArmed) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (memoryTag == MemoryTag.MMAP_O3 && (flags & Files.MAP_RW) != 0 && isArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
     }
 
     private FilesFacade failToFSync(String fileName) {

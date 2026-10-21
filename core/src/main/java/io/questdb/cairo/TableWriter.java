@@ -10457,7 +10457,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             throw e;
                         }
 
-                        columnCounter.set(compressColumnCount(metadata));
+                        // columnCounter counts live columns only, so the error path releases the units of
+                        // the live columns never handed off, not of the dropped ones
+                        final int liveColumnCount = compressColumnCount(metadata);
+                        columnCounter.set(liveColumnCount);
                         Path pathToPartition = Path.getThreadLocal(path);
                         setPathForNativePartition(
                                 pathToPartition,
@@ -10469,39 +10472,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final int plen = pathToPartition.size();
                         int columnsPublished = 0;
                         long minTimestamp = isCommitReplaceMode() ? txWriter.getMinTimestamp() : o3TimestampMin;
-                        for (int i = 0; i < columnCount; i++) {
-                            final int columnType = metadata.getColumnType(i);
-                            if (columnType < 0) {
-                                continue;
-                            }
-                            final int colOffset = TableWriter.getPrimaryColumnIndex(i);
-                            final boolean notTheTimestamp = i != timestampIndex;
-                            final CharSequence columnName = metadata.getColumnName(i);
-                            final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
-                            final IndexWriter indexWriter = indexBlockCapacity > -1 ? getIndexWriter(i) : null;
-                            final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
-                            final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
-                            final MemoryMA mem1 = columns.getQuick(colOffset);
-                            final MemoryMA mem2 = columns.getQuick(colOffset + 1);
-                            final long srcDataTop = getColumnTop(i);
-                            final long srcOooFixAddr;
-                            final long srcOooVarAddr;
-                            final MemoryMA dstFixMem;
-                            final MemoryMA dstVarMem;
-                            if (!ColumnType.isVarSize(columnType)) {
-                                srcOooFixAddr = notTheTimestamp ? oooMem1.addressOf(0) : sortedTimestampsAddr;
-                                srcOooVarAddr = 0;
-                                dstFixMem = mem1;
-                                dstVarMem = null;
-                            } else {
-                                srcOooFixAddr = oooMem2.addressOf(0);
-                                srcOooVarAddr = oooMem1.addressOf(0);
-                                dstFixMem = mem2;
-                                dstVarMem = mem1;
-                            }
+                        try {
+                            for (int i = 0; i < columnCount; i++) {
+                                final int columnType = metadata.getColumnType(i);
+                                if (columnType < 0) {
+                                    continue;
+                                }
+                                final int colOffset = TableWriter.getPrimaryColumnIndex(i);
+                                final boolean notTheTimestamp = i != timestampIndex;
+                                final CharSequence columnName = metadata.getColumnName(i);
+                                final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
+                                final IndexWriter indexWriter = indexBlockCapacity > -1 ? getIndexWriter(i) : null;
+                                final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
+                                final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
+                                final MemoryMA mem1 = columns.getQuick(colOffset);
+                                final MemoryMA mem2 = columns.getQuick(colOffset + 1);
+                                final long srcDataTop = getColumnTop(i);
+                                final long srcOooFixAddr;
+                                final long srcOooVarAddr;
+                                final MemoryMA dstFixMem;
+                                final MemoryMA dstVarMem;
+                                if (!ColumnType.isVarSize(columnType)) {
+                                    srcOooFixAddr = notTheTimestamp ? oooMem1.addressOf(0) : sortedTimestampsAddr;
+                                    srcOooVarAddr = 0;
+                                    dstFixMem = mem1;
+                                    dstVarMem = null;
+                                } else {
+                                    srcOooFixAddr = oooMem2.addressOf(0);
+                                    srcOooVarAddr = oooMem1.addressOf(0);
+                                    dstFixMem = mem2;
+                                    dstVarMem = mem1;
+                                }
 
-                            columnsPublished++;
-                            try {
+                                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, i);
+                                // from here appendLastPartition() owns the column's unit, also when it throws
+                                columnsPublished++;
                                 O3OpenColumnJob.appendLastPartition(
                                         pathToPartition,
                                         plen,
@@ -10525,16 +10530,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         0,
                                         this,
                                         indexWriter,
-                                        getColumnNameTxn(partitionTimestamp, i),
+                                        columnNameTxn,
                                         partitionUpdateSinkAddr
                                 );
-                            } catch (Throwable e) {
-                                if (columnCounter.addAndGet(columnsPublished - columnCount) == 0) {
-                                    o3ClockDownPartitionUpdateCount();
-                                    o3CountDownDoneLatch();
-                                }
-                                throw e;
                             }
+                        } catch (Throwable e) {
+                            // counts any throwable, not only a CairoException, so the commit skips the
+                            // partition update of the columns that never ran; appendLastPartition()
+                            // failures have bumped already, a second bump is harmless
+                            o3BumpErrorCount(CairoException.isCairoOomError(e));
+                            final int delta = columnsPublished - liveColumnCount;
+                            if (delta < 0 && columnCounter.addAndGet(delta) == 0) {
+                                o3ClockDownPartitionUpdateCount();
+                                o3CountDownDoneLatch();
+                            }
+                            throw e;
                         }
 
                         addPhysicallyWrittenRows(srcOooBatchRowSize);
