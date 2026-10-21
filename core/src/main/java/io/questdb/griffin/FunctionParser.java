@@ -729,6 +729,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return ex;
     }
 
+    private static boolean isUntypedEmptyArrayLiteral(Function arg) {
+        // ArrayConstant.emptyUntyped() is the only producer of an ArrayConstant without an element type
+        return arg instanceof ArrayConstant && ColumnType.decodeArrayElementType(arg.getType()) == ColumnType.UNDEFINED;
+    }
+
     private static long parseDate(CharSequence str, int position) throws SqlException {
         try {
             return MillisTimestampDriver.floor(str);
@@ -1275,7 +1280,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                     if (argIsArray) { // given the above checks, implies that sigIsArray is also true
                         short argElemTypeTag = ColumnType.decodeArrayElementType(argType);
+
                         if (sigArgTypeTag == argElemTypeTag) {
+                            match = mergeWithExactMatch(match);
+                            continue;
+                        } else if (isUntypedEmptyArrayLiteral(arg) && sigArgTypeTag == ColumnType.DOUBLE) {
+                            // the ARRAY[] literal takes the DOUBLE[] type once this candidate wins
                             match = mergeWithExactMatch(match);
                             continue;
                         } else {
@@ -1469,7 +1479,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgType);
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
-            if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
+            if (isUntypedEmptyArrayLiteral(arg) && FunctionFactoryDescriptor.isArray(sigArgType)) {
+                // type the ARRAY[] literal the same way ARRAY[]::DOUBLE[] does
+                arg.assignType(
+                        ColumnType.encodeArrayType(sigArgTypeTag, ColumnType.decodeArrayDimensionality(arg.getType())),
+                        sqlExecutionContext.getBindVariableService()
+                );
+            } else if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
                 // substitute NaNs with appropriate types
                 if (sigArgTypeTag == ColumnType.LONG) {
                     args.setQuick(k, LongConstant.NULL);
