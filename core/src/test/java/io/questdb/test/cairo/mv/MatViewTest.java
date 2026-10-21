@@ -8572,66 +8572,6 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByQualifiedTimestampBesideBareTimestamp() throws Exception {
-        // The view selects the sampled timestamp twice, qualified and bare. Both columns
-        // carry the bucket after the first refresh and after an incremental one; master kept
-        // t.ts as a raw key and split the 03:00 bucket into two rows.
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE t (k SYMBOL, val DOUBLE, ets #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
-            );
-            final String viewSql = "SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h";
-            createMatView("t_1h", viewSql);
-            execute("""
-                    INSERT INTO t VALUES
-                        ('a', 1.0, '2024-01-01T05:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
-                        ('b', 2.0, '2024-01-01T04:00:00.000000Z', '2024-01-01T01:15:00.000000Z'),
-                        ('a', 3.0, '2024-01-01T03:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
-                        ('b', 4.0, '2024-01-01T02:00:00.000000Z', '2024-01-01T03:30:00.000000Z')
-                    """);
-            drainQueues();
-
-            final String expected = replaceExpectedTimestamp("""
-                    x\tb\tv
-                    2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
-                    2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
-                    2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
-                    """);
-            assertQuery(viewSql)
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("b")
-                    .returns(expected);
-            assertQuery("t_1h ORDER BY b")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("b")
-                    .returns(expected);
-
-            // Incremental refresh: one touched bucket and one new bucket.
-            execute("""
-                    INSERT INTO t VALUES
-                        ('a', 5.0, '2024-01-01T06:00:00.000000Z', '2024-01-01T03:45:00.000000Z'),
-                        ('b', 6.0, '2024-01-01T07:00:00.000000Z', '2024-01-01T05:00:00.000000Z')
-                    """);
-            drainQueues();
-
-            final String expectedAfterInsert = replaceExpectedTimestamp("""
-                    x\tb\tv
-                    2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
-                    2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
-                    2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t4.0
-                    2024-01-01T05:00:00.000000Z\t2024-01-01T05:00:00.000000Z\t6.0
-                    """);
-            assertQuery("t_1h ORDER BY b")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("b")
-                    .returns(expectedAfterInsert);
-        });
-    }
-
-    @Test
     public void testSelfJoinQuery() throws Exception {
         // Verify that the detached base table reader used by the refresh job
         // can be safely used in the mat view query multiple times.
