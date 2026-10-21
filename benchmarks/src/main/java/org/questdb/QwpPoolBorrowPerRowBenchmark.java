@@ -41,28 +41,37 @@ import java.util.Properties;
  * one sender and prints:
  * <ul>
  *   <li>{@code loop ms} — time to run the borrow loop;</li>
- *   <li>{@code close ms} — time until {@link QuestDB#close()} returns, so every
- *   row has been sent and acknowledged;</li>
+ *   <li>{@code close ms} — time until {@link QuestDB#close()} returns. It waits
+ *   for the server to acknowledge every row, for up to 10 minutes
+ *   ({@code close_flush_timeout_millis}), and gives up without an error;</li>
  *   <li>{@code applied ms} — time until the server has applied every WAL
- *   transaction of the pass, after which the row count is checked;</li>
+ *   transaction of the pass. The benchmark then checks the row count, which
+ *   fails the run if {@code close()} gave up;</li>
  *   <li>{@code WAL txns} — the number of WAL transactions (commits) the pass
  *   produced.</li>
  * </ul>
- * All times are measured from the first borrow. Every configuration first runs
- * once at the warm-up row count, unreported.
+ * Every time starts at the first borrow. Every configuration first runs once at
+ * the warm-up row count, unreported.
  *
  * <p>The commit window ({@code commit_rows}, {@code commit_interval_ms}) removes
  * the per-row commits but still ships one frame per {@code close()}, so its gain
  * depends on what a commit costs on the server. Run the server once with the
  * default {@code cairo.commit.mode} and once with {@code QDB_CAIRO_COMMIT_MODE=sync}
- * to see both ends. The header line prints the server's commit mode.
+ * to see both ends. The header line prints the server's commit mode. With
+ * {@code sync}, {@code flush_on_close=on} pays one fsync per row, so use fewer
+ * rows and keep each pass inside the 10-minute close budget.
  *
  * <p>Run against a QuestDB instance listening on port 9000 (HTTP/WS) and 8812
  * (PgWire), for example one started from this repository's build with the JVM
  * options from {@code questdb.sh}:
  * <pre>
  * java [JVM options] -p core/target/questdb-[version].jar -m io.questdb/io.questdb.ServerMain -d [root]
+ *
+ * # default commit mode
  * java -cp benchmarks/target/benchmarks.jar -Drows=1000000 -Dwarmup=50000 -Dreps=2 \
+ *      org.questdb.QwpPoolBorrowPerRowBenchmark
+ * # server started with QDB_CAIRO_COMMIT_MODE=sync
+ * java -cp benchmarks/target/benchmarks.jar -Drows=100000 -Dwarmup=5000 -Dreps=2 \
  *      org.questdb.QwpPoolBorrowPerRowBenchmark
  * </pre>
  * Use {@code -Dhost} for a server on another machine.
