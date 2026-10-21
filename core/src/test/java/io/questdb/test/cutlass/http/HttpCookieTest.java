@@ -51,6 +51,13 @@ public class HttpCookieTest extends BaseHttpCookieTest {
     }
 
     @Test
+    public void testLogoutWithStaleCookieDoesNotCreateSession() throws Exception {
+        final AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
+        final Bootstrap bootstrap = getBootstrapWithMockClock(currentMicros);
+        testLogoutWithStaleCookieDoesNotCreateSession(() -> new ServerMain(bootstrap), HttpClientFactory::newPlainTextInstance, currentMicros);
+    }
+
+    @Test
     public void testRefusedLogoutEndsSession() throws Exception {
         testRefusedLogoutEndsSession(() -> new ServerMain(getServerMainArgs()), HttpClientFactory::newPlainTextInstance);
     }

@@ -240,6 +240,44 @@ public abstract class BaseHttpCookieTest extends AbstractBootstrapTest {
         });
     }
 
+    protected void testLogoutWithStaleCookieDoesNotCreateSession(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier, AtomicLong currentMicros) throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain questdb = serverMainSupplier.get()) {
+                questdb.start();
+
+                final HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
+                final long sessionTimeout = questdb.getConfiguration().getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout();
+                final String expectedBody = """
+                        {"query":"SELECT 1","columns":[{"name":"1","type":"INT"}],"timestamp":-1,"dataset":[[1]],"count":1}\
+                        """;
+
+                final String sessionId;
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT 1", USER, PASSWORD, "true");
+                    awaitStatusCode(responseHeaders, "200");
+                    sessionId = assertSessionCookie(responseHeaders, isSecure());
+                    assertChunkedBody(responseHeaders, expectedBody);
+                }
+                assertSession(sessionStore, sessionId, currentMicros.get(), sessionTimeout);
+                assertEquals(1, sessionStore.size(USER));
+
+                // the session times out, such as in a web console tab left open
+                currentMicros.addAndGet(sessionTimeout + 1);
+
+                // a logout carrying the credentials and the stale cookie is served, but it must not open a session
+                // to replace the stale one, or the user would stay logged in after logging out
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT 1", USER, PASSWORD, "false", SESSION_COOKIE_NAME, sessionId);
+                    awaitStatusCode(responseHeaders, "200");
+                    assertNoSessionCookie(responseHeaders);
+                    assertChunkedBody(responseHeaders, expectedBody);
+                }
+                assertNull(sessionStore.getSession(sessionId));
+                assertEquals(0, sessionStore.size(USER));
+            }
+        });
+    }
+
     protected void testRefusedLogoutEndsSession(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier) throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain questdb = serverMainSupplier.get()) {
