@@ -4064,6 +4064,126 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterColumnNamedNoArgFunctionInExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, pi DOUBLE)");
+            execute("INSERT INTO o VALUES (1, 10), (2, 20), (3, NULL)");
+            assertQuery("""
+                    SELECT o.id, d.val FROM o
+                    CROSS JOIN LATERAL (SELECT pi+1 AS val FROM long_sequence(1)) d ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tval
+                            1\t11.0
+                            2\t21.0
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterColumnNamedNoArgFunctionInFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, pi DOUBLE)");
+            execute("INSERT INTO o VALUES (1, 10), (2, 20), (3, NULL)");
+            assertQuery("""
+                    SELECT o.id, d.x FROM o
+                    CROSS JOIN LATERAL (SELECT x FROM long_sequence(1) WHERE pi>15) d ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tx
+                            2\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterColumnNamedNoArgFunctionInProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, pi DOUBLE)");
+            execute("INSERT INTO o VALUES (1, 10), (2, 20), (3, NULL)");
+            assertQuery("""
+                    SELECT o.id, d.val FROM o
+                    CROSS JOIN LATERAL (SELECT pi AS val FROM long_sequence(1)) d ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tval
+                            1\t10.0
+                            2\t20.0
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterColumnNamedNoArgFunctionResolutionControls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, pi DOUBLE)");
+            execute("INSERT INTO o VALUES (1, 10), (2, 20), (3, NULL)");
+            assertQuery("""
+                    SELECT o.id, d.* FROM o CROSS JOIN LATERAL (
+                        SELECT pi AS local_pi, pi+1 AS local_val, o.pi AS outer_pi, pi() AS function_pi
+                        FROM (SELECT 100.0 AS pi)
+                    ) d ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tlocal_pi\tlocal_val\touter_pi\tfunction_pi
+                            1\t100.0\t101.0\t10.0\t3.141592653589793
+                            2\t100.0\t101.0\t20.0\t3.141592653589793
+                            3\t100.0\t101.0\tnull\t3.141592653589793
+                            """);
+            assertQuery("""
+                    SELECT d.* FROM long_sequence(1) o
+                    CROSS JOIN LATERAL (SELECT pi AS val, pi+1 AS incremented FROM long_sequence(1)) d
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            val\tincremented
+                            3.141592653589793\t4.141592653589793
+                            """);
+            assertException(
+                    "SELECT d.* FROM o CROSS JOIN LATERAL (SELECT missing_col FROM long_sequence(1)) d",
+                    45,
+                    "Invalid column: missing_col"
+            );
+        });
+    }
+
+    @Test
+    public void testOuterColumnNamedNoArgFunctionUsesNearestScope() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, pi DOUBLE)");
+            execute("INSERT INTO o VALUES (1, 10), (2, 20), (3, NULL)");
+            assertQuery("""
+                    SELECT o.id, d.* FROM o CROSS JOIN LATERAL (
+                        SELECT n.* FROM (SELECT o.pi+100 AS pi) p
+                        CROSS JOIN LATERAL (
+                            SELECT pi AS val, pi+1 AS incremented, o.pi AS outer_pi FROM long_sequence(1)
+                        ) n
+                    ) d ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tval\tincremented\touter_pi
+                            1\t110.0\t111.0\t10.0
+                            2\t120.0\t121.0\t20.0
+                            3\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testOuterJoinOnReadingOuterColumnAfterCrossJoin() throws Exception {
         // #7700
         assertMemoryLeak(() -> {

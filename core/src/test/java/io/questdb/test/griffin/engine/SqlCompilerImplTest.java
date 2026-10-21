@@ -4705,23 +4705,36 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDistinctDependencyColumnsThrowError() throws Exception {
+    public void testDistinctDependencyColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            create table tab (
-                              x1 int,
+                            CREATE TABLE tab (
+                              x1 INT,
                               ts TIMESTAMP
-                            ) timestamp(ts);
+                            ) TIMESTAMP(ts);
                             """
             );
+            execute("INSERT INTO tab VALUES (1, 0), (1, 1), (3, 2), (NULL, 3), (NULL, 4)");
 
-            assertQuery("select distinct x1 as a, a from tab")
+            assertQuery("SELECT DISTINCT x1 AS a, a FROM tab ORDER BY a")
                     .noLeakCheck()
-                    .fails(25, "Invalid column: a");
-            assertQuery("select distinct x1 - 1 as a, a + 1 from tab")
+                    .expectSize()
+                    .returns("""
+                            a\ta1
+                            null\tnull
+                            1\t1
+                            3\t3
+                            """);
+            assertQuery("SELECT DISTINCT x1 - 1 AS a, a + 1 FROM tab ORDER BY a")
                     .noLeakCheck()
-                    .fails(29, "Invalid column: a");
+                    .expectSize()
+                    .returns("""
+                            a\tcolumn
+                            null\tnull
+                            0\t1
+                            2\t3
+                            """);
         });
     }
 

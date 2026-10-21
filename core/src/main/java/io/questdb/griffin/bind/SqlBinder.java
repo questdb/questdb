@@ -1251,7 +1251,8 @@ public final class SqlBinder implements Mutable {
                 return ctx.planNodes.constants.next().ofBoolean(false, expression.position);
             }
         }
-        if (expression.type != ExpressionNode.LITERAL) {
+        if (expression.type != ExpressionNode.LITERAL
+                || ctx.functionBinder.isOuterColumn(expression, metadata, sourceAlias(source))) {
             final BoundExpression bound = ctx.functionBinder.toBooleanSubquery(
                     bindFilterConjunct(expression, input, sourceAlias(source), false, executionContext));
             if (bound.getDataType() != ColumnType.BOOLEAN) {

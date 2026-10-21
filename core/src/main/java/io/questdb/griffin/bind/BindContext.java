@@ -466,7 +466,8 @@ final class BindContext implements Mutable {
             final ExpressionNode expression = model.getBottomUpColumns().getQuick(i).getAst();
             if (expression.type == ExpressionNode.LITERAL && !expression.isWildcard()
                     && FunctionBinder.findColumn(expression, scope, alias) == -1
-                    && functionFactoryCache.isValidNoArgFunction(expression)) {
+                    && functionFactoryCache.isValidNoArgFunction(expression)
+                    && !functionBinder.isOuterScopeColumn(expression)) {
                 expression.type = ExpressionNode.FUNCTION;
             }
         }

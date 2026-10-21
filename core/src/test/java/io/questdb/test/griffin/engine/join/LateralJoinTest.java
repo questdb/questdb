@@ -39,6 +39,85 @@ import org.junit.Test;
 public class LateralJoinTest extends AbstractCairoTest {
 
     @Test
+    public void testCrossJoinLateralBooleanPredicateErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, flag BOOLEAN)");
+            execute("CREATE TABLE t (v INT)");
+            String sql = "SELECT o.id FROM o CROSS JOIN LATERAL (SELECT v FROM t WHERE %s) d";
+            String invalidAlias = sql.formatted("missing.flag");
+            assertException(invalidAlias, invalidAlias.indexOf("missing.flag"), "Invalid table name or alias");
+            String invalidColumn = sql.formatted("missing");
+            assertException(invalidColumn, invalidColumn.indexOf("missing"), "Invalid column: missing");
+            assertException(sql.formatted("t.v"), 0, "boolean expression expected");
+            assertException(sql.formatted("o.id"), 0, "boolean expression expected");
+            String outerColumn = sql.formatted("id");
+            assertException(outerColumn, outerColumn.lastIndexOf("id"), "boolean expression expected");
+        });
+    }
+
+    @Test
+    public void testCrossJoinLateralBooleanPredicateLocalShadow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, flag BOOLEAN)");
+            execute("INSERT INTO o VALUES (1, true), (2, false)");
+            execute("CREATE TABLE t (v INT, flag BOOLEAN)");
+            execute("INSERT INTO t VALUES (10, false), (20, true)");
+            ObjList<String> predicates = new ObjList<>("flag", "t.flag");
+            for (int i = 0; i < predicates.size(); i++) {
+                assertQuery("SELECT o.id, d.v FROM o CROSS JOIN LATERAL (SELECT v FROM t WHERE "
+                        + predicates.getQuick(i) + ") d ORDER BY o.id, d.v")
+                        .noLeakCheck()
+                        .returns("""
+                                id\tv
+                                1\t20
+                                2\t20
+                                """);
+            }
+            execute("CREATE TABLE numbers (v INT, flag INT)");
+            String sql = "SELECT o.id FROM o CROSS JOIN LATERAL (SELECT v FROM numbers WHERE flag) d";
+            assertException(sql, sql.indexOf("flag"), "boolean expression expected");
+        });
+    }
+
+    @Test
+    public void testCrossJoinLateralOuterBooleanPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, flag BOOLEAN)");
+            execute("INSERT INTO o VALUES (1, true), (2, false)");
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (10), (20)");
+            ObjList<String> predicates = new ObjList<>("o.flag = true", "o.flag", "flag", "(o.flag)");
+            for (int i = 0; i < predicates.size(); i++) {
+                assertQuery("SELECT o.id, d.val FROM o CROSS JOIN LATERAL (SELECT v AS val FROM t WHERE "
+                        + predicates.getQuick(i) + ") d ORDER BY o.id, d.val")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tval
+                                1\t10
+                                1\t20
+                                """);
+            }
+            assertQuery("SELECT o.id, d.val FROM o CROSS JOIN LATERAL (SELECT v AS val FROM t WHERE NOT o.flag) d ORDER BY o.id, d.val")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tval
+                            2\t10
+                            2\t20
+                            """);
+            assertQuery("SELECT o.id, d.val FROM o LEFT JOIN LATERAL (SELECT v AS val FROM t WHERE o.flag) d ON true ORDER BY o.id, d.val")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tval
+                            1\t10
+                            1\t20
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossJoinLateral() throws Exception {
         assertMemoryLeak(() -> {
             createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");

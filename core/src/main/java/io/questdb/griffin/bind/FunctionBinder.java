@@ -466,7 +466,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                         throw SqlException.invalidColumn(node.position, node.token);
                     }
                     final int index = findColumn(node, ctx.scope().expressionInput, ctx.scope().expressionInputAlias);
-                    yield index == -1 && resolver.findNoArgFunction(node.token) ? resolveCall(node, 0) : createColumn(node, index);
+                    yield index == -1 && resolver.findNoArgFunction(node.token) && !isOuterScopeColumn(node)
+                            ? resolveCall(node, 0) : createColumn(node, index);
                 }
                 case ExpressionNode.BIND_VARIABLE -> createParameter(node);
                 case ExpressionNode.MEMBER_ACCESS -> captureConstant(new StrConstant(node.token), node.position, null);
