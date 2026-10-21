@@ -26,12 +26,18 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.wal.WalColumnRangeAppender;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -83,6 +89,107 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                             500\t2026-01-01T00:00:00.000000Z
                             501\t2026-01-01T00:00:01.000000Z
                             502\t2026-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAppendsStringRangesWithShiftedOffsets() throws Exception {
+        // six STRING values in WAL layout (a leading aux entry, then one 8-byte offset per value); the first block
+        // takes rows 0 to 2 at data offset 0, row 3 is left out, and the second block takes rows 4 and 5, so its data
+        // offset in the source is ahead of the sink's append offset and its aux entries are shifted back
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "strings", PartitionBy.HOUR)
+                    .col("s", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final ColumnTypeDriver driver = ColumnType.getDriver(ColumnType.STRING);
+            final long pairs = Unsafe.malloc(3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MemoryCARW aux = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW data = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                driver.configureAuxMemO3RSS(aux);
+                StringTypeDriver.appendValue(aux, data, "first");
+                StringTypeDriver.appendValue(aux, data, "second value");
+                driver.appendNull(aux, data);
+                StringTypeDriver.appendValue(aux, data, "left out of the range");
+                StringTypeDriver.appendValue(aux, data, "fourth");
+                StringTypeDriver.appendValue(aux, data, "v5");
+                final long auxBase = aux.addressOf(0);
+
+                appendStringBlock(appender, driver, auxBase, data, pairs, 0, 3, TS0);
+                appendStringBlock(appender, driver, auxBase, data, pairs, 4, 6, TS0 + 3 * SECOND);
+                writer.commit();
+            } finally {
+                Unsafe.free(pairs, 3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT s, ts FROM strings")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            s\tts
+                            first\t2026-01-01T00:00:00.000000Z
+                            second value\t2026-01-01T00:00:01.000000Z
+                            \t2026-01-01T00:00:02.000000Z
+                            fourth\t2026-01-01T00:00:03.000000Z
+                            v5\t2026-01-01T00:00:04.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAppendsVarcharRangesIncludingInlinedValues() throws Exception {
+        // short VARCHAR values live in their 16-byte aux entry alone: the first block has no data bytes at all; the
+        // second holds a long value, and a long value between the two is left out, so the second block's data lands
+        // at a shifted offset
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "varchars", PartitionBy.HOUR)
+                    .col("v", ColumnType.VARCHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final ColumnTypeDriver driver = ColumnType.getDriver(ColumnType.VARCHAR);
+            final long pairs = Unsafe.malloc(3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MemoryCARW aux = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW data = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                driver.configureAuxMemO3RSS(aux);
+                VarcharTypeDriver.appendValue(aux, data, new Utf8String("ab"));
+                VarcharTypeDriver.appendValue(aux, data, null);
+                VarcharTypeDriver.appendValue(aux, data, new Utf8String("cd"));
+                VarcharTypeDriver.appendValue(aux, data, new Utf8String("left out of the range, longer than nine"));
+                VarcharTypeDriver.appendValue(aux, data, new Utf8String("a value longer than nine bytes"));
+                VarcharTypeDriver.appendValue(aux, data, new Utf8String("ef"));
+                final long auxBase = aux.addressOf(0);
+                Assert.assertEquals("the first three values are inlined", 0, driver.getDataVectorSize(auxBase, 0, 2));
+
+                appendStringBlock(appender, driver, auxBase, data, pairs, 0, 3, TS0);
+                appendStringBlock(appender, driver, auxBase, data, pairs, 4, 6, TS0 + 3 * SECOND);
+                writer.commit();
+            } finally {
+                Unsafe.free(pairs, 3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM varchars")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\tts
+                            ab\t2026-01-01T00:00:00.000000Z
+                            \t2026-01-01T00:00:01.000000Z
+                            cd\t2026-01-01T00:00:02.000000Z
+                            a value longer than nine bytes\t2026-01-01T00:00:03.000000Z
+                            ef\t2026-01-01T00:00:04.000000Z
                             """);
         });
     }
@@ -312,6 +419,30 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefusesVarSizeRangeOnFixedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "notvar", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            try (
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                appender.begin(1);
+                try {
+                    appender.putVarSizeRange(0, 0, 0, 0, 0);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "not a var-size column [column=0]");
+                }
+                appender.cancel();
+            }
+        });
+    }
+
+    @Test
     public void testRewritesTimestampRowsOfASourceRangeStartingLater() throws Exception {
         // the source segment's rows 100 to 102 land at segment row 0: the pairs must carry rows 0 to 2, which the
         // out-of-order apply reads to find each timestamp's value
@@ -358,5 +489,28 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     static void putPair(long pairs, int i, long timestamp, long row) {
         Unsafe.putLong(pairs + i * 16L, timestamp);
         Unsafe.putLong(pairs + i * 16L + 8, row);
+    }
+
+    // rows [rowLo, rowHi) of the source vectors as one block, with one timestamp per row from firstTimestamp
+    private static void appendStringBlock(
+            WalColumnRangeAppender appender,
+            ColumnTypeDriver driver,
+            long auxBase,
+            MemoryCARW data,
+            long pairs,
+            int rowLo,
+            int rowHi,
+            long firstTimestamp
+    ) {
+        final int rows = rowHi - rowLo;
+        for (int i = 0; i < rows; i++) {
+            putPair(pairs, i, firstTimestamp + i * SECOND, rowLo + i);
+        }
+        final long dataOffset = driver.getDataVectorOffset(auxBase, rowLo);
+        final long dataSize = driver.getDataVectorSize(auxBase, rowLo, rowHi - 1);
+        appender.begin(rows);
+        appender.putVarSizeRange(0, auxBase + driver.getAuxVectorOffset(rowLo), data.addressOf(dataOffset), dataOffset, dataSize);
+        appender.putTimestampRange(1, pairs, rowLo);
+        appender.finish(firstTimestamp, firstTimestamp + (rows - 1) * SECOND, false);
     }
 }
