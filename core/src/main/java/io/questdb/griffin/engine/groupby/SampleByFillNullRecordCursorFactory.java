@@ -35,7 +35,10 @@ import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
@@ -44,10 +47,16 @@ import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
 import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
 import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullArrayConstant;
+import io.questdb.griffin.engine.functions.constants.NullBinConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -153,6 +162,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
 
     static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
         return switch (ColumnType.tagOf(type)) {
+            case ColumnType.BOOLEAN -> BooleanConstant.FALSE;
             case ColumnType.INT -> IntConstant.NULL;
             case ColumnType.IPv4 -> IPv4Constant.NULL;
             case ColumnType.LONG -> LongConstant.NULL;
@@ -160,12 +170,24 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             case ColumnType.DOUBLE -> DoubleConstant.NULL;
             case ColumnType.BYTE -> ByteConstant.ZERO;
             case ColumnType.SHORT -> ShortConstant.ZERO;
+            case ColumnType.CHAR -> CharConstant.ZERO;
+            case ColumnType.DATE -> DateConstant.NULL;
             case ColumnType.GEOBYTE -> GeoByteConstant.NULL;
             case ColumnType.GEOSHORT -> GeoShortConstant.NULL;
             case ColumnType.GEOINT -> GeoIntConstant.NULL;
             case ColumnType.GEOLONG -> GeoLongConstant.NULL;
             case ColumnType.UUID -> UuidConstant.NULL;
             case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(type).getTimestampConstantNull();
+            case ColumnType.STRING -> StrConstant.NULL;
+            case ColumnType.SYMBOL -> SymbolConstant.NULL;
+            case ColumnType.LONG256 -> Long256NullConstant.INSTANCE;
+            case ColumnType.BINARY -> NullBinConstant.INSTANCE;
+            case ColumnType.VARCHAR -> VarcharConstant.NULL;
+            case ColumnType.INTERVAL -> type == ColumnType.INTERVAL_TIMESTAMP_NANO
+                    ? IntervalConstant.TIMESTAMP_NANO_NULL
+                    : type == ColumnType.INTERVAL_TIMESTAMP_MICRO
+                    ? IntervalConstant.TIMESTAMP_MICRO_NULL
+                    : IntervalConstant.RAW_NULL;
             default -> {
                 if (ColumnType.isArray(type)) {
                     yield new NullArrayConstant(type);
