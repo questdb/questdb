@@ -270,6 +270,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
+        public long getQwpMinIdleMsBeforeWriterRelease() {
+            return QwpConstants.DEFAULT_MIN_IDLE_MS_BEFORE_WRITER_RELEASE;
+        }
+
+        @Override
         public CharSequence getInfluxPingVersion() {
             return "v2.7.4";
         }

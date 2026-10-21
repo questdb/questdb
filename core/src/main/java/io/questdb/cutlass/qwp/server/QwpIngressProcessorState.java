@@ -171,6 +171,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private long highestProcessedSequence = -1;
     private boolean isDurableProgressSnapshotFullyUploaded;
     private long lastAckedSequence = -1;
+    // MicrosecondClock ticks of the last BINARY data frame; handlePing compares it to the idle threshold.
+    private long lastDataFrameMicros;
     private long messageSequence;
     private byte negotiatedVersion = QwpConstants.VERSION;
     // Bytes that onHeadersReady staged in the raw response buffer waiting to
@@ -315,6 +317,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     public void addData(long lo, long hi) {
+        lastDataFrameMicros = configuration.getMicrosecondClock().getTicks();
         int len = (int) (hi - lo);
         if (len <= 0) {
             return;
@@ -498,6 +501,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public long getLastAckedSequence() {
         return lastAckedSequence;
+    }
+
+    public long getLastDataFrameMicros() {
+        return lastDataFrameMicros;
     }
 
     public CharSequenceLongHashMap getPendingAckSeqTxns() {
@@ -1059,6 +1066,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // Reset WebSocket connection state
         highestProcessedSequence = -1;
         lastAckedSequence = -1;
+        lastDataFrameMicros = 0;
         messageSequence = 0;
         recvBufferLen = 0;
         resumeAckSequence = -1;
@@ -1415,6 +1423,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
         this.fd = fd;
         LOG.error().$('[').$(fd).$("] rejected [status=").$(status).$(", error=").$safe(errorText).$(']').$();
+    }
+
+    public void releaseIdleWriters() {
+        tudCache.releaseIdleWriters();
     }
 
     public void setDurableAckEnabled(boolean durableAckEnabled) {

@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageHeader;
@@ -52,6 +53,7 @@ import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
@@ -188,6 +190,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     \r
                     """).getBytes(StandardCharsets.US_ASCII);
     // Dependencies for ILP processing (safe as instance fields — config only)
+    // Same clock QwpIngressProcessorState stamps lastDataFrameMicros with.
+    private final MicrosecondClock clock;
     // Effective ingest payload cap in bytes: the recv buffer minus the
     // worst-case WebSocket frame header, floored at the QWP protocol ceiling.
     // Zero when the recv buffer cannot fit a frame header at all, which
@@ -212,6 +216,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // WebSocket frame parser (scratchpad — fully reset within each processWebSocketFrames call)
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final HttpFullFatServerConfiguration httpConfiguration;
+    // qwp.min.idle.ms.before.writer.release in micros; 0 disables the release.
+    private final long idleWriterReleaseMicros;
     private final int maxResponseContentLength;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
@@ -221,6 +227,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.httpConfiguration = httpConfiguration;
+        final LineHttpProcessorConfiguration lineConfiguration = httpConfiguration.getLineHttpProcessorConfiguration();
+        this.clock = lineConfiguration.getMicrosecondClock();
+        this.idleWriterReleaseMicros = lineConfiguration.getQwpMinIdleMsBeforeWriterRelease() * 1000L;
         this.qwpBrowserTlsTerminationEnabled = httpConfiguration.isQwpBrowserTlsTerminationEnabled();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         // Advertise the effective batch cap, not the QWP protocol ceiling. The
@@ -1886,6 +1895,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void handlePing(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        // A client keepalive PING on a connection that has sent no data for a
+        // while is the cue to return its idle WAL writers to the pool, so a quiet
+        // but open connection does not pin them (and block WAL purge) until it
+        // closes. Runs first because flushPendingAck below can throw.
+        if (idleWriterReleaseMicros > 0 && clock.getTicks() - state.getLastDataFrameMicros() >= idleWriterReleaseMicros) {
+            state.releaseIdleWriters();
+        }
+
         // PING is a documented flush point for pending ACK/durable-ACK frames.
         // A client may send PING specifically to prod the server into emitting
         // acks for commits whose uploads have completed since the last message.

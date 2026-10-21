@@ -556,6 +556,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
 
         @Override
+        public long getQwpMinIdleMsBeforeWriterRelease() {
+            return QwpConstants.DEFAULT_MIN_IDLE_MS_BEFORE_WRITER_RELEASE;
+        }
+
+        @Override
         public long getSymbolCacheWaitUsBeforeReload() {
             return 0;
         }
