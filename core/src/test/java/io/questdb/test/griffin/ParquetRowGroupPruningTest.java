@@ -49,6 +49,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     // Rows createRepeatedFloatPartialParquet() writes into the parquet partition. The value is large
     // enough that the compiled filter runs its AVX2 loop rather than handling everything in the
@@ -60,6 +63,61 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void setUp() {
         ParquetRowGroupFilter.resetRowGroupsSkipped();
         super.setUp();
+    }
+
+    @Test
+    public void testAttachedIntegerSentinelsInNegatedRangeComparison() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (id LONG, i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO p VALUES (1, 1, 1, 0), (2, 1, 1, 1), (3, 9, 9, 86_400_000_000)");
+            execute("ALTER TABLE p DETACH PARTITION LIST '1970-01-01'");
+            Path table = Path.of(configuration.getDbRoot().toString(), engine.verifyTableName("p").getDirName());
+            Path attach = table.resolve("1970-01-01" + configuration.getAttachPartitionSuffix());
+            Files.move(table.resolve("1970-01-01.detached"), attach);
+            for (String column : new String[]{"id", "i", "l", "ts"}) {
+                Files.delete(attach.resolve(column + ".d"));
+            }
+            // The external writer stores INT_MIN/LONG_MIN as values and reports null_count=0.
+            Files.copy(Path.of(TestUtils.getTestResourcePath("/parquet/attached_int_sentinels.parquet")), attach.resolve("data.parquet"));
+            execute("ALTER TABLE p ATTACH PARTITION LIST '1970-01-01'");
+            assertQuery("SELECT id, i, l, i = NULL AS ni, l = NULL AS nl FROM p ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ti\tl\tni\tnl
+                            1\tnull\tnull\ttrue\ttrue
+                            2\t1\t1\tfalse\tfalse
+                            3\t9\t9\tfalse\tfalse
+                            """);
+            final int savedJitMode = sqlExecutionContext.getJitMode();
+            final boolean isPruningEnabled = sqlExecutionContext.isParquetRowGroupPruningEnabled();
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    for (boolean isPruning : new boolean[]{false, true}) {
+                        sqlExecutionContext.setParquetRowGroupPruningEnabled(isPruning);
+                        for (String column : new String[]{"i", "l"}) {
+                            ParquetRowGroupFilter.resetRowGroupsSkipped();
+                            assertQuery("SELECT p.id FROM long_sequence(2) q JOIN p ON q.x = p.id AND NOT (p." + column + " < 2)")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .returns("id\n1\n");
+                            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+                            ParquetRowGroupFilter.resetRowGroupsSkipped();
+                            assertQuery("SELECT p.id FROM long_sequence(2) q JOIN p ON q.x = p.id AND p.id > 2 AND NOT (p." + column + " < 2)")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .returns("id\n");
+                            Assert.assertEquals(isPruning, ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(savedJitMode);
+                sqlExecutionContext.setParquetRowGroupPruningEnabled(isPruningEnabled);
+            }
+        });
     }
 
     @Test
@@ -3689,6 +3747,51 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .returns("a\tb\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testNegatedDecimalRangeComparisonPrunesOnlyNullFreeRowGroups() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT x id,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(2,0) d2,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(4,0) d4,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(9,0) d9,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(18,0) d18,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(38,0) d38,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(76,0) d76,
+                            timestamp_sequence('2024-01-01', 10_000) ts
+                        FROM long_sequence(90)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("INSERT INTO x VALUES (91, 1, 1, 1, 1, 1, 1, '2024-01-02')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            for (int precision : new int[]{2, 4, 9, 18, 38, 76}) {
+                final String column = "d" + precision;
+                final String boundary = "81::DECIMAL(" + precision + ",0)";
+                final String predicate = "NOT (" + column + " < " + boundary + ")";
+                assertQuery("SELECT id, " + column + " = NULL AS is_null FROM x WHERE " + predicate + " ORDER BY ts")
+                        .noLeakCheck()
+                        .returns("""
+                                id	is_null
+                                15	true
+                                81	false
+                                82	false
+                                83	false
+                                84	false
+                                85	false
+                                86	false
+                                87	false
+                                88	false
+                                89	false
+                                90	false
+                                """);
+                assertPrunedCount(predicate, "count\n11\n", 7);
+                assertPrunedCount(column + " >= " + boundary, "count\n10\n", 8);
+            }
         });
     }
 

@@ -1295,6 +1295,59 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHasNoNullsRequiresSentinelFreeStatistics() throws Exception {
+        assertMemoryLeak(() -> {
+            // Type, physical type, min, max, flags, null count, expected proof of no SQL NULLs.
+            final long[][] cases = {
+                    {ColumnType.INT, 1, Integer.MIN_VALUE, 1, 0x9b, 0, 0},
+                    {ColumnType.INT, 1, 1, Integer.MIN_VALUE, 0x9b, 0, 0},
+                    {ColumnType.INT, 1, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.INT, 1, 1, 10, 0x80, 0, 0},
+                    {ColumnType.INT, 1, 1, 10, 0x1b, 0, 0},
+                    {ColumnType.INT, 1, 1, 10, 0x9b, 1, 0},
+                    {ColumnType.LONG, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
+                    {ColumnType.LONG, 2, 1, Long.MIN_VALUE, 0x9b, 0, 0},
+                    {ColumnType.LONG, 2, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.DATE, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
+                    {ColumnType.DATE, 2, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.DATE, 1, -10, 10, 0x9b, 0, 0},
+                    {ColumnType.TIMESTAMP, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
+                    {ColumnType.TIMESTAMP, 2, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.TIMESTAMP_NANO, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
+                    {ColumnType.TIMESTAMP_NANO, 2, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.IPv4, 1, 0, -1, 0x9b, 0, 0},
+                    {ColumnType.IPv4, 1, 1, -1, 0x9b, 0, 1},
+                    {ColumnType.IPv4, 1, -1, 1, 0x9b, 0, 0},
+                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x1b, 0, 0},
+                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x9b, 1, 0}
+            };
+            for (long[] values : cases) {
+                try (ParquetMetaTestFile file = buildFile(1, 2)) {
+                    Unsafe.putInt(file.dataPtr + 32 + 12, (int) values[0]);
+                    Unsafe.putByte(file.dataPtr + 32 + 28, (byte) values[1]);
+                    long footer = file.dataPtr + file.parquetMetaFileSize - 4
+                            - Integer.toUnsignedLong(Unsafe.getInt(file.dataPtr + file.parquetMetaFileSize - 4));
+                    long chunk = file.dataPtr + (Integer.toUnsignedLong(Unsafe.getInt(footer + 40)) << 3) + 8;
+                    Unsafe.putLong(chunk + 48, values[2]);
+                    Unsafe.putLong(chunk + 56, values[3]);
+                    Unsafe.putByte(chunk + 2, (byte) values[4]);
+                    Unsafe.putLong(chunk + 32, values[5]);
+                    patchCrc(file.dataPtr, file.parquetMetaFileSize);
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    try {
+                        reader.of(file.dataPtr, file.parquetMetaFileSize);
+                        Assert.assertTrue(reader.resolveLastFooter());
+                        Assert.assertEquals(ColumnType.nameOf((int) values[0]), values[6] != 0, reader.hasNoNulls(0, 0));
+                    } finally {
+                        reader.clear();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLargeRowGroupCount() throws Exception {
         assertMemoryLeak(() -> {
             long[] sizes = new long[128];

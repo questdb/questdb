@@ -418,6 +418,17 @@ final class JoinBinder implements Mutable {
         }
     }
 
+    private void addLateralDependencies(JoinPlan join, int index, LogicalPlan input) {
+        for (int i = 0, n = input.inputCount(); i < n; i++) {
+            addLateralDependencies(join, index, input.inputAt(i));
+        }
+        final IntList outerColumnIds = ctx.scope().outerColumnIds;
+        final int outerColumnBase = outerColumnIds.size();
+        ctx.outerColumnReads.collect(input, outerColumnIds);
+        addLateralDependencies(join, index, outerColumnBase);
+        outerColumnIds.setPos(outerColumnBase);
+    }
+
     private ExpressionNode appendJoinConjuncts(ExpressionNode prefix, ExpressionNode expression) {
         if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
             return appendJoinConjuncts(appendJoinConjuncts(prefix, expression.lhs), expression.rhs);
@@ -445,7 +456,8 @@ final class JoinBinder implements Mutable {
         final JoinPlan group = ctx.planNodes.joins.next().of(sources.getQuick(lo).getModelPosition());
         group.setExplicitTimestamp(false);
         final boolean hasGroupTemporalJoin = hasTemporalJoin(sources, lo, hi);
-        bindJoinInputs(group, source, lo, hi, hasGroupTemporalJoin, executionContext);
+        final int outerColumnBase = ctx.scope().outerColumnIds.size();
+        bindJoinInputs(group, source, lo, hi, hasGroupTemporalJoin, join.getOutput(), executionContext);
         final ObjList<JoinInput> inputs = group.getInputs();
         boolean hasPrefixReference = false;
         for (int i = 1, n = inputs.size(); i < n && !hasPrefixReference; i++) {
@@ -462,6 +474,9 @@ final class JoinBinder implements Mutable {
                 if (hasTemporalJoin && !hasGroupTemporalJoin && step.getInput() != null) {
                     ctx.retainImplicitTimestamp(step.getInput());
                 }
+                if (step.isDependent()) {
+                    addLateralDependencies(join, join.getInputs().size(), step.getInput());
+                }
                 join.getInputs().add(step);
                 join.getOutput().addColumnsFrom(step.getSourceOutput(), step.getBindingAlias());
             }
@@ -472,7 +487,11 @@ final class JoinBinder implements Mutable {
         lateralDependencyInputs.setPos(dependencyBase);
         lateralDependencyParents.setPos(dependencyBase);
         inputModels.add(lo);
-        join.getInputs().add(ctx.planNodes.joinInputs.next().of(group, JoinKind.CROSS, null, sources.getQuick(lo).getJoinKeywordPosition()));
+        inputs.getQuick(0).setDependent(false);
+        final JoinInput step = ctx.planNodes.joinInputs.next().of(group, JoinKind.CROSS, null, sources.getQuick(lo).getJoinKeywordPosition());
+        addLateralDependencies(join, join.getInputs().size(), outerColumnBase);
+        step.setDependent(lateralDependencyInputs.size() > dependencyBase);
+        join.getInputs().add(step);
         join.getOutput().addColumnsFrom(group.getOutput());
     }
 
@@ -604,7 +623,7 @@ final class JoinBinder implements Mutable {
         return predicate;
     }
 
-    private void bindJoinInputs(JoinPlan join, QueryModel source, int lo, int hi, boolean hasTemporalJoin,
+    private void bindJoinInputs(JoinPlan join, QueryModel source, int lo, int hi, boolean hasTemporalJoin, OutputSchema prefix,
                                 SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> sources = source.getJoinModels();
         for (int i = lo; i < hi; i++) {
@@ -640,7 +659,7 @@ final class JoinBinder implements Mutable {
                 final LogicalPlan input;
                 if (isDependent) {
                     final int outerColumnBase = ctx.scope().outerColumnIds.size();
-                    input = lateralBinder.bindLateral(occurrence, join, index, executionContext);
+                    input = lateralBinder.bindLateral(occurrence, join, index, prefix, executionContext);
                     addLateralDependencies(join, index, outerColumnBase);
                 } else {
                     input = binder.bindSource(occurrence, executionContext);
@@ -716,7 +735,7 @@ final class JoinBinder implements Mutable {
         final JoinPlan join = ctx.planNodes.joins.next().of(sources.getQuick(0).getModelPosition());
         join.setExplicitTimestamp(source.hasExplicitTimestamp());
         try {
-            bindJoinInputs(join, source, 0, hi, hasTemporalJoin(sources, 0, hi), executionContext);
+            bindJoinInputs(join, source, 0, hi, hasTemporalJoin(sources, 0, hi), null, executionContext);
             if (binder.isLatestOverLeadingInput(source)) {
                 where = bindLatestInput(join, source, where, modelBase, executionContext);
             }

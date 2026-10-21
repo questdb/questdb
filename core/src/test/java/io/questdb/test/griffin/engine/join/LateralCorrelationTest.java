@@ -336,6 +336,165 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommaGroupLateralFirstInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            execute("INSERT INTO c VALUES (7)");
+            assertQuery("""
+                    SELECT a.k, b.k bk, c.k ck
+                    FROM a, LATERAL (SELECT a.k AS k FROM long_sequence(1)) b
+                    RIGHT JOIN c ON b.k=c.k ORDER BY a.k, b.k, c.k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tbk\tck
+                            7\tnull\t1
+                            7\tnull\t2
+                            7\t7\t7
+                            """);
+            execute("CREATE TABLE d (q INT)");
+            execute("INSERT INTO d VALUES (10), (20)");
+            assertQuery("""
+                    SELECT a.k, d.q, b.k bk, c.k ck, s.v
+                    FROM a, d, LATERAL (SELECT a.k AS k FROM long_sequence(1)) b
+                    RIGHT JOIN c ON b.k=c.k AND d.q>0
+                    CROSS JOIN LATERAL (SELECT a.k+d.q+b.k+c.k AS v FROM long_sequence(1)) s
+                    ORDER BY a.k, d.q, b.k, c.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tq\tbk\tck\tv
+                            null\tnull\tnull\t1\tnull
+                            null\tnull\tnull\t2\tnull
+                            7\t10\t7\t7\t31
+                            7\t20\t7\t7\t41
+                            """);
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralNestedMultiplePrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            execute("CREATE TABLE d (q INT)");
+            execute("INSERT INTO d VALUES (10), (20)");
+            assertQuery("""
+                    SELECT a.k, d.q, s.v FROM a, d, b RIGHT JOIN c ON b.k=c.k
+                    CROSS JOIN LATERAL (
+                        SELECT t.v FROM long_sequence(1) n
+                        CROSS JOIN LATERAL (SELECT a.k+d.q+c.k AS v FROM long_sequence(1)) t
+                    ) s ORDER BY a.k, d.q, s.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tq\tv
+                            7\t10\t18
+                            7\t10\t19
+                            7\t20\t28
+                            7\t20\t29
+                            """);
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralPreservesNullsAndDuplicates() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            assertQuery("""
+                    SELECT a.k, s.v FROM a, b RIGHT JOIN c ON b.k=c.k
+                    CROSS JOIN LATERAL (SELECT a.k AS v FROM long_sequence(1)) s
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tv
+                            7\t7
+                            7\t7
+                            """);
+            execute("INSERT INTO a VALUES (8), (7), (NULL)");
+            execute("INSERT INTO b VALUES (3)");
+            assertQuery("""
+                    SELECT a.k, b.k bk, c.k ck, s.v FROM a, b RIGHT JOIN c ON b.k=c.k
+                    CROSS JOIN LATERAL (SELECT a.k+coalesce(b.k,0)+c.k AS v FROM long_sequence(1)) s
+                    ORDER BY a.k, b.k, c.k, s.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tbk\tck\tv
+                            null\tnull\t2\tnull
+                            null\t1\t1\tnull
+                            7\tnull\t2\t9
+                            7\tnull\t2\t9
+                            7\t1\t1\t9
+                            7\t1\t1\t9
+                            8\tnull\t2\t10
+                            8\t1\t1\t10
+                            """);
+            assertQuery("""
+                    SELECT a.k, b.k bk, c.k ck, s.v FROM a, b FULL JOIN c ON b.k=c.k
+                    CROSS JOIN LATERAL (SELECT a.k+coalesce(b.k,0)+coalesce(c.k,0) AS v FROM long_sequence(1)) s
+                    ORDER BY a.k, b.k, c.k, s.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tbk\tck\tv
+                            null\tnull\t2\tnull
+                            null\t1\t1\tnull
+                            null\t3\tnull\tnull
+                            7\tnull\t2\t9
+                            7\tnull\t2\t9
+                            7\t1\t1\t9
+                            7\t1\t1\t9
+                            7\t3\tnull\t10
+                            7\t3\tnull\t10
+                            8\tnull\t2\t10
+                            8\t1\t1\t10
+                            8\t3\tnull\t11
+                            """);
+            assertQuery("""
+                    SELECT a.k, s.v FROM (SELECT * FROM a WHERE k<0) a, b RIGHT JOIN c ON b.k=c.k
+                    CROSS JOIN LATERAL (SELECT a.k AS v FROM long_sequence(1)) s
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("k\tv\n");
+        });
+    }
+
+    @Test
+    public void testCommaGroupLateralScope() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            assertQuery("""
+                    SELECT a.k, s.v FROM a, b RIGHT JOIN c ON b.k=c.k
+                    CROSS JOIN LATERAL (SELECT a.k AS v FROM (SELECT 99 AS k) a) s
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tv
+                            7\t99
+                            7\t99
+                            """);
+            assertException(
+                    "SELECT a.k FROM a, (SELECT a.k AS k FROM long_sequence(1)) b RIGHT JOIN c ON b.k=c.k",
+                    27,
+                    "Invalid table name or alias"
+            );
+            final String ambiguous = """
+                    SELECT s.v FROM a, b RIGHT JOIN (SELECT 1 AS j) c ON b.k=c.j
+                    CROSS JOIN LATERAL (SELECT k AS v FROM long_sequence(1)) s
+                    """;
+            assertException(ambiguous, ambiguous.indexOf("k AS v"), "Invalid column: k");
+        });
+    }
+
+    @Test
     public void testConsecutiveRightAndFullJoinsAfterCorrelatedOn() throws Exception {
         // #7723
         assertMemoryLeak(() -> {
@@ -6571,6 +6730,15 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     private void createB(String rows) throws Exception {
         execute("CREATE TABLE b (id INT, k INT, x INT)");
         execute("INSERT INTO b VALUES " + rows);
+    }
+
+    private void createCommaGroupTables() throws Exception {
+        execute("CREATE TABLE a (k INT)");
+        execute("CREATE TABLE b (k INT)");
+        execute("CREATE TABLE c (k INT)");
+        execute("INSERT INTO a VALUES (7)");
+        execute("INSERT INTO b VALUES (1)");
+        execute("INSERT INTO c VALUES (1), (2)");
     }
 
     private void createCorrelationPointTables() throws Exception {

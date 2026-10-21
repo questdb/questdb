@@ -121,6 +121,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int COL_DESC_MAX_DEF_LEVEL_OFF = 30;
     private static final int COL_DESC_NAME_LENGTH_OFF = 24;
     private static final int COL_DESC_NAME_OFFSET_OFF = 0;
+    private static final int COL_DESC_PHYSICAL_TYPE_OFF = 28;
     private static final int FOOTER_FEATURE_FLAGS_OFF = 32;
     private static final int FOOTER_FIXED_SIZE = 40;
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
@@ -651,7 +652,39 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
     @Override
     public boolean hasNoNulls(int rowGroupIndex, int columnIndex) {
-        return hasChunkNullCount(rowGroupIndex, columnIndex) && getChunkNullCount(rowGroupIndex, columnIndex) == 0;
+        if (!hasChunkNullCount(rowGroupIndex, columnIndex) || getChunkNullCount(rowGroupIndex, columnIndex) != 0) {
+            return false;
+        }
+        // ATTACH accepts external files whose physical null count omits SQL NULL sentinels.
+        return switch (ColumnType.tagOf(getColumnType(columnIndex))) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT,
+                 ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
+            // Valid decimal precision excludes the storage NULL sentinel.
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
+                 ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> true;
+            case ColumnType.INT, ColumnType.IPv4 -> {
+                if (Unsafe.getByte(columnDescriptorAddr(columnIndex) + COL_DESC_PHYSICAL_TYPE_OFF) != 1
+                        || !hasInlineMinMax(rowGroupIndex, columnIndex)) {
+                    yield false;
+                }
+                final int min = (int) getChunkMinStat(rowGroupIndex, columnIndex);
+                final int max = (int) getChunkMaxStat(rowGroupIndex, columnIndex);
+                // Check both bounds: external integer statistics may use unsigned ordering.
+                yield ColumnType.tagOf(getColumnType(columnIndex)) == ColumnType.IPv4
+                        ? min != 0 && Integer.compareUnsigned(min, max) <= 0
+                        : min != Integer.MIN_VALUE && min <= max;
+            }
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> {
+                if (Unsafe.getByte(columnDescriptorAddr(columnIndex) + COL_DESC_PHYSICAL_TYPE_OFF) != 2
+                        || !hasInlineMinMax(rowGroupIndex, columnIndex)) {
+                    yield false;
+                }
+                final long min = getChunkMinStat(rowGroupIndex, columnIndex);
+                final long max = getChunkMaxStat(rowGroupIndex, columnIndex);
+                yield min != Long.MIN_VALUE && min <= max;
+            }
+            default -> false;
+        };
     }
 
     public boolean isOpen() {
@@ -857,6 +890,11 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private long columnDescriptorAddr(int columnIndex) {
         assert columnIndex >= 0 && columnIndex < columnCount;
         return addr + HEADER_FIXED_SIZE + (long) columnIndex * COLUMN_DESCRIPTOR_SIZE;
+    }
+
+    private boolean hasInlineMinMax(int rowGroupIndex, int columnIndex) {
+        final int mask = STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED | STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED;
+        return (getChunkStatFlags(rowGroupIndex, columnIndex) & mask) == mask;
     }
 
     /**
