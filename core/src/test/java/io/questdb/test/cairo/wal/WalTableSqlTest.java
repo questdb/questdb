@@ -60,6 +60,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -2028,6 +2029,199 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalBlockApplyBackfillWideTimestampRangeDedup() throws Exception {
+        // Dedup sorts every block, even in-order txns from a single segment,
+        // so the sort key capacity must bound the block
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
+            final TableToken tableToken = createWideBackfillTableNanos(" DEDUP UPSERT KEYS(ts)");
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                commitBackfillRowsNanos(walWriter, 0, 300);
+            }
+            drainAndAssertWideBackfillNanos(tableToken);
+        });
+    }
+
+    @Test
+    public void testWalBlockApplyBackfillWideTimestampRangeEarlyOutOfOrderTxn() throws Exception {
+        // 10 in-order txns, a txn with rows in reverse order, then 288 in-order txns.
+        // TableWriter sorts any block that includes the reversed txn, however many
+        // in-order txns follow, so the sort key capacity must bound the whole block
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
+            final TableToken tableToken = createWideBackfillTableNanos("");
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                commitBackfillRowsNanos(walWriter, 0, 10);
+                appendBackfillRowNanos(walWriter, 11);
+                appendBackfillRowNanos(walWriter, 10);
+                walWriter.commit();
+                commitBackfillRowsNanos(walWriter, 12, 300);
+            }
+            drainAndAssertWideBackfillNanos(tableToken);
+        });
+    }
+
+    @Test
+    public void testWalBlockApplyBackfillWideTimestampRangeEarlyOverlappingTxn() throws Exception {
+        // 10 in-order txns, a txn that overlaps them, then 289 in-order txns. TableWriter
+        // sorts any block that includes the overlapping txn, however many in-order txns
+        // follow, so the sort key capacity must bound the whole block
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
+            final TableToken tableToken = createWideBackfillTableNanos("");
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                commitBackfillRowsNanos(walWriter, 0, 5);
+                commitBackfillRowsNanos(walWriter, 6, 11);
+                commitBackfillRowsNanos(walWriter, 5, 6);
+                commitBackfillRowsNanos(walWriter, 11, 300);
+            }
+            drainAndAssertWideBackfillNanos(tableToken);
+        });
+    }
+
+    @Test
+    public void testWalBlockApplyBackfillWideTimestampRangeEarlySegmentChange() throws Exception {
+        // 10 in-order txns from one WAL, then 290 in-order txns from another WAL. TableWriter
+        // sorts any block that spans both WAL segments, however many txns from the second
+        // segment follow, so the sort key capacity must bound the whole block
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
+            final TableToken tableToken = createWideBackfillTableNanos("");
+            try (
+                    WalWriter walWriter1 = engine.getWalWriter(tableToken);
+                    WalWriter walWriter2 = engine.getWalWriter(tableToken)
+            ) {
+                commitBackfillRowsNanos(walWriter2, 0, 10);
+                commitBackfillRowsNanos(walWriter1, 10, 300);
+            }
+            drainAndAssertWideBackfillNanos(tableToken);
+        });
+    }
+
+    @Test
+    public void testWalBlockApplyBackfillWideTimestampRangeOutOfOrderFirstTxn() throws Exception {
+        // A txn with rows in reverse order, then 298 in-order txns. TableWriter sorts a
+        // block that starts with the reversed txn, so the sort key capacity must bound
+        // the block
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
+            final TableToken tableToken = createWideBackfillTableNanos("");
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                appendBackfillRowNanos(walWriter, 1);
+                appendBackfillRowNanos(walWriter, 0);
+                walWriter.commit();
+                commitBackfillRowsNanos(walWriter, 2, 300);
+            }
+            drainAndAssertWideBackfillNanos(tableToken);
+        });
+    }
+
+    @Test
+    public void testWalBlockApplyBackfillWideTimestampRangeOutOfOrderTxn() throws Exception {
+        // 280 in-order txns, then a txn with rows in reverse order. TableWriter sorts a
+        // block that includes that txn, so the sort key capacity must bound the whole
+        // block, including the in-order txns before it
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
+            final TableToken tableToken = createWideBackfillTableNanos("");
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                commitBackfillRowsNanos(walWriter, 0, 280);
+                appendBackfillRowNanos(walWriter, 281);
+                appendBackfillRowNanos(walWriter, 280);
+                walWriter.commit();
+                commitBackfillRowsNanos(walWriter, 282, 300);
+            }
+            drainAndAssertWideBackfillNanos(tableToken);
+        });
+    }
+
+    @Test
+    public void testWalBlockApplyBackfillWideTimestampRangeOverlappingTxn() throws Exception {
+        // 279 in-order txns, then a txn that overlaps them. TableWriter sorts a block
+        // that includes that txn, so the sort key capacity must bound the whole block,
+        // including the in-order txns before it
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
+            final TableToken tableToken = createWideBackfillTableNanos("");
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                commitBackfillRowsNanos(walWriter, 0, 140);
+                commitBackfillRowsNanos(walWriter, 141, 280);
+                commitBackfillRowsNanos(walWriter, 140, 141);
+                commitBackfillRowsNanos(walWriter, 280, 300);
+            }
+            drainAndAssertWideBackfillNanos(tableToken);
+        });
+    }
+
+    @Test
+    public void testWalBlockApplyBackfillWideTimestampRangeSegmentChange() throws Exception {
+        // 280 in-order txns from one WAL, then in-order txns from another WAL. TableWriter
+        // sorts a block that spans both WAL segments, so the sort key capacity must bound
+        // the whole block, including the txns from the first segment
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
+            final TableToken tableToken = createWideBackfillTableNanos("");
+            try (
+                    WalWriter walWriter1 = engine.getWalWriter(tableToken);
+                    WalWriter walWriter2 = engine.getWalWriter(tableToken)
+            ) {
+                commitBackfillRowsNanos(walWriter1, 0, 280);
+                commitBackfillRowsNanos(walWriter2, 280, 300);
+            }
+            drainAndAssertWideBackfillNanos(tableToken);
+        });
+    }
+
+    @Test
+    public void testWalBlockApplyInOrderBackfillWideTimestampRangeMicros() throws Exception {
+        // 300 hours in micros need 5 bytes, 300 txns need 2 bytes: 5 + 2 fits the sort key
+        testWalBlockApplyInOrderBackfillWideTimestampRange(
+                "TIMESTAMP",
+                MicrosTimestampDriver.floor("2026-01-02"),
+                Micros.HOUR_MICROS,
+                1,
+                0,
+                MicrosTimestampDriver.floor("2026-01-31"),
+                "301\t2026-01-02T00:00:00.000000Z\t2026-01-31T00:00:00.000000Z\t45850\n"
+        );
+    }
+
+    @Test
+    public void testWalBlockApplyInOrderBackfillWideTimestampRangeMultiRowNanos() throws Exception {
+        // Same backlog with two rows per txn, one hour apart. Each txn spans a range,
+        // so its min is below its own max: the sort-free check must compare a txn's min
+        // against the max of the txns before it, not against a max that includes the txn.
+        // Each txn's first row shares the timestamp of the previous txn's last row, as when
+        // a client splits rows with equal timestamps across commits. The txns still do
+        // not overlap, so the block applies without the sort.
+        testWalBlockApplyInOrderBackfillWideTimestampRange(
+                "TIMESTAMP_NS",
+                NanosTimestampDriver.floor("2026-01-02"),
+                Nanos.HOUR_NANOS,
+                2,
+                Nanos.HOUR_NANOS,
+                NanosTimestampDriver.floor("2026-01-31"),
+                "601\t2026-01-02T00:00:00.000000000Z\t2026-01-31T00:00:00.000000000Z\t90700\n"
+        );
+    }
+
+    @Test
+    public void testWalBlockApplyInOrderBackfillWideTimestampRangeNanos() throws Exception {
+        // 300 hours in nanos need 7 bytes, 300 txns need 2 bytes: 7 + 2 does not fit the
+        // sort key. In-order txns from a single segment apply without the sort, so the
+        // sort key capacity must not split them.
+        testWalBlockApplyInOrderBackfillWideTimestampRange(
+                "TIMESTAMP_NS",
+                NanosTimestampDriver.floor("2026-01-02"),
+                Nanos.HOUR_NANOS,
+                1,
+                0,
+                NanosTimestampDriver.floor("2026-01-31"),
+                "301\t2026-01-02T00:00:00.000000000Z\t2026-01-31T00:00:00.000000000Z\t45850\n"
+        );
+    }
+
+    @Test
     public void testWalBlockApplyManySmallTxnsWideTimestampRangeMicros() throws Exception {
         // 300 txns need 2 bytes, 10 years in micros (> 2^48) need 7 bytes: 2 + 7 > 8
         testWalBlockApplyManySmallTxnsWideTimestampRange(
@@ -2047,7 +2241,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 "TIMESTAMP_NS",
                 NanosTimestampDriver.floor("2026-01-01"),
                 NanosTimestampDriver.floor("2026-01-05"),
-                1_000_000L,
+                Nanos.MILLI_NANOS,
                 "300\t2026-01-01T00:00:00.001000000Z\t2026-01-05T00:00:00.298000000Z\t44850\n"
         );
     }
@@ -2126,6 +2320,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
         });
     }
 
+    private void appendBackfillRowNanos(WalWriter walWriter, int i) {
+        TableWriter.Row row = walWriter.newRow(NanosTimestampDriver.floor("2026-01-02") + i * Nanos.HOUR_NANOS);
+        row.putLong(0, i);
+        row.append();
+    }
+
     private void checkTableFilesExist(TableToken sysTableName, String partition, String fileName, boolean value) {
         Path sysPath = Path.PATH.get().of(configuration.getDbRoot()).concat(sysTableName).concat(TXN_FILE_NAME);
         Assert.assertEquals(Utf8s.toString(sysPath), value, Files.exists(sysPath.$()));
@@ -2154,6 +2354,45 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         sysPath.of(configuration.getDbRoot()).concat(sysTableName).concat(SEQ_DIR);
         Assert.assertFalse(Utf8s.toString(sysPath), Files.exists(sysPath.$()));
+    }
+
+    private void commitBackfillRowsNanos(WalWriter walWriter, int lo, int hi) {
+        for (int i = lo; i < hi; i++) {
+            appendBackfillRowNanos(walWriter, i);
+            walWriter.commit();
+        }
+    }
+
+    // MONTH partitioned table with one row later than the backfill rows of
+    // appendBackfillRowNanos(), so every backfill row lands in the existing partition
+    private TableToken createWideBackfillTableNanos(String dedupClause) throws Exception {
+        execute("CREATE TABLE t (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY MONTH WAL" + dedupClause);
+        execute("INSERT INTO t VALUES (1000, '2026-01-31T00:00:00.000000000Z')");
+        drainWalQueue();
+        return engine.verifyTableName("t");
+    }
+
+    // Rows 0..299 of appendBackfillRowNanos() plus the row of createWideBackfillTableNanos()
+    private void drainAndAssertWideBackfillNanos(TableToken tableToken) throws Exception {
+        drainWalQueue();
+        Assert.assertFalse(
+                "WAL block apply failed and suspended the table",
+                engine.getTableSequencerAPI().isSuspended(tableToken)
+        );
+        assertQuery("SELECT count(), min(ts), max(ts), sum(v) FROM t")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count\tmin\tmax\tsum
+                        301\t2026-01-02T00:00:00.000000000Z\t2026-01-31T00:00:00.000000000Z\t45850
+                        """);
+    }
+
+    private long getTableTxn(TableToken tableToken) {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            return reader.getTxn();
+        }
     }
 
     private void runApplyOnce(TableToken token) {
@@ -2327,6 +2566,62 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     asdf\t123\tasdff\t222\ttrue\t1.2.3\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-01T03:25:21.312321Z
                     """
             );
+        });
+    }
+
+    private void testWalBlockApplyInOrderBackfillWideTimestampRange(
+            String timestampType,
+            long backfillLo,
+            long tsStep,
+            int rowsPerTxn,
+            long rowStep,
+            long existingTs,
+            String expectedSummary
+    ) throws Exception {
+        // A backlog of txns from one WAL segment, each later than the previous, all
+        // earlier than the table max timestamp. TableWriter applies such a block
+        // without the O3 sort, so the whole backlog applies as one block: one table commit.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, true);
+            // A negative quota gives ApplyWal2TableJob a one-day time limit, so a slow
+            // run cannot cut the lookahead pre-read or the apply loop short and split
+            // the backlog across commits
+            node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, -1);
+            final int txnCount = 300;
+            execute("CREATE TABLE t (v LONG, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY MONTH WAL");
+            final TableToken tableToken = engine.verifyTableName("t");
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = walWriter.newRow(existingTs);
+                row.putLong(0, 1000);
+                row.append();
+                walWriter.commit();
+            }
+            drainWalQueue();
+            final long txnBefore = getTableTxn(tableToken);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < txnCount; i++) {
+                    for (int j = 0; j < rowsPerTxn; j++) {
+                        TableWriter.Row row = walWriter.newRow(backfillLo + i * tsStep + j * rowStep);
+                        row.putLong(0, i);
+                        row.append();
+                    }
+                    walWriter.commit();
+                }
+            }
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "WAL block apply failed and suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+            Assert.assertEquals("table commits to apply the backlog", 1, getTableTxn(tableToken) - txnBefore);
+            assertQuery("SELECT count(), min(ts), max(ts), sum(v) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tmin\tmax\tsum\n" + expectedSummary);
         });
     }
 

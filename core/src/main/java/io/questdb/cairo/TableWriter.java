@@ -5496,7 +5496,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // For parquet last partition: use Long.MAX_VALUE to disable optimization entirely,
         // batching more transactions to reduce the number of expensive parquet O3 merges.
         long inOrderMinTimestamp = isLastPartitionParquet() ? Long.MAX_VALUE : txWriter.getMaxTimestamp();
-        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows(), inOrderMinTimestamp);
+        return walTxnDetails.calculateInsertTransactionBlock(
+                seqTxn,
+                pressureControl,
+                getWalMaxLagRows(),
+                inOrderMinTimestamp,
+                isCommitDedupMode()
+        );
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
@@ -11266,6 +11272,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", maxTs=").$ts(timestampDriver, maxTs)
                     .I$();
 
+            // calculateInsertTransactionBlock() caps every block that reaches this sort to fit the sort key
+            assert !WalTxnDetails.isTxnBlockSortKeyOverflow(minTs, maxTs, segmentCopyInfo.getTxnCount());
             long indexFormat = Vect.radixSortManySegmentsIndexAsc(
                     timestampAddr,
                     o3TimestampMemCpy.addressOf(0),

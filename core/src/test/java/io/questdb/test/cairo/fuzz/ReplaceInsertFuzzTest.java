@@ -30,12 +30,14 @@ import org.junit.Test;
 public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
     // Regression for the POSTING column rename bug where
     // linkPostingIndexAuxFiles skipped the .pv link when readSealTxnFromKeyFile
-    // returned -1, including the legitimate empty-chain (pre-seal) case. With
-    // this seed the WAL apply path adds sym_top SYMBOL INDEX and immediately
-    // renames it before any seal has run, so the live unsealed values still
-    // live in .pv.<colTxn>.0. Without the fix, the renamed column ends up
-    // with .d + .pk linked but no .pv, the table gets suspended on apply,
-    // and the parallel WAL harness fails checkNoSuspendedTables.
+    // returned -1, including the legitimate empty-chain (pre-seal) case. The
+    // failing scenario has the WAL apply path add a SYMBOL INDEX column and
+    // rename it before any seal has run, so the live unsealed values still
+    // live in .pv.<colTxn>.0. The non-zero column add and rename probabilities
+    // below let a random seed reach that sequence. Without the fix, the
+    // renamed column ends up with .d + .pk linked but no .pv, WAL apply
+    // suspends the table, and the parallel WAL harness fails
+    // checkNoSuspendedTables.
     @Test
     public void testRenamePostingColumnBeforeFirstSeal() throws Exception {
         Rnd rnd = generateRandom(LOG);

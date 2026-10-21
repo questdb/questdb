@@ -37,8 +37,9 @@ import io.questdb.std.str.StringSink;
 public interface FuzzTransactionOperation extends QuietCloseable {
 
     /**
-     * Formats a SQL WHERE clause that selects partitions in the day before
-     * <code>cutoffTimestamp</code>, the timestamp being in the table's native unit.
+     * Formats a SQL WHERE condition, without the WHERE keyword, that selects
+     * partitions in the day before <code>cutoffTimestamp</code>, the timestamp
+     * being in the table's native unit.
      */
     static String partitionDayBeforeFilter(RecordMetadata metadata, long cutoffTimestamp) {
         final TimestampDriver driver = ColumnType.getTimestampDriver(metadata.getTimestampType());

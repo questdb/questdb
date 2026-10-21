@@ -286,9 +286,16 @@ public class WalTxnDetails implements QuietCloseable {
      *                            Pass the last partition's max timestamp for native partitions (optimization applies
      *                            only to appending data). Pass Long.MAX_VALUE when the last partition is parquet
      *                            to disable in-order optimization entirely and batch more aggressively.
+     * @param isCommitDedupMode   true when the table applies the block with deduplication, which always sorts it
      * @return the number of transactions to apply in one go, e.g. the block size
      */
-    public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount, long inOrderMinTimestamp) {
+    public int calculateInsertTransactionBlock(
+            long seqTxn,
+            TableWriterPressureControl pressureControl,
+            long maxBlockRecordCount,
+            long inOrderMinTimestamp,
+            boolean isCommitDedupMode
+    ) {
         int blockSize = 1;
         long lastSeqTxn = getLastSeqTxn();
         long totalRowCount = getSegmentRowHi(seqTxn) - getSegmentRowLo(seqTxn);
@@ -301,12 +308,25 @@ public class WalTxnDetails implements QuietCloseable {
         // Timestamp spread of the whole block, used to keep the block sortable
         long blockMinTs = getMinTimestamp(seqTxn);
         long blockMaxTs = getMaxTimestamp(seqTxn);
+        // Mirrors prepareCopySegments() and the TableWriter gate that skips the sort:
+        // non-dedup, single WAL segment, every txn in order and not overlapping the
+        // txns before it. Once false, it stays false for the rest of the block.
+        boolean isSortFree = !isCommitDedupMode && getTxnInOrder(seqTxn);
+        final long firstWalSegment = getWalSegment(seqTxn);
 
         if (getCommitToTimestamp(seqTxn) != FORCE_FULL_COMMIT && getDedupMode(seqTxn) != WAL_DEDUP_MODE_REPLACE_RANGE) {
             for (long nextTxn = seqTxn + 1; nextTxn <= lastSeqTxn; nextTxn++) {
                 long nextBlockMinTs = Math.min(blockMinTs, getMinTimestamp(nextTxn));
                 long nextBlockMaxTs = Math.max(blockMaxTs, getMaxTimestamp(nextTxn));
-                if (isTxnBlockSortKeyOverflow(nextBlockMinTs, nextBlockMaxTs, blockSize + 1)) {
+                isSortFree = isSortFree
+                        && getWalSegment(nextTxn) == firstWalSegment
+                        && getTxnInOrder(nextTxn)
+                        && getMinTimestamp(nextTxn) >= blockMaxTs;
+                // TableWriter applies a non-dedup block of in-order, non-overlapping txns from
+                // one WAL segment without the sort, see prepareCopySegments(). Only a sorted
+                // block must fit the sort key. The check covers the whole block, including the
+                // sort-free txns before the first one that requires the sort.
+                if (!isSortFree && isTxnBlockSortKeyOverflow(nextBlockMinTs, nextBlockMaxTs, blockSize + 1)) {
                     // Adding this txn makes the block impossible to sort in one go,
                     // it would fail and fall back to 1-by-1 apply
                     break;
@@ -491,12 +511,13 @@ public class WalTxnDetails implements QuietCloseable {
         boolean isLastSegmentUse = false;
         long roHi = 0;
         long prevRoHi = -1;
-        // Non-overlap in-order check, consistent with calculateInsertTransactionBlock
-        // (:286-287): compare each txn's min against the aggregate max of the txns
-        // BEFORE it, hence the check runs ahead of the addTxn that folds this txn's
-        // own max in. For a single segment the slice iteration order is txn order ==
-        // time order, so internally sorted txns joined without overlap mean the whole
-        // row range is already sorted and block-apply can skip the O3 sort.
+        // Non-overlap in-order check, consistent with the isSortFree check in
+        // calculateInsertTransactionBlock: compare each txn's min against the
+        // aggregate max of the txns BEFORE it, hence the check runs ahead of the
+        // addTxn that folds this txn's own max in. For a single segment the slice
+        // iteration order is txn order == time order, so internally sorted txns
+        // joined without overlap mean the whole row range is already sorted and
+        // block-apply can skip the O3 sort.
         boolean allInOrder = true;
 
         for (int i = 0; i < blockTransactionCount; i++) {
