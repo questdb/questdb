@@ -178,6 +178,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
@@ -1598,6 +1599,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateLiveViewAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, x int) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create live view test flush every 1s start from now as " +
+                            "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) rn from tab",
+                    "create live view other flush every 1s start from now as " +
+                            "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) rn from tab"
+            );
+        });
+    }
+
+    @Test
     public void testExplainCreateMatView() throws Exception {
         assertQuery("create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day")
                 .ddl("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal")
@@ -1617,12 +1631,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateMatViewAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
+                    "create materialized view other as (select ts, k, avg(v) from tab sample by 30s) partition by day"
+            );
+        });
+    }
+
+    @Test
     public void testExplainCreateTable() throws Exception {
         assertQuery("create table a ( l long, d double)")
                 .noLeakCheck()
                 .assertsPlan("""
                         Create table: a
                         """);
+    }
+
+    @Test
+    public void testExplainCreateTableAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> assertExplainAfterCompilerReuse(
+                "create table test (x long)",
+                "create table other (x long)"
+        ));
     }
 
     @Test
@@ -1635,6 +1668,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               functions: [x,1]
                                 long_sequence count: 10
                         """));
+    }
+
+    @Test
+    public void testExplainCreateTableAsSelectAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, x long) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create table test as (select ts, x from tab) timestamp(ts) partition by day",
+                    "create table other as (select ts, x from tab) timestamp(ts) partition by day"
+            );
+        });
     }
 
     @Test
@@ -1666,8 +1710,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   keys: [ts,id]
                                   values: [last(val)]
                                     DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id
-                                          filter: id=1
+                                        Index forward scan on: id deferred: true
+                                          filter: id='XXX'
                                         Frame forward scan on: tab
                             """);
 
@@ -1745,6 +1789,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainInsertAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse("insert into test values (1)", "insert into other values (2)");
+        });
+    }
+
+    @Test
     public void testExplainInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
@@ -1756,6 +1809,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   functions: [x,1]
                                     long_sequence count: 10
                             """);
+        });
+    }
+
+    @Test
+    public void testExplainInsertAsSelectAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse(
+                    "insert into test select x from long_sequence(10)",
+                    "insert into other select x from long_sequence(20)"
+            );
         });
     }
 
@@ -1897,6 +1962,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: b
                             """);
+        });
+    }
+
+    @Test
+    public void testExplainUpdateAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse("update test set x = 1", "update other set x = 2");
         });
     }
 
@@ -2562,10 +2636,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       values: [count(*)]
                         FilterOnValues symbolOrder: desc
                             Cursor-order scan
-                                Index forward scan on: venue
-                                  filter: venue=3 and not (referencePriceType in [TYPE1])
-                                Index forward scan on: venue
-                                  filter: venue=1 and not (referencePriceType in [TYPE1])
+                                Index forward scan on: venue deferred: true
+                                  symbolFilter: venue='VENUE2'
+                                  filter: not (referencePriceType in [TYPE1])
+                                Index forward scan on: venue deferred: true
+                                  symbolFilter: venue='VENUE1'
+                                  filter: not (referencePriceType in [TYPE1])
                             Frame forward scan on: reference_prices
                     """;
 
@@ -4329,9 +4405,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // withPlanContaining is what proves the optimisation: a plan that forgot to derive the slave
         // filter would still return the right rows (the post-join WHERE k='x' filters correctly either
         // way), so the bkey fragment guards the transitive push, while .returns confirms exactly the
-        // surviving master row is kept and the 'y' row excluded. With data present, 'x' resolves to
-        // symbol key 1, so both filters render by resolved key (akey=1/bkey=1) rather than the
-        // deferred ='x' form the no-data plan-only sibling shows - exercising the resolved-key path.
+        // surviving master row is kept and the 'y' row excluded.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
             execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
@@ -4344,7 +4418,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     ) WHERE k = 'x'""")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("filter: akey=1", "filter: bkey=1")
+                    .withPlanContaining("filter: akey='x'", "filter: bkey='x'")
                     .returns("""
                             k\tav\tbv
                             x\tax\tbx
@@ -4712,6 +4786,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Lt Join Light
                                               condition: maps.cluster=_xQdbA3.cluster and maps.alias=_xQdbA3.alias
                                                 LatestByAllSymbolsFiltered
+                                                  jit: true
                                                   filter: cluster in [cluster10]
                                                     Row backward scan
                                                       expectedSymbolsCount: 2147483647
@@ -4800,6 +4875,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             LatestByValueDeferredFiltered
+                              jit: true
                               filter: 0<i
                               symbolFilter: s='ABC'
                                 Frame backward scan on: a
@@ -4816,10 +4892,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                LatestByValueFiltered
-                                    Row backward scan
-                                      symbolFilter: s=0
-                                      filter: 0<i
+                                LatestByValueDeferredFiltered
+                                  jit: true
+                                  filter: 0<i
+                                  symbolFilter: s='a1'
                                     Frame backward scan on: a
                             """);
         });
@@ -4835,9 +4911,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                LatestByValueFiltered
-                                    Row backward scan
-                                      symbolFilter: s=0
+                                LatestByValueDeferredFiltered
+                                  symbolFilter: s='a1'
                                     Frame backward scan on: a
                             """);
         });
@@ -4854,7 +4929,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Index backward scan on: s
                               filter: 0<i
-                              symbolFilter: s=1
+                              symbolFilter: s='a1'
                                 Frame backward scan on: a
                             """);
         });
@@ -4871,13 +4946,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
-    @Test // TODO: should use index
+    @Test
     public void testLatestOn10() throws Exception {
         assertQuery("select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s")
                 .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        LatestByDeferredListValuesFiltered
-                          filter: (s='S1' or s='S2')
+                        Index backward scan on: s
+                          symbolFilter: s in ['S1','S2']
                             Frame backward scan on: a
                         """);
     }
@@ -4973,6 +5048,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
+                          jit: true
                           filter: (s1 in [S1,S2] and s2='S3' and 0<i)
                             Row backward scan
                               expectedSymbolsCount: 2
@@ -4986,6 +5062,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
+                          jit: true
                           filter: (s1 in [S1,S2] and s2='S3')
                             Row backward scan
                               expectedSymbolsCount: 2
@@ -4999,6 +5076,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
+                          jit: true
                           filter: s1='S1'
                             Row backward scan
                               expectedSymbolsCount: 2147483647
@@ -5029,6 +5107,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             LatestByAllFiltered
+                              jit: true
                                 Row backward scan
                                   filter: (0<i and i<10)
                                 Frame backward scan on: a
@@ -5096,7 +5175,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Index backward scan on: s
-                              symbolFilter: s in [1] or s in ['deferred']
+                              symbolFilter: s in ['1','deferred']
                                 Frame backward scan on: a
                             """);
         });
@@ -5112,7 +5191,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Index backward scan on: s
-                              symbolFilter: s in [1,2]
+                              symbolFilter: s in ['1','2']
                                 Frame backward scan on: a
                             """);
         });
@@ -5152,8 +5231,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             PageFrame
-                                Index backward scan on: s
-                                  filter: s=1
+                                Index backward scan on: s deferred: true
+                                  filter: s='s1'
                                 Frame backward scan on: a
                             """);
         });
@@ -5211,7 +5290,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Index backward scan on: s
                               filter: length(s)=10
-                              symbolFilter: s=1
+                              symbolFilter: s='S1'
                                 Frame backward scan on: a
                             """);
         });
@@ -10401,10 +10480,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                                 FilterOnValues
                                     Table-order scan
-                                        Index forward scan on: s
-                                          filter: s=2 and length(s)=2
-                                        Index forward scan on: s
-                                          filter: s=1 and length(s)=2
+                                        Index forward scan on: s deferred: true
+                                          symbolFilter: s='S2'
+                                          filter: length(s)=2
+                                        Index forward scan on: s deferred: true
+                                          symbolFilter: s='S1'
+                                          filter: length(s)=2
                                     Frame forward scan on: a
                             """);
         });
@@ -10420,8 +10501,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                                 PageFrame
-                                    Index forward scan on: s2
-                                      filter: s2=2 and s1 in [S1,S2]
+                                    Index forward scan on: s2 deferred: true
+                                      symbolFilter: s2='S2'
+                                      filter: s1 in [S1,S2]
                                     Frame forward scan on: a
                             """);
         });
@@ -10436,8 +10518,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1
-                                  filter: s1=1
+                                Index backward scan on: s1 deferred: true
+                                  filter: s1='S1'
                                 Frame backward scan on: a
                             """);
         });
@@ -10452,8 +10534,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1
-                                  filter: s1=1
+                                Index backward scan on: s1 deferred: true
+                                  filter: s1='S1'
                                 Frame backward scan on: a
                             """);
         });
@@ -10468,8 +10550,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1
-                                  filter: s1=1
+                                Index backward scan on: s1 deferred: true
+                                  filter: s1='S1'
                                 Interval forward scan on: a
                                   intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);
@@ -10486,10 +10568,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             FilterOnValues symbolOrder: asc
                                 Cursor-order scan
-                                    Index backward scan on: s1
-                                      filter: s1=1
-                                    Index backward scan on: s1
-                                      filter: s1=2
+                                    Index backward scan on: s1 deferred: true
+                                      filter: s1='S1'
+                                    Index backward scan on: s1 deferred: true
+                                      filter: s1='S2'
                                 Interval forward scan on: a
                                   intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);
@@ -13482,6 +13564,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from t where x = :v1 ")
                 .noLeakCheck()
                 .assertsPlan("Async Filter workers: 1\n" + "  filter: x=:v1::" + type + "\n" + "    PageFrame\n" + "        Row forward scan\n" + "        Frame forward scan on: t\n");
+    }
+
+    private void assertExplainAfterCompilerReuse(String sql, String otherSql) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            ObjList<String> formats = list("text", "json");
+            ObjList<String> nextQueries = list("select * from long_sequence(1)", "explain " + otherSql);
+            for (int i = 0, n = formats.size(); i < n; i++) {
+                String explain = "explain (format " + formats.getQuick(i) + ") " + sql;
+                StringSink expected = new StringSink();
+                TestUtils.printSql(compiler, sqlExecutionContext, explain, expected);
+                for (int j = 0, m = nextQueries.size(); j < m; j++) {
+                    String nextSql = nextQueries.getQuick(j);
+                    try (RecordCursorFactory factory = compiler.compile(explain, sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursorFactory ignored = compiler.compile(nextSql, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertFactory(factory)
+                                    .withContext(sqlExecutionContext)
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns(expected);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private void assertNotSupportedByExplain(String sql, SqlExecutionContextImpl sqlExecutionContext) {

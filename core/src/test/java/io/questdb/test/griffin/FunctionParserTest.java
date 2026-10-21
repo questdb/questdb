@@ -29,18 +29,22 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -109,6 +113,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -117,6 +122,7 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.cairo.security.NoSystemAdminSecurityContext;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assume;
@@ -811,6 +817,23 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         } finally {
             sqlExecutionContext.setAllowNonDeterministicFunction(isAllowed);
         }
+    }
+
+    @Test
+    public void testEnterpriseSecurityContextRequirementRejectedAtRefresh() throws Exception {
+        // Unlike a function that discloses objects, an administrative function is rejected at refresh too:
+        // it needs the Enterprise security context of a caller, which the refresh does not have.
+        final AtomicInteger constructionCount = new AtomicInteger();
+        functions.add(countingFactory("ent_secure()", SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT, constructionCount));
+        try (SqlExecutionContext refreshContext = new MatViewRefreshLikeContext(new NoSystemAdminSecurityContext())) {
+            assertParseFails(
+                    "ent_secure()",
+                    refreshContext,
+                    0,
+                    "administrative function cannot be used in materialized view: ent_secure"
+            );
+        }
+        assertEquals(0, constructionCount.get());
     }
 
     @Test
@@ -1873,6 +1896,116 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testObjectDisclosingRequirementChecksSystemAdminBeforeConstruction() throws Exception {
+        final AtomicInteger constructionCount = new AtomicInteger();
+        functions.add(countingFactory("list_objects()", SqlExecutionRequirements.DISCLOSES_OBJECTS, constructionCount));
+        try (SqlExecutionContextImpl nonAdmin = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
+            // outside materialized and live views, the function lists what the caller may see
+            Misc.free(createFunctionParser().parseFunction(expr("list_objects()"), new GenericRecordMetadata(), nonAdmin));
+            assertEquals(1, constructionCount.get());
+
+            // NoSystemAdminSecurityContext.isSystemAdmin() is true: authorizeSystemAdmin() decides
+            nonAdmin.setAllowNonDeterministicFunction(false);
+            assertParseFails(
+                    "list_objects()",
+                    nonAdmin,
+                    0,
+                    "catalogue function cannot be used in materialized view without SYSTEM ADMIN: list_objects"
+            );
+            nonAdmin.setLiveViewCompile(true);
+            try {
+                assertParseFails(
+                        "list_objects()",
+                        nonAdmin,
+                        0,
+                        "catalogue function cannot be used in live view without SYSTEM ADMIN: list_objects"
+                );
+            } finally {
+                nonAdmin.setLiveViewCompile(false);
+            }
+            assertEquals(1, constructionCount.get());
+        }
+
+        // a SYSTEM ADMIN may write it in a materialized view
+        final boolean isAllowed = sqlExecutionContext.allowNonDeterministicFunctions();
+        sqlExecutionContext.setAllowNonDeterministicFunction(false);
+        try {
+            Misc.free(parseFunction("list_objects()", new GenericRecordMetadata(), createFunctionParser()));
+        } finally {
+            sqlExecutionContext.setAllowNonDeterministicFunction(isAllowed);
+        }
+        assertEquals(2, constructionCount.get());
+
+        // and the refresh, which has no caller to authorize, compiles what CREATE accepted
+        try (SqlExecutionContext refreshContext = new MatViewRefreshLikeContext(new NoSystemAdminSecurityContext())) {
+            Misc.free(createFunctionParser().parseFunction(expr("list_objects()"), new GenericRecordMetadata(), refreshContext));
+        }
+        assertEquals(3, constructionCount.get());
+    }
+
+    @Test
+    public void testObjectDisclosingRequirementFromViewRejectedBeforeConstruction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE VIEW v AS (SELECT 1 x)");
+            drainWalAndViewQueues();
+            final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(engine.verifyTableName("v"));
+            final AtomicInteger closeCount = new AtomicInteger();
+            final AtomicInteger constructionCount = new AtomicInteger();
+            functions.add(new FunctionFactory() {
+                @Override
+                public String getSignature() {
+                    return "tracked_arg()";
+                }
+
+                @Override
+                public Function newInstance(
+                        int position,
+                        ObjList<Function> args,
+                        IntList argPositions,
+                        CairoConfiguration configuration,
+                        SqlExecutionContext sqlExecutionContext
+                ) {
+                    return new BooleanFunction() {
+                        @Override
+                        public void close() {
+                            closeCount.incrementAndGet();
+                        }
+
+                        @Override
+                        public boolean getBool(Record rec) {
+                            return true;
+                        }
+                    };
+                }
+            });
+            functions.add(countingFactory("list_objects(T)", SqlExecutionRequirements.DISCLOSES_OBJECTS, constructionCount));
+            // Neither a SYSTEM ADMIN at CREATE nor the refresh may use the function when a regular view
+            // writes it: the definition of the view may change after CREATE.
+            try (
+                    SqlExecutionContextImpl admin = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl refreshContext = new MatViewRefreshLikeContext(AllowAllSecurityContext.INSTANCE)
+            ) {
+                admin.setAllowNonDeterministicFunction(false);
+                for (SqlExecutionContextImpl context : new SqlExecutionContextImpl[]{admin, refreshContext}) {
+                    context.setTableFunctionView(new SqlExecutionContext.TableFunctionView(viewDefinition));
+                    try {
+                        assertParseFails(
+                                "list_objects(tracked_arg())",
+                                context,
+                                0,
+                                "catalogue function from view v cannot be used in materialized view: list_objects"
+                        );
+                    } finally {
+                        context.setTableFunctionView(null);
+                    }
+                }
+            }
+            assertEquals(0, constructionCount.get());
+            assertEquals(2, closeCount.get());
+        });
+    }
+
+    @Test
     public void testOverloadBetweenNullAndAnyType() {
         for (short type = ColumnType.BOOLEAN; type < ColumnType.NULL; type++) {
             String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
@@ -2375,6 +2508,33 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         return closeCount;
     }
 
+    // A factory with the given execution requirements that counts the functions it constructs.
+    private static FunctionFactory countingFactory(String signature, int executionRequirements, AtomicInteger constructionCount) {
+        return new FunctionFactory() {
+            @Override
+            public int getExecutionRequirements() {
+                return executionRequirements;
+            }
+
+            @Override
+            public String getSignature() {
+                return signature;
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext sqlExecutionContext
+            ) {
+                constructionCount.incrementAndGet();
+                return BooleanConstant.TRUE;
+            }
+        };
+    }
+
     // A parent factory that matches on signature but must never have newInstance() invoked, used for
     // resolution/validation failures that reject arguments before the factory ever runs.
     private static FunctionFactory neverInvokedFactory(String signature) {
@@ -2471,6 +2631,16 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         }
     }
 
+    private void assertParseFails(String expression, SqlExecutionContext context, int expectedPos, String expectedMessage) throws SqlException {
+        try {
+            Misc.free(createFunctionParser().parseFunction(expr(expression), new GenericRecordMetadata(), context));
+            fail("expected rejection of " + expression);
+        } catch (SqlException e) {
+            assertEquals(expectedPos, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
+    }
+
     private void assertSignatureFailure(String signature) throws SqlException {
         functions.add(new OrFunctionFactory());
         functions.add(new FunctionFactory() {
@@ -2521,6 +2691,24 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         assertSame(constant, parseFunction("x()", new GenericRecordMetadata(), createFunctionParser()));
+    }
+
+    // compiles like the refresh of a materialized view, see MatViewRefreshSqlExecutionContext
+    private static class MatViewRefreshLikeContext extends SqlExecutionContextImpl {
+        private MatViewRefreshLikeContext(SecurityContext securityContext) {
+            super(engine, 1);
+            with(securityContext);
+        }
+
+        @Override
+        public boolean allowNonDeterministicFunctions() {
+            return false;
+        }
+
+        @Override
+        public boolean isMatViewRefresh() {
+            return true;
+        }
     }
 
     /**
