@@ -60,7 +60,7 @@ public class CastCharToIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             char c = arg.getChar(rec);
-            final byte v = (byte) (c - '0');
+            final int v = c - '0';
             if (v > -1 && v < 10) {
                 return v;
             }

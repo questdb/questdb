@@ -1165,9 +1165,9 @@ public class SqlUtil {
     }
 
     public static byte implicitCastCharAsType(char value, int toType) {
-        byte v = (byte) (value - '0');
+        int v = value - '0';
         if (v > -1 && v < 10) {
-            return v;
+            return (byte) v;
         }
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.CHAR, toType);
     }
@@ -1525,7 +1525,12 @@ public class SqlUtil {
 
     public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
         if (value != null) {
-            Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);
+            int start = 0;
+            int end = value.length();
+            if (end > 2 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x') {
+                start = 2;
+            }
+            Long256FromCharSequenceDecoder.decode(value, start, end, long256Acceptor);
         } else {
             long256Acceptor.setAll(
                     Long256Impl.NULL_LONG256.getLong0(),

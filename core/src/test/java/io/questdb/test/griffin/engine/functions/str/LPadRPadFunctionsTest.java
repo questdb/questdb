@@ -30,6 +30,21 @@ import org.junit.Test;
 public class LPadRPadFunctionsTest extends AbstractCairoTest {
 
     @Test
+    public void testVarcharConstantStringWithVariableFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s VARCHAR, l VARCHAR, r VARCHAR)");
+            execute("INSERT INTO t VALUES ('*', '***ab', 'ab***'), ('é', 'éééab', 'abééé'), (NULL, NULL, NULL), ('', NULL, NULL)");
+            assertQuery("SELECT lpad('ab'::VARCHAR, 5, s) l, rpad('ab'::VARCHAR, 5, s) r FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("l\tr\n***ab\tab***\néééab\tabééé\n\t\n\t\n");
+            assertQuery("SELECT s FROM t WHERE l = lpad('ab'::VARCHAR, 5, s) AND r = rpad('ab'::VARCHAR, 5, s)")
+                    .noLeakCheck()
+                    .returns("s\n*\né\n\n\n");
+        });
+    }
+
+    @Test
     public void testAscii() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");

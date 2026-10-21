@@ -14343,7 +14343,7 @@ public class SqlOptimiser implements Mutable {
                 if (!(func instanceof CharConstant)) {
                     value = func.getLong(null);
                 } else {
-                    long tmp = (byte) (func.getChar(null) - '0');
+                    long tmp = func.getChar(null) - '0';
                     value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
                 }
 
@@ -15220,7 +15220,7 @@ public class SqlOptimiser implements Mutable {
                 if (!(func instanceof CharConstant)) {
                     value = func.getLong(null);
                 } else {
-                    long tmp = (byte) (func.getChar(null) - '0');
+                    long tmp = func.getChar(null) - '0';
                     value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
                 }
 

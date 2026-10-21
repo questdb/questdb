@@ -1251,6 +1251,33 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testLong256VarSetToHexStr() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.LONG256, 0);
+            bindVariableService.setLong256("v");
+            for (String value : new String[]{"0x02", "0X02", "02", "0x123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0", null}) {
+                bindVariableService.setStr(0, value);
+                bindVariableService.setStr("v", value);
+                String expected = value == null ? "" : value.length() > 4 ? value : "0x02";
+                StringSink sink = new StringSink();
+                bindVariableService.getFunction(0).getLong256(null, sink);
+                TestUtils.assertEquals(expected, sink);
+                sink.clear();
+                bindVariableService.getFunction(":v").getLong256(null, sink);
+                TestUtils.assertEquals(expected, sink);
+            }
+            for (String value : new String[]{"0x", "0X", "0xg", "0x" + "1".repeat(65)}) {
+                try {
+                    bindVariableService.setStr(0, value);
+                    Assert.fail("Accepted invalid LONG256: " + value);
+                } catch (ImplicitCastException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "STRING -> LONG256");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSetStrToLong256() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.define(0, ColumnType.STRING, 0);
