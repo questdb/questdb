@@ -48,7 +48,8 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
             int columnIndex,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts,
-            @NotNull LongList prefixes
+            @NotNull LongList prefixes,
+            boolean isParallel
     ) {
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
@@ -59,7 +60,7 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
                 this.prefixes.add(prefixes.get(i));
             }
 
-            this.cursor = new LatestByAllIndexedRecordCursor(engine, configuration, metadata, columnIndex, rows, this.prefixes);
+            this.cursor = new LatestByAllIndexedRecordCursor(engine, configuration, metadata, columnIndex, rows, this.prefixes, isParallel);
         } catch (Throwable th) {
             close();
             throw th;
