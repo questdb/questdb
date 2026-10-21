@@ -39,6 +39,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -50,6 +51,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.ObjLongConsumer;
 
 import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
@@ -109,6 +111,21 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return rnd.nextInt(4);
     }
 
+    /**
+     * The server.conf line of {@link #setRndSmallWalApplyBlock(Rnd, ObjLongConsumer)}, empty when it keeps the
+     * defaults.
+     */
+    public static String getRndSmallWalApplyBlockConfig(Rnd rnd) {
+        final StringSink sink = new StringSink();
+        setRndSmallWalApplyBlock(rnd, (key, value) -> sink.put(key.getPropertyPath()).put('=').put(value));
+        return sink.toString();
+    }
+
+    public static long getRndSmallWalApplyBlockSize(Rnd rnd) {
+        // Down to a single row per block
+        return 1 + rnd.nextLong(rnd.nextBoolean() ? 64 * 1024 : 10 * Numbers.SIZE_1MB);
+    }
+
     public static long getRndWalApplyBlockMaxRows(Rnd rnd) {
         // cairo.wal.apply.block.max.rows: the hard row cap of an adaptive WAL apply block. Under an RSS limit the
         // block's row limit doubles after every block it cuts, so without a small cap a long fuzz backlog grows its
@@ -124,11 +141,23 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         // cairo.wal.apply.block.size: 0 sizes WAL apply blocks from the lag settings, a positive size switches
         // to the adaptive block. The 75 MiB default would apply a whole fuzz backlog as one block, so draw sizes
         // small enough to split it - down to a few rows - and cover the block boundaries in both modes.
-        return switch (rnd.nextInt(3)) {
-            case 0 -> 0;
-            case 1 -> 1 + rnd.nextLong(64 * 1024);
-            default -> 1 + rnd.nextLong(10 * Numbers.SIZE_1MB);
-        };
+        return rnd.nextInt(3) == 0 ? 0 : getRndSmallWalApplyBlockSize(rnd);
+    }
+
+    /**
+     * Half the time shrinks WAL apply blocks far below the 75 MiB default, by a small block size or a small row cap
+     * picked at random, so a fuzz backlog applies across many block boundaries. Hands the property it overrides to
+     * the setter; the other half of the time it sets nothing and the defaults apply.
+     */
+    public static void setRndSmallWalApplyBlock(Rnd rnd, ObjLongConsumer<PropertyKey> setter) {
+        if (rnd.nextBoolean()) {
+            return;
+        }
+        if (rnd.nextBoolean()) {
+            setter.accept(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, getRndSmallWalApplyBlockSize(rnd));
+        } else {
+            setter.accept(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, getRndWalApplyBlockMaxRows(rnd));
+        }
     }
 
     @BeforeClass
