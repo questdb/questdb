@@ -467,6 +467,52 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefusedFinishLeavesTheBlockOpenForCancel() throws Exception {
+        // a finish refused for a timestamp outside the table's bounds leaves the block open: a second begin is
+        // refused, the client cancels, the segment keeps its row count and the appender takes the next block
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "refused", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final long values = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+            final long pairs = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                Unsafe.putLong(values, 7);
+                putPair(pairs, 0, TS0, 0);
+                appender.begin(1);
+                appender.putFixedRange(0, values, 8);
+                appender.putTimestampRange(1, pairs, 0);
+                assertRefused(() -> appender.finish(-1L, TS0, false), "designated timestamp before 1970-01-01 is not allowed");
+                assertRefused(() -> appender.begin(1), "block already open");
+                appender.cancel();
+                Assert.assertEquals(0, writer.getSegmentRowCount());
+                appender.begin(1);
+                appender.putFixedRange(0, values, 8);
+                appender.putTimestampRange(1, pairs, 0);
+                appender.finish(TS0, TS0, false);
+                writer.commit();
+            } finally {
+                Unsafe.free(values, 8, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(pairs, 16, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, ts FROM refused")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            7\t2026-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testRefusesDroppedAndOutOfRangeColumns() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = createTable(new TableModel(configuration, "dropped", PartitionBy.HOUR)
@@ -501,10 +547,12 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRefusesPutOutsideBlock() throws Exception {
+    public void testRefusesEveryCallOutsideBlock() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = createTable(new TableModel(configuration, "outside", PartitionBy.HOUR)
                     .col("a", ColumnType.LONG)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("v", ColumnType.VARCHAR)
                     .timestamp("ts")
                     .wal()
             );
@@ -512,18 +560,14 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                     WalWriter writer = engine.getWalWriter(token);
                     WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
             ) {
-                try {
-                    appender.putFixedRange(0, 0, 0);
-                    Assert.fail();
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "no open block");
-                }
-                try {
-                    appender.finish(TS0, TS0, false);
-                    Assert.fail();
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "no open block");
-                }
+                assertRefused(() -> appender.putFixedRange(0, 0, 0), "no open block");
+                assertRefused(() -> appender.putSymbolRange(1, 0, key -> null), "no open block");
+                assertRefused(() -> appender.putVarSizeRange(2, 0, 0, 0, 0), "no open block");
+                assertRefused(() -> appender.putTimestampRange(3, 0, 0), "no open block");
+                assertRefused(() -> appender.fillSymbolKey(1, 0), "no open block");
+                assertRefused(() -> appender.resolveSymbol(1, "x"), "no open block");
+                assertRefused(appender::syncWrittenColumns, "no open block");
+                assertRefused(() -> appender.finish(TS0, TS0, false), "no open block");
                 appender.cancel(); // without a block: nothing
                 Assert.assertEquals(0, writer.getSegmentRowCount());
             }
@@ -635,6 +679,33 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
                             21
                             22
                             """);
+        });
+    }
+
+    @Test
+    public void testRefusesSymbolCallsOnOtherColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "kinds", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final long values = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                appender.begin(1);
+                assertRefused(() -> appender.putSymbolRange(0, values, key -> null), "not a SYMBOL column [column=0]");
+                assertRefused(() -> appender.fillSymbolKey(0, 0), "not a SYMBOL column [column=0]");
+                assertRefused(() -> appender.resolveSymbol(0, "x"), "not a SYMBOL column [column=0]");
+                assertRefused(() -> appender.putFixedRange(1, values, 4), "not a fixed-size column [column=1]");
+                appender.cancel();
+                Assert.assertEquals(0, writer.getSegmentRowCount());
+            } finally {
+                Unsafe.free(values, 8, MemoryTag.NATIVE_DEFAULT);
+            }
         });
     }
 
@@ -898,6 +969,193 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShiftsEntriesForwardWhenTheSourceIsBehindTheSink() throws Exception {
+        // the first block takes source rows 4 and 5, the second takes rows 0 to 2: the second range's data offset
+        // in the source is below the sink's append offset, so its aux entries are shifted forward
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "behind", PartitionBy.HOUR)
+                    .col("s", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final ColumnTypeDriver driver = ColumnType.getDriver(ColumnType.STRING);
+            final long pairs = Unsafe.malloc(3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MemoryCARW aux = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW data = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                driver.configureAuxMemO3RSS(aux);
+                StringTypeDriver.appendValue(aux, data, "first");
+                StringTypeDriver.appendValue(aux, data, "second value");
+                driver.appendNull(aux, data);
+                StringTypeDriver.appendValue(aux, data, "left out of the range");
+                StringTypeDriver.appendValue(aux, data, "fourth");
+                StringTypeDriver.appendValue(aux, data, "v5");
+                final long auxBase = aux.addressOf(0);
+
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 4, 6, TS0);
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 0, 3, TS0 + 2 * SECOND);
+                writer.commit();
+            } finally {
+                Unsafe.free(pairs, 3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT s, ts FROM behind")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            s\tts
+                            fourth\t2026-01-01T00:00:00.000000Z
+                            v5\t2026-01-01T00:00:01.000000Z
+                            first\t2026-01-01T00:00:02.000000Z
+                            second value\t2026-01-01T00:00:03.000000Z
+                            \t2026-01-01T00:00:04.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testStaysUsableAfterCloseAndGrowsItsScratch() throws Exception {
+        // a two-row block, then close(), which frees the aux scratch, then a 200-row block from the same source:
+        // the scratch is allocated again, larger, and every value lands
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "grown", PartitionBy.HOUR)
+                    .col("v", ColumnType.VARCHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final int bigRows = 200;
+            final ColumnTypeDriver driver = ColumnType.getDriver(ColumnType.VARCHAR);
+            final long pairs = Unsafe.malloc(bigRows * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MemoryCARW aux = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW data = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                driver.configureAuxMemO3RSS(aux);
+                VarcharTypeDriver.appendValue(aux, data, new Utf8String("a"));
+                VarcharTypeDriver.appendValue(aux, data, new Utf8String("bb"));
+                for (int i = 0; i < bigRows; i++) {
+                    // longer than nine bytes, so that the value is not inlined and the data vector is used
+                    VarcharTypeDriver.appendValue(aux, data, new Utf8String("value-" + i + "-not-inlined"));
+                }
+                final long auxBase = aux.addressOf(0);
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 0, 2, TS0);
+                appender.close();
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 2, 2 + bigRows, TS0 + 2 * SECOND);
+                writer.commit();
+            } finally {
+                Unsafe.free(pairs, bigRows * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            // 202 rows: "a" (1) + "bb" (2) + 10 values of 19 bytes + 90 of 20 + 100 of 21 = 4_093 bytes
+            assertQuery("SELECT count(), sum(length(v)) FROM grown")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            202\t4093
+                            """);
+            assertQuery("SELECT v FROM grown LIMIT 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            a
+                            bb
+                            value-0-not-inlined
+                            """);
+            assertQuery("SELECT v FROM grown LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            value-199-not-inlined
+                            """);
+        });
+    }
+
+    @Test
+    public void testSyncsOnlyTheColumnsWrittenInTheBlock() throws Exception {
+        final AtomicInteger msyncs = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                msyncs.incrementAndGet();
+                super.msync(addr, len, async);
+            }
+        };
+        try {
+            assertMemoryLeak(() -> {
+                final TableToken token = createTable(new TableModel(configuration, "scoped", PartitionBy.HOUR)
+                        .col("a", ColumnType.LONG)
+                        .col("v", ColumnType.VARCHAR)
+                        .timestamp("ts")
+                        .wal()
+                );
+                final int rows = 2;
+                final long values = Unsafe.malloc(rows * 8L, MemoryTag.NATIVE_DEFAULT);
+                final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
+                try (
+                        MemoryCARW aux = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW data = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        WalWriter writer = engine.getWalWriter(token);
+                        WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+                ) {
+                    final ColumnTypeDriver driver = ColumnType.getDriver(ColumnType.VARCHAR);
+                    driver.configureAuxMemO3RSS(aux);
+                    // values longer than nine bytes, so that v's data page is written and mapped by the first block
+                    VarcharTypeDriver.appendValue(aux, data, new Utf8String("the first value, not inlined"));
+                    VarcharTypeDriver.appendValue(aux, data, new Utf8String("the second value, not inlined"));
+                    for (int i = 0; i < rows; i++) {
+                        Unsafe.putLong(values + i * 8L, i);
+                        putPair(pairs, i, TS0 + i * SECOND, i);
+                    }
+                    // the first block writes every column, so every memory of the segment has a mapped page
+                    appender.begin(rows);
+                    appender.putFixedRange(0, values, rows * 8L);
+                    appender.putVarSizeRange(1, aux.addressOf(0), data.addressOf(0), 0, driver.getDataVectorSize(aux.addressOf(0), 0, 1));
+                    appender.putTimestampRange(2, pairs, 0);
+                    appender.finish(TS0, TS0 + SECOND, false);
+                    // the second block writes a and ts only; v's mapped pages are not synced
+                    for (int i = 0; i < rows; i++) {
+                        putPair(pairs, i, TS0 + (rows + i) * SECOND, rows + i);
+                    }
+                    appender.begin(rows);
+                    appender.putFixedRange(0, values, rows * 8L);
+                    appender.putTimestampRange(2, pairs, rows);
+                    msyncs.set(0);
+                    appender.syncWrittenColumns();
+                    Assert.assertEquals(2, msyncs.get());
+                    appender.finish(TS0 + rows * SECOND, TS0 + (2 * rows - 1) * SECOND, false);
+                    writer.commit();
+                } finally {
+                    Unsafe.free(values, rows * 8L, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(pairs, rows * 16L, MemoryTag.NATIVE_DEFAULT);
+                }
+                drainWalQueue();
+                assertQuery("SELECT a, v FROM scoped")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tv
+                                0\tthe first value, not inlined
+                                1\tthe second value, not inlined
+                                0\t
+                                1\t
+                                """);
+            });
+        } finally {
+            ff = null;
+        }
+    }
+
+    @Test
     public void testSyncsWrittenColumnsInsideBlockOnly() throws Exception {
         final AtomicInteger msyncs = new AtomicInteger();
         ff = new TestFilesFacadeImpl() {
@@ -979,15 +1237,6 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
         Unsafe.putLong(pairs + i * 16L + 8, row);
     }
 
-    private static void assertRefused(Runnable call, CharSequence message) {
-        try {
-            call.run();
-            Assert.fail("expected a CairoException containing: " + message);
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), message);
-        }
-    }
-
     // rows [rowLo, rowHi) of the source vectors as one block, with one timestamp per row from firstTimestamp
     private static void appendVarSizeBlock(
             WalColumnRangeAppender appender,
@@ -1009,6 +1258,15 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
         appender.putVarSizeRange(0, auxBase + driver.getAuxVectorOffset(rowLo), data.addressOf(dataOffset), dataOffset, dataSize);
         appender.putTimestampRange(1, pairs, rowLo);
         appender.finish(firstTimestamp, firstTimestamp + (rows - 1) * SECOND, false);
+    }
+
+    private static void assertRefused(Runnable call, CharSequence message) {
+        try {
+            call.run();
+            Assert.fail("expected a CairoException containing: " + message);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+        }
     }
 
     // a one-dimensional DOUBLE[] of the given values; no values makes an empty array
