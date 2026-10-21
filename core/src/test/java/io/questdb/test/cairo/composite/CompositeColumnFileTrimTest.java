@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -95,8 +96,12 @@ public class CompositeColumnFileTrimTest extends AbstractCairoTest {
             final long length = ff.length(partitionPath.concat(fileName).$());
             Assert.assertTrue(fileName + " is shorter than its rows [length=" + length + ", liveBytes=" + liveBytes + ']',
                     length >= liveBytes);
-            Assert.assertEquals(fileName + " kept bytes nobody wrote [liveBytes=" + liveBytes + ']',
-                    Files.ceilPageSize(liveBytes), length);
+            // Windows refuses to shorten a file while any view of it is mapped, and the read-only frame the writer
+            // caches over the partition maps these same files, so the best-effort trim is refused there.
+            if (!Os.isWindows()) {
+                Assert.assertEquals(fileName + " kept bytes nobody wrote [liveBytes=" + liveBytes + ']',
+                        Files.ceilPageSize(liveBytes), length);
+            }
         } finally {
             partitionPath.trimTo(plen);
         }

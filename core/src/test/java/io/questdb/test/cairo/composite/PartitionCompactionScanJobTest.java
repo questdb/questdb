@@ -40,6 +40,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -53,6 +54,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1342,6 +1344,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
 
     @Test
     public void testScanLeavesASoftLinkedParquetPartitionAlone() throws Exception {
+        // Windows: ff.isSoftLink() is always false, so ATTACH does not mark a soft-linked partition READ ONLY.
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             final TableToken token = createIdleDirtyParquetTable("sl_px");
             execute("ALTER TABLE sl_px DETACH PARTITION LIST '2020-01-01'");
