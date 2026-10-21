@@ -26,9 +26,11 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
@@ -37,11 +39,12 @@ import io.questdb.std.Unsafe;
  * blocks of a {@link WalColumnSink}. A client brackets each block with {@link #begin(int)} and
  * {@link #finish(long, long, boolean)} or {@link #cancel()}, and between the two hands over one range per column it
  * writes; the columns it does not write are NULL-filled by the sink when the block finishes. Every range covers
- * the whole block. A column takes one range per block; a second range for it is refused. This class keeps the sink's rules for its client: it advances the not-null watermark of every
- * written column, writes the designated timestamp as (timestamp, row) pairs whose row is the segment's, continues
- * a STRING or BINARY aux vector from the entry already present, resolves symbols through the sink's own reader in
- * first-row order, checks the timestamp bounds before the block finishes, and leaves a refused call to be
- * cancelled by the client. The ranges are not validated beyond their sizes: the client owns their layout.
+ * the whole block. A column takes one range per block; a second range for it is refused. This class keeps the
+ * sink's rules for its client: it advances the not-null watermark of every written column, writes the designated
+ * timestamp as (timestamp, row) pairs whose row is the segment's, continues a STRING or BINARY aux vector from
+ * the entry already present, resolves symbols through the sink's own reader in first-row order, checks the
+ * timestamp bounds before the block finishes, and leaves a refused call to be cancelled by the client. The
+ * ranges are not validated beyond their sizes: the client owns their layout.
  * <p>
  * Not thread-safe; one instance per sink. {@link #close()} frees the buffer the var-size aux shift uses.
  */
@@ -51,6 +54,8 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     private long firstRow;
     private boolean isInBlock;
     private int rowCount;
+    private long scratch;
+    private long scratchSize;
 
     public WalColumnRangeAppender(WalColumnSink sink) {
         this.sink = sink;
@@ -87,6 +92,8 @@ public final class WalColumnRangeAppender implements QuietCloseable {
 
     @Override
     public void close() {
+        scratch = Unsafe.free(scratch, scratchSize, MemoryTag.NATIVE_DEFAULT);
+        scratchSize = 0;
     }
 
     /**
@@ -139,6 +146,41 @@ public final class WalColumnRangeAppender implements QuietCloseable {
             for (int i = 0; i < rowCount; i++) {
                 data.putLong128(Unsafe.getLong(address + ((long) i << 4)), firstRow + i);
             }
+        }
+        written(columnIndex);
+    }
+
+    /**
+     * Appends the block's values of a var-size column (STRING, BINARY, VARCHAR, ARRAY) from WAL layout:
+     * {@code auxAddress} is the aux entry of the range's first row (STRING and BINARY: the entry holding its data
+     * offset, of which the block's rows plus one are read; VARCHAR and ARRAY: its 16-byte entry),
+     * {@code dataAddress} and {@code dataSize} the range's data bytes, and {@code dataOffset} the offset of
+     * {@code dataAddress} in the source data vector, which the aux entries are relative to. The entries are
+     * shifted to the sink's data append offset; a STRING or BINARY range continues from the entry the sink's aux
+     * column already holds.
+     */
+    public void putVarSizeRange(int columnIndex, long auxAddress, long dataAddress, long dataOffset, long dataSize) {
+        checkInBlock();
+        checkNotWritten(columnIndex);
+        final int type = sink.getMetadata().getColumnType(columnIndex);
+        if (!ColumnType.isVarSize(type)) {
+            throw CairoException.nonCritical().put("not a var-size column [column=").put(columnIndex).put(']');
+        }
+        final ColumnTypeDriver driver = ColumnType.getDriver(type);
+        final MemoryMA aux = sink.getAuxColumn(columnIndex);
+        final MemoryMA data = sink.getDataColumn(columnIndex);
+        final long shift = dataOffset - data.getAppendOffset();
+        final long auxSize = driver.getAuxVectorSize(rowCount);
+        final long appendBytes = driver.auxRowsToBytes(rowCount);
+        if (auxSize > scratchSize) {
+            scratch = Unsafe.realloc(scratch, scratchSize, auxSize, MemoryTag.NATIVE_DEFAULT);
+            scratchSize = auxSize;
+        }
+        driver.shiftCopyAuxVector(shift, auxAddress, 0, rowCount - 1, scratch, auxSize);
+        // the leading entry of a STRING or BINARY vector is already present in the sink's aux column
+        aux.putBlockOfBytes(scratch + auxSize - appendBytes, appendBytes);
+        if (dataSize > 0) {
+            data.putBlockOfBytes(dataAddress, dataSize);
         }
         written(columnIndex);
     }
