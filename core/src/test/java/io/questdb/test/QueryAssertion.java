@@ -823,6 +823,9 @@ public class QueryAssertion {
         // registered query is returned to the pool (not freed) and would
         // otherwise trip the leak checker as a retained native block.
         engine.getMemoryTrackerProvider().clear();
+        // A composite-partition O3 commit returns its frames to the engine's frame pool rather
+        // than freeing them; drain the pool so the pooled frames do not trip the leak checker.
+        engine.getFrameFactory().clear();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }
