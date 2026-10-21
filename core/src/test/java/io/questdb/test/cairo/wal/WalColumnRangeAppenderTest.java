@@ -359,6 +359,43 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillsNullForANegativeSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "nullkey", PartitionBy.HOUR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final int rows = 2;
+            final long pairs = Unsafe.malloc(rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                for (int i = 0; i < rows; i++) {
+                    putPair(pairs, i, TS0 + i * SECOND, i);
+                }
+                appender.begin(rows);
+                appender.fillSymbolKey(0, -7);
+                appender.putTimestampRange(1, pairs, 0);
+                appender.finish(TS0, TS0 + SECOND, false);
+                writer.commit();
+            } finally {
+                Unsafe.free(pairs, rows * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() AS n FROM nullkey WHERE s IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            n
+                            2
+                            """);
+        });
+    }
+
+    @Test
     public void testNullValueForAKeyMarksNull() throws Exception {
         // a key the lookup cannot resolve becomes a NULL symbol, and the column carries the null flag
         assertMemoryLeak(() -> {

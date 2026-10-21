@@ -119,19 +119,22 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     }
 
     /**
-     * Writes one symbol key, as {@link #resolveSymbol(int, CharSequence)} returned it, for every row of the block.
-     * Only a key {@link #resolveSymbol(int, CharSequence)} returned for this sink is valid; any other key is
-     * written as it is and the segment is silently wrong.
+     * Writes one symbol key for every row of the block. A non-negative key is one that
+     * {@link #resolveSymbol(int, CharSequence)} returned for this sink, valid until the writer's next commit, since
+     * a key for a value new to the table is transaction-local (a cancel does not invalidate it): resolve the key in
+     * the block that uses it. A negative key writes NULL and marks the column's null flag.
      */
     public void fillSymbolKey(int columnIndex, int key) {
         checkInBlock();
         checkColumn(columnIndex);
         checkNotWritten(columnIndex);
         checkSymbol(columnIndex);
+        // a negative key is NULL, as in putSymbolRange: resolved through the sink, which marks the null flag
+        final int targetKey = key < 0 ? sink.resolveSymbol(columnIndex, null, sink.getSymbolMapReader(columnIndex)) : key;
         final MemoryMA data = sink.getDataColumn(columnIndex);
         try {
             for (int i = 0; i < rowCount; i++) {
-                data.putInt(key);
+                data.putInt(targetKey);
             }
         } catch (Throwable th) {
             hasFailedWrite = true;
