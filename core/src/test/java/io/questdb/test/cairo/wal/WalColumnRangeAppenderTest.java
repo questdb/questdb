@@ -33,10 +33,13 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.wal.WalColumnRangeAppender;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;
@@ -56,6 +59,116 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     private static final long SECOND = 1_000_000L;
     private static final long TS0 = 1_767_225_600_000_000L; // 2026-01-01T00:00:00.000000Z
+
+    @Test
+    public void testAppendsArrayRangesWithShiftedOffsets() throws Exception {
+        // six DOUBLE[] values in WAL layout (one 16-byte aux entry per value); the first block takes rows 0 to 2, row
+        // 3 is left out, and the second block takes rows 4 and 5 from a source data offset ahead of the sink's; an
+        // empty array and a NULL are among the rows
+        assertMemoryLeak(() -> {
+            final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            final TableToken token = createTable(new TableModel(configuration, "arrays", PartitionBy.HOUR)
+                    .col("arr", arrayType)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final ColumnTypeDriver driver = ColumnType.getDriver(arrayType);
+            final long pairs = Unsafe.malloc(3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MemoryCARW aux = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW data = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    DirectArray array = new DirectArray(configuration);
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                driver.configureAuxMemO3RSS(aux);
+                ArrayTypeDriver.appendValue(aux, data, doubles(array, 1.0, 2.0));      // row 0
+                ArrayTypeDriver.appendValue(aux, data, doubles(array));                // row 1: empty
+                array.ofNull();
+                ArrayTypeDriver.appendValue(aux, data, array);                         // row 2: NULL
+                ArrayTypeDriver.appendValue(aux, data, doubles(array, 9.0));           // row 3: left out of the range
+                ArrayTypeDriver.appendValue(aux, data, doubles(array, 3.0, 4.0, 5.0)); // row 4
+                ArrayTypeDriver.appendValue(aux, data, doubles(array, 6.0));           // row 5
+                final long auxBase = aux.addressOf(0);
+
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 0, 3, TS0);
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 4, 6, TS0 + 3 * SECOND);
+                writer.commit();
+            } finally {
+                Unsafe.free(pairs, 3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT arr, ts FROM arrays")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            arr\tts
+                            [1.0,2.0]\t2026-01-01T00:00:00.000000Z
+                            []\t2026-01-01T00:00:01.000000Z
+                            null\t2026-01-01T00:00:02.000000Z
+                            [3.0,4.0,5.0]\t2026-01-01T00:00:03.000000Z
+                            [6.0]\t2026-01-01T00:00:04.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAppendsBinaryRangesWithShiftedOffsets() throws Exception {
+        // six BINARY values in WAL layout (a leading aux entry, then one 8-byte end offset per value); the first block
+        // takes rows 0 to 2, row 3 is left out, and the second block takes rows 4 and 5, whose source data offset is
+        // ahead of the sink's append offset, so its aux entries are shifted back; an empty value and a NULL are among
+        // the rows
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "binaries", PartitionBy.HOUR)
+                    .col("b", ColumnType.BINARY)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final ColumnTypeDriver driver = ColumnType.getDriver(ColumnType.BINARY);
+            final long pairs = Unsafe.malloc(3 * 16L, MemoryTag.NATIVE_DEFAULT);
+            final long bytes = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
+            final DirectBinarySequence binary = new DirectBinarySequence();
+            try (
+                    MemoryCARW aux = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW data = Vm.getCARWInstance(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                for (int i = 0; i < 4; i++) {
+                    Unsafe.putByte(bytes + i, (byte) (0x10 + i));
+                }
+                driver.configureAuxMemO3RSS(aux);
+                aux.putLong(data.putBin(binary.of(bytes, 4)));     // row 0: 10 11 12 13
+                aux.putLong(data.putBin(binary.of(bytes, 0)));     // row 1: empty, length 0
+                driver.appendNull(aux, data);                      // row 2: NULL
+                aux.putLong(data.putBin(binary.of(bytes, 2)));     // row 3: left out of the range
+                aux.putLong(data.putBin(binary.of(bytes + 1, 3))); // row 4: 11 12 13
+                aux.putLong(data.putBin(binary.of(bytes + 3, 1))); // row 5: 13
+                final long auxBase = aux.addressOf(0);
+
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 0, 3, TS0);
+                appendVarSizeBlock(appender, driver, auxBase, data, pairs, 4, 6, TS0 + 3 * SECOND);
+                writer.commit();
+            } finally {
+                Unsafe.free(pairs, 3 * 16L, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(bytes, 4, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT length(b) AS len, b, ts FROM binaries")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            len\tb\tts
+                            4\t00000000 10 11 12 13\t2026-01-01T00:00:00.000000Z
+                            0\t\t2026-01-01T00:00:01.000000Z
+                            -1\t\t2026-01-01T00:00:02.000000Z
+                            3\t00000000 11 12 13\t2026-01-01T00:00:03.000000Z
+                            1\t00000000 13\t2026-01-01T00:00:04.000000Z
+                            """);
+        });
+    }
 
     @Test
     public void testAppendsFixedAndTimestampRanges() throws Exception {
@@ -896,5 +1009,16 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
         appender.putVarSizeRange(0, auxBase + driver.getAuxVectorOffset(rowLo), data.addressOf(dataOffset), dataOffset, dataSize);
         appender.putTimestampRange(1, pairs, rowLo);
         appender.finish(firstTimestamp, firstTimestamp + (rows - 1) * SECOND, false);
+    }
+
+    // a one-dimensional DOUBLE[] of the given values; no values makes an empty array
+    private static DirectArray doubles(DirectArray array, double... values) {
+        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        array.setDimLen(0, values.length);
+        array.applyShape();
+        for (int i = 0; i < values.length; i++) {
+            array.putDouble(i, values[i]);
+        }
+        return array;
     }
 }
