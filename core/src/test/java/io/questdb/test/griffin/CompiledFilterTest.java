@@ -1803,6 +1803,46 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampNsTextBoundInYear2262() throws Exception {
+        // TIMESTAMP_NS ends at 2262-04-11T23:47:16.854775807Z. A text bound in 2262 with
+        // sub-microsecond digits must keep them in the Java filter as well as in the JIT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, v TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('max', '2262-04-11T23:47:16.854775807Z', '1970-01-01T00:00:00.000000Z'),
+                    ('mid', '2262-01-01T00:00:00.000000123Z', '1970-01-01T00:00:01.000000Z'),
+                    ('one', '1970-01-01T00:00:00.000000001Z', '1970-01-01T00:00:02.000000Z')
+                    """);
+
+            final String eqMax = "SELECT k FROM x WHERE v = '2262-04-11T23:47:16.854775807Z'";
+            for (int mode = 0; mode < 3; mode++) {
+                final boolean isParallel = mode > 0;
+                final boolean isJit = mode == 2;
+                sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                sqlExecutionContext.setJitMode(isJit ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                try (RecordCursorFactory factory = select(eqMax)) {
+                    Assert.assertEquals(isJit, factory.usesCompiledFilter());
+                }
+
+                assertQuery(eqMax).noLeakCheck().returns("k\nmax\n");
+                assertQuery("SELECT k FROM x WHERE v = '2262-01-01T00:00:00.000000123Z'")
+                        .noLeakCheck().returns("k\nmid\n");
+                assertQuery("SELECT k FROM x WHERE v > '2262-01-01T00:00:00.000000200Z'")
+                        .noLeakCheck().returns("k\nmax\n");
+                assertQuery("SELECT k FROM x WHERE v <= '2262-01-01T00:00:00.000000122Z'")
+                        .noLeakCheck().returns("k\none\n");
+                assertQuery("SELECT k FROM x WHERE v IN ('2262-04-11T23:47:16.854775807Z', '2262-01-01T00:00:00.000000123Z')")
+                        .noLeakCheck().returns("k\nmax\nmid\n");
+                assertQuery("SELECT k FROM x WHERE v BETWEEN '2262-04-11T23:47:16.854775807Z' AND '2262-04-11T23:47:16.854775807Z'")
+                        .noLeakCheck().returns("k\nmax\n");
+                assertQuery("SELECT k FROM x WHERE v = '2262-04-11T23:47:16.854775Z'")
+                        .noLeakCheck().returns("k\n");
+            }
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

@@ -141,6 +141,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.datetime.nanotime.Nanos;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -1867,7 +1868,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         // Extract year from timestamp string to check nano range
         int year = extractYearFromTimestamp(timestampStr);
-        if (year >= 2262) {
+        if (year > 2262) {
             // Year is beyond nano timestamp range, use original type
             return FunctionFactoryDescriptor.toType(sigArgType);
         }
@@ -1900,6 +1901,19 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
             // If more than 6 digits (microsecond precision) and within nano range, use nanosecond type
             if (digitCount > 6) {
+                if (year == 2262) {
+                    // TIMESTAMP_NS ends at 2262-04-11T23:47:16.854775807Z. A nano parse
+                    // of a later 2262 date wraps past Long.MAX_VALUE, so check the result
+                    // against the year's floor before committing to the nano type.
+                    try {
+                        long ts = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO).parseFloorLiteral(timestampStr);
+                        if (ts >= Nanos.yearNanos(2262, false)) {
+                            return ColumnType.TIMESTAMP_NANO;
+                        }
+                    } catch (NumericException ignore) {
+                    }
+                    return FunctionFactoryDescriptor.toType(sigArgType);
+                }
                 return ColumnType.TIMESTAMP_NANO;
             }
         }
