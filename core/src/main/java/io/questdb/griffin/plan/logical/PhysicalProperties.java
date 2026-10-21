@@ -384,7 +384,7 @@ public final class PhysicalProperties {
             case JoinPlan join -> join(join, join.getOrderedInputs().size());
             case WindowJoinPlan windowJoin -> windowJoin(windowJoin);
             case SetOperationPlan operation -> setOperation(operation);
-            case HorizonJoinPlan _ -> unknown(ScanDirection.UNKNOWN, Capability.UNKNOWN);
+            case HorizonJoinPlan horizon -> computed(Capability.NO, scanDirection(horizon.getMaster()), Capability.NO);
         };
     }
 
@@ -1037,7 +1037,8 @@ public final class PhysicalProperties {
             case AggregatePlan aggregate -> isSource ? -1 : aggregateTimestampIndex(aggregate);
             case ScanPlan scan -> isSource ? -1 : scanTimestampIndex(scan);
             case DistinctPlan _, FillPlan _ -> forwarded(plan.getOutput().getTimestampIndex(), isSource);
-            case SampleByPlan _, FunctionSourcePlan _, HorizonJoinPlan _ ->
+            case HorizonJoinPlan horizon -> forwarded(timestamp(horizon.getMaster(), null, false), isSource);
+            case SampleByPlan _, FunctionSourcePlan _ ->
                     isSource ? -1 : plan.getOutput().getTimestampIndex();
         };
     }

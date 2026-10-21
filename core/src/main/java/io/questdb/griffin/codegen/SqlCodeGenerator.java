@@ -64,6 +64,7 @@ import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -169,7 +170,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             this.filterGenerator = new FilterFactoryGenerator(configuration, characterStore, jitIRMem, reduceTaskFactory, functionInstantiator,
                     tmpSink, tmpIndexes, tmpValues, tmpLongs);
             this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, filterGenerator, functionInstantiator, asm,
-                    entityColumnFilter, tmpIndexes, tmpValues, tmpMasterKeys);
+                    entityColumnFilter, tmpIndexes, tmpValues, tmpMasterKeys, reduceTaskFactory);
             this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionInstantiator, expressionRewriter,
                     functionResolver.getFunctionFactoryCache(), asm, entityColumnFilter, reduceTaskFactory, tmpSink, temporaries.ids, tmpIndexes);
             this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, tmpLongs);
@@ -522,6 +523,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case AggregatePlan aggregate when PlanToFactoryRules.postingDistinctScan(aggregate) instanceof ScanPlan scan ->
                     scanGenerator.generatePostingDistinct(frame, aggregate, scan, executionContext);
             case AggregatePlan aggregate -> aggregateGenerator.generateAggregate(frame, aggregate, executionContext);
+            case HorizonJoinPlan horizon -> aggregateGenerator.generateHorizonJoin(frame, null, horizon, executionContext);
             case JoinPlan join -> joinGenerator.generateJoin(frame, join, executionContext);
             case WindowJoinPlan windowJoin ->
                     joinGenerator.generateWindowJoin(frame, windowJoin, null, executionContext);

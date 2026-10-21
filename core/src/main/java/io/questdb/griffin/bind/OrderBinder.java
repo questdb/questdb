@@ -167,6 +167,7 @@ final class OrderBinder implements Mutable {
             boolean isTimestampSet = false;
             for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
                 if (project.getExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == timestampId
+                        && !ctx.scope().nonTimestampReferenceIds.contains(project.getOutput().getColumnId(i))
                         && (!isTimestampSet || project.getOutput().getColumnId(i) == firstOrderId
                         || Chars.equalsIgnoreCase(project.getOutput().getColumnName(i), timestampName))) {
                     project.getOutput().setTimestampIndex(i);
@@ -233,12 +234,15 @@ final class OrderBinder implements Mutable {
         }
         final int timestampId = input.getColumnId(inputTimestampIndex);
         final CharSequence timestampName = input.getColumnName(inputTimestampIndex);
+        final int preferredTimestampIndex = output.getColumnIndexById(ctx.scope().preferredTimestampColumnId);
         // A computed projection designates the last plain reference, as the virtual factory does.
         final boolean isLastReference = !LogicalPlans.isColumnReferenceProjection(project);
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (project.getExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == timestampId
                     && (column.isDirectReference() || i == orderedProjectionIndex)
-                    && !ctx.scope().translatingCopyIds.contains(output.getColumnId(i))) {
+                    && (preferredTimestampIndex < 0 || orderedProjectionIndex >= 0 || i == preferredTimestampIndex)
+                    && !ctx.scope().translatingCopyIds.contains(output.getColumnId(i))
+                    && !ctx.scope().nonTimestampReferenceIds.contains(output.getColumnId(i))) {
                 if (i == orderedProjectionIndex
                         || output.getTimestampIndex() < 0
                         || orderedProjectionIndex < 0 && (isLastReference

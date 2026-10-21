@@ -95,6 +95,7 @@ final class BindScope implements Mutable {
     final ObjList<ExpressionNode> joinResidualNodes;
     final IntList joinResidualOrigins;
     final IntHashSet keySubqueryColumnIds = new IntHashSet();
+    final IntHashSet nonTimestampReferenceIds = new IntHashSet();
     final IntList orderOutputIndexes = new IntList();
     final IntList outerColumnIds = new IntList();
     final ObjList<OutputSchema> outerScopes = new ObjList<>();
@@ -155,6 +156,8 @@ final class BindScope implements Mutable {
     QueryModel namedWindowScope;
     IntHashSet nativeTimestampIds;
     int nestedWindowPosition;
+    // A horizon projection prefers exact source spelling, otherwise its first resolved timestamp.
+    int preferredTimestampColumnId = -1;
     ObjList<? extends BoundExpression> replacementColumns;
     ObjList<ExpressionNode> replacementNodes;
     QueryModel timestampFromSubquery;
@@ -216,6 +219,8 @@ final class BindScope implements Mutable {
         substitutionNodes.clear();
         translatingAliases.clear();
         translatingCopyIds.clear();
+        nonTimestampReferenceIds.clear();
+        preferredTimestampColumnId = -1;
         windowAliasCopies.clear();
         windowAliasCopyColumns.clear();
         windowAliasIds.clear();

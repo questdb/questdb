@@ -486,6 +486,13 @@ final class OrderPlanning implements OptimiserPass {
             case AggregatePlan aggregate -> requireAggregate(aggregate, requirement);
             case JoinPlan join -> requireJoin(join, requirement);
             case WindowJoinPlan windowJoin -> requireWindowJoin(windowJoin, requirement);
+            case HorizonJoinPlan horizon -> {
+                // Expansion counts output rows, not master rows. Neither LIMIT nor a requested
+                // descending output order may cross it; every operand needs temporal row order.
+                for (int i = 0, n = horizon.inputCount(); i < n; i++) {
+                    require(horizon.inputAt(i), requirements.next().inputOf(requirement).rowOrderRequired(true));
+                }
+            }
             case SetOperationPlan operation when isRandomAccessRequired ->
                     requireSetOperation(operation, -1, null, requirement);
             case SetOperationPlan operation ->

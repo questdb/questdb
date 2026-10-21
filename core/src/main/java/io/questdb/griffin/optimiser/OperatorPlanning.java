@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -573,17 +574,10 @@ final class OperatorPlanning implements Mutable {
         final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
         if (factory == PlanToFactoryRules.AggregateFactory.HORIZON) {
             final HorizonJoinPlan horizon = (HorizonJoinPlan) aggregate.getChild();
-            final LogicalPlan master = horizon.getMaster();
-            validateConsumedTimestamp(master);
-            for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
-                validateConsumedTimestamp(horizon.getSlaves().getQuick(i).getInput());
-            }
-            validateTimestampAggregates(aggregate.getAggregates(), horizon.getOutput(), timestampIndex(master), false);
-            for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
-                final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
-                validateTimeSeriesOrders(master, slave.getInput(), slave.getPosition());
-            }
+            validateHorizonInputs(horizon);
+            validateTimestampAggregates(aggregate.getAggregates(), horizon.getOutput(), timestampIndex(horizon.getMaster()), false);
             aggregate.setAlgorithm(horizonAlgorithm(aggregate, horizon.getMaster()));
+            horizon.setAlgorithm(HorizonJoinPlan.Algorithm.FUSED_AGGREGATE);
             return;
         }
         if (factory != PlanToFactoryRules.AggregateFactory.GROUP_BY) {
@@ -624,6 +618,37 @@ final class OperatorPlanning implements Mutable {
         final ScanPlan scan = (ScanPlan) filter.getChild();
         scan.setResidualAlgorithm(!hasResidualFilterChoice(scan) ? null
                 : isParallelEnabled && isParallelResidual(scan) ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL);
+    }
+
+    private void planHorizon(HorizonJoinPlan horizon) throws SqlException {
+        validateHorizonInputs(horizon);
+        final LogicalPlan master = horizon.getMaster();
+        // Output expressions run on the cursor owner, not the horizon workers.
+        if (!context.getExecutionContext().isParallelHorizonJoinEnabled()
+                || !AsyncHorizonJoinProjectionRecordCursorFactory.isWithinSlotCap(horizon.getOffsetValues().size(), horizon.getSlaves().size())
+                && isRandomAccess(master)) {
+            horizon.setAlgorithm(HorizonJoinPlan.Algorithm.SERIAL);
+        } else if (isPageFrameSource(master)) {
+            horizon.setAlgorithm(HorizonJoinPlan.Algorithm.PARALLEL);
+        } else if (isStolenFilter(master, FilterConsumer.AGGREGATE)) {
+            horizon.setAlgorithm(HorizonJoinPlan.Algorithm.PARALLEL_STOLEN_FILTER);
+        } else {
+            horizon.setAlgorithm(HorizonJoinPlan.Algorithm.SERIAL);
+        }
+        if (horizon.getAlgorithm() == HorizonJoinPlan.Algorithm.SERIAL && !isRandomAccess(master)) {
+            throw SqlException.$(horizon.getSlaves().getQuick(0).getPosition(),
+                    "left-hand side of HORIZON JOIN can only be a table with an optional filter");
+        }
+    }
+
+    private void validateHorizonInputs(HorizonJoinPlan horizon) throws SqlException {
+        final LogicalPlan master = horizon.getMaster();
+        validateConsumedTimestamp(master);
+        for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
+            final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
+            validateConsumedTimestamp(slave.getInput());
+            validateTimeSeriesOrders(master, slave.getInput(), slave.getPosition());
+        }
     }
 
     private void planJoin(JoinPlan join) throws SqlException {
@@ -1498,6 +1523,7 @@ final class OperatorPlanning implements Mutable {
                 }
             }
             case WindowJoinPlan windowJoin -> planWindowJoin(windowJoin);
+            case HorizonJoinPlan horizon -> planHorizon(horizon);
             case AggregatePlan aggregate -> {
                 planAggregate(aggregate);
                 planSharedRead(aggregate);

@@ -799,6 +799,11 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // join the gang to consume published tasks
             while (reduceFinishedCounter.get() < dispatchStartFrameOrdinal) {
                 idle = false;
+                // The owner may take its own published frames here, so it lets the strategy hold
+                // it back first. An inactive sequence only drains, which the strategy must not hold.
+                if (isActive()) {
+                    workStealingStrategy.onBeforeDirectSteal();
+                }
                 if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
                     if (isActive()) {
                         continue;

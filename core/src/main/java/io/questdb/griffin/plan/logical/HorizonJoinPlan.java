@@ -33,13 +33,15 @@ import java.util.Objects;
 /**
  * The HORIZON JOIN record stream: every master row repeated for each horizon offset, with each slave
  * ASOF-matched at the offset timestamp. Output is the master columns, the horizon offset and timestamp,
- * then every slave's columns. Only an aggregate consumes it.
+ * then every slave's columns. A projection reads the stream directly; an AggregatePlan consumes it
+ * through a fused horizon aggregate without changing the grouping contract after column pruning.
  */
 public final class HorizonJoinPlan extends LogicalPlan {
     public static final ObjectFactory<HorizonJoinPlan> FACTORY = HorizonJoinPlan::new;
     private final LongList offsetValues = new LongList();
     private final ObjList<CharSequence> offsets = new ObjList<>();
     private final ObjList<HorizonJoinSlave> slaves = new ObjList<>();
+    private Algorithm algorithm;
     private CharSequence horizonAlias;
     private CharSequence masterAlias;
     private LogicalPlan master;
@@ -50,9 +52,14 @@ public final class HorizonJoinPlan extends LogicalPlan {
         offsetValues.clear();
         offsets.clear();
         slaves.clear();
+        algorithm = null;
         horizonAlias = null;
         masterAlias = null;
         master = null;
+    }
+
+    public Algorithm getAlgorithm() {
+        return algorithm;
     }
 
     public CharSequence getHorizonAlias() {
@@ -112,10 +119,22 @@ public final class HorizonJoinPlan extends LogicalPlan {
         }
     }
 
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+    }
+
     @Override
     public void visitReads(PlanExpressionVisitor visitor) {
         for (int i = 0, n = slaves.size(); i < n; i++) {
             slaves.getQuick(i).visitReads(visitor);
         }
+    }
+
+    public enum Algorithm {
+        SERIAL,
+        PARALLEL,
+        PARALLEL_STOLEN_FILTER,
+        // The consuming AggregatePlan owns the physical choice and functions.
+        FUSED_AGGREGATE
     }
 }

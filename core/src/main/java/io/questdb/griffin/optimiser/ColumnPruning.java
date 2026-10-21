@@ -680,7 +680,8 @@ final class ColumnPruning implements OptimiserPass {
         UnaryPlan boundary = null;
         LogicalPlan input = aggregate.getChild();
         while (true) {
-            if (input instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)) {
+            if (input instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)
+                    && !(project.getChild() instanceof HorizonJoinPlan)) {
                 projectionMerge.absorbColumnProject(aggregate, project, boundary);
             } else if (input instanceof LimitPlan limit) {
                 boundary = limit;

@@ -705,6 +705,7 @@ final class AccessPathPlanning {
             case AggregatePlan aggregate -> walkAggregate(aggregate, isTimestampRequired);
             case JoinPlan join -> walkJoin(join, isTimestampRequired);
             case WindowJoinPlan windowJoin -> walkWindowJoin(windowJoin, isTimestampRequired);
+            case HorizonJoinPlan horizon -> walkHorizon(horizon, isTimestampRequired);
             case SampleByPlan sample ->
                     walk(PlanToFactoryRules.sampleByBase(sample), operatorPlanning.requiresInputTimestamp(sample, 0, isTimestampRequired));
             default -> {
@@ -720,17 +721,7 @@ final class AccessPathPlanning {
     private void walkAggregate(AggregatePlan aggregate, boolean isTimestampRequired) throws SqlException {
         if (aggregate.getChild() instanceof HorizonJoinPlan horizon) {
             final boolean isHorizonTimestampRequired = operatorPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired);
-            walk(horizon.getMaster(), operatorPlanning.requiresInputTimestamp(horizon, 0, isHorizonTimestampRequired));
-            for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
-                final LogicalPlan slave = horizon.getSlaves().getQuick(i).getInput();
-                final FilterPlan filter = PlanToFactoryRules.temporalStolenFilter(slave);
-                horizonSlaveScan = filter != null ? PlanToFactoryRules.fusedScan(filter) : null;
-                try {
-                    walk(slave, operatorPlanning.requiresInputTimestamp(horizon, i + 1, isHorizonTimestampRequired));
-                } finally {
-                    horizonSlaveScan = null;
-                }
-            }
+            walkHorizon(horizon, isHorizonTimestampRequired);
             planSubqueries(horizon);
             return;
         }
@@ -739,6 +730,21 @@ final class AccessPathPlanning {
             return;
         }
         planScanSubqueries(aggregate.getChild(), PlanToFactoryRules.postingDistinctScan(aggregate));
+    }
+
+    private void walkHorizon(HorizonJoinPlan horizon, boolean isTimestampRequired) throws SqlException {
+        walk(horizon.getMaster(), operatorPlanning.requiresInputTimestamp(horizon, 0, isTimestampRequired));
+        for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
+            final LogicalPlan slave = horizon.getSlaves().getQuick(i).getInput();
+            final FilterPlan filter = PlanToFactoryRules.temporalStolenFilter(slave);
+            final ScanPlan previous = horizonSlaveScan;
+            horizonSlaveScan = filter != null ? PlanToFactoryRules.fusedScan(filter) : null;
+            try {
+                walk(slave, operatorPlanning.requiresInputTimestamp(horizon, i + 1, isTimestampRequired));
+            } finally {
+                horizonSlaveScan = previous;
+            }
+        }
     }
 
     private void walkJoin(JoinPlan join, boolean isTimestampRequired) throws SqlException {

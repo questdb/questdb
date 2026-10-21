@@ -5010,6 +5010,20 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinInnerQualifiedColumnFilterWithNonBooleanExpressionFails() throws Exception {
+        // SqlOptimiser pushes each single-table conjunct into its join model's own WHERE clause
+        // and strips the table prefix there. The error still points at the column token.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+
+            final String sql = "SELECT * FROM trades t JOIN prices p ON t.sym = p.sym WHERE ";
+            assertQuery(sql + "t.qty > 1 AND p.price").noLeakCheck().fails(74, "boolean expression expected");
+            assertQuery(sql + "p.price > 1 AND t.qty").noLeakCheck().fails(76, "boolean expression expected");
+        });
+    }
+
+    @Test
     public void testJoinInnerTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """

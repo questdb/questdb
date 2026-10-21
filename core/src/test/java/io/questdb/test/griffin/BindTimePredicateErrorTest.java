@@ -151,21 +151,21 @@ public class BindTimePredicateErrorTest extends AbstractCairoTest {
     public void testNonBooleanSourceConjuncts() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v AND a.v").noLeakCheck().fails(0, "boolean expression expected");
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v AND b.v").noLeakCheck().fails(0, "boolean expression expected");
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v").noLeakCheck().fails(0, "boolean expression expected");
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v AND b.ts = 'abc'").noLeakCheck().fails(0, "boolean expression expected");
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v AND a.ts = 'abc'").noLeakCheck().fails(0, MISMATCH_ERROR);
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v AND a.v + 1").noLeakCheck().fails(0, MISMATCH_ERROR);
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v AND a.v").noLeakCheck().fails(44, "boolean expression expected");
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v AND b.v").noLeakCheck().fails(44, "boolean expression expected");
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v").noLeakCheck().fails(46, "boolean expression expected");
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v AND b.ts = 'abc'").noLeakCheck().fails(46, "boolean expression expected");
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v AND a.ts = 'abc'").noLeakCheck().fails(46, MISMATCH_ERROR);
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v AND a.v + 1").noLeakCheck().fails(46, MISMATCH_ERROR);
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v + 1 AND a.v - 1").noLeakCheck().fails(50, MISMATCH_ERROR);
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v + 1 AND b.v = true").noLeakCheck().fails(50, "boolean expression expected");
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v + 1 AND b.ts = 'abc'").noLeakCheck().fails(50, "boolean expression expected");
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE b.ts = 'abc' AND a.v + 1").noLeakCheck().fails(53, "invalid timestamp");
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE b.v + 1 AND a.ts = 'abc'").noLeakCheck().fails(50, "boolean expression expected");
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v AND a.v + 1 WHERE b.ts = 'abc'").noLeakCheck().fails(48, "boolean expression expected");
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v AND a.v WHERE b.v = true").noLeakCheck().fails(0, "boolean expression expected");
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v AND a.v WHERE b.v = true").noLeakCheck().fails(44, "boolean expression expected");
             assertQuery("SELECT * FROM x a LEFT JOIN x b ON a.v = b.v AND b.v").noLeakCheck().fails(49, "boolean expression expected");
-            assertQuery("SELECT * FROM x a LEFT JOIN x b ON a.v = b.v WHERE a.v").noLeakCheck().fails(0, "boolean expression expected");
+            assertQuery("SELECT * FROM x a LEFT JOIN x b ON a.v = b.v WHERE a.v").noLeakCheck().fails(51, "boolean expression expected");
             assertQuery("SELECT * FROM x a LEFT JOIN x b ON a.v = b.v WHERE b.v").noLeakCheck().fails(51, "boolean expression expected");
             assertQuery("SELECT * FROM x a LEFT JOIN x b ON a.v = b.v WHERE a.v + 1 AND b.ts = 'abc'").noLeakCheck().fails(55, "boolean expression expected");
             assertQuery("SELECT * FROM x a CROSS JOIN x b WHERE a.v + 1 AND b.ts = 'abc'").noLeakCheck().fails(43, "boolean expression expected");
@@ -173,10 +173,10 @@ public class BindTimePredicateErrorTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM x a ASOF JOIN x b WHERE a.v + 1 AND b.ts = 'abc'").noLeakCheck().fails(42, "boolean expression expected");
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v JOIN x c ON b.v = c.v WHERE b.v + 1 AND c.ts = 'abc'").noLeakCheck().fails(72, "boolean expression expected");
             assertQuery("SELECT * FROM x a JOIN (SELECT * FROM x) b ON a.v = b.v WHERE b.v").noLeakCheck().fails(62, "boolean expression expected");
-            assertQuery("SELECT * FROM x a WHERE a.v").noLeakCheck().fails(0, "boolean expression expected");
+            assertQuery("SELECT * FROM x a WHERE a.v").noLeakCheck().fails(24, "boolean expression expected");
             assertQuery("SELECT * FROM x WHERE v").noLeakCheck().fails(22, "boolean expression expected");
             assertQuery("SELECT * FROM (SELECT * FROM x) WHERE v").noLeakCheck().fails(38, "boolean expression expected");
-            assertExceptionNoLeakCheck("UPDATE x SET v = 1 FROM x b WHERE x.v = b.v AND x.v", 0, "boolean expression expected");
+            assertExceptionNoLeakCheck("UPDATE x SET v = 1 FROM x b WHERE x.v = b.v AND x.v", 48, "boolean expression expected");
         });
     }
 
@@ -261,7 +261,7 @@ public class BindTimePredicateErrorTest extends AbstractCairoTest {
     public void testNonBooleanConjunctJoiningItsOwnFilter() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v AND b.v > 0").noLeakCheck().fails(0, "boolean expression expected");
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v AND b.v > 0").noLeakCheck().fails(46, "boolean expression expected");
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v + 1 AND b.v > 0").noLeakCheck().fails(50, "boolean expression expected");
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v + 1 AND a.v > 0").noLeakCheck().fails(50, MISMATCH_ERROR);
             assertQuery("SELECT * FROM x a JOIN x b ON a.v + 1 AND b.v > 0").noLeakCheck().fails(34, "boolean expression expected");

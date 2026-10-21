@@ -50,6 +50,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.ForwardingPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -234,16 +235,13 @@ final class BindContext implements Mutable {
     /**
      * The error of a WHERE or ON conjunct that binds to a value of a type other than BOOLEAN: the type mismatch of
      * the conjunction when other conjuncts of its WHERE clause or ON condition join the same filter, otherwise
-     * "boolean expression expected". A column that the filter of its own table names with a qualifier reads
-     * unqualified there, so its error has no source position (0).
+     * "boolean expression expected". Resolving a qualified column to its table never changes the offending
+     * token's source position.
      */
-    static SqlException nonBooleanConjunct(ExpressionNode expression, int type, int position, boolean isTableFilter, boolean isFilterShared) {
-        final boolean isUnqualified = isTableFilter && expression.type == ExpressionNode.LITERAL
-                && Chars.indexOfLastUnquoted(expression.token, '.') > 0;
-        final int errorPosition = isUnqualified ? 0 : position;
+    static SqlException nonBooleanConjunct(int type, int position, boolean isFilterShared) {
         return isFilterShared
-                ? SqlException.$(errorPosition, "expression type mismatch, expected: BOOLEAN, actual: ").put(ColumnType.nameOf(type))
-                : SqlException.$(errorPosition, "boolean expression expected");
+                ? SqlException.$(position, "expression type mismatch, expected: BOOLEAN, actual: ").put(ColumnType.nameOf(type))
+                : SqlException.$(position, "boolean expression expected");
     }
 
     static SqlException orderNotSelected(ExpressionNode order) {
@@ -491,7 +489,8 @@ final class BindContext implements Mutable {
             return;
         }
         if (plan instanceof ProjectPlan project) {
-            if (!LogicalPlans.isColumnReferenceProjection(project)) {
+            if (!LogicalPlans.isColumnReferenceProjection(project)
+                    || project.getChild() instanceof HorizonJoinPlan) {
                 return;
             }
             retainImplicitTimestamp(project.getChild());

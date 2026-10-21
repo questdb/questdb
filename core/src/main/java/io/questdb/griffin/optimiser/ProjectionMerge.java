@@ -32,6 +32,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -209,7 +210,8 @@ final class ProjectionMerge implements OptimiserPass {
      */
     private void absorbColumnProject(AggregatePlan aggregate) {
         final ProjectPlan inner = absorbableProject(aggregate.getChild());
-        if (inner == null) {
+        // A query over a horizon stream is not the horizon block's fused aggregate.
+        if (inner == null || inner.getChild() instanceof HorizonJoinPlan) {
             return;
         }
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();

@@ -48,8 +48,10 @@ public class LateralJoinTest extends AbstractCairoTest {
             assertException(invalidAlias, invalidAlias.indexOf("missing.flag"), "Invalid table name or alias");
             String invalidColumn = sql.formatted("missing");
             assertException(invalidColumn, invalidColumn.indexOf("missing"), "Invalid column: missing");
-            assertException(sql.formatted("t.v"), 0, "boolean expression expected");
-            assertException(sql.formatted("o.id"), 0, "boolean expression expected");
+            String localColumn = sql.formatted("t.v");
+            assertException(localColumn, localColumn.lastIndexOf("t.v"), "boolean expression expected");
+            String qualifiedOuterColumn = sql.formatted("o.id");
+            assertException(qualifiedOuterColumn, qualifiedOuterColumn.lastIndexOf("o.id"), "boolean expression expected");
             String outerColumn = sql.formatted("id");
             assertException(outerColumn, outerColumn.lastIndexOf("id"), "boolean expression expected");
         });

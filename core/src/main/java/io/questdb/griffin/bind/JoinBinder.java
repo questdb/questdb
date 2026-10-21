@@ -602,8 +602,7 @@ final class JoinBinder implements Mutable {
                 isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext));
         if (predicate.getDataType() != ColumnType.BOOLEAN && (predicate.getDataType() != ColumnType.NULL || !isAndArgument)) {
             final int filterInput = joinFilterInput(expression, join, lastInput);
-            final boolean isTableFilter = filterInput >= 0 && join.getInputs().getQuick(filterInput).getInput() instanceof ScanPlan;
-            throw BindContext.nonBooleanConjunct(expression, predicate.getDataType(), predicate.getPosition(), isTableFilter,
+            throw BindContext.nonBooleanConjunct(predicate.getDataType(), predicate.getPosition(),
                     isAndArgument && countJoinFilterConjuncts(conjunction, filterInput, join, lastInput) > 1);
         }
         join.getFilterConjuncts().add(predicate);

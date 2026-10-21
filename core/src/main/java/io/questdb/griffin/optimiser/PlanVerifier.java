@@ -101,6 +101,7 @@ public final class PlanVerifier {
     public static final String FILL_TIMESTAMP = "fill does not designate its bucket timestamp";
     public static final String FILTER_ALGORITHM = "filter algorithm contradicts the filter the generator builds";
     public static final String FUNCTION_OVERLOAD = "function call has no overload";
+    public static final String HORIZON_ALGORITHM = "horizon projection algorithm does not match its inputs";
     public static final String HORIZON_JOIN_SHAPE = "horizon join output does not start with the master columns";
     public static final String INPUT_NULL = "input is null";
     public static final String INPUT_RANDOM_ACCESS = "physical choice reads an input by row id that lacks random access";
@@ -540,20 +541,45 @@ public final class PlanVerifier {
     }
 
     private void horizonJoin(HorizonJoinPlan horizon) {
+        failIfViolated(PhysicalChoiceVerifier.horizon(horizon, isAccessPathRequired));
         final OutputSchema master = horizon.getMaster().getOutput();
         final OutputSchema output = horizon.getOutput();
-        if (output.getColumnCount() < master.getColumnCount()) {
+        if (output.getColumnCount() < master.getColumnCount() + 2
+                || output.getColumnType(master.getColumnCount()) != ColumnType.LONG
+                || !ColumnType.isTimestamp(output.getColumnType(master.getColumnCount() + 1))) {
             fail(HORIZON_JOIN_SHAPE);
+        }
+        boolean hasFusedConsumer = false;
+        for (int i = 0, n = visited.size(); i < n; i++) {
+            if (visited.getQuick(i) instanceof AggregatePlan aggregate && aggregate.getChild() == horizon) {
+                hasFusedConsumer = true;
+                break;
+            }
+        }
+        if ((isAccessPathRequired || horizon.getAlgorithm() != null)
+                && hasFusedConsumer != (horizon.getAlgorithm() == HorizonJoinPlan.Algorithm.FUSED_AGGREGATE)) {
+            fail(HORIZON_ALGORITHM);
         }
         for (int i = 0, n = master.getColumnCount(); i < n; i++) {
             if (output.getColumnId(i) != master.getColumnId(i) || output.getColumnType(i) != master.getColumnType(i)) {
                 fail(HORIZON_JOIN_SHAPE, master.getColumnId(i));
             }
         }
+        int index = master.getColumnCount() + 2;
         for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
             final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
+            final OutputSchema slaveOutput = slave.getInput().getOutput();
             masterKeys(master, slave.getKeys());
-            slaveKeys(slave.getInput().getOutput(), slave.getKeys());
+            slaveKeys(slaveOutput, slave.getKeys());
+            for (int j = 0, m = slaveOutput.getColumnCount(); j < m; j++, index++) {
+                if (index >= output.getColumnCount() || output.getColumnId(index) != slaveOutput.getColumnId(j)
+                        || output.getColumnType(index) != slaveOutput.getColumnType(j)) {
+                    fail(HORIZON_JOIN_SHAPE);
+                }
+            }
+        }
+        if (index != output.getColumnCount()) {
+            fail(HORIZON_JOIN_SHAPE);
         }
     }
 

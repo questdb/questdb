@@ -1805,6 +1805,16 @@ final class AggregateBinder implements Mutable {
         }
     }
 
+    void validateHorizonProjectionOrder(QueryModel model, QueryModel source, OutputSchema input) throws SqlException {
+        for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
+            final ExpressionNode order = source.getOrderBy().getQuick(i);
+            // HORIZON rejects an unselected bare column, but permits a computed hidden sort key.
+            if (order.type == ExpressionNode.LITERAL && !isSelectAlias(order, model) && isOmittedSourceColumn(order, model, source, input)) {
+                throw orderNotSelected(order);
+            }
+        }
+    }
+
     void validateGroupByKeys(QueryModel model, QueryModel source) throws SqlException {
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
         for (int i = 0, n = groupBy.size(); i < n; i++) {

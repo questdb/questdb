@@ -27,8 +27,12 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.plan.logical.AggregatePlan;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.PhysicalProperties;
+import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -38,6 +42,67 @@ import org.junit.Test;
 import static io.questdb.test.griffin.PlanShape.assertPlanned;
 
 public class TemporalJoinPlanningTest extends AbstractCairoTest {
+    @Test
+    public void testHorizonProjectionOwnsPhysicalChoiceBeforeOutputPruning() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE hm (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE hs (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO hm VALUES ('2026-01-01', 2), ('2026-01-01', 2), ('2026-01-01T00:00:01', 3)");
+            final String from = " FROM hm a HORIZON JOIN hs b LIST (0s, 1s) AS h";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertPlanned(engine, sqlExecutionContext, "SELECT h.offset" + from, HorizonJoinPlan.class, horizon -> {
+                    Assert.assertEquals(isParallel ? HorizonJoinPlan.Algorithm.PARALLEL : HorizonJoinPlan.Algorithm.SERIAL, horizon.getAlgorithm());
+                    Assert.assertEquals(PhysicalProperties.Capability.NO, PhysicalProperties.supportsRandomAccess(horizon));
+                    Assert.assertEquals(PhysicalProperties.ScanDirection.FORWARD, PhysicalProperties.scanDirection(horizon));
+                    Assert.assertEquals(horizon.getMaster().getOutput().getTimestampIndex(), horizon.getOutput().getTimestampIndex());
+                });
+                assertPlanned(engine, sqlExecutionContext, "SELECT h.offset" + from + " WHERE a.k > 1", HorizonJoinPlan.class,
+                        horizon -> Assert.assertEquals(isParallel ? HorizonJoinPlan.Algorithm.PARALLEL_STOLEN_FILTER
+                                : HorizonJoinPlan.Algorithm.SERIAL, horizon.getAlgorithm()));
+                assertPlanned(engine, sqlExecutionContext, "SELECT count() FROM (SELECT h.offset" + from + ")", AggregatePlan.class,
+                        aggregate -> Assert.assertTrue(aggregate.getChild() instanceof ProjectPlan project && project.getChild() instanceof HorizonJoinPlan));
+                assertQuery("SELECT count() FROM (SELECT h.offset" + from + ")").noRandomAccess().expectSize().returns("count\n6\n");
+                assertPlanned(engine, sqlExecutionContext, "SELECT DISTINCT h.offset" + from, HorizonJoinPlan.class,
+                        horizon -> Assert.assertEquals(isParallel ? HorizonJoinPlan.Algorithm.PARALLEL : HorizonJoinPlan.Algorithm.SERIAL, horizon.getAlgorithm()));
+                assertQuery("SELECT count() FROM (SELECT DISTINCT h.offset" + from + ")").noRandomAccess().expectSize().returns("count\n2\n");
+                assertPlanned(engine, sqlExecutionContext, "SELECT count() FROM (SELECT h.offset, avg(b.v)" + from + ")",
+                        HorizonJoinPlan.class, horizon -> Assert.assertEquals(HorizonJoinPlan.Algorithm.FUSED_AGGREGATE, horizon.getAlgorithm()));
+                assertQuery("SELECT count() FROM (SELECT h.offset, avg(b.v)" + from + ")").noRandomAccess().expectSize().returns("count\n2\n");
+                assertQuery("SELECT count() FROM (SELECT h.offset" + from + " GROUP BY h.offset)").noRandomAccess().expectSize().returns("count\n2\n");
+                // The random values vary, but the alias must read the owner's same evaluation, so
+                // the final count is deterministic and supports every returns() cursor cross-check.
+                assertQuery("SELECT count() FROM (SELECT rnd_long() AS r, r AS copied" + from + ") WHERE r != copied")
+                        .noRandomAccess().expectSize().returns("count\n0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonTimestampAliasPreference() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE hm (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE hs (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO hm VALUES ('2026-01-01', 2)");
+            final String from = " FROM hm a HORIZON JOIN hs b LIST (0s) AS h";
+            // Cursor columns wrap the horizon in a JoinPlan before wildcard binding.
+            assertQuery("SELECT count() FROM (SELECT a.*, pg_database() AS db" + from + ")")
+                    .noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("SELECT count() FROM (SELECT *, pg_database() AS db" + from + ")")
+                    .fails(0, "Duplicate column [name=db]");
+            final String expected = "x\ty\toffset\n2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:00.000000Z\t0\n";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                // Exact source spelling wins; without one the first resolved reference wins.
+                assertQuery("SELECT A.TS x, a.ts y, h.offset" + from).noRandomAccess().expectSize().timestamp("y").returns(expected);
+                assertQuery("SELECT a.ts x, A.TS y, h.offset" + from).noRandomAccess().expectSize().timestamp("x").returns(expected);
+                assertQuery("SELECT A.TS x, A.TS y, h.offset + 0 AS offset" + from).noRandomAccess().expectSize().timestamp("x").returns(expected);
+                assertPlanned(engine, sqlExecutionContext, "SELECT *, A.TS z" + from, ProjectPlan.class,
+                        project -> Assert.assertEquals(0, project.getOutput().getTimestampIndex()));
+            }
+        });
+    }
+
     @Test
     public void testDerivedHiddenTimestampsPreserveVisibleScope() throws Exception {
         assertMemoryLeak(() -> {

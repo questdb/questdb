@@ -186,6 +186,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     private HorizonJoinPlan cloneHorizonJoin(HorizonJoinPlan horizon) {
         final HorizonJoinPlan clone = planNodes.horizonJoinPlans.next().of(horizon.getMaster(), horizon.getMasterAlias(),
                 horizon.getHorizonAlias(), horizon.getPosition());
+        clone.setAlgorithm(horizon.getAlgorithm());
         clone.getOffsets().addAll(horizon.getOffsets());
         clone.getOffsetValues().addAll(horizon.getOffsetValues());
         for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {

@@ -404,35 +404,25 @@ final class TemporalJoinBinder {
         }
     }
 
-    private boolean hasUnresolvableReference(ExpressionNode node, OutputSchema scope, CharSequence alias) {
+    private int firstUnresolvableReference(ExpressionNode node, OutputSchema scope, CharSequence alias) {
         if (node == null || node.queryModel != null) {
-            return false;
+            return Integer.MAX_VALUE;
         }
         if (node.type == ExpressionNode.LITERAL) {
-            return FunctionBinder.findColumn(node, scope, alias) == -1 && !ctx.functionBinder.isOuterColumn(node, scope, alias);
+            return FunctionBinder.findColumn(node, scope, alias) == -1 && !ctx.functionBinder.isOuterColumn(node, scope, alias)
+                    ? node.position : Integer.MAX_VALUE;
         }
-        if (hasUnresolvableReference(node.lhs, scope, alias) || hasUnresolvableReference(node.rhs, scope, alias)) {
-            return true;
-        }
+        int position = Math.min(firstUnresolvableReference(node.lhs, scope, alias), firstUnresolvableReference(node.rhs, scope, alias));
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasUnresolvableReference(node.args.getQuick(i), scope, alias)) {
-                return true;
-            }
+            position = Math.min(position, firstUnresolvableReference(node.args.getQuick(i), scope, alias));
         }
-        return false;
+        return position;
     }
 
     private void rejectHorizonWhere(ExpressionNode node, OutputSchema master, CharSequence masterAlias) throws SqlException {
-        if (node == null) {
-            return;
-        }
-        if (SqlKeywords.isAndKeyword(node.token) && node.paramCount == 2) {
-            rejectHorizonWhere(node.lhs, master, masterAlias);
-            rejectHorizonWhere(node.rhs, master, masterAlias);
-            return;
-        }
-        if (hasUnresolvableReference(node, master, masterAlias)) {
-            throw SqlException.position(node.position).put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+        final int position = firstUnresolvableReference(node, master, masterAlias);
+        if (position != Integer.MAX_VALUE) {
+            throw SqlException.position(position).put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         }
     }
 
@@ -805,6 +795,31 @@ final class TemporalJoinBinder {
             }
         }
         return plan;
+    }
+
+    static boolean isExactHorizonColumn(ExpressionNode expression, OutputSchema output, int index) {
+        final CharSequence qualifier = output.getColumnQualifier(index);
+        final CharSequence name = output.getColumnName(index);
+        final CharSequence token = expression.token;
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        return qualifier == null ? Chars.equals(token, name)
+                : dot >= 0 && Chars.equals(qualifier, token, 0, dot) && Chars.equals(name, token, dot + 1, token.length());
+    }
+
+    /**
+     * SQL places the offset source immediately before the last slave. The runtime layout always
+     * places it after the master, so wildcard expansion maps source order onto that layout.
+     */
+    int horizonWildcardIndex(HorizonJoinPlan horizon, int index) {
+        final int masterCount = horizon.getMaster().getOutput().getColumnCount();
+        int precedingSlaveCount = 0;
+        for (int i = 0, n = horizon.getSlaves().size() - 1; i < n; i++) {
+            precedingSlaveCount += horizon.getSlaves().getQuick(i).getInput().getOutput().getColumnCount();
+        }
+        if (index < masterCount || index >= masterCount + precedingSlaveCount + 2) {
+            return index;
+        }
+        return index < masterCount + precedingSlaveCount ? index + 2 : index - precedingSlaveCount;
     }
 
     WindowJoinPlan bindWindowJoin(

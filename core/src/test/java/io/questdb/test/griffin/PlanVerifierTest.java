@@ -38,6 +38,7 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -881,6 +882,37 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 Assert.assertEquals(WindowJoinStep.Algorithm.SERIAL, step.getAlgorithm());
                 step.setAlgorithm(WindowJoinStep.Algorithm.PARALLEL);
             }, PlanVerifier.WINDOW_JOIN_ALGORITHM);
+        });
+    }
+
+    @Test
+    public void testHorizonProjectionChoicesAndLayout() throws Exception {
+        assertMemoryLeak(() -> {
+            createTemporalTables();
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            final String sql = "SELECT a.ts, h.offset, b.v FROM a a HORIZON JOIN b b LIST (0s, 1s) AS h";
+            assertAlgorithmUnplanned(sql, HorizonJoinPlan.class, horizon -> horizon.setAlgorithm(null));
+            assertAlgorithmContradicts(sql, HorizonJoinPlan.class,
+                    horizon -> horizon.setAlgorithm(HorizonJoinPlan.Algorithm.PARALLEL_STOLEN_FILTER), PlanVerifier.HORIZON_ALGORITHM);
+            assertAlgorithmContradicts(sql, HorizonJoinPlan.class,
+                    horizon -> horizon.setAlgorithm(HorizonJoinPlan.Algorithm.FUSED_AGGREGATE), PlanVerifier.HORIZON_ALGORITHM);
+            assertAlgorithmContradicts(sql, HorizonJoinPlan.class,
+                    horizon -> horizon.getOutput().remove(horizon.getMaster().getOutput().getColumnCount()), PlanVerifier.HORIZON_JOIN_SHAPE);
+            assertAlgorithmContradicts("SELECT h.offset FROM a a HORIZON JOIN b b RANGE FROM 0s TO 100s STEP 1s AS h",
+                    HorizonJoinPlan.class, horizon -> {
+                        Assert.assertEquals(HorizonJoinPlan.Algorithm.SERIAL, horizon.getAlgorithm());
+                        horizon.setAlgorithm(HorizonJoinPlan.Algorithm.PARALLEL);
+                    }, PlanVerifier.HORIZON_ALGORITHM);
+            assertAlgorithmContradicts("SELECT h.offset FROM (SELECT * FROM a LIMIT 3) a HORIZON JOIN b b LIST (0s) AS h",
+                    HorizonJoinPlan.class, horizon -> {
+                        Assert.assertEquals(HorizonJoinPlan.Algorithm.SERIAL, horizon.getAlgorithm());
+                        horizon.setAlgorithm(HorizonJoinPlan.Algorithm.PARALLEL);
+                    }, PlanVerifier.HORIZON_ALGORITHM);
+            assertAlgorithmContradicts("SELECT h.offset, count() FROM a a HORIZON JOIN b b LIST (0s) AS h",
+                    HorizonJoinPlan.class, horizon -> {
+                        Assert.assertEquals(HorizonJoinPlan.Algorithm.FUSED_AGGREGATE, horizon.getAlgorithm());
+                        horizon.setAlgorithm(HorizonJoinPlan.Algorithm.SERIAL);
+                    }, PlanVerifier.HORIZON_ALGORITHM);
         });
     }
 

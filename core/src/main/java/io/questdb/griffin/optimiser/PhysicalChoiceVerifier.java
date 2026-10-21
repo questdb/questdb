@@ -25,6 +25,7 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
@@ -251,6 +252,25 @@ final class PhysicalChoiceVerifier {
             case SERIAL -> true;
         };
         return isValid ? null : PlanVerifier.AGGREGATE_ALGORITHM;
+    }
+
+    static String horizon(HorizonJoinPlan horizon, boolean isPlanned) {
+        final HorizonJoinPlan.Algorithm algorithm = horizon.getAlgorithm();
+        if (algorithm == null) {
+            return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
+        }
+        final LogicalPlan master = horizon.getMaster();
+        final boolean isValid = switch (algorithm) {
+            case FUSED_AGGREGATE -> true;
+            case SERIAL -> !isUnsatisfied(PhysicalProperties.supportsRandomAccess(master), isPlanned);
+            case PARALLEL, PARALLEL_STOLEN_FILTER ->
+                    (AsyncHorizonJoinProjectionRecordCursorFactory.isWithinSlotCap(horizon.getOffsetValues().size(), horizon.getSlaves().size())
+                            || PhysicalProperties.supportsRandomAccess(master) != PhysicalProperties.Capability.YES)
+                            && (algorithm == HorizonJoinPlan.Algorithm.PARALLEL
+                            ? !isUnsatisfied(PhysicalProperties.supportsPageFrameCursor(master), isPlanned)
+                            : PlanToFactoryRules.stolenFilter(master) != null);
+        };
+        return isValid ? null : PlanVerifier.HORIZON_ALGORITHM;
     }
 
     static String fill(FillPlan fill, boolean isPlanned) {
