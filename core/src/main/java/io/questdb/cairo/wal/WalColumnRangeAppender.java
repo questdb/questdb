@@ -37,7 +37,7 @@ import io.questdb.std.Unsafe;
  * blocks of a {@link WalColumnSink}. A client brackets each block with {@link #begin(int)} and
  * {@link #finish(long, long, boolean)} or {@link #cancel()}, and between the two hands over one range per column it
  * writes; the columns it does not write are NULL-filled by the sink when the block finishes. Every range covers
- * the whole block. This class keeps the sink's rules for its client: it advances the not-null watermark of every
+ * the whole block. A column takes one range per block; a second range for it is refused. This class keeps the sink's rules for its client: it advances the not-null watermark of every
  * written column, writes the designated timestamp as (timestamp, row) pairs whose row is the segment's, continues
  * a STRING or BINARY aux vector from the entry already present, resolves symbols through the sink's own reader in
  * first-row order, checks the timestamp bounds before the block finishes, and leaves a refused call to be
@@ -106,6 +106,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      */
     public void putFixedRange(int columnIndex, long address, long size) {
         checkInBlock();
+        checkNotWritten(columnIndex);
         final TableRecordMetadata metadata = sink.getMetadata();
         final int type = metadata.getColumnType(columnIndex);
         if (ColumnType.isVarSize(type) || ColumnType.isSymbol(type) || columnIndex == metadata.getTimestampIndex()) {
@@ -127,6 +128,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      */
     public void putTimestampRange(int columnIndex, long address, long sourceFirstRow) {
         checkInBlock();
+        checkNotWritten(columnIndex);
         if (columnIndex != sink.getMetadata().getTimestampIndex()) {
             throw CairoException.nonCritical().put("not the designated timestamp [column=").put(columnIndex).put(']');
         }
@@ -144,6 +146,12 @@ public final class WalColumnRangeAppender implements QuietCloseable {
     private void checkInBlock() {
         if (!isInBlock) {
             throw CairoException.nonCritical().put("no open block");
+        }
+    }
+
+    private void checkNotWritten(int columnIndex) {
+        if (writtenColumns.contains(columnIndex)) {
+            throw CairoException.nonCritical().put("column already written in this block [column=").put(columnIndex).put(']');
         }
     }
 
