@@ -14815,11 +14815,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static class RecordCursorFactoryStub implements RecordCursorFactory {
-        final ExecutionModel model;
+        final int modelType;
+        final String tableName;
+        final String typeName;
         RecordCursorFactory factory;
 
-        protected RecordCursorFactoryStub(ExecutionModel model, RecordCursorFactory factory) {
-            this.model = model;
+        protected RecordCursorFactoryStub(@Transient ExecutionModel model, RecordCursorFactory factory) {
+            this.modelType = model.getModelType();
+            this.tableName = Chars.toString(model.getTableName());
+            this.typeName = model.getTypeName();
             this.factory = factory;
         }
 
@@ -14849,11 +14853,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.type(model.getTypeName());
+            sink.type(typeName);
 
-            final CharSequence tableName = model.getTableName();
             if (tableName != null) {
-                sink.meta(model.getModelType() == CREATE_MAT_VIEW ? "view" : "table").val(tableName);
+                sink.meta(modelType == CREATE_MAT_VIEW ? "view" : "table").val(tableName);
             }
             if (factory != null) {
                 sink.child(factory);
