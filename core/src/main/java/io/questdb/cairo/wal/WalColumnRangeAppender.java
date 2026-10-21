@@ -135,7 +135,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      * Checks that the minimum and maximum timestamp lie within the table's bounds and closes the block; the sink
      * NULL-fills the columns that received no range. The minimum, maximum and order are the client's claim about
      * the pairs it wrote and are not cross-checked against them.
-     * A refused finish leaves the block open, so that the client cancels it.
+     * A finish the sink refuses leaves the block open, so that the client cancels it.
      */
     public void finish(long minTimestamp, long maxTimestamp, boolean outOfOrder) {
         checkInBlock();
@@ -246,9 +246,9 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      * {@code dataAddress} in the source data vector, which the aux entries are relative to. The entries are read
      * from {@code auxAddress} without a length: the block's rows plus one for STRING and BINARY, the block's rows
      * for VARCHAR and ARRAY, and a shorter buffer is read past its end. The entries are shifted to the sink's data
-     * append offset; a STRING or BINARY range continues from the entry the sink's aux column already holds. The
-     * type driver shifts the entries and asserts their layout as it does so, so a malformed VARCHAR entry trips an
-     * assertion before any byte is written.
+     * append offset; a STRING or BINARY range continues from the entry the sink's aux column already holds. Before
+     * any byte is written, the appender reads the last shifted entry's extent through the driver, whose assertion
+     * rejects a zero VARCHAR header there; the entries' interior is not checked.
      */
     public void putVarSizeRange(int columnIndex, long auxAddress, long dataAddress, long dataOffset, long dataSize) {
         checkInBlock();
@@ -301,8 +301,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      * Syncs the memories of the columns written in the open block, data and aux: synchronous, regardless of the
      * writer's commit mode, and covering each memory's current append page; an earlier page of a block larger than
      * one page was synced when the memory released it under commit mode SYNC; under ASYNC that release-time msync
-     * is asynchronous, and a no-op on Linux. What the block finish
-     * and the commit sync afterwards is unchanged.
+     * is asynchronous, and a no-op on Linux. What the block finish and the commit sync afterwards is unchanged.
      */
     public void syncWrittenColumns() {
         checkInBlock();
