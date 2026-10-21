@@ -123,6 +123,16 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void addLateralNullCheck(ExpressionNode check, int columnType) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void addLateralNullCheckGroup(IntList checkIndices) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         throw new UnsupportedOperationException();
     }
@@ -420,6 +430,26 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<QueryColumn> getLateralCountTemplates() {
         return delegate.getLateralCountTemplates();
+    }
+
+    @Override
+    public IntList getLateralNullCheckGroups() {
+        return delegate.getLateralNullCheckGroups();
+    }
+
+    @Override
+    public IntList getLateralNullCheckTypes() {
+        return delegate.getLateralNullCheckTypes();
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getLateralNullChecks() {
+        return delegate.getLateralNullChecks();
+    }
+
+    @Override
+    public LateralNullRejection getLateralNullRejection() {
+        return delegate.getLateralNullRejection();
     }
 
     @Override
@@ -878,6 +908,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isMovableAfterOuterJoins() {
+        return delegate.isMovableAfterOuterJoins();
+    }
+
+    @Override
     public boolean isNestedModelIsSubQuery() {
         return delegate.isNestedModelIsSubQuery();
     }
@@ -890,6 +925,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return delegate.isOrderDescendingByDesignatedTimestampOnly();
+    }
+
+    @Override
+    public boolean isOuterRefJoinChecked() {
+        return delegate.isOuterRefJoinChecked();
     }
 
     @Override
@@ -1173,6 +1213,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setLateralNullRejection(LateralNullRejection lateralNullRejection) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setLatestByType(int latestByType) {
         throw new UnsupportedOperationException();
     }
@@ -1204,6 +1249,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setModelType(int modelType) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setMovableAfterOuterJoins(boolean movableAfterOuterJoins) {
         throw new UnsupportedOperationException();
     }
 
@@ -1244,6 +1294,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setOuterRefJoinChecked(boolean isOuterRefJoinChecked) {
         throw new UnsupportedOperationException();
     }
 

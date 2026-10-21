@@ -1394,3 +1394,232 @@ ORDER BY t1_or.a
 ----
 1 13
 2 50
+
+# ============================================================
+# WHERE key equality next to another condition on the outer column
+# QuestDB's = matches NULL to NULL, where DuckDB and PostgreSQL need
+# IS NOT DISTINCT FROM. Here the comparison with the NULL outer key
+# drops its rows either way, so plain = gives the same rows there.
+# ============================================================
+
+statement ok
+CREATE TABLE o_kc (id INT, x INT)
+
+statement ok
+INSERT INTO o_kc VALUES (1, 1), (2, NULL), (3, 3)
+
+statement ok
+CREATE TABLE a_kc (id INT, x INT)
+
+statement ok
+INSERT INTO a_kc VALUES (10, 1), (11, 3), (12, NULL), (0, 1)
+
+statement ok
+CREATE TABLE b_kc (id INT, k INT, x INT)
+
+statement ok
+INSERT INTO b_kc VALUES (20, 5, 1), (21, 1, 1), (22, 7, NULL), (23, 1, NULL), (24, 3, 3)
+
+query II nosort
+SELECT o.id, l.aid
+FROM o_kc o
+JOIN LATERAL (SELECT a.id aid FROM a_kc a WHERE a.x = o.x AND a.id > o.x) l
+ORDER BY 1, 2
+----
+1 10
+3 11
+
+query II nosort
+SELECT o.id, l.aid
+FROM o_kc o
+LEFT JOIN LATERAL (SELECT a.id aid FROM a_kc a WHERE a.x = o.x AND a.id > o.x) l
+ORDER BY 1, 2
+----
+1 10
+2 NULL
+3 11
+
+query II nosort
+SELECT o.id, l.n
+FROM o_kc o
+JOIN LATERAL (SELECT count(*) n FROM a_kc a WHERE a.x = o.x AND a.id > o.x) l
+ORDER BY 1
+----
+1 1
+2 0
+3 1
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, s.id sid
+    FROM a_kc a
+    RIGHT JOIN (SELECT id, k, x FROM b_kc WHERE x = o.x) s ON a.x = s.k
+    WHERE a.x = o.x AND s.id > o.x
+) l
+ORDER BY 1, 2, 3
+----
+1 0 21
+1 10 21
+3 11 24
+
+# ============================================================
+# Outer column in an ON clause before a RIGHT join, WHERE key on a later table
+# The ON clause of c_kc reads o.x, and WHERE equates o.x to a column of a
+# table joined at or after the RIGHT join, or before it. QuestDB's = matches
+# NULL to NULL, where DuckDB and PostgreSQL need IS NOT DISTINCT FROM; no
+# NULL key meets another NULL here, so plain = gives the same rows.
+# ============================================================
+
+statement ok
+CREATE TABLE c_kc (id INT, sid INT)
+
+statement ok
+INSERT INTO c_kc VALUES (100, 21), (101, 22), (102, 20), (103, 23), (104, 99)
+
+statement ok
+CREATE TABLE o2_kc (id INT, x INT, y INT)
+
+statement ok
+INSERT INTO o2_kc VALUES (1, 1, 1), (2, 3, 3), (3, 1, 5), (4, 3, 1)
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND o.x > 1
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE b.k = o.x
+) l
+ORDER BY 1, 2, 3
+----
+1 NULL 21
+1 NULL 23
+3 11 24
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o2_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND c.id > o.x + 98
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE a.x = o.x AND b.k = o.y AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+1 10 21
+1 10 23
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid - 20 = o.x
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE a.x = o.x AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+1 0 21
+1 0 23
+1 10 21
+1 10 23
+3 11 24
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND o.x > 0
+    JOIN b_kc b2 ON b2.id = c.sid
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE b2.k = o.x AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+1 10 21
+1 10 23
+
+# ============================================================
+# Outer column in an ON clause before a RIGHT join, WHERE key on its slave
+# The ON clause of c_kc reads o.id, which no WHERE key equates to an inner
+# column, or the body is a UNION ALL, and a.id IS NOT NULL drops the rows
+# that the RIGHT join NULL-extends. QuestDB runs the WHERE key after the
+# RIGHT join. For the UNION ALL, QuestDB's = matches the NULL o.x to a row
+# 12, which DuckDB returns only with IS NOT DISTINCT FROM. DuckDB does not
+# run the FULL join form ("Unsupported join type for flattening correlated
+# subquery"), so LateralJoinTest covers it.
+# ============================================================
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND o.id > 1
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE b.k = o.x AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+3 11 24
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND o.x > 1
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE b.k = o.x AND a.id IS NOT NULL
+    UNION ALL
+    SELECT a.id, -1 FROM a_kc a WHERE a.x = o.x
+) l
+ORDER BY 1, 2, 3
+----
+1 0 -1
+1 10 -1
+2 12 -1
+3 11 -1
+3 11 24
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 10 + o.id
+    RIGHT JOIN b_kc b ON a.x = b.k
+    WHERE b.k = o.x AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+1 10 21
+1 10 23
+
+query III nosort
+SELECT o.id, l.aid, l.sid
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, b.id sid
+    FROM a_kc a
+    JOIN c_kc c ON c.sid = a.id + 11 AND o.id > 1
+    RIGHT JOIN b_kc b ON a.x = b.k
+    JOIN b_kc b2 ON b2.id = b.id
+    WHERE b2.k = o.x AND a.id IS NOT NULL
+) l
+ORDER BY 1, 2, 3
+----
+3 11 24

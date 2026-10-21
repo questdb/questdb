@@ -192,12 +192,21 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    private class HashJoinRecordCursor extends AbstractJoinCursor {
+    // The hash table that a CROSS or nested loop LEFT join reading the master side of every key consults,
+    // see SqlCodeGenerator.generateJoins(). Such a master does not support random access, so the cursor
+    // does not swap the sides, and the table holds the slave keys.
+    public JoinKeyFilter getJoinKeyFilter() {
+        return cursor;
+    }
+
+    private class HashJoinRecordCursor extends AbstractJoinCursor implements JoinKeyFilter {
         private final Map joinKeyMap;
         private final JoinRecord record;
         private final LongChain slaveChain;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isKnownEmpty;
         private boolean isMapBuilt;
+        private boolean isMapEmpty;
         private boolean isOpen;
         private RecordSink masterCursorSink;
         private Record masterRecord;
@@ -227,6 +236,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             while (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveChainCursor.next();
                 counter.inc();
+            }
+            if (isMapEmpty) {
+                return;
             }
 
             final Record masterRecord = masterCursor.getRecord();
@@ -269,11 +281,26 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         }
 
         @Override
+        public boolean hasMatch(Record record) {
+            // hasNext() builds the table before it reads the master; a swapped cursor holds the master keys
+            if (!isMapBuilt || swapped) {
+                return true;
+            }
+            final MapKey key = joinKeyMap.withKey();
+            key.put(record, masterCursorSink);
+            return key.findValue() != null;
+        }
+
+        @Override
         public boolean hasNext() {
             buildMapOfSlaveRecords();
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
+            }
+            // no master row matches a key of an empty table, so the master goes unread
+            if (isMapEmpty) {
+                return false;
             }
 
             while (masterCursor.hasNext()) {
@@ -291,6 +318,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 }
             }
             return false;
+        }
+
+        @Override
+        public boolean isKnownEmpty() {
+            return isKnownEmpty;
         }
 
         @Override
@@ -330,6 +362,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
                 populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveCursorSink, slaveChain, keyRecord);
                 isMapBuilt = true;
+                isMapEmpty = joinKeyMap.size() == 0;
             }
         }
 
@@ -367,6 +400,13 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
             slaveChainCursor = null;
             isMapBuilt = false;
+            // A side that knows it has no rows, see RecordCursor.isKnownEmpty(), empties the join. The hash table
+            // of the slave then stays empty, and the cursor reads neither side.
+            isKnownEmpty = masterCursor.isKnownEmpty() || slaveCursor.isKnownEmpty();
+            if (isKnownEmpty) {
+                isMapBuilt = true;
+                isMapEmpty = true;
+            }
             // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

@@ -175,6 +175,30 @@ public final class QueryModelGenerationState implements Mutable {
         }
     }
 
+    // Adds the lateral NULL checks of the model and returns whether one of them reads a sub-query.
+    // A check copies a filter conjunct and shares its sub-query models. SqlCodeGenerator compiles
+    // the checks after the filter, so it generates each of those sub-queries a second time, and the
+    // second generation must see the WHERE, LATEST ON and LIMIT state that the first one consumed.
+    private static boolean addLateralNullChecks(ObjList<Object> edges, IQueryModel model, ObjList<ExpressionNode> pending) {
+        boolean hasSubQuery = false;
+        final ObjList<ExpressionNode> checks = model.getLateralNullChecks();
+        for (int i = 0, n = checks.size(); i < n; i++) {
+            final ExpressionNode check = checks.getQuick(i);
+            add(edges, check);
+            hasSubQuery |= containsSubQuery(check, pending);
+        }
+        for (LateralNullRejection rejection = model.getLateralNullRejection(); rejection != null; rejection = rejection.getNext()) {
+            for (int i = 0, n = rejection.size(); i < n; i++) {
+                final ExpressionNode check = rejection.getNullCheck(i);
+                if (check != null) {
+                    add(edges, check);
+                    hasSubQuery |= containsSubQuery(check, pending);
+                }
+            }
+        }
+        return hasSubQuery;
+    }
+
     private static void addWindow(ObjList<Object> edges, WindowExpression window) {
         if (window != null) {
             addExpressions(edges, window.getPartitionBy());
@@ -230,7 +254,7 @@ public final class QueryModelGenerationState implements Mutable {
     private boolean discover(IQueryModel root) {
         boolean hasSharing = root instanceof QueryModelWrapper;
         ObjList<Object> pending = new ObjList<>();
-        ObjList<ExpressionNode> windowArguments = new ObjList<>();
+        ObjList<ExpressionNode> pendingExpressions = new ObjList<>();
         add(pending, root);
         while (pending.size() > 0) {
             Object node = pending.popLast();
@@ -256,8 +280,10 @@ public final class QueryModelGenerationState implements Mutable {
                 // Window generation may compile an argument once for its streaming probe and
                 // again for the cached layout. Restore sub-query predicates on the second pass
                 // just as we do for explicitly shared models.
-                hasSharing |= addColumns(edges, model.getBottomUpColumns(), windowArguments);
-                hasSharing |= addColumns(edges, model.getTopDownColumns(), windowArguments);
+                hasSharing |= addColumns(edges, model.getBottomUpColumns(), pendingExpressions);
+                hasSharing |= addColumns(edges, model.getTopDownColumns(), pendingExpressions);
+                // SqlCodeGenerator generates the sub-queries of the lateral NULL checks twice too.
+                hasSharing |= addLateralNullChecks(edges, model, pendingExpressions);
                 addExpressions(edges, model.getExpressionModels());
                 addExpressions(edges, model.getLatestBy());
                 addExpressions(edges, model.getOrderBy());
