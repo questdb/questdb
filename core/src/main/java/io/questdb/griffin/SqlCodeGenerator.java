@@ -1694,6 +1694,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Returns the index of the SAMPLE BY bucket key in the group-by output, or -1 when
+     * the output does not carry it. SqlOptimiser.rewriteSampleBy records the bucket key
+     * node on the model that holds the fill parameters, and the group-by column that
+     * carries that very node is the bucket, under whatever alias the optimizer gave it.
+     * The lookup never identifies the bucket by name, so a user column that shares the
+     * timestamp's name or collides with the bucket's alias cannot be taken for the
+     * bucket (#7838).
+     * The TIMESTAMP check guards getTimestampDriver downstream.
+     */
+    private static int findFillBucketIndex(IQueryModel model, RecordMetadata metadata, IQueryModel fillModel) {
+        final ExpressionNode bucketKey = fillModel.getFillBucketKey();
+        assert bucketKey != null : "rewriteSampleBy records fillBucketKey together with fillStride";
+        if (bucketKey == null) {
+            return -1;
+        }
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (column.getAst() == bucketKey) {
+                final int index = SqlUtil.getColumnIndexQuiet(metadata, column.getAlias());
+                return index >= 0 && ColumnType.isTimestamp(metadata.getColumnType(index)) ? index : -1;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Finds the position of the leftmost column in a rejected HORIZON JOIN WHERE clause that
      * does not belong to the left-hand side, so that the error points at the offending token
      * rather than at the root of the clause.
@@ -4397,8 +4424,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(-1, "fill values were null");
             }
 
-            fillValues = new ObjList<>(fillValuesExprs.size());
-
             // FILL(NONE) is incompatible with per-aggregate fill values. The
             // optimizer accepts multi-element fill lists, so reject FILL(NONE, 1)
             // here rather than silently dropping the trailing values.
@@ -4410,6 +4435,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
+
+            // This group-by owns the fill when its output carries the bucket key node
+            // that SqlOptimiser.rewriteSampleBy recorded on the model holding the fill
+            // parameters. An outer GROUP BY over a SAMPLE BY ... FILL sub-query reaches
+            // the inner fill through the walk above but never carries that node, so it
+            // must not stack the inner fill on its own output. The owner may sit several
+            // models above the fill: LateralJoinRewriter's LATEST ON fallback inserts a
+            // filter model and a window model in between, which leaves the group-by's
+            // sampleByFill list empty (rewriteSelectClause0 re-exposes only a fill held
+            // by the immediate base model), so that list cannot decide ownership. A
+            // non-empty list without the node means an optimizer path dropped or
+            // rebuilt the node: fail loudly under -ea, and without -ea skip the fill
+            // rather than guess a column. That assertion reaches only the shape where
+            // rewriteSelectClause0 re-exposed the list; under the LATERAL fallback the
+            // list is empty by construction, so a rebuilt node there skips the fill
+            // silently and LateralJoinTest's LATEST ON fill tests are the net. The
+            // check runs after the FILL(NONE) validation so that an all-NONE list,
+            // which carries no signal, still fails that validation as before.
+            final RecordMetadata baseMeta = groupByFactory.getMetadata();
+            final int timestampIndex = findFillBucketIndex(model, baseMeta, curr);
+            if (timestampIndex < 0) {
+                assert model.getSampleByFill().size() == 0 : "fill bucket key node not found on the group-by output";
+                return groupByFactory;
+            }
+
+            fillValues = new ObjList<>(fillValuesExprs.size());
 
             ExpressionNode expr;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
@@ -4441,63 +4492,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return groupByFactory;
             }
 
-
-            IQueryModel temp = model;
-            ExpressionNode timestamp = model.getTimestamp();
-
-            while (timestamp == null && temp != null) {
-                temp = temp.getNestedModel();
-
-                if (temp != null) {
-                    timestamp = temp.getTimestamp();
-                }
-            }
-
-            assert timestamp != null;
-
-            // look for timestamp_floor to check for an alias
-            CharSequence alias = timestamp.token;
-            final CharSequence currTimestamp = curr.getTimestamp().token;
-            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn col = model.getBottomUpColumns().getQuick(i);
-                final ExpressionNode ast = col.getAst();
-                if (SqlUtil.isTimestampFloorFunction(ast)) {
-                    final CharSequence ts = SqlUtil.getTimestampFloorTimestampArg(ast).token;
-                    if (Chars.equalsIgnoreCase(ts, currTimestamp)) {
-                        alias = col.getAlias();
-                    }
-                }
-            }
-
-            final RecordMetadata baseMeta = groupByFactory.getMetadata();
-            int timestampIndex = SqlUtil.getColumnIndexQuiet(baseMeta, alias);
-            // The alias may resolve to a non-TIMESTAMP column after outer projection
-            // (e.g. SELECT ts::LONG AS ts, ...). Reset so the fallback below can try
-            // the raw timestamp token and getTimestampDriver doesn't trip its tag
-            // assert.
-            if (timestampIndex >= 0
-                    && !ColumnType.isTimestamp(baseMeta.getColumnType(timestampIndex))) {
-                timestampIndex = -1;
-            }
-            // When the same timestamp column appears multiple times (e.g. SELECT k, k),
-            // the alias may land on a renamed duplicate. Prefer the original token if
-            // it yields an earlier TIMESTAMP-typed index.
-            if (!Chars.equalsIgnoreCase(alias, timestamp.token)) {
-                int origIndex = SqlUtil.getColumnIndexQuiet(baseMeta, timestamp.token);
-                if (origIndex >= 0
-                        && ColumnType.isTimestamp(baseMeta.getColumnType(origIndex))
-                        && (timestampIndex < 0 || origIndex < timestampIndex)) {
-                    timestampIndex = origIndex;
-                }
-            }
-            // No TIMESTAMP column reachable (e.g. wrapped by an outer GROUP BY that
-            // projects different columns). Skip fill entirely.
-            if (timestampIndex < 0) {
-                final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
-                fillValues = null;
-                CairoException.rethrowCleanupFailure(cleanupFailure);
-                return groupByFactory;
-            }
             int timestampType = baseMeta.getColumnType(timestampIndex);
             TimestampDriver driver = getTimestampDriver(timestampType);
             fillFromFunc = driver.getTimestampConstantNull();
