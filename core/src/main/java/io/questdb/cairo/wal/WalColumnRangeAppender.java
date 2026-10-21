@@ -48,14 +48,14 @@ import org.jetbrains.annotations.Nullable;
  * the entry already present, resolves symbols through the sink's own reader in first-row order, checks the
  * timestamp bounds before the block finishes, and leaves a refused call to be cancelled by the client.
  * <p>
- * What each call validates, before it writes anything: that a block is open; that the column is of the kind the
- * call takes and was not written in this block; for a fixed-size range, that its byte count is the block's rows
- * times the column's WAL width; for timestamp pairs that are copied, that the first pair carries the source row
- * the client names; for a var-size range, that its shifted aux entries end where its data bytes end; for the
- * block's finish, that the minimum and maximum timestamp lie within the table's bounds. Everything else is
- * trusted: the layout of the bytes, the pairs' rows and timestamps once rebased, the symbol keys and the values
- * the lookup returns, and the agreement between the pairs written and the minimum, maximum and order given to
- * {@link #finish(long, long, boolean)}. The client owns the layout; a wrong layout is a wrong segment.
+ * What each put validates, before it writes anything: that a block is open and the column exists; that the
+ * column is of the kind the call takes and was not written in this block; for a fixed-size range, that its byte
+ * count is the block's rows times the column's WAL width; for timestamp pairs that are copied, that the first
+ * pair carries the source row the client names; for a var-size range, that its shifted aux entries end where its
+ * data bytes end; for the block's finish, that the minimum and maximum timestamp lie within the table's bounds.
+ * Everything else is trusted: the layout of the bytes, the pairs' rows and timestamps once rebased, the symbol
+ * keys and the values the lookup returns, and the agreement between the pairs written and the minimum, maximum
+ * and order given to {@link #finish(long, long, boolean)}. The client owns the layout; a wrong layout is a wrong segment.
  * <p>
  * Not thread-safe; one instance per sink. {@link #close()} frees the buffer the var-size aux shift uses.
  */
@@ -118,6 +118,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      */
     public void fillSymbolKey(int columnIndex, int key) {
         checkInBlock();
+        checkColumn(columnIndex);
         checkNotWritten(columnIndex);
         checkSymbol(columnIndex);
         final MemoryMA data = sink.getDataColumn(columnIndex);
@@ -146,6 +147,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      */
     public void putFixedRange(int columnIndex, long address, long size) {
         checkInBlock();
+        checkColumn(columnIndex);
         checkNotWritten(columnIndex);
         final TableRecordMetadata metadata = sink.getMetadata();
         final int type = metadata.getColumnType(columnIndex);
@@ -169,6 +171,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      */
     public void putSymbolRange(int columnIndex, long keysAddress, SymbolValues values) {
         checkInBlock();
+        checkColumn(columnIndex);
         checkNotWritten(columnIndex);
         checkSymbol(columnIndex);
         final SymbolMapReader reader = sink.getSymbolMapReader(columnIndex);
@@ -209,6 +212,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      */
     public void putTimestampRange(int columnIndex, long address, long sourceFirstRow) {
         checkInBlock();
+        checkColumn(columnIndex);
         checkNotWritten(columnIndex);
         if (columnIndex != sink.getMetadata().getTimestampIndex()) {
             throw CairoException.nonCritical().put("not the designated timestamp [column=").put(columnIndex).put(']');
@@ -241,6 +245,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      */
     public void putVarSizeRange(int columnIndex, long auxAddress, long dataAddress, long dataOffset, long dataSize) {
         checkInBlock();
+        checkColumn(columnIndex);
         checkNotWritten(columnIndex);
         final int type = sink.getMetadata().getColumnType(columnIndex);
         if (!ColumnType.isVarSize(type)) {
@@ -280,6 +285,7 @@ public final class WalColumnRangeAppender implements QuietCloseable {
      */
     public int resolveSymbol(int columnIndex, @Nullable CharSequence value) {
         checkInBlock();
+        checkColumn(columnIndex);
         checkSymbol(columnIndex);
         return sink.resolveSymbol(columnIndex, value, sink.getSymbolMapReader(columnIndex));
     }
@@ -299,6 +305,17 @@ public final class WalColumnRangeAppender implements QuietCloseable {
             if (ColumnType.isVarSize(metadata.getColumnType(column))) {
                 sink.getAuxColumn(column).sync(false);
             }
+        }
+    }
+
+    private void checkColumn(int columnIndex) {
+        final TableRecordMetadata metadata = sink.getMetadata();
+        if (columnIndex < 0 || columnIndex >= metadata.getColumnCount()) {
+            throw CairoException.nonCritical().put("column index out of range [column=").put(columnIndex)
+                    .put(", columnCount=").put(metadata.getColumnCount()).put(']');
+        }
+        if (metadata.getColumnType(columnIndex) < 1) {
+            throw CairoException.nonCritical().put("column is dropped [column=").put(columnIndex).put(']');
         }
     }
 

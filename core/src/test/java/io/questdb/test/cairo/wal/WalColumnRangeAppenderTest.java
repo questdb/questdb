@@ -354,6 +354,40 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefusesDroppedAndOutOfRangeColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable(new TableModel(configuration, "dropped", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .col("b", ColumnType.LONG)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+            execute("ALTER TABLE dropped DROP COLUMN b");
+            final long values = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    WalWriter writer = engine.getWalWriter(token);
+                    WalColumnRangeAppender appender = new WalColumnRangeAppender(writer)
+            ) {
+                // the dropped column keeps its index, 1, with a negative type; index 10 is outside the metadata
+                appender.begin(1);
+                assertRefused(() -> appender.putFixedRange(1, values, 8), "column is dropped [column=1]");
+                assertRefused(() -> appender.putFixedRange(10, values, 8), "column index out of range [column=10");
+                assertRefused(() -> appender.putFixedRange(-1, values, 8), "column index out of range [column=-1");
+                assertRefused(() -> appender.putSymbolRange(1, values, key -> null), "column is dropped [column=1]");
+                assertRefused(() -> appender.putTimestampRange(10, values, 0), "column index out of range [column=10");
+                assertRefused(() -> appender.putVarSizeRange(1, values, values, 0, 0), "column is dropped [column=1]");
+                assertRefused(() -> appender.fillSymbolKey(10, 0), "column index out of range [column=10");
+                assertRefused(() -> appender.resolveSymbol(1, "x"), "column is dropped [column=1]");
+                appender.cancel();
+                Assert.assertEquals(0, writer.getSegmentRowCount());
+            } finally {
+                Unsafe.free(values, 8, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testRefusesPutOutsideBlock() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = createTable(new TableModel(configuration, "outside", PartitionBy.HOUR)
@@ -830,6 +864,15 @@ public class WalColumnRangeAppenderTest extends AbstractCairoTest {
     static void putPair(long pairs, int i, long timestamp, long row) {
         Unsafe.putLong(pairs + i * 16L, timestamp);
         Unsafe.putLong(pairs + i * 16L + 8, row);
+    }
+
+    private static void assertRefused(Runnable call, CharSequence message) {
+        try {
+            call.run();
+            Assert.fail("expected a CairoException containing: " + message);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+        }
     }
 
     // rows [rowLo, rowHi) of the source vectors as one block, with one timestamp per row from firstTimestamp
