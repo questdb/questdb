@@ -109,7 +109,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 5 + rnd.nextInt(10)
         );
 
-        setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
+        setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3, getRndWalApplyBlockMaxRows(rnd));
         runFuzzWithCheckpoint(rnd);
     }
 
@@ -117,7 +117,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     public void testCheckpointFullFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fullFuzz(rnd);
-        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
+        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3, getRndWalApplyBlockMaxRows(rnd));
         runFuzzWithCheckpoint(rnd);
     }
 
@@ -333,7 +333,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 getRndO3PartitionSplit(rnd),
                 getRndO3PartitionSplitMaxCount(rnd),
                 10 * Numbers.SIZE_1MB,
-                3
+                3,
+                getRndWalApplyBlockMaxRows(rnd)
         );
         runFuzzWithCheckpoint(rnd);
     }

@@ -46,6 +46,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE;
 import static io.questdb.PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT;
 import static io.questdb.PropertyKey.CAIRO_WAL_MAX_LAG_SIZE;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
@@ -66,6 +67,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     public void testManyTransactionsSkippedWhenTruncateIfFound() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+            setProperty(CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
 
             execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("stress");
@@ -1646,10 +1648,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         // the pre-conversion rows under a large lookahead changes which strings get registered
         // first, silently diverging the symbol key assignment from a low-lookahead applier.
         assertMemoryLeak(() -> {
-            // Build t1 with a tiny lag window (lookahead=1 + maxLagSize=1) so the apply job
+            // Build t1 with a tiny lag window (lookahead=1, maxLagSize=1, block size=1) so the apply job
             // sees only the current txn and cannot look ahead to the future replace-range.
             node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
             node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+            node1.setProperty(CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
             execute("create table rg_conv_small (id long, ts timestamp, s string) timestamp(ts) partition by DAY WAL");
             TableToken tt1 = engine.verifyTableName("rg_conv_small");
 
@@ -1698,6 +1701,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // replace-range can justify skipping across the ALTER txn (the bug path).
             node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 10_000);
             node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1024 * 1024 * 1024);
+            node1.setProperty(CAIRO_WAL_APPLY_BLOCK_SIZE, 1024 * 1024 * 1024);
             execute("create table rg_conv_large (id long, ts timestamp, s string) timestamp(ts) partition by DAY WAL");
             TableToken tt2 = engine.verifyTableName("rg_conv_large");
 
@@ -1775,6 +1779,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // future replace-range and does not skip any txns.
             node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
             node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+            node1.setProperty(CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
             execute("create table rg_trunc_small (id long, ts timestamp, s symbol) timestamp(ts) partition by DAY WAL");
             TableToken tt1 = engine.verifyTableName("rg_trunc_small");
 
@@ -1846,6 +1851,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // replace-range can justify skipping across the TRUNCATE txn (the bug path).
             node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 10_000);
             node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1024 * 1024 * 1024);
+            node1.setProperty(CAIRO_WAL_APPLY_BLOCK_SIZE, 1024 * 1024 * 1024);
             execute("create table rg_trunc_large (id long, ts timestamp, s symbol) timestamp(ts) partition by DAY WAL");
             TableToken tt2 = engine.verifyTableName("rg_trunc_large");
 

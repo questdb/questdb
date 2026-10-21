@@ -421,7 +421,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
 
-        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), getMaxWalFdCache(rnd));
+        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), getMaxWalFdCache(rnd), getRndWalApplyBlockMaxRows(rnd));
         int tableCount = Math.max(2, rnd.nextInt(3));
         fullRandomFuzz(rnd, tableCount);
     }
@@ -527,7 +527,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setTestParams(rnd);
 
         fuzzer.setFuzzCounts(false, 100_000, 50, 20, 10, 20, 0, 5, 2, 0);
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), 1);
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), 1, getRndWalApplyBlockMaxRows(rnd));
         runFuzz(rnd);
     }
 

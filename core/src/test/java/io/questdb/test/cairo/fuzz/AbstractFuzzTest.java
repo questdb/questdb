@@ -109,6 +109,28 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return rnd.nextInt(4);
     }
 
+    public static long getRndWalApplyBlockMaxRows(Rnd rnd) {
+        // cairo.wal.apply.block.max.rows: the hard row cap of an adaptive WAL apply block. Under an RSS limit the
+        // block's row limit doubles after every block it cuts, so without a small cap a long fuzz backlog grows its
+        // blocks past the drawn block size and back to one big block.
+        return switch (rnd.nextInt(3)) {
+            case 0 -> 1 + rnd.nextInt(100);
+            case 1 -> 1 + rnd.nextInt(10_000);
+            default -> 1 + rnd.nextInt(1_000_000);
+        };
+    }
+
+    public static long getRndWalApplyBlockSize(Rnd rnd) {
+        // cairo.wal.apply.block.size: 0 sizes WAL apply blocks from the lag settings, a positive size switches
+        // to the adaptive block. The 75 MiB default would apply a whole fuzz backlog as one block, so draw sizes
+        // small enough to split it - down to a few rows - and cover the block boundaries in both modes.
+        return switch (rnd.nextInt(3)) {
+            case 0 -> 0;
+            case 1 -> 1 + rnd.nextLong(64 * 1024);
+            default -> 1 + rnd.nextLong(10 * Numbers.SIZE_1MB);
+        };
+    }
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
@@ -419,12 +441,16 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             long splitPartitionThreshold,
             int o3PartitionSplitMaxCount,
             long walMaxLagSize,
-            int maxWalFdCache
+            int maxWalFdCache,
+            long walApplyBlockMaxRows
     ) {
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, maxApplyTimePerTable);
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, splitPartitionThreshold);
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, o3PartitionSplitMaxCount);
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, walMaxLagSize);
+        // The lag size bounds WAL apply blocks only at block size 0; size the adaptive block the same
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, walMaxLagSize);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, walApplyBlockMaxRows);
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, maxWalFdCache);
     }
 
@@ -437,6 +463,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, getMaxWalSize(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, getMaxWalFdCache(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1 + rnd.nextInt(200));
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, getRndWalApplyBlockSize(rnd));
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, getRndWalApplyBlockMaxRows(rnd));
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndParquetRowGroupSize(rnd));
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, getRndPartitionCompactionCheckInterval(rnd));
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, getRndPartitionCompactionIdleTimeout(rnd));

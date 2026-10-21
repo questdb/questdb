@@ -155,9 +155,10 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void test1RowCommitEqualSize() throws Exception {
-        // Force 1 by 1 commit application
+        // Force 1 by 1 commit application: a 1-byte adaptive block holds a single row
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
         setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
 
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, id)");
@@ -1156,6 +1157,8 @@ public class WalWriterTest extends AbstractCairoTest {
         // job invocations must still drain the entire backlog correctly.
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
+        // The adaptive block sizes the lookahead to its rows; 1 byte keeps it at one row
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
 
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
