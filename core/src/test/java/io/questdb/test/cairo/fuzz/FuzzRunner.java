@@ -94,15 +94,17 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 public class FuzzRunner {
     public final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
     protected static final Log LOG = LogFactory.getLog(AbstractFuzzTest.class);
+    protected static final StringSink sink = new StringSink();
     private static final int MAX_COVERED_KEYS_CHECKED = 32;
     // Share of fuzz runs that use TIMESTAMP_NS designated timestamp instead of TIMESTAMP
     private static final int NANOS_TIMESTAMP_PERCENT = 40;
-    protected static final StringSink sink = new StringSink();
     private static final long OPEN_RETRY_TIMEOUT_MILLIS = 10_000;
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     protected int initialRowCount;
     protected int partitionCount;
     private double addCoveringIndexProb;
+    private long applySeed0;
+    private long applySeed1;
     private double cancelRowsProb;
     private double colAddProb;
     private double colRemoveProb;
@@ -110,13 +112,11 @@ public class FuzzRunner {
     private double colTypeChangeProb;
     private boolean createWalAsParquet;
     private double dataAddProb;
-    private long applySeed0;
-    private long applySeed1;
     private CairoEngine engine;
     private double equalTsRowsProb;
     private FailureFileFacade ff;
-    private boolean hasApplySeeds;
     private int fuzzRowCount;
+    private boolean hasApplySeeds;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
     private boolean isO3;
@@ -601,14 +601,6 @@ public class FuzzRunner {
         this.createWalAsParquet = createWalAsParquet;
     }
 
-    /**
-     * Sets designated timestamp type of the tables the runner creates. {@link #generateRandom(Log)}
-     * picks it randomly, call this after it to pin the type.
-     */
-    public void setTimestampType(int timestampType) {
-        this.timestampType = timestampType;
-    }
-
     public void setFuzzCounts(
             boolean isO3,
             int fuzzRowCount,
@@ -837,6 +829,14 @@ public class FuzzRunner {
         this.setParquetEncodingProb = setParquetEncodingProb;
         this.setTableFormatProb = setTableFormatProb;
         this.addCoveringIndexProb = addCoveringIndexProb;
+    }
+
+    /**
+     * Sets designated timestamp type of the tables the runner creates. {@link #generateRandom(Log)}
+     * picks it randomly, call this after it to pin the type.
+     */
+    public void setTimestampType(int timestampType) {
+        this.timestampType = timestampType;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
