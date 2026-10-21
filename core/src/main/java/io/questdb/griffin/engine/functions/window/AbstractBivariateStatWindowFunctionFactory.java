@@ -68,6 +68,9 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
     static final ArrayColumnTypes BIVAR_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes BIVAR_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    // Live-view variant of BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES with the BYTE
+    // tombstone slot appended.
+    private static final ArrayColumnTypes BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
 
     // Naive sum-of-products formula, used by sliding-window (removable) frames.
     static double computeCorr(double sumXY, double sumXX, double sumYY, double sumX, double sumY, long count) {
@@ -294,13 +297,15 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 }
                 // between [unbounded | x] preceding and [x preceding | current row]
                 else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES
+                                liveView ? BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -319,7 +324,9 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                                 mem,
                                 isCorrelation,
                                 isSample,
-                                name
+                                name,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -899,6 +906,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         private final int frameSize;
         private final boolean isCorrelation;
         private final boolean isSample;
+        // Deep copy of the partition-by key column types for the snapshot codec. The
+        // factory reuses its partitionByKeyTypes buffer across compiles. Null outside LV.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout, tombstone slot included. Null outside LV.
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final String name;
         private double result;
@@ -914,7 +927,9 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 MemoryARW memory,
                 boolean isCorrelation,
                 boolean isSample,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, argY, argX);
             this.argY = argY;
@@ -934,6 +949,29 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             this.isCorrelation = isCorrelation;
             this.isSample = isSample;
             this.name = name;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 8;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
         }
 
         @Override
@@ -953,6 +991,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             // 5 - finite count in frame
             // 6 - (0-based) index of oldest value
             // 7 - native array start offset
+            // 8 - tombstone (live view only)
             // ring buffer stores [x, y] pairs including NaN placeholders
 
             partitionByRecord.of(record);
@@ -972,6 +1011,9 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             double x = argX.getDouble(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * SLOT_SIZE) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && Numbers.isFinite(y) && Numbers.isFinite(x)) {
@@ -1053,6 +1095,39 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             memory.putDouble(startOffset + loIdx * SLOT_SIZE + Double.BYTES, y);
         }
 
+        /**
+         * Writes {@code (sumX, sumXX, sumY, sumYY, sumXY, count, loIdx)} followed by the
+         * partition's whole ring of {@code (x, y)} pairs, NaN placeholders included. The ring
+         * is always {@code bufferSize} pairs long, so the image width depends on the declared
+         * frame rather than on the partition.
+         */
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            for (int i = 0; i < 5; i++) {
+                sink.putDouble(value.getDouble(i));
+            }
+            sink.putLong(value.getLong(5));
+            sink.putLong(value.getLong(6));
+            final long startOffset = value.getLong(7);
+            for (int i = 0; i < bufferSize; i++) {
+                final long slotOffset = startOffset + (long) i * SLOT_SIZE;
+                sink.putDouble(memory.getDouble(slotOffset));
+                sink.putDouble(memory.getDouble(slotOffset + Double.BYTES));
+            }
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+        }
+
         @Override
         public double getDouble(Record rec) {
             return result;
@@ -1064,8 +1139,29 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N (x, y) pairs and the five sums plus the count
+            // accumulate over exactly those, so a warm-up of N predecessors reconstructs the
+            // state. The replayed ring starts at a different rotation and the replayed sums
+            // skip the rounding the dropped rows left behind, which the contract allows: the
+            // values emitted are the same, up to the documented floating drift.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -1087,6 +1183,63 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame to empty: the five sums, the
+            // count and loIdx go to zero and every ring pair back to NaN, so the next row
+            // re-anchors cleanly. The ring's startOffset (slot 7) stays allocated and the
+            // next row's write reuses it from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(7);
+                for (int i = 0; i < 5; i++) {
+                    value.putDouble(i, 0.0);
+                }
+                value.putLong(5, 0L);
+                value.putLong(6, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    final long slotOffset = startOffset + (long) i * SLOT_SIZE;
+                    memory.putDouble(slotOffset, Double.NaN);
+                    memory.putDouble(slotOffset + Double.BYTES, Double.NaN);
+                }
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final long ringBytes = (long) bufferSize * SLOT_SIZE;
+            for (int i = 0; i < 5; i++) {
+                value.putDouble(i, source.getDouble(offset));
+                offset += Double.BYTES;
+            }
+            final long partitionCount = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                final long slotOffset = newStartOffset + (long) i * SLOT_SIZE;
+                memory.putDouble(slotOffset, source.getDouble(offset));
+                offset += Double.BYTES;
+                memory.putDouble(slotOffset + Double.BYTES, source.getDouble(offset));
+                offset += Double.BYTES;
+            }
+            value.putLong(5, partitionCount);
+            value.putLong(6, loIdx);
+            value.putLong(7, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             // Bind the tracker on BOTH native structures: super handles the unbounded
             // per-partition map (and the compaction scratch), this handles the ring
@@ -1094,6 +1247,13 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             // PARTITION BY grew it past the per-query limit unaccounted.
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -2075,6 +2235,17 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);    // finite count in frame
         BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);    // lo index
         BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);    // start offset
+
+        BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE);  // sumX
+        BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE);  // sumXX
+        BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE);  // sumY
+        BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE);  // sumYY
+        BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE);  // sumXY
+        BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);    // finite count in frame
+        BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);    // lo index
+        BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);    // start offset
+        BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE);    // tombstone
 
         BIVAR_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
         BIVAR_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.DOUBLE); // sumX
