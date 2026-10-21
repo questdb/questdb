@@ -26,9 +26,13 @@ package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DerivedArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -1339,6 +1343,104 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testSnapshotArrayDeepCopy() throws Exception {
+        assertMemoryLeak(() -> {
+            int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+            bindVariableService.define(0, type, 0);
+            bindVariableService.setStr(0, "{{1,NaN,3},{4,5,6}}");
+            DerivedArrayView slice = new DerivedArrayView();
+            slice.of(bindVariableService.getFunction(0).getArray(null));
+            slice.slice(1, 1, 3);
+            slice.transpose();
+            bindVariableService.setArray(1, slice);
+            BindVariableService copy = BindVariableServiceImpl.snapshot(bindVariableService, new DefaultTestCairoConfiguration(null));
+            bindVariableService.setStr(0, "{{99}}");
+            slice.ofNull();
+            bindVariableService.clear();
+            ArrayView originalCopy = copy.getFunction(0).getArray(null);
+            Assert.assertEquals(type, copy.getFunction(0).getType());
+            Assert.assertEquals(2, originalCopy.getDimLen(0));
+            Assert.assertEquals(3, originalCopy.getDimLen(1));
+            for (int i = 0; i < 6; i++) {
+                Assert.assertEquals(i == 1 ? Double.NaN : i + 1, originalCopy.getDouble(i), 0);
+            }
+            ArrayView sliceCopy = copy.getFunction(1).getArray(null);
+            Assert.assertEquals(2, sliceCopy.getDimLen(0));
+            Assert.assertEquals(2, sliceCopy.getDimLen(1));
+            Assert.assertTrue(Numbers.isNull(sliceCopy.getDouble(0)));
+            Assert.assertEquals(5, sliceCopy.getDouble(1), 0);
+            Assert.assertEquals(3, sliceCopy.getDouble(2), 0);
+            Assert.assertEquals(6, sliceCopy.getDouble(3), 0);
+        });
+    }
+
+    @Test
+    public void testSnapshotArrayNullAndEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+            bindVariableService.define(0, type, 0);
+            bindVariableService.define(1, type, 0);
+            bindVariableService.setStr(1, "{{},{}}");
+            BindVariableService copy = BindVariableServiceImpl.snapshot(bindVariableService, new DefaultTestCairoConfiguration(null));
+            bindVariableService.clear();
+            Assert.assertEquals(type, copy.getFunction(0).getType());
+            Assert.assertTrue(copy.getFunction(0).getArray(null).isNull());
+            ArrayView empty = copy.getFunction(1).getArray(null);
+            Assert.assertEquals(type, copy.getFunction(1).getType());
+            Assert.assertFalse(empty.isNull());
+            Assert.assertTrue(empty.isEmpty());
+            Assert.assertEquals(2, empty.getDimLen(0));
+            Assert.assertEquals(0, empty.getDimLen(1));
+        });
+    }
+
+    @Test
+    public void testSnapshotLongArray() throws Exception {
+        assertMemoryLeak(() -> {
+            BindVariableService copy;
+            try (DirectArray array = new DirectArray()) {
+                array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 1, false));
+                array.setDimLen(0, 2);
+                array.applyShape();
+                var memory = array.startMemoryA();
+                memory.putLong(Long.MAX_VALUE);
+                memory.putLong(Numbers.LONG_NULL);
+                bindVariableService.setArray(0, array);
+                copy = BindVariableServiceImpl.snapshot(bindVariableService, new DefaultTestCairoConfiguration(null));
+                bindVariableService.clear();
+            }
+            ArrayView array = copy.getFunction(0).getArray(null);
+            Assert.assertEquals(Long.MAX_VALUE, array.getLong(0));
+            Assert.assertEquals(Numbers.LONG_NULL, array.getLong(1));
+        });
+    }
+
+    @Test
+    public void testSnapshotVarcharArray() throws Exception {
+        assertMemoryLeak(() -> {
+            int type = ColumnType.encodeArrayType(ColumnType.VARCHAR, 1, false);
+            bindVariableService.define(0, type, 0);
+            ArrayBindVariable variable = (ArrayBindVariable) bindVariableService.getFunction(0);
+            BindVariableService copy;
+            try {
+                bindVariableService.setStr(0, "{abc,é,NULL,\"\"}");
+                copy = BindVariableServiceImpl.snapshot(bindVariableService, new DefaultTestCairoConfiguration(null));
+                bindVariableService.setStr(0, "{other}");
+                bindVariableService.clear();
+            } finally {
+                variable.release();
+            }
+            ArrayView array = copy.getFunction(0).getArray(null);
+            Assert.assertEquals(type, copy.getFunction(0).getType());
+            Assert.assertEquals(4, array.getCardinality());
+            TestUtils.assertEquals("abc", array.getVarchar(0).toString());
+            TestUtils.assertEquals("é", array.getVarchar(1).toString());
+            Assert.assertNull(array.getVarchar(2));
+            Assert.assertEquals(0, array.getVarchar(3).size());
+        });
+    }
+
+    @Test
     public void testSnapshotBinaryDeepCopy() throws Exception {
         assertMemoryLeak(() -> {
             TestBinarySequence binSeq = new TestBinarySequence().of(new byte[]{1, 2, 3, 4, 5});
@@ -1429,7 +1531,7 @@ public class BindVariableServiceImplTest {
                     case ColumnType.UUID -> bindVariableService.setUuid(0, 100L, 200L);
                     case ColumnType.VARCHAR -> bindVariableService.setVarchar(0, new Utf8String("test"));
                     case ColumnType.ARRAY -> {
-                    } // snapshot does not deep-copy array values
+                    } // typed NULL; non-null arrays have dedicated shape and ownership tests
                     case ColumnType.DECIMAL, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
                          ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128,
                          ColumnType.DECIMAL256 -> bindVariableService.setDecimal(0, 0, 0, 0, 42, type);

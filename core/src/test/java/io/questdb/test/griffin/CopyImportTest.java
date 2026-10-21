@@ -409,6 +409,30 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyWithMissingArrayColumn() throws Exception {
+        final String oldInputRoot = inputRoot;
+        try {
+            File dir = temp.newFolder("missing-array");
+            TestUtils.writeStringToFile(new File(dir, "no-array.csv"), "k,ts\n1,2024-01-01T00:00:00.000000Z\n2,2024-01-02T00:00:00.000000Z\n");
+            inputRoot = dir.getAbsolutePath();
+            testCopy(
+                    () -> {
+                        execute("CREATE TABLE t (k INT, a DOUBLE[], ts TIMESTAMP, aa DOUBLE[][], b BINARY, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+                        runAndFetchCopyID("COPY t FROM 'no-array.csv' WITH HEADER true TIMESTAMP 'ts' PARTITION BY DAY", sqlExecutionContext);
+                    },
+                    () -> {
+                        assertQuery("SELECT status, rows_imported FROM " + configuration.getSystemTableNamePrefix() + "text_import_log LIMIT -1")
+                                .noLeakCheck().expectSize().returns("status\trows_imported\nfinished\t2\n");
+                        assertQuery("SELECT k, a, aa, s FROM t")
+                                .noLeakCheck().expectSize().returns("k\ta\taa\ts\n1\tnull\tnull\t\n2\tnull\tnull\t\n");
+                    }
+            );
+        } finally {
+            inputRoot = oldInputRoot;
+        }
+    }
+
+    @Test
     public void testParallelCopyIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
             execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");

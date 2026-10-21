@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -1874,6 +1875,23 @@ public class CopyExportTest extends AbstractCairoTest {
                     });
 
             testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithArrayBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT, v DOUBLE[])");
+            execute("INSERT INTO t VALUES (1, ARRAY[1.0]), (2, ARRAY[2.0]), (3, NULL)");
+            bindVariableService.define(0, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1), 0);
+            bindVariableService.setStr(0, "{1.0}");
+            testCopyExport(
+                    () -> runAndFetchCopyExportID("COPY (SELECT k, v FROM t WHERE v = $1) TO 'array_bind' WITH FORMAT PARQUET", sqlExecutionContext),
+                    () -> assertEventually(() -> assertQuery("SELECT k, v FROM read_parquet('" + exportRoot + File.separator + "array_bind.parquet')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("k\tv\n1\t[1.0]\n"))
+            );
         });
     }
 

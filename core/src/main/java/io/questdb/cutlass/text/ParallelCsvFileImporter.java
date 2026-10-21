@@ -73,6 +73,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -929,7 +930,28 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                 if (unused) {
                     names.add(metadata.getColumnName(i));
-                    types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
+                    final int columnType = metadata.getColumnType(i);
+                    if (ColumnType.isArray(columnType) || columnType == ColumnType.BINARY) {
+                        // Workers need the type for temporary table metadata, not a text parser.
+                        types.add(new TypeAdapter() {
+                            @Override
+                            public int getType() {
+                                return columnType;
+                            }
+
+                            @Override
+                            public boolean probe(DirectUtf8Sequence text) {
+                                return false;
+                            }
+
+                            @Override
+                            public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws TextException {
+                                throw TextException.$("cannot import text into missing column [index=").put(column).put(']');
+                            }
+                        });
+                    } else {
+                        types.add(typeManager.getTypeAdapter(columnType));
+                    }
                     remapIndex.add(i);
                 }
             }
