@@ -1837,10 +1837,36 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampMicrosTextBindVariablePast2262() throws Exception {
+        // A TIMESTAMP (micros) designated timestamp holds years past 2262, the end of TIMESTAMP_NS. A text bound
+        // of it parses with the micros driver whether the bind variable is STRING or VARCHAR.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("INSERT INTO x VALUES ('mid', '2020-01-03T00:00:00Z'), ('y2300', '2300-01-01T00:00:00Z')");
+            for (int i = 0; i < 4; i++) {
+                final String text = (i & 1) == 0 ? "2300-01-01" : "9999-12-31";
+                bindVariableService.clear();
+                if (i < 2) {
+                    bindVariableService.setStr(0, text);
+                } else {
+                    bindVariableService.setVarchar(0, new Utf8String(text));
+                }
+                final boolean is2300 = (i & 1) == 0;
+                assertBound("ts < $1", is2300 ? "mid\n" : "mid\ny2300\n");
+                assertBound("ts >= $1", is2300 ? "y2300\n" : "");
+                assertBound("ts = $1", is2300 ? "y2300\n" : "");
+                assertBound("ts IN ($1)", is2300 ? "y2300\n" : "");
+                assertBound("ts BETWEEN '2020-01-01' AND $1", "mid\ny2300\n");
+            }
+        });
+    }
+
+    @Test
     public void testTimestampNsBindVariableOutsideRange() throws Exception {
-        // A bind variable past either end of the TIMESTAMP_NS range compares as the same text does as a
-        // literal: = and IN match nothing, != matches every row, and a bound of the designated timestamp
-        // counts as before or after every row. The functions read the value once per execution.
+        // A bind variable past either end of the TIMESTAMP_NS range in = or != on a non-designated column fails
+        // once per execution, as a range comparison with a text bind variable does. IN matches nothing, and a
+        // bound of the designated timestamp counts as before or after every row, as the same text does as a
+        // literal.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (k SYMBOL, v TIMESTAMP_NS, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -1862,19 +1888,25 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 // STRING, VARCHAR, then TIMESTAMP (micros) bind variables
                 for (int i = 0; i < 2 * texts.length + micros.length; i++) {
                     final boolean isAbove;
+                    final String error;
                     bindVariableService.clear();
                     if (i < texts.length) {
                         bindVariableService.setStr(0, texts[i]);
                         isAbove = i >= 2;
+                        error = "inconvertible value: `" + texts[i] + "` [STRING -> TIMESTAMP_NS]";
                     } else if (i < 2 * texts.length) {
                         bindVariableService.setVarchar(0, new Utf8String(texts[i - texts.length]));
                         isAbove = i - texts.length >= 2;
+                        error = "inconvertible value: `" + texts[i - texts.length] + "` [VARCHAR -> TIMESTAMP_NS]";
                     } else {
                         bindVariableService.setTimestamp(0, micros[i - 2 * texts.length]);
                         isAbove = i - 2 * texts.length >= 1;
+                        error = "inconvertible value: " + micros[i - 2 * texts.length] + " [TIMESTAMP -> TIMESTAMP_NS]";
                     }
-                    assertBound("v = $1", "");
-                    assertBound("v != $1", all);
+                    assertQuery("SELECT k FROM x WHERE v = $1").noLeakCheck().failsWith(error);
+                    assertQuery("SELECT k FROM x WHERE v != $1").noLeakCheck().failsWith(error);
+                    assertQuery("SELECT k FROM x WHERE $1 = v").noLeakCheck().failsWith(error);
+                    assertQuery("SELECT k FROM x WHERE (ts = $1 OR k = 'zz')").noLeakCheck().failsWith(error);
                     assertBound("v IN ($1, '2020-01-03T00:00:00Z')", "mid\n");
                     assertBound("v NOT IN ($1, '2020-01-03T00:00:00Z')", "min\nmax\nnul\n");
                     assertBound("ts = $1", "");
@@ -1894,6 +1926,20 @@ public class CompiledFilterTest extends AbstractCairoTest {
             assertQuery("SELECT k FROM x WHERE v < $1")
                     .noLeakCheck()
                     .failsWith("inconvertible value: `9999-12-31` [STRING -> TIMESTAMP_NS]");
+
+            // Other runtime constants past the range fail in = and != as well, and clamp in IN and in a bound of
+            // the designated timestamp.
+            final String above = "dateadd('y', 300, now())";
+            final String below = "dateadd('y', -500, now())";
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelFilterEnabled((mode & 1) != 0);
+                sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                assertQuery("SELECT k FROM x WHERE v = " + above).noLeakCheck().failsWith("[TIMESTAMP -> TIMESTAMP_NS]");
+                assertQuery("SELECT k FROM x WHERE v != " + below).noLeakCheck().failsWith("[TIMESTAMP -> TIMESTAMP_NS]");
+                assertBound("v IN (" + above + ", '2020-01-03T00:00:00Z')", "mid\n");
+                assertBound("ts < " + above, all);
+                assertBound("ts > " + below, all);
+            }
         });
     }
 

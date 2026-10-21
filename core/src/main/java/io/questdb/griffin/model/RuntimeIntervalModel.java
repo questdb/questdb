@@ -523,6 +523,16 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             try {
                 return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
             } catch (ImplicitCastException e) {
+                if (ColumnType.isVarchar(functionType)) {
+                    // VARCHAR text converts with the TIMESTAMP_NS parser, which rejects text past 2262 that
+                    // a TIMESTAMP column holds; parse it with the column's driver, as the STRING branch does
+                    final CharSequence value = dynamicFunction.getStrA(null);
+                    try {
+                        return timestampDriver.parseFloorSaturated(value, 0, value.length());
+                    } catch (NumericException ignore) {
+                        throw e;
+                    }
+                }
                 // a bound past the range saturates, as a literal bound does
                 final int side = timestampDriver.compareToRange(dynamicFunction);
                 if (side == 0) {
