@@ -75,9 +75,6 @@ public class QueryModel implements IQueryModel {
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
-    // Each IntList contains indices into groupBy for columns active in that grouping set.
-    // Empty IntList = empty set () = grand total. Null means no GROUPING SETS syntax.
-    private ObjList<IntList> groupingSets;
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
     private final HorizonJoinContext horizonJoinContext = new HorizonJoinContext();
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
@@ -146,6 +143,9 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
+    // Each IntList contains indices into groupBy for columns active in that grouping set.
+    // Empty IntList = empty set () = grand total. Null means no GROUPING SETS syntax.
+    private ObjList<IntList> groupingSets;
     private boolean isCteModel;
     private ExpressionNode lateralCountCoalesceGuard;
     private boolean isLateralCountCoalesceRequired;
@@ -1159,11 +1159,6 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public boolean hasGroupingSets() {
-        return groupingSets != null && groupingSets.size() > 0;
-    }
-
-    @Override
     public int getTimestampColumnIndex() {
         return timestampColumnIndex;
     }
@@ -1289,6 +1284,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public boolean hasExplicitTimestamp() {
         return timestamp != null && explicitTimestamp;
+    }
+
+    @Override
+    public boolean hasGroupingSets() {
+        return groupingSets != null && groupingSets.size() > 0;
     }
 
     @Override

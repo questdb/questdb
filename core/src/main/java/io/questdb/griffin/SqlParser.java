@@ -1792,6 +1792,15 @@ public class SqlParser {
         return tok;
     }
 
+    private CharSequence optTokAfterGroupingSets(GenericLexer lexer) throws SqlException {
+        CharSequence tok = optTok(lexer);
+        if (tok != null && Chars.equals(tok, ',')) {
+            throw SqlException.$(lexer.lastTokenPosition(),
+                    "grouping items after ROLLUP, CUBE, or GROUPING SETS are not supported");
+        }
+        return tok;
+    }
+
     private ExecutionModel parse0(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         // ANCHOR is a live-view-only clause. A live-view re-compile (the refresh
         // worker, the startup graph build, CREATE's own validating compile of the
@@ -5877,7 +5886,7 @@ public class SqlParser {
             } else {
                 expandCube(model, 0, columns.size(), kwPos, maxSets);
             }
-            return optTok(lexer);
+            return optTokAfterGroupingSets(lexer);
         }
 
         if (isGroupingKeyword(tok)) {
@@ -5888,7 +5897,7 @@ public class SqlParser {
                 throw SqlException.$(kwPos, "expected SETS after GROUPING");
             }
             parseExplicitGroupingSets(lexer, model, sqlParserCallback);
-            return optTok(lexer);
+            return optTokAfterGroupingSets(lexer);
         }
 
         // Plain GROUP BY parsing - may contain ROLLUP/CUBE after plain columns (composite)
@@ -5925,7 +5934,7 @@ public class SqlParser {
                 } else {
                     expandCubeComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos, maxSets);
                 }
-                return optTok(lexer);
+                return optTokAfterGroupingSets(lexer);
             }
 
             // Regular expression

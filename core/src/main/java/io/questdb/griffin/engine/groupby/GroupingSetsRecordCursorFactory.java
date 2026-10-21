@@ -99,10 +99,14 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
             int setCount = groupingSets.size();
             int totalKeyColumns = keyColumnIndices.size();
 
-            // Build the single RecordSink that copies all key columns.
+            // Copy raw key columns through the nulling record and virtual keys
+            // through the original input record.
             RecordSink mapSink = RecordSinkFactory.getInstance(
-                    configuration, asm, base.getMetadata(), listColumnFilter, keyFunctions, null
+                    configuration, asm, base.getMetadata(), listColumnFilter, null, null
             );
+            RecordSink functionSink = keyFunctions.size() > 0 ? RecordSinkFactory.getInstance(
+                    configuration, asm, base.getMetadata(), new ListColumnFilter(), keyFunctions, null
+            ) : null;
 
             // Build per-set lists of base column indices to null out. For each
             // grouping set, columns NOT in its active list must return NULL.
@@ -111,7 +115,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                 IntList activeIndices = groupingSets.getQuick(s);
                 IntList nulled = new IntList();
                 for (int k = 0; k < totalKeyColumns; k++) {
-                    if (!containsValue(activeIndices, k)) {
+                    if (!containsValue(activeIndices, k) && keyColumnIndices.getQuick(k) >= 0) {
                         nulled.add(keyColumnIndices.getQuick(k));
                     }
                 }
@@ -166,9 +170,11 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                     keyTypes,
                     valueTypes,
                     mapSink,
+                    functionSink,
                     nulledColumnsPerSet,
                     groupingFunctions,
-                    setCount
+                    setCount,
+                    totalKeyColumns
             );
         } catch (Throwable e) {
             Misc.free(this, e);
@@ -293,6 +299,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
     private class GroupingSetsRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         private final GroupByAllocator allocator;
         private final ObjList<Map> dataMaps;
+        private final RecordSink functionSink;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         private final ObjList<GroupingFunction> groupingFunctions;
         private final RecordSink mapSink;
@@ -314,18 +321,21 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                 @Transient @NotNull ArrayColumnTypes keyTypes,
                 @Transient @NotNull ArrayColumnTypes valueTypes,
                 RecordSink mapSink,
+                RecordSink functionSink,
                 ObjList<IntList> nulledColumnsPerSet,
                 ObjList<GroupingFunction> groupingFunctions,
-                int setCount
+                int setCount,
+                int keyColumnCount
         ) {
             super(functions, false);
             try {
                 this.groupByFunctionsUpdater = groupByFunctionsUpdater;
                 this.groupingFunctions = groupingFunctions;
                 this.mapSink = mapSink;
+                this.functionSink = functionSink;
                 this.nulledColumnsPerSet = nulledColumnsPerSet;
                 this.setCount = setCount;
-                this.keyColumnCount = keyTypes.getColumnCount();
+                this.keyColumnCount = keyColumnCount;
 
                 // One map per grouping set. Maps start with a small initial
                 // capacity and grow lazily during the scan, so the upfront
@@ -464,6 +474,11 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                     // The NullingRecord returns NULL for inactive columns,
                     // so the map key has NULLs for non-grouped columns.
                     mapSink.copy(nullingRecords.getQuick(s), key);
+                    if (functionSink != null) {
+                        // Prefix expressions keep their original inputs even when
+                        // another grouping key rolls up a column they reference.
+                        functionSink.copy(baseRecord, key);
+                    }
                     MapValue value = key.createValue();
                     if (value.isNew()) {
                         groupByFunctionsUpdater.updateNew(value, baseRecord, rowId);

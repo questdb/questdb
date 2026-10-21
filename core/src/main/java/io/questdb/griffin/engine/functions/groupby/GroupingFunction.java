@@ -28,12 +28,15 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 
 /**
  * Returns the GROUPING bitmask for its argument columns. For each argument,
@@ -49,14 +52,28 @@ import io.questdb.std.Numbers;
  */
 public class GroupingFunction extends IntFunction implements GroupByFunction {
     private final IntList argColumnIndices;
+    private final ObjList<Function> argFunctions;
+    private final IntList argKeyPositions;
+    private final IntList argPositions;
     private final int position;
     private int currentValue;
     private int[] perSetValues;
     private int valueIndex;
 
-    public GroupingFunction(IntList argColumnIndices, int position) {
+    public GroupingFunction(IntList argColumnIndices, ObjList<Function> argFunctions, IntList argPositions, int position) {
         this.argColumnIndices = argColumnIndices;
+        this.argPositions = new IntList(argPositions);
+        // FunctionParser clears its scratch args list after the factory returns.
+        // Keep our own list so close() releases the argument functions we own.
+        this.argFunctions = new ObjList<>(argFunctions);
+        this.argKeyPositions = new IntList(argColumnIndices.size());
+        this.argKeyPositions.setAll(argColumnIndices.size(), -1);
         this.position = position;
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(argFunctions);
     }
 
     @Override
@@ -113,16 +130,23 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
             for (int a = 0, nArgs = argColumnIndices.size(); a < nArgs; a++) {
                 int argBaseIdx = argColumnIndices.getQuick(a);
                 // Find this arg's position in the key column list
-                int keyPos = -1;
-                for (int k = 0; k < keyCount; k++) {
-                    if (keyColumnIndices.getQuick(k) == argBaseIdx) {
-                        keyPos = k;
-                        break;
+                int keyPos = argKeyPositions.getQuick(a);
+                if (keyPos < 0 && argBaseIdx >= 0) {
+                    for (int k = 0; k < keyCount; k++) {
+                        if (keyColumnIndices.getQuick(k) == argBaseIdx) {
+                            keyPos = k;
+                            break;
+                        }
                     }
                 }
                 if (keyPos < 0) {
-                    throw SqlException.$(position, "GROUPING()/GROUPING_ID() argument must be a grouping key column");
+                    int argumentPosition = argPositions.getQuick(a);
+                    if (argBaseIdx < 0) {
+                        throw SqlException.$(argumentPosition, "argument must be a column reference");
+                    }
+                    throw SqlException.$(argumentPosition, "argument must be a grouping key column");
                 }
+                argKeyPositions.setQuick(a, keyPos);
                 // Extract the bit for this key position from the full bitmask.
                 // Bit (keyCount - 1 - keyPos) in the full mask tells whether
                 // this key is rolled up (1) or active (0).
@@ -142,6 +166,10 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.INT);
+    }
+
+    public void setArgKeyPosition(int argIndex, int keyPosition) {
+        argKeyPositions.setQuick(argIndex, keyPosition);
     }
 
     public void setCurrentSet(int setIndex) {
@@ -165,7 +193,12 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
             if (i > 0) {
                 sink.val(',');
             }
-            sink.putColumnName(argColumnIndices.getQuick(i));
+            int columnIndex = argColumnIndices.getQuick(i);
+            if (columnIndex >= 0) {
+                sink.putColumnName(columnIndex);
+            } else {
+                argFunctions.getQuick(i).toPlan(sink);
+            }
         }
         sink.val(')');
     }

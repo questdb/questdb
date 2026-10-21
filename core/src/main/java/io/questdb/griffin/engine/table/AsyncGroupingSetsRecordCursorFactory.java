@@ -94,7 +94,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
             @NotNull ArrayColumnTypes keyTypes,
             @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @NotNull ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
+            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> keyFunctions,
             @NotNull ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @NotNull ObjList<Function> recordFunctions,
@@ -265,6 +265,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
             record.init(frameMemory);
             long baseRowId = Rows.toRowID(frameIndex, 0);
             RecordSink recordSink = atom.getRecordSink(slotId);
+            RecordSink functionSink = atom.getFunctionSink(slotId);
             GroupByFunctionsUpdater updater = atom.getUpdater(slotId);
             int setCount = atom.getSetCount();
             for (long row = 0; row < frameRowCount; row++) {
@@ -277,6 +278,9 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                     Map map = atom.getMap(slotId, setIndex);
                     MapKey key = map.withKey();
                     recordSink.copy(keyRecord, key);
+                    if (functionSink != null) {
+                        functionSink.copy(record, key);
+                    }
                     MapValue value = key.createValue();
                     if (value.isNew()) {
                         updater.updateNew(value, record, baseRowId + row);
@@ -298,7 +302,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
 
     private static void initGroupingFunctions(
             ObjList<GroupByFunction> ownerFunctions,
-            ObjList<ObjList<GroupByFunction>> workerFunctions,
+            @Nullable ObjList<ObjList<GroupByFunction>> workerFunctions,
             ObjList<IntList> groupingSets,
             IntList keyColumnIndices
     ) throws SqlException {
@@ -314,8 +318,10 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
             groupingIds.add(mask);
         }
         initGroupingFunctions(ownerFunctions, groupingIds, keyColumnIndices);
-        for (int i = 0, n = workerFunctions.size(); i < n; i++) {
-            initGroupingFunctions(workerFunctions.getQuick(i), groupingIds, keyColumnIndices);
+        if (workerFunctions != null) {
+            for (int i = 0, n = workerFunctions.size(); i < n; i++) {
+                initGroupingFunctions(workerFunctions.getQuick(i), groupingIds, keyColumnIndices);
+            }
         }
     }
 

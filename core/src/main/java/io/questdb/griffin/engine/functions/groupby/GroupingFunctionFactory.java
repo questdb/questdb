@@ -70,12 +70,10 @@ public class GroupingFunctionFactory implements FunctionFactory {
         }
 
         Function arg = args.getQuick(0);
-        if (!(arg instanceof ColumnFunction)) {
-            throw SqlException.$(argPositions.getQuick(0), "GROUPING() argument must be a column reference");
-        }
-
         IntList columnIndices = new IntList(1);
-        columnIndices.add(((ColumnFunction) arg).getColumnIndex());
-        return new GroupingFunction(columnIndices, position);
+        columnIndices.add(arg instanceof ColumnFunction columnFunction
+                ? columnFunction.getColumnIndex()
+                : -1);
+        return new GroupingFunction(columnIndices, args, argPositions, position);
     }
 }

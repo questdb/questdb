@@ -68,12 +68,9 @@ public class GroupingIdFunctionFactory implements FunctionFactory {
         IntList columnIndices = new IntList(args.size());
         for (int i = 0, n = args.size(); i < n; i++) {
             Function arg = args.getQuick(i);
-            if (!(arg instanceof ColumnFunction)) {
-                throw SqlException.$(argPositions.getQuick(i), "GROUPING_ID() arguments must be column references");
-            }
-            columnIndices.add(((ColumnFunction) arg).getColumnIndex());
+            columnIndices.add(arg instanceof ColumnFunction columnFunction ? columnFunction.getColumnIndex() : -1);
         }
 
-        return new GroupingFunction(columnIndices, position);
+        return new GroupingFunction(columnIndices, args, argPositions, position);
     }
 }

@@ -55,6 +55,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -67,8 +68,9 @@ import java.io.Closeable;
 public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeable {
     private final ObjList<GroupByAllocator> allocators;
     private final CairoConfiguration configuration;
+    private final ObjList<RecordSink> functionSinks;
     private final ObjList<Map> maps;
-    private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
+    private final @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final ObjList<RecordSink> recordSinks;
     private final ObjList<GroupByFunctionsUpdater> updaters;
@@ -92,7 +94,7 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
             @NotNull ArrayColumnTypes valueTypes,
             @NotNull ListColumnFilter listColumnFilter,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
-            @NotNull ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
+            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> ownerKeyFunctions,
             @NotNull ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @NotNull ObjList<IntList> groupingSets,
@@ -118,13 +120,14 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
             IntList activeKeys = groupingSets.getQuick(setIndex);
             IntList nulledColumns = new IntList();
             for (int keyIndex = 0; keyIndex < keyColumnIndices.size(); keyIndex++) {
-                if (!containsValue(activeKeys, keyIndex)) {
+                if (!containsValue(activeKeys, keyIndex) && keyColumnIndices.getQuick(keyIndex) >= 0) {
                     nulledColumns.add(keyColumnIndices.getQuick(keyIndex));
                 }
             }
             nulledColumnsPerSet.add(nulledColumns);
         }
         this.recordSinks = new ObjList<>(workerCount + 1);
+        this.functionSinks = new ObjList<>(workerCount + 1);
         this.updaters = new ObjList<>(workerCount + 1);
         this.allocators = new ObjList<>(workerCount + 1);
 
@@ -134,7 +137,7 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
                     asm,
                     baseColumnTypes,
                     listColumnFilter,
-                    ownerKeyFunctions,
+                    null,
                     null,
                     null,
                     null,
@@ -143,9 +146,13 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(
                     asm, ownerGroupByFunctions.size()
             );
-            createSlot(-1, sinkClass, updaterClass, baseColumnTypes, listColumnFilter);
+            final ListColumnFilter functionColumnFilter = new ListColumnFilter();
+            final Class<RecordSink> functionSinkClass = ownerKeyFunctions.size() > 0 ? RecordSinkFactory.getInstanceClass(
+                    configuration, asm, baseColumnTypes, functionColumnFilter, ownerKeyFunctions, null, null, null, null
+            ) : null;
+            createSlot(-1, sinkClass, functionSinkClass, updaterClass, baseColumnTypes, listColumnFilter, functionColumnFilter);
             for (int worker = 0; worker < workerCount; worker++) {
-                createSlot(worker, sinkClass, updaterClass, baseColumnTypes, listColumnFilter);
+                createSlot(worker, sinkClass, functionSinkClass, updaterClass, baseColumnTypes, listColumnFilter, functionColumnFilter);
             }
         } catch (Throwable th) {
             Misc.free(this, th);
@@ -201,8 +208,10 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
             }
         }
         Misc.clearObjList(ownerGroupByFunctions);
-        for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-            PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+            }
         }
         for (int i = 0, n = allocators.size(); i < n; i++) {
             Misc.clear(allocators.getQuick(i));
@@ -215,6 +224,10 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
         return filterContext;
     }
 
+    public RecordSink getFunctionSink(int slotId) {
+        return functionSinks.getQuick(slotIndex(slotId));
+    }
+
     public GroupByFunctionsUpdater getUpdater(int slotId) {
         return updaters.getQuick(slotIndex(slotId));
     }
@@ -224,7 +237,7 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
     }
 
     public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
-        if (slotId < 0) {
+        if (slotId < 0 || perWorkerGroupByFunctions == null) {
             return ownerGroupByFunctions;
         }
         return perWorkerGroupByFunctions.getQuick(slotId);
@@ -293,8 +306,10 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
 
     public void toTop() {
         GroupByUtils.toTop(ownerGroupByFunctions);
-        for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-            GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
+            }
         }
     }
 
@@ -342,22 +357,31 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
     private void createSlot(
             int slotId,
             Class<RecordSink> sinkClass,
+            Class<RecordSink> functionSinkClass,
             Class<? extends GroupByFunctionsUpdater> updaterClass,
             ColumnTypes baseColumnTypes,
-            ListColumnFilter listColumnFilter
+            ListColumnFilter listColumnFilter,
+            ListColumnFilter functionColumnFilter
     ) {
         final int index = slotIndex(slotId);
         final ObjList<Function> keyFunctions = slotId < 0 || perWorkerKeyFunctions == null
                 ? ownerKeyFunctions
                 : perWorkerKeyFunctions.getQuick(slotId);
-        final ObjList<GroupByFunction> groupByFunctions = slotId < 0 ? ownerGroupByFunctions : perWorkerGroupByFunctions.getQuick(slotId);
+        final ObjList<GroupByFunction> groupByFunctions = slotId < 0 || perWorkerGroupByFunctions == null
+                ? ownerGroupByFunctions
+                : perWorkerGroupByFunctions.getQuick(slotId);
         recordSinks.extendAndSet(index, RecordSinkFactory.getInstance(
-                sinkClass, baseColumnTypes, listColumnFilter, keyFunctions, null, null, null, null
+                sinkClass, baseColumnTypes, listColumnFilter, null, null, null, null, null
         ));
+        functionSinks.extendAndSet(index, keyFunctions.size() > 0 ? RecordSinkFactory.getInstance(
+                functionSinkClass, baseColumnTypes, functionColumnFilter, keyFunctions, null, null, null, null
+        ) : null);
         updaters.extendAndSet(index, GroupByFunctionsUpdaterFactory.getInstance(updaterClass, groupByFunctions));
         final GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
         allocators.extendAndSet(index, allocator);
-        GroupByUtils.setAllocator(groupByFunctions, allocator);
+        if (slotId < 0 || perWorkerGroupByFunctions != null) {
+            GroupByUtils.setAllocator(groupByFunctions, allocator);
+        }
         for (int set = 0; set < setCount; set++) {
             int mapIndex = index * setCount + set;
             maps.extendAndSet(mapIndex, null);
