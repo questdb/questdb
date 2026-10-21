@@ -143,6 +143,9 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
+    // Each IntList contains indices into groupBy for columns active in that grouping set.
+    // Empty IntList = empty set () = grand total. Null means no GROUPING SETS syntax.
+    private ObjList<IntList> groupingSets;
     private boolean isCteModel;
     private ExpressionNode lateralCountCoalesceGuard;
     private boolean isLateralCountCoalesceRequired;
@@ -287,6 +290,13 @@ public class QueryModel implements IQueryModel {
         groupBy.add(node);
     }
 
+    public void addGroupingSet(IntList columnIndices) {
+        if (groupingSets == null) {
+            groupingSets = new ObjList<>();
+        }
+        groupingSets.add(columnIndices);
+    }
+
     @Override
     public void addHint(CharSequence key, CharSequence value) {
         hintsMap.put(key, value);
@@ -405,6 +415,7 @@ public class QueryModel implements IQueryModel {
         orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
         isSelectTranslation = false;
         groupBy.clear();
+        groupingSets = null;
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
@@ -803,6 +814,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<ExpressionNode> getGroupBy() {
         return groupBy;
+    }
+
+    @Override
+    public ObjList<IntList> getGroupingSets() {
+        return groupingSets;
     }
 
     @NotNull
@@ -1271,6 +1287,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean hasGroupingSets() {
+        return groupingSets != null && groupingSets.size() > 0;
+    }
+
+    @Override
     public boolean hasSharedRefs() {
         return sharedRefs.size() > 0;
     }
@@ -1513,6 +1534,10 @@ public class QueryModel implements IQueryModel {
     public void moveGroupByFrom(IQueryModel model) {
         ObjList<ExpressionNode> thatGroupBy = model.getGroupBy();
         groupBy.addAll(thatGroupBy);
+        if (model instanceof QueryModel that) {
+            groupingSets = that.groupingSets;
+            that.groupingSets = null;
+        }
         // clear the source
         thatGroupBy.clear();
     }

@@ -4594,6 +4594,7 @@ public class SqlOptimiser implements Mutable {
                     qc.getColumnType()
             );
             renamed.setGenerated(qc.isGenerated());
+            renamed.setGroupingArgKeyPositions(qc.getGroupingArgKeyPositions());
             qc = renamed;
         }
         return qc;
@@ -6070,6 +6071,60 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private boolean isGroupingSetsPushdownSafe(
+            IQueryModel model,
+            ExpressionNode node,
+            LowerCaseCharSequenceObjHashMap<CharSequence> aliases
+    ) {
+        if (node == null || !model.hasGroupingSets()) {
+            return true;
+        }
+        if (node.type == LITERAL) {
+            CharSequence token = node.token;
+            int dot = Chars.indexOfLastUnquoted(token, '.');
+            if (aliases != null) {
+                CharSequence translated = aliases.get(token, dot + 1, token.length());
+                if (translated != null) {
+                    token = translated;
+                    dot = Chars.indexOfLastUnquoted(token, '.');
+                }
+            }
+            QueryColumn column = model.getAliasToColumnMap().get(token, dot + 1, token.length());
+            if (column == null) {
+                return false;
+            }
+            IQueryModel chooseModel = model.getNestedModel();
+            while (chooseModel != null
+                    && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_CHOOSE
+                    && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
+                chooseModel = chooseModel.getNestedModel();
+            }
+            ObjList<ExpressionNode> keys = model.getGroupBy();
+            for (int k = 0, n = keys.size(); k < n; k++) {
+                ExpressionNode key = keys.getQuick(k);
+                if ((key.type == LITERAL && Chars.equalsIgnoreCase(key.token, column.getAlias()))
+                        || ExpressionNode.compareNodesGroupBy(key, column.getAst(), chooseModel)) {
+                    // A rolled key gains NULL rows, so filtering its input changes the result.
+                    ObjList<IntList> sets = model.getGroupingSets();
+                    for (int s = 0, sn = sets.size(); s < sn; s++) {
+                        if (!sets.getQuick(s).contains(k)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isGroupingSetsPushdownSafe(model, node.args.getQuick(i), aliases)) {
+                return false;
+            }
+        }
+        return isGroupingSetsPushdownSafe(model, node.lhs, aliases)
+                && isGroupingSetsPushdownSafe(model, node.rhs, aliases);
+    }
+
     private boolean isIntegerConstant(@Nullable ExpressionNode n) {
         if (n == null || n.type != CONSTANT) {
             return false;
@@ -6340,6 +6395,26 @@ public class SqlOptimiser implements Mutable {
             Misc.free(function);
             Misc.freeIfCloseable(nullRecord);
         }
+    }
+
+    private boolean isRepeatableGroupingSetsPredicate(ExpressionNode node) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == ExpressionNode.QUERY
+                || (node.type == FUNCTION
+                && !isInKeyword(node.token)
+                && !isBetweenKeyword(node.token)
+                && !isCastKeyword(node.token)
+                && !functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token))) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isRepeatableGroupingSetsPredicate(node.args.getQuick(i))) {
+                return false;
+            }
+        }
+        return isRepeatableGroupingSetsPredicate(node.lhs) && isRepeatableGroupingSetsPredicate(node.rhs);
     }
 
     private boolean isResolvableColumn(
@@ -7103,6 +7178,8 @@ public class SqlOptimiser implements Mutable {
                             // Preserve the lone internal keep predicate for row-selecting fusion.
                             // Outer predicates filter the selected rows at the parent instead.
                             || isSubsampleKeepFilter(nested)
+                            || (nested.hasGroupingSets() && !isRepeatableGroupingSetsPredicate(node))
+                            || !isGroupingSetsPushdownSafe(nested, node, parent.getAliasToColumnNameMap())
                             || (nested.getSampleBy() != null && !canPushToSampleBy(nested, literalCollectorANames))
                     ) {
                         // there is no nested model for this table, keep where clause element with this model
@@ -10708,7 +10785,7 @@ public class SqlOptimiser implements Mutable {
             final ExpressionNode sampleByTo = nested.getSampleByTo();
 
             final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
-            if (sampleBy != null && groupBy != null && groupBy.size() > 0) {
+            if (sampleBy != null && groupBy != null && groupBy.size() > 0 && !nested.hasGroupingSets()) {
                 throw SqlException.$(groupBy.getQuick(0).position, "SELECT query must not contain both GROUP BY and SAMPLE BY");
             }
 
@@ -10743,7 +10820,10 @@ public class SqlOptimiser implements Mutable {
                             && timestamp != null
                             // null offset means ALIGN TO FIRST OBSERVATION, and we only support ALIGN TO CALENDAR
                             && sampleByOffset != null
-                            && !hasLinearFill(sampleByFill)
+                            // LINEAR normally stays on the dedicated SAMPLE BY path. GROUPING SETS
+                            // always need the GROUP BY rewrite so generateFill can reject unsupported
+                            // FILL(PREV/LINEAR) modes with the grouping-sets-specific diagnostic.
+                            && (nested.hasGroupingSets() || !hasLinearFill(sampleByFill))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
@@ -10836,6 +10916,7 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 if (maybeKeyed.size() > 0
+                        && !nested.hasGroupingSets()
                         && nested.getTableName() == null
                         && ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
                     // Down-sampling of sub-queries yields a null table name; the nested
@@ -10990,6 +11071,17 @@ public class SqlOptimiser implements Mutable {
 
                 if (timestampOnly || nested.getGroupBy().size() > 0) {
                     nested.addGroupBy(tsFloorFunc);
+                }
+
+                // For SAMPLE BY with GROUPING SETS, add the timestamp column index
+                // to every grouping set. The timestamp is always an active key -
+                // it is never rolled up, since each time bucket must be preserved.
+                if (nested.hasGroupingSets()) {
+                    int tsGroupByIndex = nested.getGroupBy().size() - 1;
+                    ObjList<IntList> sets = nested.getGroupingSets();
+                    for (int s = 0, n = sets.size(); s < n; s++) {
+                        sets.getQuick(s).add(tsGroupByIndex);
+                    }
                 }
 
                 // Sub-day SAMPLE BY with a TIME ZONE: tsFloor's FROM argument is
@@ -12290,6 +12382,7 @@ public class SqlOptimiser implements Mutable {
             SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback,
             QueryColumn qc,
+            IQueryModel selectModel,
             IQueryModel windowModel,
             IQueryModel outerVirtualModel,
             IQueryModel distinctModel,
@@ -12298,6 +12391,7 @@ public class SqlOptimiser implements Mutable {
             IQueryModel baseModel,
             boolean useOuterModel,
             IQueryModel groupByModel,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> groupingAliasExpressions,
             ExpressionNode sampleBy,
             IQueryModel cursorModel,
             IQueryModel windowJoinModel,
@@ -12341,9 +12435,24 @@ public class SqlOptimiser implements Mutable {
         } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
             ExpressionNode ast = qc.getAst();
 
+            IntList groupingArgKeyPositions = null;
+            if (Chars.equalsIgnoreCase(ast.token, "grouping_id") || Chars.equalsIgnoreCase(ast.token, "grouping")) {
+                groupingArgKeyPositions = resolveGroupingAliases(
+                        ast,
+                        baseModel,
+                        groupByModel,
+                        groupByNodes,
+                        groupByAliases,
+                        groupingAliasExpressions
+                );
+            }
+
             // Add missing table prefixes BEFORE extracting nested windows
             // because addMissingTablePrefixesForGroupByQueries validates columns against baseModel
             addMissingTablePrefixesForGroupByQueries(ast, baseModel, innerVirtualModel);
+            if (groupingArgKeyPositions != null) {
+                qc.setGroupingArgKeyPositions(groupingArgKeyPositions);
+            }
 
             // Extract any nested window functions from arguments to inner window model
             extractAndRegisterNestedWindowFunctions(ast, translatingModel, innerVirtualModel, baseModel, 0);
@@ -12397,6 +12506,150 @@ public class SqlOptimiser implements Mutable {
             return null;
         }
         return qc;
+    }
+
+    private boolean baseModelHasColumn(IQueryModel baseModel, CharSequence columnName) {
+        if (baseModel.getAliasToColumnMap().contains(columnName)) {
+            return true;
+        }
+        ObjList<IQueryModel> joinModels = baseModel.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            if (joinModels.getQuick(i).getAliasToColumnMap().contains(columnName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsGroupingFunction(ObjList<QueryColumn> columns) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (containsGroupingFunction(columns.getQuick(i).getAst())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsGroupingFunction(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == FUNCTION
+                && (Chars.equalsIgnoreCase(node.token, "grouping")
+                || Chars.equalsIgnoreCase(node.token, "grouping_id"))) {
+            return true;
+        }
+        if (node.args != null) {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                if (containsGroupingFunction(node.args.getQuick(i))) {
+                    return true;
+                }
+            }
+        }
+        return containsGroupingFunction(node.lhs) || containsGroupingFunction(node.rhs);
+    }
+
+    private int findGroupingKeyPosition(
+            ExpressionNode argument,
+            IQueryModel baseModel,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> groupingAliasExpressions,
+            ObjList<ExpressionNode> groupByNodes,
+            ObjList<CharSequence> groupByAliases
+    ) {
+        if (argument.type == LITERAL) {
+            for (int i = 0, n = groupByAliases.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(groupByAliases.getQuick(i), argument.token)) {
+                    return i;
+                }
+            }
+            ExpressionNode aliasExpression = groupingAliasExpressions.get(argument.token);
+            if (aliasExpression != null
+                    && (aliasExpression.type != LITERAL || !Chars.equalsIgnoreCase(aliasExpression.token, argument.token))) {
+                int keyPosition = findColumnIdxByAst(groupByNodes, aliasExpression);
+                if (keyPosition >= 0) {
+                    return keyPosition;
+                }
+            }
+        }
+        return findColumnIdxByAst(groupByNodes, argument);
+    }
+
+    private boolean isGroupingKeyAlwaysPresent(IQueryModel groupByModel, int keyPosition) {
+        if (groupByModel.hasGroupingSets()) {
+            ObjList<IntList> groupingSets = groupByModel.getGroupingSets();
+            for (int i = 0, n = groupingSets.size(); i < n; i++) {
+                if (!groupingSets.getQuick(i).contains(keyPosition)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private ExpressionNode resolveGroupingAlias(
+            ExpressionNode argument,
+            IQueryModel baseModel,
+            IQueryModel groupByModel,
+            ObjList<ExpressionNode> groupByNodes,
+            ObjList<CharSequence> groupByAliases,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> groupingAliasExpressions
+    ) {
+        if (argument != null && argument.type == LITERAL) {
+            for (int i = 0, n = groupByAliases.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(groupByAliases.getQuick(i), argument.token)) {
+                    ExpressionNode resolved = deepClone(expressionNodePool, groupByNodes.getQuick(i));
+                    resolved.position = argument.position;
+                    return resolved;
+                }
+            }
+            ExpressionNode aliasExpression = groupingAliasExpressions.get(argument.token);
+            if (aliasExpression != null
+                    && (aliasExpression.type != LITERAL || !baseModelHasColumn(baseModel, argument.token))) {
+                int keyPosition = findColumnIdxByAst(groupByNodes, aliasExpression);
+                if (keyPosition >= 0
+                        && (aliasExpression.type == LITERAL || isGroupingKeyAlwaysPresent(groupByModel, keyPosition))) {
+                    ExpressionNode resolved = deepClone(expressionNodePool, aliasExpression);
+                    resolved.position = argument.position;
+                    return resolved;
+                }
+            }
+
+        }
+        return argument;
+    }
+
+    private IntList resolveGroupingAliases(
+            ExpressionNode ast,
+            IQueryModel baseModel,
+            IQueryModel groupByModel,
+            ObjList<ExpressionNode> groupByNodes,
+            ObjList<CharSequence> groupByAliases,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> groupingAliasExpressions
+    ) throws SqlException {
+        IntList keyPositions = new IntList(ast.paramCount);
+        if (ast.paramCount == 1) {
+            keyPositions.add(findGroupingKeyPosition(ast.rhs, baseModel, groupingAliasExpressions, groupByNodes, groupByAliases));
+            ast.rhs = resolveGroupingAlias(ast.rhs, baseModel, groupByModel, groupByNodes, groupByAliases, groupingAliasExpressions);
+        } else if (ast.paramCount == 2) {
+            keyPositions.add(findGroupingKeyPosition(ast.lhs, baseModel, groupingAliasExpressions, groupByNodes, groupByAliases));
+            keyPositions.add(findGroupingKeyPosition(ast.rhs, baseModel, groupingAliasExpressions, groupByNodes, groupByAliases));
+            ast.lhs = resolveGroupingAlias(ast.lhs, baseModel, groupByModel, groupByNodes, groupByAliases, groupingAliasExpressions);
+            ast.rhs = resolveGroupingAlias(ast.rhs, baseModel, groupByModel, groupByNodes, groupByAliases, groupingAliasExpressions);
+        } else {
+            for (int i = ast.paramCount - 1; i >= 0; i--) {
+                keyPositions.add(findGroupingKeyPosition(
+                        ast.args.getQuick(i),
+                        baseModel,
+                        groupingAliasExpressions,
+                        groupByNodes,
+                        groupByAliases
+                ));
+            }
+            for (int i = 0, n = ast.paramCount; i < n; i++) {
+                ast.args.setQuick(i, resolveGroupingAlias(ast.args.getQuick(i), baseModel, groupByModel, groupByNodes, groupByAliases, groupingAliasExpressions));
+            }
+        }
+        return keyPositions;
     }
 
     private int rewriteSelect0HandleOperation(
@@ -12769,6 +13022,16 @@ public class SqlOptimiser implements Mutable {
             rewriteStatus |= REWRITE_STATUS_USE_DISTINCT_MODEL;
         }
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        final LowerCaseCharSequenceObjHashMap<ExpressionNode> groupingAliasExpressions;
+        if (containsGroupingFunction(columns)) {
+            groupingAliasExpressions = new LowerCaseCharSequenceObjHashMap<>();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn column = columns.getQuick(i);
+                groupingAliasExpressions.put(column.getAlias(), deepClone(expressionNodePool, column.getAst()));
+            }
+        } else {
+            groupingAliasExpressions = null;
+        }
         final IQueryModel baseModel = model.getNestedModel();
         final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 
@@ -12937,6 +13200,7 @@ public class SqlOptimiser implements Mutable {
                 ExpressionNode node = groupBy.getQuick(i);
                 CharSequence alias = null;
                 int originalNodePosition = -1;
+                boolean isGroupByPosition = false;
 
                 // group by select clause alias
                 if (node.type == LITERAL) {
@@ -12949,6 +13213,7 @@ public class SqlOptimiser implements Mutable {
                     QueryColumn qc = model.getAliasToColumnMap().get(node.token);
                     if (qc != null && (qc.getAst().type != LITERAL || !Chars.equals(node.token, qc.getAst().token))) {
                         originalNodePosition = node.position;
+                        isGroupByPosition = true;
                         node = qc.getAst();
                         alias = qc.getAlias();
                     }
@@ -12964,6 +13229,7 @@ public class SqlOptimiser implements Mutable {
                         QueryColumn qc = columns.getQuick(columnIdx);
 
                         originalNodePosition = node.position;
+                        isGroupByPosition = true;
                         node = qc.getAst();
                         alias = qc.getAlias();
                     } catch (NumericException e) {
@@ -12978,8 +13244,33 @@ public class SqlOptimiser implements Mutable {
                 // this loop is processing group-by columns that can only reference
                 // the columns from the underlying table(s). They cannot reference the projection itself
                 addMissingTablePrefixesForGroupByQueries(node, baseModel, innerVirtualModel);
+                if (isGroupByPosition && groupByModel.hasGroupingSets()) {
+                    // Grouping-set membership indexes refer to this list, so keep the resolved ordinal expression.
+                    ExpressionNode resolvedNode = deepClone(expressionNodePool, node);
+                    if (originalNodePosition > -1) {
+                        resolvedNode.position = originalNodePosition;
+                    }
+                    groupBy.setQuick(i, resolvedNode);
+                }
                 // ignore duplicates in group by
-                if (findColumnByAst(groupByNodes, groupByAliases, node) != null) {
+                final int existingKeyIndex = findColumnIdxByAst(groupByNodes, node);
+                if (existingKeyIndex >= 0) {
+                    if (groupByModel.hasGroupingSets()) {
+                        // Keep set membership attached to the surviving key and
+                        // shift later indexes with the GROUP BY list.
+                        ObjList<IntList> groupingSets = groupByModel.getGroupingSets();
+                        for (int s = 0, sn = groupingSets.size(); s < sn; s++) {
+                            IntList set = groupingSets.getQuick(s);
+                            for (int j = 0, jn = set.size(); j < jn; j++) {
+                                int keyIndex = set.getQuick(j);
+                                if (keyIndex == i) {
+                                    set.setQuick(j, existingKeyIndex);
+                                } else if (keyIndex > i) {
+                                    set.setQuick(j, keyIndex - 1);
+                                }
+                            }
+                        }
+                    }
                     groupBy.remove(i--);
                     n--;
                     continue;
@@ -13011,7 +13302,9 @@ public class SqlOptimiser implements Mutable {
                 // select count(*) from t  returns 0  but
                 // select count(*) from t group by 12+3 returns empty result
                 // if we removed 12+3 then we'd affect result
-                else if (!(isEffectivelyConstantExpression(node) && n > 1)) {
+                // A grouping-set prefix also retains its constant key in every
+                // set, including when all other keys roll up.
+                else if (groupByModel.hasGroupingSets() || !(isEffectivelyConstantExpression(node) && n > 1)) {
                     alias = createColumnAlias(alias != null ? alias : node.token, groupByModel, true);
                     final QueryColumn qc = queryColumnPool.next().of(alias, node);
                     groupByModel.addBottomUpColumn(qc);
@@ -13193,6 +13486,7 @@ public class SqlOptimiser implements Mutable {
                             sqlExecutionContext,
                             sqlParserCallback,
                             qc,
+                            model,
                             windowModel,
                             outerVirtualModel,
                             distinctModel,
@@ -13201,6 +13495,7 @@ public class SqlOptimiser implements Mutable {
                             baseModel,
                             (rewriteStatus & REWRITE_STATUS_USE_OUTER_MODEL) != 0,
                             groupByModel,
+                            groupingAliasExpressions,
                             sampleBy,
                             cursorModel,
                             windowJoinModel,
@@ -14392,6 +14687,16 @@ public class SqlOptimiser implements Mutable {
             return false;
         }
 
+        if (!isRepeatableGroupingSetsPredicate(node)) {
+            for (IQueryModel b = nested; b != null; b = b.getUnionModel()) {
+                if (b.hasGroupingSets()) {
+                    // A grouping-set barrier can retain the parent filter after partial pushdown.
+                    // Keep volatile or unknown functions there so no branch evaluates them twice.
+                    return false;
+                }
+            }
+        }
+
         boolean allPushed = true;
         IQueryModel branch = nested;
         while (branch != null) {
@@ -14419,7 +14724,8 @@ public class SqlOptimiser implements Mutable {
                         traversalAlgo.traverse(clone, literalRewritingVisitor.of(tempAliasRewriteMap));
                     }
                 }
-                if (allLiteralsMatchBranch(clone, branch.getAliasToColumnMap())) {
+                if (allLiteralsMatchBranch(clone, branch.getAliasToColumnMap())
+                        && isGroupingSetsPushdownSafe(branch, clone, null)) {
                     addWhereNode(branch, clone);
                 } else {
                     allPushed = false;

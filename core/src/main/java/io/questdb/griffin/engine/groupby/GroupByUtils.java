@@ -67,6 +67,7 @@ import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.groupby.GroupingFunction;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
@@ -132,17 +133,23 @@ public class GroupByUtils {
                             baseMetadata,
                             executionContext
                     );
+                    if (func instanceof GroupingFunction groupingFunction) {
+                        setGroupingArgKeyPositions(groupingFunction, column);
+                    }
 
                     outerProjectionFunctions.add(func);
                     if (extraOuterProjectionFunctions != null) {
                         for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
                             Function extraFunc = functionParser.parseFunction(node, baseMetadata, executionContext);
+                            if (extraFunc instanceof GroupingFunction extraGroupingFunction) {
+                                setGroupingArgKeyPositions(extraGroupingFunction, column);
+                            }
                             extraOuterProjectionFunctions.getQuick(d).add(extraFunc);
                         }
                     }
                     innerProjectionFunctions.add(func);
 
-                    index = findColumnKeyIndex(node, func, baseMetadata);
+                    index = findColumnKeyIndex(node, func, baseMetadata, model.hasGroupingSets());
                     if (index != -1) {
                         // it's a column key
                         projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
@@ -242,7 +249,7 @@ public class GroupByUtils {
                 final ExpressionNode node = column.getAst();
                 final Function func = outerProjectionFunctions.getQuick(i);
 
-                final int index = findColumnKeyIndex(node, func, baseMetadata);
+                final int index = findColumnKeyIndex(node, func, baseMetadata, model.hasGroupingSets());
                 if (index != -1) {
                     if (index != timestampIndex || timestampUnimportant) {
                         // when we have the same column several times in a row,
@@ -335,7 +342,7 @@ public class GroupByUtils {
                 final ExpressionNode node = column.getAst();
                 final Function func = outerProjectionFunctions.getQuick(i);
 
-                final int index = findColumnKeyIndex(node, func, baseMetadata);
+                final int index = findColumnKeyIndex(node, func, baseMetadata, model.hasGroupingSets());
                 if (index != -1) {
                     final int type = baseMetadata.getColumnType(index);
 
@@ -404,6 +411,131 @@ public class GroupByUtils {
             }
             throw th;
         }
+    }
+
+    private static void setGroupingArgKeyPositions(GroupingFunction function, QueryColumn column) {
+        IntList keyPositions = column.getGroupingArgKeyPositions();
+        for (int a = 0, n = keyPositions.size(); a < n; a++) {
+            function.setArgKeyPosition(a, keyPositions.getQuick(a));
+        }
+    }
+
+    public static IntList buildGroupingSetKeyColumnIndices(
+            IQueryModel model,
+            RecordMetadata baseMetadata,
+            ObjList<Function> innerProjectionFunctions,
+            IntList projectionFunctionFlags
+    ) throws SqlException {
+        IntList keyColumnIndices = new IntList(model.getGroupBy().size());
+        IQueryModel chooseModel = model;
+        while (chooseModel != null
+                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_CHOOSE
+                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
+            chooseModel = chooseModel.getNestedModel();
+        }
+        boolean hasGroupingFunction = false;
+        for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
+            if (innerProjectionFunctions.getQuick(i) instanceof GroupingFunction) {
+                hasGroupingFunction = true;
+                break;
+            }
+        }
+        for (int k = 0, n = model.getGroupBy().size(); k < n; k++) {
+            ExpressionNode key = model.getGroupBy().getQuick(k);
+            boolean isFound = false;
+            if (hasGroupingFunction && key.type == LITERAL) {
+                for (int i = 0, m = model.getColumns().size(); i < m; i++) {
+                    QueryColumn column = model.getColumns().getQuick(i);
+                    ExpressionNode columnAst = column.getAst();
+                    if (Chars.equalsIgnoreCase(key.token, column.getAlias())
+                            && columnAst.type == LITERAL
+                            && !Chars.equalsIgnoreCase(key.token, columnAst.token)) {
+                        keyColumnIndices.add(i);
+                        isFound = true;
+                        break;
+                    }
+                }
+            }
+            for (int i = 0, m = model.getColumns().size(); i < m; i++) {
+                if (isFound) {
+                    break;
+                }
+                QueryColumn column = model.getColumns().getQuick(i);
+                if (ExpressionNode.compareNodesGroupBy(key, column.getAst(), chooseModel)) {
+                    int baseColumnIndex = findColumnKeyIndex(
+                            column.getAst(),
+                            innerProjectionFunctions.getQuick(i),
+                            baseMetadata,
+                            true
+                    );
+                    if (baseColumnIndex < 0) {
+                        for (int s = 0, sn = model.getGroupingSets().size(); s < sn; s++) {
+                            if (!model.getGroupingSets().getQuick(s).contains(k)) {
+                                throw SqlException.$(key.position, "column reference expected");
+                            }
+                        }
+                    }
+                    if (hasGroupingFunction && key.type == LITERAL && baseColumnIndex >= 0 && keyColumnIndices.contains(baseColumnIndex)) {
+                        baseColumnIndex = k;
+                    }
+                    keyColumnIndices.add(baseColumnIndex);
+                    isFound = true;
+                    break;
+                }
+            }
+            if (!isFound && key.type == LITERAL) {
+                for (int i = 0, m = model.getColumns().size(); i < m; i++) {
+                    QueryColumn column = model.getColumns().getQuick(i);
+                    if (Chars.equalsIgnoreCase(key.token, column.getAlias())) {
+                        int baseColumnIndex = findColumnKeyIndex(
+                                column.getAst(),
+                                innerProjectionFunctions.getQuick(i),
+                                baseMetadata,
+                                true
+                        );
+                        if (baseColumnIndex < 0) {
+                            for (int s = 0, sn = model.getGroupingSets().size(); s < sn; s++) {
+                                if (!model.getGroupingSets().getQuick(s).contains(k)) {
+                                    throw SqlException.$(key.position, "column reference expected");
+                                }
+                            }
+                        }
+                        if (hasGroupingFunction && baseColumnIndex >= 0 && keyColumnIndices.contains(baseColumnIndex)) {
+                            baseColumnIndex = k;
+                        }
+                        keyColumnIndices.add(baseColumnIndex);
+                        isFound = true;
+                        break;
+                    }
+                }
+            }
+            if (!isFound) {
+                throw SqlException.$(key.position, "grouping key does not match a key expression");
+            }
+        }
+        for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
+            Function function = innerProjectionFunctions.getQuick(i);
+            if (function instanceof GroupingFunction groupingFunction) {
+                IntList argColumnIndices = groupingFunction.getArgColumnIndices();
+                if (argColumnIndices.size() == keyColumnIndices.size()) {
+                    boolean isAligned = true;
+                    for (int a = 0, an = argColumnIndices.size(); a < an; a++) {
+                        if (argColumnIndices.getQuick(a) != keyColumnIndices.getQuick(a)) {
+                            isAligned = false;
+                            break;
+                        }
+                    }
+                    if (isAligned) {
+                        IntList keyPositions = model.getColumns().getQuick(i).getGroupingArgKeyPositions();
+                        for (int a = 0, an = argColumnIndices.size(); a < an; a++) {
+                            keyPositions.setQuick(a, a);
+                            groupingFunction.setArgKeyPosition(a, a);
+                        }
+                    }
+                }
+            }
+        }
+        return keyColumnIndices;
     }
 
     public static Function createColumnFunction(
@@ -719,6 +851,11 @@ public class GroupByUtils {
                             throw SqlException.$(key.position, "invalid column reference");
                         }
                     } else {
+                        if (model.hasGroupingSets()) {
+                            // This key came from the GROUP BY list being validated. Do not
+                            // reinterpret it as a SELECT alias while checking grouping sets.
+                            break;
+                        }
                         int refColumn = model.getAliasToColumnMap().keyIndex(key.token);
                         if (refColumn > -1) {
                             throw SqlException.$(key.position, "group by column does not match any key column is select statement");
@@ -828,11 +965,17 @@ public class GroupByUtils {
      * 1. it's a column literal
      * 2. cast(a_column as same_type) which is compiled as a_column (the case is no-op)
      */
-    private static int findColumnKeyIndex(ExpressionNode node, Function func, RecordMetadata baseMetadata) {
+    private static int findColumnKeyIndex(
+            ExpressionNode node,
+            Function func,
+            RecordMetadata baseMetadata,
+            boolean hasGroupingSets
+    ) {
         if (node.type == LITERAL) {
             return SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
         }
-        if (SqlKeywords.isCastKeyword(node.token) && func instanceof ColumnFunction) {
+        // Grouping sets must keep expression keys separate from raw keys that roll up the same input.
+        if (!hasGroupingSets && SqlKeywords.isCastKeyword(node.token) && func instanceof ColumnFunction) {
             return ((ColumnFunction) func).getColumnIndex();
         }
         return -1;
