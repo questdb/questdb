@@ -343,6 +343,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getFillBucketKey() {
+        return delegate.getFillBucketKey();
+    }
+
+    @Override
     public ExpressionNode getFillFrom() {
         return delegate.getFillFrom();
     }
@@ -1099,6 +1104,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setFillBucketKey(ExpressionNode fillBucketKey) {
         throw new UnsupportedOperationException();
     }
 
