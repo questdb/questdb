@@ -29,6 +29,8 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
@@ -39,6 +41,7 @@ import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewLifecycleState;
 import io.questdb.cairo.lv.LiveViewRegistry;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewStateReader;
 import io.questdb.cairo.lv.LiveViewStateStore;
@@ -133,6 +136,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
@@ -496,7 +500,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * viewLowerBoundTimestamp; surfacing the gap at CREATE keeps that surprise off the
      * steady-state hot path.
      */
-    public static void validateLiveViewWindowFunction(WindowFunction f, int position) throws SqlException {
+    public static void validateLiveViewWindowFunction(WindowFunction f, int position, RecordMetadata windowInputMetadata) throws SqlException {
         // unreachable in practice: a multi-pass / lead / percent_rank shape compiles to
         // a cached factory and is caught upstream by validateLiveViewFactory; only a
         // ZERO_PASS stub reaches here (see the javadoc). Kept as a defensive backstop.
@@ -512,14 +516,86 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put("() declares both checkpoint state and no checkpoint state");
         }
         if (!f.supportsCheckpointState() && !f.isCheckpointStateless()) {
-            throw SqlException.$(position, "live view select cannot use window function ")
-                    .put(f.getName())
-                    .put("(); incremental snapshot is not supported for this function yet");
+            throw liveViewWindowFunctionRejection(f, position, windowInputMetadata);
         }
         if (f.checkpointFunctionIdentity() == null || f.checkpointDependency() == null) {
             throw SqlException.$(position, "live view checkpoint compiler metadata is missing for window function ")
                     .put(f.getName()).put("()");
         }
+    }
+
+    /**
+     * Builds the CREATE LIVE VIEW rejection for a window function that supports neither
+     * checkpoint state nor the stateless shortcut. Several unrelated conditions feed into
+     * {@link WindowFunction#supportsCheckpointState()}, and blaming the function for all of
+     * them leaves the user with no way to tell what to change - so each cause gets its own
+     * message naming the problem and the fix:
+     * <ul>
+     *     <li>no PARTITION BY (the function keeps no per-partition state to snapshot),</li>
+     *     <li>a PARTITION BY key type the snapshot codec cannot encode,</li>
+     *     <li>anything else (frame shape, arguments), which keeps the generic wording.</li>
+     * </ul>
+     */
+    private static SqlException liveViewWindowFunctionRejection(
+            WindowFunction f,
+            int position,
+            RecordMetadata windowInputMetadata
+    ) {
+        final ObjList<? extends Function> partitionByFunctions = f.checkpointPartitionByFunctions();
+        if (partitionByFunctions == null) {
+            // No PARTITION BY: the function has no partition map to snapshot, so the
+            // reject is structural rather than about the function itself.
+            return SqlException.$(position, "live view window function ")
+                    .put(f.getName())
+                    .put("() requires PARTITION BY");
+        }
+        final ColumnTypes keyTypes = f.getCheckpointKeyColumnTypes();
+        if (keyTypes != null) {
+            for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+                final int keyType = keyTypes.getColumnType(i);
+                if (!LiveViewSnapshotKeyCodec.isSupportedKeyType(keyType)) {
+                    final String keyName = liveViewPartitionKeyName(f, i, windowInputMetadata);
+                    final SqlException e = SqlException.$(position, "live view PARTITION BY key ");
+                    if (keyName != null) {
+                        e.put('\'').put(keyName).put('\'');
+                    } else {
+                        e.put('#').put(i + 1);
+                    }
+                    return e.put(" has unsupported type ")
+                            .put(ColumnType.nameOf(keyType))
+                            .put("; cast it to SYMBOL or STRING");
+                }
+            }
+        }
+        // Frame shape or arguments: the generic wording stands.
+        return SqlException.$(position, "live view select cannot use window function ")
+                .put(f.getName())
+                .put("(); incremental snapshot is not supported for this function yet");
+    }
+
+    /**
+     * Resolves the name of the i-th PARTITION BY key for error messages. The key functions
+     * are index-aligned with {@link WindowFunction#getCheckpointKeyColumnTypes()}; a plain
+     * column key resolves through {@link ColumnFunction#getColumnIndex()} against the
+     * window input metadata. Returns {@code null} when the key is an expression rather
+     * than a plain column, or when the metadata is unavailable.
+     */
+    private static String liveViewPartitionKeyName(WindowFunction f, int keyIndex, RecordMetadata windowInputMetadata) {
+        if (windowInputMetadata == null) {
+            return null;
+        }
+        final ObjList<? extends Function> partitionByFunctions = f.checkpointPartitionByFunctions();
+        if (partitionByFunctions == null || keyIndex >= partitionByFunctions.size()) {
+            return null;
+        }
+        final ColumnFunction keyFunction = ColumnFunction.unwrap(partitionByFunctions.getQuick(keyIndex));
+        if (keyFunction != null) {
+            final int columnIndex = keyFunction.getColumnIndex();
+            if (columnIndex >= 0 && columnIndex < windowInputMetadata.getColumnCount()) {
+                return windowInputMetadata.getColumnName(columnIndex);
+            }
+        }
+        return null;
     }
 
     /**
@@ -3935,7 +4011,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // without looking ahead or buffering state across multiple passes
         ObjList<WindowFunction> fns = plan.getWindowFactory().getWindowFunctions();
         for (int i = 0, n = fns.size(); i < n; i++) {
-            validateLiveViewWindowFunction(fns.getQuick(i), position);
+            validateLiveViewWindowFunction(fns.getQuick(i), position, plan.getWindowInputMetadata());
         }
 
         final PageFrameRecordCursorFactory pfrcf = plan.getPageFrameFactory();

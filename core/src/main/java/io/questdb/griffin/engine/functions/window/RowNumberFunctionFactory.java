@@ -235,6 +235,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public @Nullable ObjList<? extends Function> checkpointPartitionByFunctions() {
+            return partitionByRecord.getFunctions();
+        }
+
+        @Override
         public LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
             return checkpointFunctionIdentity;
         }
@@ -319,6 +324,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             return rowNumber;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override

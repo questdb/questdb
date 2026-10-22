@@ -1202,6 +1202,44 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Each distinct cause of a window function lacking incremental-snapshot support gets
+     * its own CREATE LIVE VIEW rejection naming the problem and the fix, instead of every
+     * shape sharing the one message blaming the function. See issue #7872.
+     */
+    @Test
+    public void testWindowFunctionRejectionNamesCause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fills (ts TIMESTAMP, venue VARCHAR, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // 1. No PARTITION BY: the function has no partition map to snapshot.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, sum(px) OVER (ORDER BY ts ROWS 10 PRECEDING) s FROM fills",
+                    "live view window function sum() requires PARTITION BY"
+            );
+
+            // 2. PARTITION BY key type the snapshot codec cannot encode.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, sum(px) OVER (PARTITION BY venue ORDER BY ts ROWS 10 PRECEDING) s FROM fills",
+                    "live view PARTITION BY key 'venue' has unsupported type VARCHAR; cast it to SYMBOL or STRING"
+            );
+
+            // 3. Same as 2 for row_number(): the key-type message carries no function
+            // name, so the Java class name RowNumberFunction used to leak is gone.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, row_number() OVER w rn FROM fills " +
+                            "WINDOW w AS (PARTITION BY venue ORDER BY ts ANCHOR DAILY '00:00')",
+                    "live view PARTITION BY key 'venue' has unsupported type VARCHAR; cast it to SYMBOL or STRING"
+            );
+
+            // 4. Unsupported frame shape keeps the generic wording.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, stddev(px) OVER (PARTITION BY sym ORDER BY ts ROWS 10 PRECEDING) s FROM fills",
+                    "live view select cannot use window function stddev(); incremental snapshot is not supported for this function yet"
+            );
+        });
+    }
+
     private void assertLagOverWideDecimalRejected(String col) throws Exception {
         try {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
