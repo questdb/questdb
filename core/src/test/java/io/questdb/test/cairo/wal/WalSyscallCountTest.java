@@ -310,9 +310,10 @@ public class WalSyscallCountTest extends AbstractCairoTest {
                 writer.advanceDurableEpoch(1L);
                 ff.stop();
                 final String afterOpen = "isSoftLink=" + ff.probes("isSoftLink", anyFile) + " findFirst=" + ff.probes("findFirst", tableDir);
-                final TableWriter.Row row = writer.newRow(31 * 86_400_000_000L);
-                row.putLong(1, 31);
-                row.append();
+                // A WAL table refuses TableWriter rows, so an uncommitted column version change, as an UPDATE
+                // leaves one, puts the writer in the transaction the rollback discards.
+                writer.upsertColumnVersion(30 * 86_400_000_000L, writer.getColumnIndex("v"), 0);
+                Assert.assertTrue("the writer is not in a transaction to roll back", writer.inTransaction());
                 writer.rollback();
                 ff.start(true);
                 writer.advanceDurableEpoch(2L);
