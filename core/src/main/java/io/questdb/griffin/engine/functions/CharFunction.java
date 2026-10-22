@@ -280,9 +280,9 @@ public abstract class CharFunction implements Function {
 
     private byte castCharToNumber(Record rec, int toType) {
         char c = getChar(rec);
-        final byte v = (byte) (c - '0');
+        final int v = c - '0';
         if (v > -1 && v < 10) {
-            return v;
+            return (byte) v;
         }
         throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, toType);
     }
