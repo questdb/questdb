@@ -97,6 +97,13 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             }
 
             @Override
+            public boolean isTableRowCountChangeTolerated() {
+                // The export runs the factory that COPY compiled when it queued the export, and
+                // nothing compiles it again, so a recompile request would fail the export.
+                return true;
+            }
+
+            @Override
             public synchronized void setCancelledFlag(AtomicBoolean cancelled, long generation) {
                 super.setCancelledFlag(cancelled, generation);
                 final CopyExportRequestTask currentTask = task;
