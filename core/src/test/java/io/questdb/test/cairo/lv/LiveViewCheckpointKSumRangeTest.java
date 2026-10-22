@@ -82,9 +82,11 @@ import org.junit.Test;
  * through the repair's copy-aside overlay. {@link
  * #testBoundedRangeRestoresExactValuesAcrossRestart()} pins restored values against
  * hand-computed ones, including a ring that restores a pair the frame has not reached yet.
- * {@link #testBoundedRangeContinuesBitExactlyAcrossRestart()} proves the carried
- * compensation term: over values whose Kahan compensation is nonzero at the seal, the view
- * continues after a restart to the plain query's exact bits. {@link
+ * {@link #testBoundedRangeContinuesBitExactlyAcrossRestartAndRepair()} proves the carried
+ * Kahan pair: over values whose compensation is nonzero when the roots seal, the view emits the
+ * plain query's exact bits after a restart, and after a repair that resumes from a sealed
+ * root, which a restore that re-ran the compensated sum over the ring, or dropped the
+ * compensation term, would not. {@link
  * #testBoundedRangeRestoreCarriesKahanPairAndRejectsCorruptRing()} pins both restore paths
  * and every corrupt-ring rejection directly.
  * <p>
@@ -115,6 +117,20 @@ public class LiveViewCheckpointKSumRangeTest extends AbstractLiveViewTest {
     private static final String FRAME_ISSUE = "PARTITION BY sym ORDER BY ts RANGE '1' MINUTE PRECEDING";
     // A high bound below the current row: the ring holds pairs the frame has not reached yet.
     private static final String FRAME_LAGGED = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND '3' SECOND PRECEDING";
+    // The bit-exact case's frames, over all four frame shapes: frameIncludesCurrentValue (k1,
+    // and the issue's short form k5) and not (the lagged k2 and k3, EXCLUDE CURRENT ROW k4).
+    // The 10-second frames expire pairs from the eleventh second on, so their running sums
+    // carry the rounding of many adds and drops; the narrow lagged k3 is where a restore that
+    // dropped the compensation term shows.
+    private static final String KAHAN_PROJECTION = "ksum(px) OVER (PARTITION BY sym ORDER BY ts "
+            + "RANGE BETWEEN '10' SECOND PRECEDING AND CURRENT ROW) AS k1, "
+            + "ksum(px) OVER (" + FRAME_LAGGED + ") AS k2, "
+            + "ksum(px) OVER (PARTITION BY sym ORDER BY ts "
+            + "RANGE BETWEEN '6' SECOND PRECEDING AND '1' SECOND PRECEDING) AS k3, "
+            + "ksum(px) OVER (" + FRAME_EXCLUDED + ") AS k4, "
+            + "ksum(px) OVER (" + FRAME_ISSUE + ") AS k5";
+    // Seconds per commit in the bit-exact case.
+    private static final int KAHAN_COMMIT_SECONDS = 20;
     private static final String[] NARROW_VIEWS = {"lv_lag", "lv_excl", "lv_issue"};
     // Distinct ascending seconds per key per commit.
     private static final int ROWS_PER_COMMIT = 40;
@@ -164,49 +180,71 @@ public class LiveViewCheckpointKSumRangeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBoundedRangeContinuesBitExactlyAcrossRestart() throws Exception {
+    public void testBoundedRangeContinuesBitExactlyAcrossRestartAndRepair() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
-            // Three frames over values mixing magnitudes 1e16 and 3e15 with fractions, so the
-            // Kahan compensation is nonzero when the root seals. A restore that dropped the
-            // compensation term diverges on the narrow lagged frame; one that re-ran the
-            // compensated sum over the ring diverges on the two 10-second frames, whose running
-            // sums carry the rounding of pairs that already expired.
-            execute("""
-                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
-                    SELECT ts, sym,
-                           ksum(px) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND CURRENT ROW) AS k1,
-                           ksum(px) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND '3' SECOND PRECEDING) AS k2,
-                           ksum(px) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '6' SECOND PRECEDING AND '1' SECOND PRECEDING) AS k3
-                    FROM fx""");
-            final String plain = """
-                    (SELECT ts, sym,
-                            ksum(px) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND CURRENT ROW) AS k1,
-                            ksum(px) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND '3' SECOND PRECEDING) AS k2,
-                            ksum(px) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '6' SECOND PRECEDING AND '1' SECOND PRECEDING) AS k3
-                    FROM fx) ORDER BY sym, ts""";
+            // Values mixing magnitudes 1e16 and 3e15 with fractions, so the Kahan compensation
+            // is nonzero when the roots seal. A restore that dropped the compensation term
+            // diverges from the plain query on the narrow lagged frame; one that re-ran the
+            // compensated sum over the ring diverges on the 10-second frames, whose running sums
+            // carry the rounding of pairs that already expired. Integer data would hide both, as
+            // it sums to the same doubles in every order.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, "
+                    + KAHAN_PROJECTION + " FROM fx");
+            final String plain = "(SELECT ts, sym, " + KAHAN_PROJECTION + " FROM fx) ORDER BY sym, ts";
+            final String view = "SELECT ts, sym, k1, k2, k3, k4, k5 FROM lv ORDER BY sym, ts";
+            int second = 0;
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                insertKahanSeconds(0, 20);
-                drainJob(job);
-                drainWalQueue();
+                commitKahanSeconds(job, second, KAHAN_COMMIT_SECONDS);
+                second += KAHAN_COMMIT_SECONDS;
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
                 assertNoRefreshFaults("lv");
-                assertViewPrintsLikePlain("SELECT ts, sym, k1, k2, k3 FROM lv ORDER BY sym, ts", plain);
+                assertViewPrintsLikePlain(view, plain);
             }
 
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                insertKahanSeconds(20, 20);
-                drainJob(job);
-                drainWalQueue();
+                commitKahanSeconds(job, second, KAHAN_COMMIT_SECONDS);
+                second += KAHAN_COMMIT_SECONDS;
                 driveRefreshToQuiescence(job);
                 assertRestoredFromTimeline("lv");
                 assertNoRefreshFaults("lv");
                 // The printed form is the shortest text that round-trips a double, so equal
                 // text is equal bits: every row after the restart runs on the carried Kahan pair.
-                assertViewPrintsLikePlain("SELECT ts, sym, k1, k2, k3 FROM lv ORDER BY sym, ts", plain);
+                assertViewPrintsLikePlain(view, plain);
+
+                // A short tail, then a late row just above the root sealed below it. Replaying
+                // the tail from that root reads fewer base rows than rebuilding the widest
+                // frame's reach, so the repair resumes from the root and restores every
+                // partition's ring, Kahan pair included, from the timeline before it replays.
+                // That root holds the state forward processing reached, so the repaired rows
+                // match the plain query bit for bit as well.
+                final int tailSecond = second;
+                commitKahanSeconds(job, second, TAIL_ROWS);
+                second += TAIL_ROWS;
+                driveRefreshToQuiescence(job);
+                commitOutOfOrderHalfSecond(job, tailSecond, "a", "0.731");
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(
+                        "the late row must resume the view from a sealed root",
+                        "resume from anchor",
+                        LiveViewCheckpointRepairPlan.dispositionName(
+                                instance.getCheckpointRepairLastDisposition(),
+                                instance.getCheckpointRepairLastDenialReason()
+                        )
+                );
+                assertNoRefreshFaults("lv");
+                assertViewPrintsLikePlain(view, plain);
+
+                // And the in-order path keeps going on the state the repair left behind.
+                commitKahanSeconds(job, second, KAHAN_COMMIT_SECONDS);
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+                assertViewPrintsLikePlain(view, plain);
             }
         });
     }
@@ -820,6 +858,26 @@ public class LiveViewCheckpointKSumRangeTest extends AbstractLiveViewTest {
         commitSeconds(job, (commit - 1) * ROWS_PER_COMMIT, ROWS_PER_COMMIT);
     }
 
+    // Commits `count` ascending seconds from `firstSecond` for 'a' and 'b' with kahanValue's
+    // data, in one commit, and gives the refresh job a turn.
+    private void commitKahanSeconds(LiveViewRefreshJob job, int firstSecond, int count) throws Exception {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final StringBuilder sql = new StringBuilder("INSERT INTO fx (ts, sym, px, qty) VALUES ");
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                sql.append(", ");
+            }
+            final int second = firstSecond + i;
+            final String ts = timestamp(second);
+            sql.append("('").append(ts).append("', 'a', ").append(kahanValue("a", second)).append(", 1.0), ")
+                    .append("('").append(ts).append("', 'b', ").append(kahanValue("b", second)).append(", 1.0)");
+        }
+        execute(sql.toString());
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
     // Commits one out-of-order row half a second past an in-order timestamp - a fresh
     // designated timestamp, so it ties with no existing row and the recompute ordering stays
     // deterministic - and, given a job, gives it a turn.
@@ -882,24 +940,6 @@ public class LiveViewCheckpointKSumRangeTest extends AbstractLiveViewTest {
             }
         }
         Assert.assertNotNull("the repair never parked on its turn budget", instance.getSuspendedRepair());
-    }
-
-    // Inserts `count` ascending seconds from `firstSecond` for 'a' and 'b' with kahanValue's
-    // data, in one commit.
-    private void insertKahanSeconds(int firstSecond, int count) throws Exception {
-        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-        final StringBuilder sql = new StringBuilder("INSERT INTO fx (ts, sym, px, qty) VALUES ");
-        for (int i = 0; i < count; i++) {
-            if (i > 0) {
-                sql.append(", ");
-            }
-            final int second = firstSecond + i;
-            final String ts = timestamp(second);
-            sql.append("('").append(ts).append("', 'a', ").append(kahanValue("a", second)).append(", 1.0), ")
-                    .append("('").append(ts).append("', 'b', ").append(kahanValue("b", second)).append(", 1.0)");
-        }
-        execute(sql.toString());
-        drainWalQueue();
     }
 
     private LiveViewCheckpointMetaStore openStore(LiveViewInstance instance) {
