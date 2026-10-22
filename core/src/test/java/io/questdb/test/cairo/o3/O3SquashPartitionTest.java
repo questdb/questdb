@@ -1018,6 +1018,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     public void testSplitParentDedupAppendAtSharedTimestampKeepsPinnedReaderRows() throws Exception {
         // The dedup step can turn a merge back into an in-place append when every parent row shares
         // the O3 rows' timestamp. The parent's tail is pinned, so the writer must keep the merge.
+        // Merge-append writes the late rows into the parent's own geometry instead of splitting it, so the split
+        // this test's setup asserts never appears. Pin the production default to cover the plain split path.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
             executeWithRewriteTimestamp(
@@ -1086,6 +1089,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     public void testSplitParentGapAboveMaxCopiesWhenPinned() throws Exception {
         // A range-replace commit trims the parent and leaves a gap below its split neighbor. A late row in
         // the gap sits above the parent's max; while the parent counts as pinned, the writer copies it.
+        // Merge-append writes the late rows into the parent's own geometry instead of splitting it, so the split
+        // this test's setup asserts never appears. Pin the production default to cover the plain split path.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
             // keeps the trimmed parent and its split apart: no reader can pin a partition version it never saw
@@ -2418,9 +2424,14 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     private void assertO3IntoSplitParentAfterSquashOfNewerSplit(boolean isWal) throws Exception {
+        // Merge-append writes the late rows into the parent's own geometry instead of splitting it, so the split
+        // this test's setup asserts never appears. Pin the production default to cover the plain split path.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
-            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 2);
+            // a WAL table squashes only cold splits above the cap; count every split as cold at once
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
             executeWithRewriteTimestamp(
                     "CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : " BYPASS WAL"),
                     timestampType.getTypeName()
@@ -2430,19 +2441,21 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Late rows walk backwards through the day: the first splits at 15:00, the second splits the parent
-            // again at 12:00. Three parts exceed the two splits allowed, so the squash folds the newer split back
-            // into the parent and keeps the older one as its neighbor.
+            // again at 12:00. Three parts exceed the two splits allowed, so the squash folds two of them. A non-WAL
+            // table folds the newer split back into the parent and keeps the older one as its neighbor; a WAL table
+            // folds the smallest adjacent pair, the two splits, into a rewritten neighbor of the parent. Either way
+            // the parent's neighbor now carries a name txn newer than the split that left the parent's tail behind.
             execute("INSERT INTO x VALUES (1_001, '2020-02-03T15:00:30')");
             drainWalQueue();
             execute("INSERT INTO x VALUES (1_002, '2020-02-03T12:00:30')");
             drainWalQueue();
             try (TableReader reader = getReader("x")) {
                 Assert.assertEquals(2, reader.getPartitionCount());
-                Assert.assertEquals(902, reader.getPartitionRowCountFromMetadata(0));
+                Assert.assertEquals(isWal ? 721 : 902, reader.getPartitionRowCountFromMetadata(0));
             }
 
             // the next late row lands in the parent
-            execute("INSERT INTO x VALUES (1_003, '2020-02-03T13:00:30')");
+            execute("INSERT INTO x VALUES (1_003, '2020-02-03T11:00:30')");
             drainWalQueue();
             if (isWal) {
                 Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
@@ -2454,8 +2467,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     .returns(replaceTimestampSuffix1(
                             """
                                     i\tts
+                                    1003\t2020-02-03T11:00:30.000000Z
                                     1002\t2020-02-03T12:00:30.000000Z
-                                    1003\t2020-02-03T13:00:30.000000Z
                                     1001\t2020-02-03T15:00:30.000000Z
                                     """,
                             timestampType.getTypeName()

@@ -7949,13 +7949,25 @@ public class MatViewTest extends AbstractCairoTest {
     public void testRefreshSurvivesO3AppendAtSplitParentMaxTimestamp() throws Exception {
         // The refresh pins its base reader before an O3 split. An O3 row at the parent's max timestamp
         // must not be appended in place over the parent's tail, which the pinned reader still reads.
-        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", false);
     }
 
     @Test
     public void testRefreshSurvivesO3AppendAtSplitParentMaxTimestampDedup() throws Exception {
         // the O3 row is not a duplicate, its s differs
-        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
+        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", false);
+    }
+
+    @Test
+    public void testRefreshSurvivesO3AppendAtSplitParentMaxTimestampDedupMergeAppend() throws Exception {
+        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", true);
+    }
+
+    @Test
+    public void testRefreshSurvivesO3AppendAtSplitParentMaxTimestampMergeAppend() throws Exception {
+        // Merge-append appends the late rows past the end of the parent's column files instead of splitting
+        // it, so the pinned reader's rows are never overwritten. Same symptom check, no split layout to assert.
+        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", true);
     }
 
     @Test
@@ -10498,8 +10510,12 @@ public class MatViewTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
-    private void assertRefreshSurvivesSplitParentTailAppend(String baseTableDdl) throws Exception {
+    private void assertRefreshSurvivesSplitParentTailAppend(String baseTableDdl, boolean isMergeAppend) throws Exception {
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(isMergeAppend));
+        // Merge-append writes the late rows into the parent's own geometry instead of splitting it, so the split
+        // this test's setup asserts never appears. Pin the production default to cover the plain split path.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute(baseTableDdl);
             execute(
@@ -10529,13 +10545,15 @@ public class MatViewTest extends AbstractCairoTest {
                         // shorter than the one it would overwrite
                         execute("INSERT INTO base VALUES ('X', '2020-02-03T01:19')");
                         drainWalQueue();
-                        try (TableReader reader = getReader("base")) {
-                            // the pinned refresh reader forces the parent's last row and the new
-                            // row into a second split instead of an in-place append or a full copy
-                            Assert.assertEquals(3, reader.getPartitionCount());
-                            Assert.assertEquals(79, reader.getPartitionRowCountFromMetadata(0));
-                            Assert.assertEquals(2, reader.getPartitionRowCountFromMetadata(1));
-                            Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                        if (!isMergeAppend) {
+                            try (TableReader reader = getReader("base")) {
+                                // the pinned refresh reader forces the parent's last row and the new
+                                // row into a second split instead of an in-place append or a full copy
+                                Assert.assertEquals(3, reader.getPartitionCount());
+                                Assert.assertEquals(79, reader.getPartitionRowCountFromMetadata(0));
+                                Assert.assertEquals(2, reader.getPartitionRowCountFromMetadata(1));
+                                Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                            }
                         }
                     } catch (Throwable th) {
                         hookFailure.set(th);
