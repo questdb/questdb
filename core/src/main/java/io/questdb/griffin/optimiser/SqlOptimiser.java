@@ -153,7 +153,7 @@ public final class SqlOptimiser implements Mutable {
         passes.add(projectionMerge);
         passes.add(new NegativeLimitReversal(constants, sorts, tmpIndexes, tmpPlans));
         passes.add(new OrderPlanning(configuration, functionFactoryCache, columnIds));
-        operatorPlanning = new OperatorPlanning(configuration, context, tmpIndexes, tmpValues, tmpSteps);
+        operatorPlanning = new OperatorPlanning(configuration, context, planNodes, tmpIndexes, tmpValues, tmpSteps);
         accessPathPlanning = new AccessPathPlanning(configuration, context, operatorPlanning, tmpConjuncts, tmpExpressions, tmpKeys, tmpValues,
                 temporaries.sink, temporaries.longs);
         verifier = ParanoiaState.PLAN_PARANOIA_MODE

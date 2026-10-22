@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionInstantiator;
-import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.HashJoinGroupByFunctions;
 import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.SqlException;
@@ -38,19 +37,21 @@ import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
+import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.PlanToFactoryRules;
-import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-/** Compiles the fused operator chosen by physical planning without rebuilding or rebinding a query model. */
+/**
+ * Builds the GROUP BY fused into a hash join as the {@link HashJoinAggregation} operator planning records: each input
+ * as it decided to read it, under the gate when it recorded one, and the other build when it recorded one.
+ */
 final class HashJoinGroupByFactoryGenerator {
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
@@ -59,7 +60,7 @@ final class HashJoinGroupByFactoryGenerator {
     private final FunctionInstantiator instantiator;
 
     HashJoinGroupByFactoryGenerator(CairoConfiguration configuration, SqlCodeGenerator codeGenerator,
-                                   FilterFactoryGenerator filterGenerator, FunctionInstantiator instantiator, BytecodeAssembler asm) {
+                                    FilterFactoryGenerator filterGenerator, FunctionInstantiator instantiator, BytecodeAssembler asm) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
         this.filterGenerator = filterGenerator;
@@ -67,14 +68,16 @@ final class HashJoinGroupByFactoryGenerator {
         this.asm = asm;
     }
 
-    RecordCursorFactory generate(GenerationFrame frame, HashJoinGroupByCandidate candidate, SqlExecutionContext executionContext) throws SqlException {
-        AsyncHashJoinGroupByRecordCursorFactory primary = generateOrientation(frame, candidate, executionContext);
-        if (candidate.getAlternate() == null || !primary.hasIntervalScan()) {
+    RecordCursorFactory generate(GenerationFrame frame, HashJoinAggregation hashJoin, SqlExecutionContext executionContext) throws SqlException {
+        final BoundExpression gate = hashJoin.getGate();
+        final AsyncHashJoinGroupByRecordCursorFactory primary = generateOrientation(frame, hashJoin, gate, executionContext);
+        final HashJoinAggregation alternateJoin = hashJoin.getAlternate();
+        if (alternateJoin == null) {
             return primary;
         }
         AsyncHashJoinGroupByRecordCursorFactory alternate = null;
         try {
-            alternate = generateOrientation(frame, candidate.getAlternate(), executionContext);
+            alternate = generateOrientation(frame, alternateJoin, gate, executionContext);
             if (!HashJoinGroupByBuildChoiceRecordCursorFactory.isSameOutput(primary.getMetadata(), alternate.getMetadata())) {
                 throw new IllegalStateException("hash join orientations have different output metadata");
             }
@@ -100,8 +103,17 @@ final class HashJoinGroupByFactoryGenerator {
         }
     }
 
-    private AsyncHashJoinGroupByRecordCursorFactory generateOrientation(GenerationFrame frame, HashJoinGroupByCandidate candidate,
-                                                                       SqlExecutionContext executionContext) throws SqlException {
+    /**
+     * Gates the input on the runtime constant the ordinary plan evaluates over the join: a false gate serves no page
+     * frames, so the operator aggregates no rows, and an aggregate without keys still returns its row.
+     */
+    private RecordCursorFactory gate(BoundExpression gate, RecordCursorFactory input, OutputSchema output,
+                                     SqlExecutionContext executionContext) throws SqlException {
+        return new RuntimeConstGateRecordCursorFactory(input, instantiator.instantiate(gate, output, executionContext));
+    }
+
+    private AsyncHashJoinGroupByRecordCursorFactory generateOrientation(GenerationFrame frame, HashJoinAggregation hashJoin,
+                                                                        BoundExpression gate, SqlExecutionContext executionContext) throws SqlException {
         RecordCursorFactory probe = null;
         RecordCursorFactory build = null;
         HashJoinGroupByFunctions functions = null;
@@ -109,34 +121,41 @@ final class HashJoinGroupByFactoryGenerator {
         ObjList<Function> workerBuildOnFilters = null;
         AsyncFilterContext probeContext = null;
         AsyncFilterContext buildContext = null;
+        final PreparedFilter probeFilter = frame.pushPreparedFilter();
+        final PreparedFilter buildFilter = frame.pushPreparedFilter();
         Throwable primary = null;
-        try (PreparedFilter probeFilter = new PreparedFilter(); PreparedFilter buildFilter = new PreparedFilter()) {
-            if (candidate.isInputSwapped()) {
-                build = generateSource(frame, candidate.getBuildInput(), buildFilter, executionContext);
+        try {
+            // The ordinary plan builds the master first, and the first build of a bind variable without a type infers it.
+            final boolean isMasterBuilt = hashJoin.getBuildSide() == HashJoinAggregation.BuildSide.MASTER;
+            if (isMasterBuilt) {
+                build = generateInput(frame, hashJoin.getBuildInput(), hashJoin.getBuildRead(), buildFilter, executionContext);
             }
-            probe = generateSource(frame, candidate.getProbeInput(), probeFilter, executionContext);
-            if (!candidate.isInputSwapped()) {
-                build = generateSource(frame, candidate.getBuildInput(), buildFilter, executionContext);
+            probe = generateInput(frame, hashJoin.getProbeInput(), hashJoin.getProbeRead(), probeFilter, executionContext);
+            if (!isMasterBuilt) {
+                build = generateInput(frame, hashJoin.getBuildInput(), hashJoin.getBuildRead(), buildFilter, executionContext);
             }
             final int workers = executionContext.getSharedQueryWorkerCount();
-            final OutputSchema probeInput = HashJoinGroupByCandidate.frameOutput(candidate.getProbeInput());
-            final OutputSchema buildInput = HashJoinGroupByCandidate.frameOutput(candidate.getBuildInput());
-            try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, asm, candidate,
-                    probe.getMetadata(), columnIds(probeInput), build.getMetadata(), columnIds(buildInput))) {
-                functions = new HashJoinGroupByFunctions(configuration, asm, instantiator, candidate, metadata, workers, executionContext);
-                final BoundExpression on = candidate.getBuildOnFilter();
+            final OutputSchema buildInput = hashJoin.getBuildOutput();
+            try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, asm, hashJoin,
+                    probe.getMetadata(), columnIds(hashJoin.getProbeOutput()), build.getMetadata(), columnIds(buildInput))) {
+                functions = new HashJoinGroupByFunctions(configuration, asm, instantiator, hashJoin, metadata, workers, executionContext);
+                final BoundExpression on = hashJoin.getBuildOnFilter();
                 if (on != null) {
                     buildOnFilter = instantiator.instantiate(on, buildInput, build.getMetadata(), executionContext);
                     workerBuildOnFilters = instantiator.instantiateWorkers(on, buildInput, build.getMetadata(), buildOnFilter, workers, executionContext);
                 }
-                if (probeFilter.getFilter() != null) {
+                if (hashJoin.getProbeRead() == HashJoinAggregation.InputRead.STOLEN_FILTER) {
                     filterGenerator.prepareParallel(frame, probeFilter, probe, executionContext);
                 }
-                if (buildFilter.getFilter() != null) {
+                if (hashJoin.getBuildRead() == HashJoinAggregation.InputRead.STOLEN_FILTER) {
                     filterGenerator.prepareParallel(frame, buildFilter, build, executionContext);
                 }
                 probeContext = filterContext(probeFilter, workers);
                 buildContext = filterContext(buildFilter, workers);
+                if (gate != null) {
+                    probe = gate(gate, probe, hashJoin.getProbeOutput(), executionContext);
+                    build = gate(gate, build, buildInput, executionContext);
+                }
                 RecordCursorFactory ownedProbe = probe;
                 RecordCursorFactory ownedBuild = build;
                 HashJoinGroupByFunctions ownedFunctions = functions;
@@ -153,7 +172,7 @@ final class HashJoinGroupByFactoryGenerator {
                 buildContext = null;
                 return new AsyncHashJoinGroupByRecordCursorFactory(executionContext.getCairoEngine(), ownedProbe, ownedBuild,
                         ownedBuildContext, ownedOn, ownedOnWorkers, metadata, ownedFunctions, ownedProbeContext,
-                        candidate.getLogicalJoinType() != JoinKind.INNER, workers, candidate.getLogicalJoinType(), candidate.isInputSwapped());
+                        hashJoin.getJoinType() != JoinKind.INNER, workers, hashJoin.getJoinType(), isMasterBuilt);
             }
         } catch (Throwable th) {
             primary = th;
@@ -166,24 +185,25 @@ final class HashJoinGroupByFactoryGenerator {
             failure = Misc.freeBestEffort(failure, buildContext);
             failure = Misc.freeBestEffort(failure, probe);
             failure = Misc.freeBestEffort(failure, build);
+            if (failure != null) {
+                frame.popPreparedFilter(failure);
+                frame.popPreparedFilter(failure);
+            } else {
+                frame.popPreparedFilter();
+                frame.popPreparedFilter();
+            }
             if (primary == null) {
                 CairoException.rethrowCleanupFailure(failure);
             }
         }
     }
 
-    private RecordCursorFactory generateSource(GenerationFrame frame, LogicalPlan input, PreparedFilter prepared,
-                                               SqlExecutionContext executionContext) throws SqlException {
-        if (input instanceof FilterPlan filter) {
-            final ScanPlan scan = PlanToFactoryRules.fusedScan(filter);
-            if (!HashJoinGroupByCandidate.isConstantGate(scan == null ? filter.getPredicate() : scan.getResidual())
-                    && PlanToFactoryRules.stolenFilter(input) != null && (scan == null || scan.getResidual() != null)) {
-                return codeGenerator.generateSource(frame, input, prepared, executionContext);
-            }
-        } else if (input instanceof ScanPlan scan && scan.getResidual() != null
-                && !HashJoinGroupByCandidate.isConstantGate(scan.getResidual())) {
-            return codeGenerator.generateFilteredScan(frame, scan, prepared, executionContext);
-        }
-        return codeGenerator.generate(frame, input, executionContext);
+    /**
+     * Builds the factory of a frame source the fused operator reads as {@code read} records: whole, for its page
+     * frames, or without the filter it steals into {@code stolen}.
+     */
+    private RecordCursorFactory generateInput(GenerationFrame frame, LogicalPlan source, HashJoinAggregation.InputRead read,
+                                              PreparedFilter stolen, SqlExecutionContext executionContext) throws SqlException {
+        return codeGenerator.generateSource(frame, source, read == HashJoinAggregation.InputRead.STOLEN_FILTER ? stolen : null, executionContext);
     }
 }

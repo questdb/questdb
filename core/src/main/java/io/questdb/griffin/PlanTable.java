@@ -53,6 +53,7 @@ public final class PlanTable implements Mutable, TableAccessInfo {
     private int partitionBy;
     private long partitionTableVersion;
     private int position;
+    private long rowCount;
     private TableToken tableToken;
 
     @Override
@@ -103,6 +104,11 @@ public final class PlanTable implements Mutable, TableAccessInfo {
     @Override
     public int getPartitionedBy() {
         return partitionBy;
+    }
+
+    @Override
+    public long getRowCount() {
+        return rowCount;
     }
 
     @Override
@@ -176,6 +182,7 @@ public final class PlanTable implements Mutable, TableAccessInfo {
      */
     void readFacts(TableReader reader) {
         partitionTableVersion = reader.getTxFile().getPartitionTableVersion();
+        rowCount = reader.size();
         hasParquetPartitions = reader.hasParquetPartitions();
         hasParquetConvertedColumns = hasParquetPartitions && hasConvertedColumns;
         for (int i = 0, n = symbolColumnIndexes.size(); i < n; i++) {

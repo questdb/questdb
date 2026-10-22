@@ -37,6 +37,7 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinDependency;
@@ -83,6 +84,7 @@ public final class PlanNodePools implements Mutable {
     public final ObjectPool<FilterPlan> filters;
     public final ObjectPool<FunctionSourcePlan> functionSources;
     public final ObjectPool<FunctionExpression> functions;
+    public final ObjectPool<HashJoinAggregation> hashJoinAggregations;
     public final ObjectPool<HorizonJoinPlan> horizonJoinPlans;
     public final ObjectPool<HorizonJoinSlave> horizonJoinSlaves;
     public final ObjectPool<JoinDependency> joinDependencies;
@@ -129,6 +131,7 @@ public final class PlanNodePools implements Mutable {
         this.filters = new ObjectPool<>(FilterPlan.FACTORY, 4, planCapacity);
         this.functionSources = new ObjectPool<>(FunctionSourcePlan.FACTORY, 4, planCapacity);
         this.functions = new ObjectPool<>(FunctionExpression.FACTORY, 16, expressionCapacity);
+        this.hashJoinAggregations = new ObjectPool<>(HashJoinAggregation.FACTORY, 2, planCapacity);
         this.horizonJoinPlans = new ObjectPool<>(HorizonJoinPlan.FACTORY, 2, planCapacity);
         this.horizonJoinSlaves = new ObjectPool<>(HorizonJoinSlave.FACTORY, 2, planCapacity);
         this.joinDependencies = new ObjectPool<>(JoinDependency.FACTORY, 8, minRetainedJoinContexts);
@@ -165,6 +168,7 @@ public final class PlanNodePools implements Mutable {
         fills.clear();
         filters.clear();
         functionSources.clear();
+        hashJoinAggregations.clear();
         horizonJoinPlans.clear();
         horizonJoinSlaves.clear();
         joinDependencies.clear();

@@ -25,13 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Mutable;
 
 /**
  * The reconciled equality keys of one fused hash join, in the order the key sinks stage them.
- * {@link HashJoinGroupByCandidate} fills this with bound column ids, which
- * {@link HashJoinGroupByMetadata} resolves against the compiled inputs. The class holds plain values and borrows nothing, so a cursor factory may keep it.
+ * Operator planning fills this with bound column ids on the {@link HashJoinAggregation} it records, and
+ * {@link HashJoinGroupByMetadata} resolves them against the compiled inputs. The class holds plain values and
+ * borrows nothing.
  * <p>
  * {@link #add(int, int, int, int)} applies the reconciliation rule that
  * ordinary hash joins and horizon joins share, so a pair this class
@@ -46,7 +49,7 @@ import io.questdb.std.IntList;
  * build's domain, so the pair reconciles to {@link ColumnType#SYMBOL} and neither side writes
  * its text, as ordinary hash joins do when both symbol tables are static.
  */
-public final class HashJoinGroupByKeys {
+public final class HashJoinGroupByKeys implements Mutable {
     private final IntList buildColumns = new IntList();
     private final BitSet buildStringAsVarchar = new BitSet();
     private final BitSet buildTimestampAsNanos = new BitSet();
@@ -61,7 +64,7 @@ public final class HashJoinGroupByKeys {
     /**
      * Key types a {@link io.questdb.cairo.RecordSink} stages and the maps store. The join keys and
      * the fused GROUP BY's own grouping expressions both answer to this set, which is wider than
-     * {@link HashJoinGroupByCandidate#isSupportedValueType(int)}, the build payload set, because a key
+     * {@link HashJoinGroupByMetadata#isSupportedValueType(int)}, the build payload set, because a key
      * reaches a map and never the row heap. BINARY and ARRAY keys keep the ordinary plan, which
      * joins and groups them itself.
      */
@@ -136,6 +139,20 @@ public final class HashJoinGroupByKeys {
         buildTypes.add(buildType);
         types.add(type);
         return !hasEncodingConflict(key);
+    }
+
+    @Override
+    public void clear() {
+        buildColumns.clear();
+        buildStringAsVarchar.clear();
+        buildTimestampAsNanos.clear();
+        buildTypes.clear();
+        probeColumns.clear();
+        probeStringAsVarchar.clear();
+        probeTimestampAsNanos.clear();
+        probeTypes.clear();
+        symbolAsString.clear();
+        types.clear();
     }
 
     public int getBuildColumn(int key) {

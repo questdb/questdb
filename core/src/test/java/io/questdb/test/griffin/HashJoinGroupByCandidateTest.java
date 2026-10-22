@@ -47,7 +47,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.HashJoinGroupByKeys;
 import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -55,9 +54,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
+import io.questdb.griffin.engine.functions.groupby.HashJoinGroupByAggregates;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.engine.join.SymbolKeyTranslatingRecord;
 import io.questdb.griffin.engine.join.SymbolKeyTranslator;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
@@ -90,13 +91,13 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 for (String expression : new String[]{"sum(d)", "avg(d)", "count()", "count(i)", "count(l)", "count(d)", "count(s)",
                         "sum(coalesce(d, 0.0))", "sum(i)", "avg(l)", "min(d)", "ksum(d)", "stddev(d)", "corr(d, l)", "weighted_avg(i, l)"}) {
                     try (Function function = parser.parseFunction(compiler.testParseExpression(expression, QueryModel.FACTORY.newInstance()), metadata, sqlExecutionContext)) {
-                        Assert.assertTrue(expression, HashJoinGroupByCandidate.isSupportedAggregate(function));
+                        Assert.assertTrue(expression, HashJoinGroupByAggregates.isSupportedAggregate(function));
                     }
                 }
                 for (String expression : new String[]{"first(d)", "last(d)", "count_distinct(i)", "sum(rnd_double())", "mode(d)",
                         "arg_min(d, l)", "corr(d, rnd_double())", "count(i::short)"}) {
                     try (Function function = parser.parseFunction(compiler.testParseExpression(expression, QueryModel.FACTORY.newInstance()), metadata, sqlExecutionContext)) {
-                        Assert.assertFalse(expression, HashJoinGroupByCandidate.isSupportedAggregate(function));
+                        Assert.assertFalse(expression, HashJoinGroupByAggregates.isSupportedAggregate(function));
                     }
                 }
             }
@@ -108,7 +109,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                HashJoinGroupByCandidate candidate = candidate(compiler,
+                HashJoinAggregation candidate = candidate(compiler,
                         "select r.plant_id, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id and p.installed_kwp > 0");
                 Assert.assertNotNull(candidate);
                 Assert.assertNotNull(candidate.getBuildOnFilter());
@@ -117,7 +118,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                         "select r.plant_id, sum(r.energy_kwh) from p right join r on r.plant_id=p.plant_id and p.installed_kwp > 0");
                 Assert.assertNotNull(candidate);
                 Assert.assertNotNull(candidate.getBuildOnFilter());
-                Assert.assertTrue(candidate.isInputSwapped());
+                Assert.assertTrue(isMasterBuilt(candidate));
                 Assert.assertEquals(0, candidate.getRequiredBuildColumns().size());
                 // The build scan's WHERE filter runs on the build's frames as well, so its columns are
                 // no payload either: p builds, the second of two empty inputs, and copies only the
@@ -168,11 +169,11 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     return false;
                 }
             })) {
-                Assert.assertFalse(HashJoinGroupByCandidate.isSupportedAggregate(aggregate));
+                Assert.assertFalse(HashJoinGroupByAggregates.isSupportedAggregate(aggregate));
             }
             try (Function aggregate = new SumDoubleGroupByFunction(DoubleColumn.newInstance(0)) {
             }) {
-                Assert.assertFalse(HashJoinGroupByCandidate.isSupportedAggregate(aggregate));
+                Assert.assertFalse(HashJoinGroupByAggregates.isSupportedAggregate(aggregate));
             }
         });
     }
@@ -185,7 +186,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                  RecordCursorFactory probeFactory = select("SELECT sym, l FROM ka");
                  RecordCursorFactory buildFactory = select("SELECT l, sym FROM kb")) {
-                HashJoinGroupByCandidate candidate = candidate(compiler, sql);
+                HashJoinAggregation candidate = candidate(compiler, sql);
                 Assert.assertNotNull(candidate);
                 // The analysis addresses base tables; the metadata compiles the keys against the inputs.
                 try (HashJoinGroupByMetadata metadata = HashJoinGroupByTestSupport.metadata(configuration, new BytecodeAssembler(), candidate,
@@ -193,7 +194,6 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     Assert.assertEquals("[0,1]", metadata.getProbeKeyColumns().toString());
                     Assert.assertEquals("[1,0]", metadata.getBuildKeyColumns().toString());
                     Assert.assertEquals("ka.sym=kb.sym and ka.l=kb.l", metadata.getCondition());
-                    Assert.assertTrue(metadata.hasStaticSymbolTables());
                     Assert.assertFalse(metadata.isSymbolKey());
                 }
             }
@@ -213,7 +213,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             assertKeys("ka.i=kb.i AND ka.sym=kb.sym", "16=16:SYMBOL 0=0:INT", false);
             assertKeys("ka.str=kb.vc AND ka.ts=kb.tn", "9=10:TIMESTAMP_NS 17=18:VARCHAR", false);
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                HashJoinGroupByCandidate candidate = candidate(compiler,
+                HashJoinAggregation candidate = candidate(compiler,
                         "SELECT count(*) FROM ka LEFT JOIN kb ON ka.str=kb.vc AND ka.ts=kb.tn");
                 Assert.assertNotNull(candidate);
                 HashJoinGroupByKeys keys = candidate.getKeys();
@@ -312,12 +312,11 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                HashJoinGroupByCandidate candidate = candidate(compiler,
+                HashJoinAggregation candidate = candidate(compiler,
                         "select p.country, sum(r.energy_kwh) from p right join r on r.plant_id=p.plant_id where p.installed_kwp is null");
                 Assert.assertNotNull(candidate);
-                Assert.assertTrue(candidate.isInputSwapped());
-                Assert.assertEquals(JoinKind.RIGHT_OUTER, candidate.getLogicalJoinType());
-                Assert.assertEquals(JoinKind.LEFT_OUTER, candidate.getPhysicalJoinType());
+                Assert.assertTrue(isMasterBuilt(candidate));
+                Assert.assertEquals(JoinKind.RIGHT_OUTER, candidate.getJoinType());
                 Assert.assertEquals("r", HashJoinGroupByTestSupport.tableName(candidate.getProbeInput()));
                 Assert.assertEquals("p", HashJoinGroupByTestSupport.tableName(candidate.getBuildInput()));
                 Assert.assertEquals(0, HashJoinGroupByTestSupport.sourceColumn(candidate.getProbeInput(), candidate.getKeys().getProbeColumn(0)));
@@ -329,9 +328,8 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 for (String join : new String[]{"r join p", "p join r"}) {
                     candidate = candidate(compiler, "select p.country, sum(r.energy_kwh) from " + join + " on r.plant_id=p.plant_id");
                     Assert.assertNotNull(join, candidate);
-                    Assert.assertEquals(join, join.equals("r join p"), candidate.isInputSwapped());
-                    Assert.assertEquals(JoinKind.INNER, candidate.getLogicalJoinType());
-                    Assert.assertEquals(JoinKind.INNER, candidate.getPhysicalJoinType());
+                    Assert.assertEquals(join, join.equals("r join p"), isMasterBuilt(candidate));
+                    Assert.assertEquals(JoinKind.INNER, candidate.getJoinType());
                     Assert.assertEquals("p", HashJoinGroupByTestSupport.tableName(candidate.getProbeInput()));
                     Assert.assertEquals("r", HashJoinGroupByTestSupport.tableName(candidate.getBuildInput()));
                     Assert.assertEquals(0, HashJoinGroupByTestSupport.sourceColumn(candidate.getProbeInput(), candidate.getKeys().getProbeColumn(0)));
@@ -346,15 +344,25 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
     public void testProbeFactories() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            for (String sql : new String[]{"r", "select energy_kwh, plant_id from r", "r where energy_kwh > 0", "r where reading_ts >= '2020-01-01'"}) {
-                try (RecordCursorFactory factory = select(sql)) {
-                    // QueryProgress is the public compiler wrapper; it owns the tested factory.
-                    Assert.assertTrue(sql, HashJoinGroupByCandidate.isSupportedFramedInput(factory.getBaseFactory()));
+            // A LEFT join probes its master, whose page frames the fused operator reads whole, or under the
+            // parallel filter it steals.
+            final String[][] probes = {
+                    {"r", "PAGE_FRAMES"},
+                    {"(select energy_kwh, plant_id from r)", "PAGE_FRAMES"},
+                    {"(r where energy_kwh > 0)", "STOLEN_FILTER"},
+                    {"(r where reading_ts >= '2020-01-01')", "PAGE_FRAMES"},
+                    {"(r where energy_kwh > 0 and reading_ts >= '2020-01-01')", "STOLEN_FILTER"}
+            };
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (String[] probe : probes) {
+                    final String sql = "select sum(x.energy_kwh) from " + probe[0] + " x left join p on x.plant_id=p.plant_id";
+                    final HashJoinAggregation candidate = candidate(compiler, sql);
+                    Assert.assertNotNull(sql, candidate);
+                    Assert.assertEquals(sql, probe[1], candidate.getProbeRead().name());
+                    Assert.assertEquals(sql, HashJoinAggregation.InputRead.PAGE_FRAMES, candidate.getBuildRead());
                 }
             }
-            try (RecordCursorFactory factory = select("select * from long_sequence(5)")) {
-                Assert.assertFalse(HashJoinGroupByCandidate.isSupportedFramedInput(factory.getBaseFactory()));
-            }
+            assertCandidate("select sum(x) from long_sequence(5) l left join p on l.x=p.long_key", false);
         });
     }
 
@@ -365,7 +373,6 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             execute("insert into r values (1, '2020-01-01', 10, 100, 1, 'a')");
             try (RecordCursorFactory factory = select("select energy_kwh from r")) {
                 for (int pass = 0; pass < 2; pass++) {
-                    Assert.assertTrue(HashJoinGroupByCandidate.isSupportedFramedInput(factory.getBaseFactory()));
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertTrue(cursor.hasNext());
                         Assert.assertEquals(10.0, cursor.getRecord().getDouble(0), 0);
@@ -461,10 +468,10 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             }
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 // A RIGHT join builds the SQL left table, so the probe key is r's column.
-                HashJoinGroupByCandidate candidate = candidate(compiler,
+                HashJoinAggregation candidate = candidate(compiler,
                         "select p.country, sum(r.energy_kwh) from p right join r on r.sym_key=p.sym_key");
                 Assert.assertNotNull(candidate);
-                Assert.assertTrue(candidate.isInputSwapped());
+                Assert.assertTrue(isMasterBuilt(candidate));
                 Assert.assertEquals(5, HashJoinGroupByTestSupport.sourceColumn(candidate.getProbeInput(), candidate.getKeys().getProbeColumn(0)));
                 Assert.assertEquals(4, HashJoinGroupByTestSupport.sourceColumn(candidate.getBuildInput(), candidate.getKeys().getBuildColumn(0)));
             }
@@ -802,7 +809,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             // its condition reads none of the condition's columns as a payload.
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 for (String condition : fixedSizeConditions) {
-                    final HashJoinGroupByCandidate candidate = candidate(compiler, froms[0] + condition);
+                    final HashJoinAggregation candidate = candidate(compiler, froms[0] + condition);
                     Assert.assertNotNull(condition, candidate);
                     Assert.assertNotNull(condition, candidate.getBuildOnFilter());
                     Assert.assertFalse(condition, candidate.isKeyCapacityPresized());
@@ -825,7 +832,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 for (String from : froms) {
                     for (String condition : expensiveConditions) {
-                        final HashJoinGroupByCandidate candidate = candidate(compiler, from + condition);
+                        final HashJoinAggregation candidate = candidate(compiler, from + condition);
                         Assert.assertNotNull(condition, candidate);
                         Assert.assertNotNull(condition, candidate.getBuildOnFilter());
                         Assert.assertTrue(condition, candidate.isKeyCapacityPresized());
@@ -852,7 +859,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
     private void assertKeys(String on, String expected, boolean isIntKeyed) throws Exception {
         String sql = "SELECT count(*) FROM ka LEFT JOIN kb ON " + on;
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            HashJoinGroupByCandidate candidate = candidate(compiler, sql);
+            HashJoinAggregation candidate = candidate(compiler, sql);
             Assert.assertNotNull(on, candidate);
             assertSameEntries(on, expected.split(" "), describeKeys(candidate).split(" "));
             Assert.assertEquals(on, isIntKeyed, candidate.getKeys().isIntKeyed());
@@ -992,7 +999,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         assertQuery(sql).noLeakCheck().expectSize().supportsRandomAccess(isRandomAccessSupported).returns(expected);
     }
 
-    private HashJoinGroupByCandidate candidate(SqlCompilerImpl compiler, String sql) throws Exception {
+    private HashJoinAggregation candidate(SqlCompilerImpl compiler, String sql) throws Exception {
         return HashJoinGroupByTestSupport.candidate(compiler, sql, sqlExecutionContext);
     }
 
@@ -1021,7 +1028,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
 
     private boolean isIntKeyed(String sql) throws Exception {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            HashJoinGroupByCandidate candidate = candidate(compiler, sql);
+            HashJoinAggregation candidate = candidate(compiler, sql);
             Assert.assertNotNull(sql, candidate);
             return candidate.getKeys().isIntKeyed();
         }
@@ -1029,7 +1036,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
 
     private boolean isSymbolKey(String sql) throws Exception {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            HashJoinGroupByCandidate candidate = candidate(compiler, sql);
+            HashJoinAggregation candidate = candidate(compiler, sql);
             Assert.assertNotNull(sql, candidate);
             return candidate.getKeys().isSymbolKey();
         }
@@ -1044,7 +1051,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             RecordCursorFactory buildBase
     ) throws Exception {
         // LEFT JOIN pins ka as the probe input, whatever the optimiser makes of the key order.
-        HashJoinGroupByCandidate candidate = candidate(compiler, "SELECT count(*) FROM ka LEFT JOIN kb ON " + on);
+        HashJoinAggregation candidate = candidate(compiler, "SELECT count(*) FROM ka LEFT JOIN kb ON " + on);
         Assert.assertNotNull(on, candidate);
         return HashJoinGroupByTestSupport.metadata(configuration, new BytecodeAssembler(), candidate,
                 probeFactory.getMetadata(), baseColumns(probeFactory.getMetadata(), probeBase.getMetadata()),
@@ -1070,7 +1077,11 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         return list;
     }
 
-    private static String describeKeys(HashJoinGroupByCandidate candidate) {
+    private static boolean isMasterBuilt(HashJoinAggregation candidate) {
+        return candidate.getBuildSide() == HashJoinAggregation.BuildSide.MASTER;
+    }
+
+    private static String describeKeys(HashJoinAggregation candidate) {
         HashJoinGroupByKeys keys = candidate.getKeys();
         StringSink sink = new StringSink();
         for (int i = 0, n = keys.size(); i < n; i++) {

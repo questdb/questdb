@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
@@ -40,16 +39,19 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
+import io.questdb.griffin.codegen.AggregateFactoryGenerator;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.HashJoinGroupByAggregates;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -83,7 +85,7 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
             CairoConfiguration configuration,
             BytecodeAssembler asm,
             FunctionInstantiator instantiator,
-            HashJoinGroupByCandidate candidate,
+            HashJoinAggregation hashJoin,
             HashJoinGroupByMetadata metadata,
             int workerCount,
             SqlExecutionContext executionContext
@@ -93,48 +95,18 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         }
         this.workerCount = workerCount;
         try {
-            final AggregatePlan plan = candidate.getAggregate();
+            final AggregatePlan plan = hashJoin.getAggregate();
             final OutputSchema input = metadata.getInput();
             final RecordMetadata joined = metadata.getJoinedMetadata();
             final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
-            final ObjList<BoundExpression> computedKeys = new ObjList<>();
             final ListColumnFilter columnFilter = new ListColumnFilter();
-            outputFunctions.setPos(plan.getOutput().getColumnCount());
-            for (int i = 0; i < plan.getAggregates().size(); i++) {
-                GroupByFunction function = (GroupByFunction) instantiator.instantiateAggregate(plan.getAggregates().getQuick(i), input, joined, executionContext);
-                outputFunctions.setQuick(keys.size() + i, function);
-                if (!HashJoinGroupByCandidate.isSupportedAggregate(function)) {
-                    throw SqlException.$(plan.getPosition(), "unsupported fused hash join aggregate");
-                }
-                groupByFunctions.add(function);
-                function.initValueTypes(valueTypes);
-            }
-            int lastIndex = -1;
-            for (int i = 0; i < keys.size(); i++) {
-                if (keys.getQuick(i) instanceof ColumnExpression column) {
-                    int index = input.getColumnIndexById(column.getColumnId());
-                    if (index != lastIndex) {
-                        columnFilter.add(index + 1);
-                        keyTypes.add(column.getDataType());
-                        lastIndex = index;
-                    }
-                    outputFunctions.setQuick(i, GroupByUtils.createColumnFunction(joined,
-                            valueTypes.getColumnCount() + keyTypes.getColumnCount(), column.getDataType(), index));
-                }
-            }
-            for (int i = 0; i < keys.size(); i++) {
-                BoundExpression key = keys.getQuick(i);
-                if (!(key instanceof ColumnExpression)) {
-                    Function function = instantiator.instantiate(key, input, joined, executionContext);
-                    keyFunctions.add(function);
-                    computedKeys.add(key);
-                    Function column = GroupByUtils.createColumnFunction(null,
-                            valueTypes.getColumnCount() + keyTypes.getColumnCount() + 1, function.getType(), -1);
-                    keyTypes.add(column.getType());
-                    if (function.getType() == ColumnType.SYMBOL && column.getType() == ColumnType.STRING) {
-                        column = new CastStrToSymbolFunctionFactory.Func(column);
-                    }
-                    outputFunctions.setQuick(i, column);
+            AggregateFactoryGenerator.assemble(plan, input, joined, instantiator, executionContext, groupByFunctions, keyFunctions,
+                    outputFunctions, keyTypes, valueTypes, columnFilter, new IntList(keys.size()));
+            assert isSupported(groupByFunctions);
+            final ObjList<BoundExpression> computedKeys = new ObjList<>(keyFunctions.size());
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                if (!(keys.getQuick(i) instanceof ColumnExpression)) {
+                    computedKeys.add(keys.getQuick(i));
                 }
             }
             for (int i = 0; i < outputFunctions.size(); i++) {
@@ -147,7 +119,7 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                     groupByFunctions, workerCount, executionContext);
             workerKeyFunctions = instantiator.instantiateWorkerFunctions(computedKeys, input, joined,
                     keyFunctions, workerCount, executionContext);
-            BoundExpression postFilter = candidate.getPostJoinFilter();
+            BoundExpression postFilter = hashJoin.getPostJoinFilter();
             if (postFilter != null) {
                 filter = instantiator.instantiate(postFilter, input, joined, executionContext);
                 workerFilters = instantiator.instantiateWorkers(postFilter, input, joined, filter, workerCount, executionContext);
@@ -304,6 +276,15 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return ((SymbolFunction) outputFunctions.getQuick(columnIndex)).newSymbolTable();
+    }
+
+    private static boolean isSupported(ObjList<GroupByFunction> aggregates) {
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            if (!HashJoinGroupByAggregates.isSupportedAggregate(aggregates.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Throwable addFailure(Throwable failure, Throwable th) {

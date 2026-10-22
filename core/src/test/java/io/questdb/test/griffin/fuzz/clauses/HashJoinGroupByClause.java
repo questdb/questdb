@@ -43,7 +43,7 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * Equi-join GROUP BY across two WAL tables: the shape that the fused parallel hash join GROUP BY
  * ({@code Async Hash Join Group By}) replaces. QueryRunner runs every query of this shape with the
  * fused plan on and off and compares the results, so the generator aims most of its queries at
- * what {@code HashJoinGroupByCandidate.analyse()} accepts and sends the rest through the features
+ * what operator planning fuses into a hash join and sends the rest through the features
  * that must keep the ordinary plan.
  * <p>
  * Shape:
@@ -122,7 +122,7 @@ public final class HashJoinGroupByClause {
     private static final String[] FILLS = {"FILL(NULL)", "FILL(PREV)", null, "FILL(NONE)"};
     private static final String[] FLOATING_DDLS = {"FLOAT", "DOUBLE"};
     // Fixed-size column types the build's row heap copies, so either input may carry them:
-    // HashJoinGroupByCandidate.isSupportedValueType(), minus the DECIMAL widths, whose DDL carries a
+    // HashJoinGroupByMetadata.isSupportedValueType(), minus the DECIMAL widths, whose DDL carries a
     // precision and a scale and which isFusable() matches by kind instead. The fuzz tables carry
     // no GEOHASH column, so that part of the payload set has no fuzz coverage.
     private static final String[] FUSABLE_DDLS = {

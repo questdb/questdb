@@ -832,8 +832,8 @@ final class SampleByFactoryGenerator {
             final ObjList<GroupByFunction> aggregates = new ObjList<>(calls.size());
             final OutputSchema output = plan.getOutput();
             records = new ObjList<>(output.getColumnCount());
-            AggregateFactoryGenerator.instantiateAggregates(plan, baseMetadata, functionInstantiator, executionContext, aggregates, records, valueTypes);
-            AggregateFactoryGenerator.layOutColumnKeys(plan, baseMetadata, records, keyTypes, valueTypes, listColumnFilterA, frame.intListA);
+            AggregateFactoryGenerator.instantiateAggregates(plan, input, baseMetadata, functionInstantiator, executionContext, aggregates, records, valueTypes);
+            AggregateFactoryGenerator.layOutColumnKeys(plan, input, baseMetadata, records, keyTypes, valueTypes, listColumnFilterA, frame.intListA);
             final int fillCount = plan.getFillModes().size();
             fillConstants = new ObjList<>(fillCount);
             fillConstants.setPos(fillCount);

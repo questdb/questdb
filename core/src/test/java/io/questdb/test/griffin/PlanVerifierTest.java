@@ -38,6 +38,7 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
@@ -93,6 +94,39 @@ public class PlanVerifierTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), " at ScanPlan position ");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testAggregateHashJoinContradictsItsInputs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ha (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE hb (k INT, w DOUBLE)");
+            // The fused GROUP BY steals the parallel filter of ha, whose factory then serves no page frames whole.
+            assertAlgorithmContradicts("SELECT count(*), sum(hb.w) FROM ha JOIN hb ON ha.k = hb.k WHERE ha.v > 0", AggregatePlan.class, aggregate -> {
+                final HashJoinAggregation hashJoin = aggregate.getHashJoin();
+                Assert.assertNotNull(hashJoin);
+                Assert.assertEquals(HashJoinAggregation.InputRead.STOLEN_FILTER, hashJoin.getProbeRead());
+                hashJoin.of(hashJoin.getAggregate(), hashJoin.getJoinType(), hashJoin.getBuildSide(),
+                        hashJoin.getProbeInput(), HashJoinAggregation.InputRead.PAGE_FRAMES, hashJoin.getProbeAlias(),
+                        hashJoin.getBuildInput(), hashJoin.getBuildRead(), hashJoin.getBuildAlias());
+            }, PlanVerifier.AGGREGATE_ALGORITHM);
+            // A LEFT join builds the input it NULL-extends, its slave.
+            assertAlgorithmContradicts("SELECT count(*), sum(hb.w) FROM ha LEFT JOIN hb ON ha.k = hb.k", AggregatePlan.class, aggregate -> {
+                final HashJoinAggregation hashJoin = aggregate.getHashJoin();
+                Assert.assertNotNull(hashJoin);
+                Assert.assertEquals(HashJoinAggregation.BuildSide.SLAVE, hashJoin.getBuildSide());
+                hashJoin.of(hashJoin.getAggregate(), hashJoin.getJoinType(), HashJoinAggregation.BuildSide.MASTER,
+                        hashJoin.getProbeInput(), hashJoin.getProbeRead(), hashJoin.getProbeAlias(),
+                        hashJoin.getBuildInput(), hashJoin.getBuildRead(), hashJoin.getBuildAlias());
+            }, PlanVerifier.AGGREGATE_ALGORITHM);
+            // The other build is recorded only when an interval scan can change which input holds fewer rows.
+            assertAlgorithmContradicts("SELECT count(*), sum(hb.w) FROM ha JOIN hb ON ha.k = hb.k", AggregatePlan.class, aggregate -> {
+                final HashJoinAggregation hashJoin = aggregate.getHashJoin();
+                Assert.assertNotNull(hashJoin);
+                Assert.assertNull(hashJoin.getAlternate());
+                hashJoin.setAlternate(hashJoin);
+            }, PlanVerifier.AGGREGATE_ALGORITHM);
         });
     }
 

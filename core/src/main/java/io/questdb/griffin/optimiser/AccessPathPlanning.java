@@ -580,6 +580,7 @@ final class AccessPathPlanning {
             return;
         }
         final boolean hasModel = hasExtractor && intervals.hasIntervalFilters();
+        scan.setIntervalScan(hasModel);
         table = context.getTableAccessInfo(scan);
         tableColumnIndexes.clear();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {

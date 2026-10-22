@@ -30,7 +30,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.HashJoinGroupByCandidate;
+import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -44,6 +44,7 @@ import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
@@ -105,16 +106,18 @@ final class OperatorPlanning implements Mutable {
     private final CairoConfiguration configuration;
     private final OptimiserContext context;
     private final ObjList<JoinInput> generatedInputs = new ObjList<>();
+    private final HashJoinAggregationPlanning hashJoinPlanning;
     private final IntList readIds;
     private final IntList readOrder;
     private final ObjList<JoinInput> undecidedSteps;
     private int frameInputLo;
     private boolean isFullFatJoins;
 
-    OperatorPlanning(CairoConfiguration configuration, OptimiserContext context, IntList readOrder, IntList readIds,
-                     ObjList<JoinInput> undecidedSteps) {
+    OperatorPlanning(CairoConfiguration configuration, OptimiserContext context, PlanNodePools planNodes, IntList readOrder,
+                     IntList readIds, ObjList<JoinInput> undecidedSteps) {
         this.configuration = configuration;
         this.context = context;
+        this.hashJoinPlanning = new HashJoinAggregationPlanning(context, planNodes);
         this.readOrder = readOrder;
         this.readIds = readIds;
         this.undecidedSteps = undecidedSteps;
@@ -123,6 +126,7 @@ final class OperatorPlanning implements Mutable {
     @Override
     public void clear() {
         generatedInputs.clear();
+        hashJoinPlanning.clear();
         frameInputLo = 0;
         undecidedSteps.clear();
     }
@@ -251,7 +255,7 @@ final class OperatorPlanning implements Mutable {
     /**
      * True when the generator gates its input once on the predicate, a runtime constant.
      */
-    private static boolean isGate(BoundExpression predicate) {
+    static boolean isGate(BoundExpression predicate) {
         return !LogicalPlans.isConstant(predicate) && !isFiltering(predicate);
     }
 
@@ -437,7 +441,7 @@ final class OperatorPlanning implements Mutable {
                 PhysicalProperties.masterTimestampIndex(join, inputIndex), timestampIndex(step.getInput()));
     }
 
-    private boolean isPageFrameSource(LogicalPlan plan) {
+    static boolean isPageFrameSource(LogicalPlan plan) {
         return PhysicalProperties.supportsPageFrameCursor(plan) == PhysicalProperties.Capability.YES;
     }
 
@@ -480,7 +484,7 @@ final class OperatorPlanning implements Mutable {
      * top-K and a frame reducer steal, and of a covering index scan, which a frame reducer steals; and a gate over page frames,
      * which a temporal join steals when the factory under the filter serves time frames, as it must for any filter.
      */
-    private boolean isStolenFilter(LogicalPlan plan, FilterConsumer consumer) {
+    static boolean isStolenFilter(LogicalPlan plan, FilterConsumer consumer) {
         final FilterPlan filter = PlanToFactoryRules.stolenFilter(plan);
         if (filter == null) {
             return false;
@@ -606,13 +610,9 @@ final class OperatorPlanning implements Mutable {
         }
         if (context.getExecutionContext().isParallelHashJoinGroupByEnabled()
                 && (factory == PlanToFactoryRules.AggregateFactory.GROUP_BY || factory == PlanToFactoryRules.AggregateFactory.COUNT)) {
-            final HashJoinGroupByCandidate candidate = HashJoinGroupByCandidate.analyse(aggregate, context.getInstantiator(), context.getExecutionContext());
-            if (candidate != null) {
-                if (candidate.getLogicalJoinType() == JoinKind.INNER && !candidate.getKeys().hasTranslatedSymbol()) {
-                    candidate.setAlternate(HashJoinGroupByCandidate.analyse(aggregate, context.getInstantiator(), context.getExecutionContext(), true));
-                }
-                aggregate.setHashJoinGroupBy(candidate);
-                aggregate.setAlgorithm(AggregatePlan.Algorithm.HASH_JOIN);
+            final HashJoinAggregation hashJoin = hashJoinPlanning.plan(aggregate);
+            if (hashJoin != null) {
+                aggregate.setHashJoin(hashJoin);
                 return;
             }
         }
@@ -1612,10 +1612,11 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * The parallel operator that steals the filter of its input. A {@link #FRAME_REDUCER} is a GROUP BY or a HORIZON
-     * JOIN, aggregating or not, which reduce the page frames under the filter alike.
+     * JOIN, aggregating or not, which reduce the page frames under the filter alike; a {@link #HASH_JOIN_INPUT} is a
+     * GROUP BY fused into a hash join, which steals only a parallel filter of each input.
      */
-    private enum FilterConsumer {
-        FRAME_REDUCER, TEMPORAL_JOIN, TOP_K, WINDOW_JOIN
+    enum FilterConsumer {
+        FRAME_REDUCER, HASH_JOIN_INPUT, TEMPORAL_JOIN, TOP_K, WINDOW_JOIN
     }
 
     /**

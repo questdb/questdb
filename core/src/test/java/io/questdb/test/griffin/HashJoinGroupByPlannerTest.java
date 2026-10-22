@@ -2941,10 +2941,12 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     // A filter that also reads a column is not a runtime constant, so it keeps the
                     // fused plan: a.v > 0 reads the NULL-extended input, which an outer join keeps
                     // above the join. The RIGHT spelling pushes the cast into the scan of b, which
-                    // it preserves, so it keeps the ordinary plan.
+                    // it preserves, so it keeps the ordinary plan. The last query filters the joined
+                    // rows on v > 0 too, so it keeps the fused plan, which gates both inputs on $1 = 1
+                    // once per execution, as the ordinary plan gates the join.
                     {select + froms[0] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, null},
                     {select + froms[1] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, castFilter},
-                    {"SELECT count(*), count(v) FROM (SELECT b.k, a.v" + froms[1] + " WHERE " + cast + " AND $1 = 1) WHERE v > 0", null}
+                    {"SELECT count(*), count(v) FROM (SELECT b.k, a.v" + froms[1] + " WHERE " + cast + " AND $1 = 1) WHERE v > 0", castFilter}
             };
             try (SqlExecutionContextImpl context = enabledContext()) {
                 context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
@@ -3102,6 +3104,38 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                     count\tcount1\tsum
                                     2\t0\t3
                                     """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInputEmptiedByFoldedFilterKeepsOrdinaryPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"fuzz_t0", "fuzz_t1"}) {
+                execute("CREATE TABLE " + table + " (sym SYMBOL, k INT, lk LONG, vk VARCHAR, c0 TIMESTAMP, c1 DATE, c2 STRING, c3 INT,"
+                        + " c4 BOOLEAN, c5 DOUBLE, c6 VARCHAR, c7 BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + """
+                         SELECT ('s' || (x % 3))::SYMBOL, (x % 5)::INT, x % 4, (x * 37_000)::VARCHAR,
+                            (x * 3_600_000_000)::TIMESTAMP, (x * 86_400_000)::DATE, (x % 7)::STRING, (x % 6)::INT, x % 2 = 0,
+                            x / 10.0, (x % 9)::VARCHAR, (x % 100)::BYTE, '2024-01-02'::TIMESTAMP + x * 1_800_000_000
+                        FROM long_sequence(48)
+                        """);
+            }
+            // A self-comparison folds to false, so the scan of the input it filters builds an empty table, which
+            // serves no page frames.
+            final String[] queries = {
+                    "SELECT 'L' AS e0, l.k AS e1, max(l.lk) AS a0, count(r.c3) AS a1, count() AS a2, count(r.k) AS a3"
+                            + " FROM fuzz_t0 l JOIN fuzz_t1 r ON l.lk = r.lk AND (l.c0 < l.c0)"
+                            + " WHERE ((114541L)::SYMBOL < l.vk) AND (l.ts >= '2024-01-02T16:00:00.000000Z' AND l.ts < '2024-01-02T19:00:00.000000Z')"
+                            + " GROUP BY e0, e1 ORDER BY a1 DESC, a2 ASC LIMIT 1",
+                    "SELECT bit_xor(l.c1_v) AS a0, count() AS a1, count(r.k) AS a2"
+                            + " FROM (SELECT sym, k, lk, vk AS vk_v, c0 AS c0_v, c1 AS c1_v, c2, c3, c4, c5 AS c5_v, c6, ts FROM fuzz_t1"
+                            + " WHERE ((c3)::DOUBLE = lk AND c0 != c0)) l JOIN fuzz_t0 r ON r.vk = l.vk_v AND ((r.ts <= r.c1 AND null >= r.ts))"
+            };
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (String sql : queries) {
+                    assertDifferential(sql, context, false);
                 }
             }
         });

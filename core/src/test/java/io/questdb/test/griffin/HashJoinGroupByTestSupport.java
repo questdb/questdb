@@ -25,21 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
-import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.PreparedFunctions;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.plan.logical.AggregatePlan;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.LogicalPlan;
-import io.questdb.griffin.plan.logical.LogicalPlanPrinter;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.BytecodeAssembler;
@@ -47,24 +44,21 @@ import io.questdb.std.IntList;
 import org.junit.Assert;
 
 final class HashJoinGroupByTestSupport {
-    static HashJoinGroupByCandidate candidate(SqlCompilerImpl compiler, String sql, SqlExecutionContext context) throws SqlException {
+    /**
+     * The fusion operator planning records on the aggregate of the compiled statement, valid until the compiler
+     * compiles again; null when the aggregate keeps the ordinary plan.
+     */
+    static HashJoinAggregation candidate(SqlCompilerImpl compiler, String sql, SqlExecutionContext context) throws SqlException {
         try (RecordCursorFactory ignored = compiler.compile(sql, context).getRecordCursorFactory()) {
             final AggregatePlan aggregate = find(compiler.getPlanForTesting(), AggregatePlan.class);
             Assert.assertNotNull(sql, aggregate);
-            final LogicalPlanPrinter printer = new LogicalPlanPrinter();
-            final String before = printer.print(aggregate).toString();
-            final IntList bindTypes = bindTypes(context.getBindVariableService());
-            final HashJoinGroupByCandidate candidate = HashJoinGroupByCandidate.analyse(aggregate,
-                    instantiator(compiler, new FunctionResolver(context.getCairoEngine().getConfiguration(), compiler.getFunctionFactoryCache())), context);
-            Assert.assertEquals("candidate analysis mutated the plan", before, printer.print(aggregate).toString());
-            Assert.assertEquals("candidate analysis changed bind types", bindTypes, bindTypes(context.getBindVariableService()));
-            return candidate;
+            return aggregate.getHashJoin();
         }
     }
 
     static HashJoinGroupByMetadata metadata(CairoConfiguration configuration, BytecodeAssembler asm,
-                                           HashJoinGroupByCandidate candidate, RecordMetadata probe, IntList probeColumns,
-                                           RecordMetadata build, IntList buildColumns) throws SqlException {
+                                            HashJoinAggregation candidate, RecordMetadata probe, IntList probeColumns,
+                                            RecordMetadata build, IntList buildColumns) {
         return new HashJoinGroupByMetadata(configuration, asm, candidate, probe, columnIds(candidate.getProbeInput(), probeColumns, 1_000_000),
                 build, columnIds(candidate.getBuildInput(), buildColumns, 2_000_000));
     }
@@ -93,15 +87,6 @@ final class HashJoinGroupByTestSupport {
         final ScanPlan scan = find(input, ScanPlan.class);
         Assert.assertNotNull(scan);
         return scan.getTableToken().getTableName();
-    }
-
-    private static IntList bindTypes(BindVariableService service) {
-        final IntList types = new IntList();
-        for (int i = 0, n = service.getIndexedVariableCount(); i < n; i++) {
-            final Function function = service.getFunction(i);
-            types.add(function == null ? -1 : function.getType());
-        }
-        return types;
     }
 
     private static IntList columnIds(LogicalPlan input, IntList sourceColumns, int unusedBase) {

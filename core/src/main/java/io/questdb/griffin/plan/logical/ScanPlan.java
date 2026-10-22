@@ -61,6 +61,7 @@ public final class ScanPlan extends LogicalPlan {
     private SortDirection indexDirection = SortDirection.ASCENDING;
     private IndexOrder indexOrder = IndexOrder.NONE;
     private IndexRead indexRead = IndexRead.NONE;
+    private boolean isIntervalScan;
     private boolean isRandomAccess = true;
     private boolean isSinglePartition;
     private boolean isTimestampDropped;
@@ -125,6 +126,7 @@ public final class ScanPlan extends LogicalPlan {
         indexDirection = SortDirection.ASCENDING;
         indexOrder = IndexOrder.NONE;
         indexRead = IndexRead.NONE;
+        isIntervalScan = false;
         isSinglePartition = false;
         isTimestampDropped = false;
         joinIntervalStep = null;
@@ -454,6 +456,14 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
+     * Whether the generator reads the partitions of the table through intervals: the ones the predicate implies, the
+     * ones the execution context overrides or the ones a window join narrows the scan to.
+     */
+    public boolean isIntervalScan() {
+        return isIntervalScan;
+    }
+
+    /**
      * Whether the intervals the scan reads lie in a single partition, which lets an index access path emit rows in
      * key order.
      */
@@ -584,6 +594,10 @@ public final class ScanPlan extends LogicalPlan {
 
     public void setScanDirection(SortDirection scanDirection) {
         this.scanDirection = scanDirection;
+    }
+
+    public void setIntervalScan(boolean isIntervalScan) {
+        this.isIntervalScan = isIntervalScan;
     }
 
     public void setSinglePartition(boolean isSinglePartition) {

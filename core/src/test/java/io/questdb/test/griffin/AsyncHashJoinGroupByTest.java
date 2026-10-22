@@ -57,7 +57,6 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.FunctionResolver;
-import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.HashJoinGroupByFunctions;
 import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.PriorityMetadata;
@@ -83,6 +82,7 @@ import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFac
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.Job;
@@ -2982,9 +2982,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     }
                 };
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                    HashJoinGroupByCandidate candidate = HashJoinGroupByTestSupport.candidate(compiler, sql, sqlExecutionContext);
+                    HashJoinAggregation candidate = HashJoinGroupByTestSupport.candidate(compiler, sql, sqlExecutionContext);
                     Assert.assertNotNull(sql, candidate);
                     Assert.assertEquals(sql, "r", HashJoinGroupByTestSupport.tableName(candidate.getProbeInput()));
+                    // The candidate lives until the compiler parses again, which the probe filter below does.
+                    final boolean isOuter = candidate.getJoinType() != JoinKind.INNER;
                     FunctionResolver resolver = new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
                         @Override
                         public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
@@ -3061,7 +3063,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         filterContext = null;
                         factory = new AsyncHashJoinGroupByRecordCursorFactory(engine, probeOwned, buildOwned, buildFiltersOwned,
                                 null, metadata, functionsOwned, filtersOwned,
-                                candidate.getPhysicalJoinType() == JoinKind.LEFT_OUTER, factoryWorkerCount);
+                                isOuter, factoryWorkerCount);
                     }
                     queryFactory = new QueryProgress(engine.getQueryRegistry(), sql, factory);
                 }

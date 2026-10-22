@@ -26,8 +26,10 @@ package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.plan.logical.AggregatePlan;
+import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
@@ -62,6 +64,41 @@ final class PhysicalChoiceVerifier {
 
     private static boolean isBounded(SortPlan.Algorithm algorithm) {
         return algorithm == SortPlan.Algorithm.LIMITED || algorithm == SortPlan.Algorithm.PRESORTED_LIMITED || isTopK(algorithm);
+    }
+
+    /**
+     * Whether the fused GROUP BY of the aggregate is one the generator builds: each orientation reads its inputs as
+     * {@link #isHashJoinOrientation} checks, and the other build, when recorded, builds the probe of an INNER join one
+     * of whose inputs an interval scan reads, under no gate of its own.
+     */
+    private static boolean isHashJoin(@Nullable HashJoinAggregation hashJoin) {
+        if (hashJoin == null || !isHashJoinOrientation(hashJoin) || hashJoin.getGate() != null && !OperatorPlanning.isGate(hashJoin.getGate())) {
+            return false;
+        }
+        final HashJoinAggregation alternate = hashJoin.getAlternate();
+        return alternate == null || hashJoin.getJoinType() == JoinKind.INNER && alternate.getJoinType() == JoinKind.INNER
+                && alternate.getBuildSide() != hashJoin.getBuildSide() && alternate.getBuildInput() == hashJoin.getProbeInput()
+                && alternate.getProbeInput() == hashJoin.getBuildInput() && alternate.getGate() == null && alternate.getAlternate() == null
+                && !hashJoin.getKeys().hasTranslatedSymbol() && isHashJoinOrientation(alternate)
+                && (HashJoinAggregationPlanning.frameScan(hashJoin.getProbeInput()).isIntervalScan()
+                || HashJoinAggregationPlanning.frameScan(hashJoin.getBuildInput()).isIntervalScan());
+    }
+
+    /**
+     * Whether one orientation of a fused GROUP BY is one the generator builds: an outer join builds the input it
+     * NULL-extends and alone applies an ON condition on the build, the joined rows pass no gate, and the operator
+     * reads each input as {@link HashJoinAggregationPlanning#inputRead} decides.
+     */
+    private static boolean isHashJoinOrientation(HashJoinAggregation hashJoin) {
+        final JoinKind kind = hashJoin.getJoinType();
+        final boolean isMasterBuilt = hashJoin.getBuildSide() == HashJoinAggregation.BuildSide.MASTER;
+        final boolean isBuildFixed = kind == JoinKind.INNER || isMasterBuilt == (kind == JoinKind.RIGHT_OUTER);
+        final BoundExpression postJoinFilter = hashJoin.getPostJoinFilter();
+        return (kind == JoinKind.INNER || kind == JoinKind.LEFT_OUTER || kind == JoinKind.RIGHT_OUTER) && isBuildFixed
+                && (kind != JoinKind.INNER || hashJoin.getBuildOnFilter() == null) && hashJoin.getKeys().size() > 0
+                && (postJoinFilter == null || !OperatorPlanning.isGate(postJoinFilter))
+                && hashJoin.getProbeRead() != null && hashJoin.getProbeRead() == HashJoinAggregationPlanning.inputRead(hashJoin.getProbeInput())
+                && hashJoin.getBuildRead() != null && hashJoin.getBuildRead() == HashJoinAggregationPlanning.inputRead(hashJoin.getBuildInput());
     }
 
     /**
@@ -253,7 +290,7 @@ final class PhysicalChoiceVerifier {
             return isPlanned && hasChoice ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
         final boolean isValid = hasChoice && switch (algorithm) {
-            case HASH_JOIN -> !isHorizon && aggregate.getHashJoinGroupBy() != null;
+            case HASH_JOIN -> !isHorizon && isHashJoin(aggregate.getHashJoin());
             case VECTORISED -> !isHorizon && PlanToFactoryRules.hasVectorShape(aggregate);
             case PARALLEL, PARALLEL_STOLEN_FILTER -> isParallelAggregate(aggregate, algorithm, isHorizon, isPlanned);
             case SERIAL -> true;

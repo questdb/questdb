@@ -352,6 +352,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.setKeySubquery(scan.getKeySubquery());
         clone.setKeyPattern(scan.getKeyPattern());
         clone.setWithin(scan.getWithin());
+        clone.setIntervalScan(scan.isIntervalScan());
         clone.setSinglePartition(scan.isSinglePartition());
         clone.setTimestampDropped(scan.isTimestampDropped());
         clone.setJoinIntervalStep(scan.getJoinIntervalStep());

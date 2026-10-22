@@ -25,7 +25,6 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.std.IntList;
-import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.std.ObjectFactory;
 
 /**
@@ -36,7 +35,7 @@ public final class AggregatePlan extends GroupingPlan {
     private final IntList sharedInputIds = new IntList();
     private final IntList sharedSourceIds = new IntList();
     private Algorithm algorithm;
-    private HashJoinGroupByCandidate hashJoinGroupBy;
+    private HashJoinAggregation hashJoin;
     private int sharedConsumerCount;
     private LogicalPlan sharedHead;
     private SetOperationPlan sharedOperation;
@@ -49,7 +48,7 @@ public final class AggregatePlan extends GroupingPlan {
         sharedInputIds.clear();
         sharedSourceIds.clear();
         algorithm = null;
-        hashJoinGroupBy = null;
+        hashJoin = null;
         sharedConsumerCount = 0;
         sharedHead = null;
         sharedOperation = null;
@@ -59,18 +58,18 @@ public final class AggregatePlan extends GroupingPlan {
 
     /**
      * The GROUP BY execution operator planning records for the aggregate; null for a count, a timestamp endpoint, a
-     * posting-index distinct and a horizon join, which build no GROUP BY.
+     * posting-index distinct and a horizon join, which build no GROUP BY. A count fused into the hash join under it,
+     * {@link Algorithm#HASH_JOIN}, builds one.
      */
     public Algorithm getAlgorithm() {
         return algorithm;
     }
 
-    public HashJoinGroupByCandidate getHashJoinGroupBy() {
-        return hashJoinGroupBy;
-    }
-
-    public void setHashJoinGroupBy(HashJoinGroupByCandidate hashJoinGroupBy) {
-        this.hashJoinGroupBy = hashJoinGroupBy;
+    /**
+     * How the GROUP BY fuses into the hash join under it, recorded with {@link Algorithm#HASH_JOIN}; null otherwise.
+     */
+    public HashJoinAggregation getHashJoin() {
+        return hashJoin;
     }
 
     /**
@@ -129,8 +128,18 @@ public final class AggregatePlan extends GroupingPlan {
         return this;
     }
 
+    /**
+     * Records a GROUP BY that reads the aggregate's input; {@link #setHashJoin} records the fused one.
+     */
     public void setAlgorithm(Algorithm algorithm) {
+        assert algorithm != Algorithm.HASH_JOIN;
         this.algorithm = algorithm;
+        hashJoin = null;
+    }
+
+    public void setHashJoin(HashJoinAggregation hashJoin) {
+        algorithm = Algorithm.HASH_JOIN;
+        this.hashJoin = hashJoin;
     }
 
     public void setSharedConsumerCount(int sharedConsumerCount) {
@@ -159,8 +168,9 @@ public final class AggregatePlan extends GroupingPlan {
 
     /**
      * How the generator executes the GROUP BY: on one thread, in parallel over the page frames of its input or over
-     * the frames under a filter it steals from its input, or in the vectorised GROUP BY of a single key, which order
-     * planning never picks over a table whose parquet partitions store a column under a converted type.
+     * the frames under a filter it steals from its input, in the vectorised GROUP BY of a single key, which order
+     * planning never picks over a table whose parquet partitions store a column under a converted type, or fused into
+     * the two-input hash join under it as {@link #getHashJoin()} records.
      */
     public enum Algorithm {
         HASH_JOIN, PARALLEL, PARALLEL_STOLEN_FILTER, SERIAL, VECTORISED

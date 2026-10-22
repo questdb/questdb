@@ -135,19 +135,29 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             final String sql = "SELECT k, count() FROM (" + SWAPPABLE_JOIN + ") GROUP BY k";
             sqlExecutionContext.pushTimestampRequiredFlag(true);
             try {
-                // The aggregate reads the direction of its input for its order-sensitive functions, which fixes the master.
+                // The GROUP BY over the join reads the direction of its input for its order-sensitive functions,
+                // which fixes the master.
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
                 assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
                         join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                // The GROUP BY fused into the join builds its own hash table and computes only aggregates whose result
+                // does not depend on the order of rows, and its output designates no timestamp, so nothing reads the
+                // order of the join, which lets the smaller input drive it.
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(true);
+                assertPlanned(engine, sqlExecutionContext, sql, AggregatePlan.class,
+                        aggregate -> Assert.assertEquals(AggregatePlan.Algorithm.HASH_JOIN, aggregate.getAlgorithm()));
+                assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
+                        join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
             } finally {
                 sqlExecutionContext.popTimestampRequiredFlag();
             }
             execute("CREATE TABLE c AS (" + sql + ")");
-            assertQuery("c")
+            assertQuery("SELECT * FROM c ORDER BY k")
                     .expectSize()
                     .returns("""
                             k\tcount
-                            2\t10
                             1\t10
+                            2\t10
                             """);
         });
     }

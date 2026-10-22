@@ -46,7 +46,6 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.FunctionResolver;
-import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.HashJoinGroupByFunctions;
 import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -62,6 +61,7 @@ import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
@@ -69,6 +69,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -317,9 +318,8 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
             for (IntList mapping : new IntList[]{ints(1, 0, 2, 3), ints(0, 1, 2, 9), ints(0, 1, 2)}) {
                 try (Fixture ignored = new Fixture(AGGREGATES + INNER, "r", mapping, "p", ints(0, 1, 2))) {
                     Assert.fail("invalid mapping accepted: " + mapping);
-                } catch (SqlException expected) {
-                    Assert.assertTrue(expected.getFlyweightMessage().toString(),
-                            expected.getFlyweightMessage().toString().contains("hash join input"));
+                } catch (IllegalStateException expected) {
+                    TestUtils.assertContains(expected.getMessage(), "hash join input");
                 }
             }
         });
@@ -651,9 +651,9 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                 probeFactory = select(probeSql);
                 buildFactory = select(buildSql);
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                    HashJoinGroupByCandidate candidate = HashJoinGroupByTestSupport.candidate(compiler, sql, sqlExecutionContext);
+                    HashJoinAggregation candidate = HashJoinGroupByTestSupport.candidate(compiler, sql, sqlExecutionContext);
                     Assert.assertNotNull(sql, candidate);
-                    isOuter = candidate.getPhysicalJoinType() == JoinKind.LEFT_OUTER;
+                    isOuter = candidate.getJoinType() != JoinKind.INNER;
                     metadata = HashJoinGroupByTestSupport.metadata(configuration, new BytecodeAssembler(), candidate,
                             probeFactory.getMetadata(), probeColumns, buildFactory.getMetadata(), buildColumns);
                     functions = new HashJoinGroupByFunctions(configuration, new BytecodeAssembler(),

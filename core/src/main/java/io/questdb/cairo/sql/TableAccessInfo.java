@@ -66,6 +66,11 @@ public interface TableAccessInfo {
 
     int getPartitionedBy();
 
+    /**
+     * The number of rows the table holds at the transaction the access facts were read at.
+     */
+    long getRowCount();
+
     int getSymbolCapacity(int columnIndex);
 
     int getSymbolCount(int columnIndex);

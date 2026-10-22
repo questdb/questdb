@@ -102,7 +102,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-final class AggregateFactoryGenerator {
+public final class AggregateFactoryGenerator {
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
@@ -142,11 +142,12 @@ final class AggregateFactoryGenerator {
     }
 
     /**
-     * Lays out the GROUP BY map and the output functions of the aggregate: the aggregates' value columns, the column
-     * keys, then the computed keys, recording each key's map slot in {@code keySlots}.
+     * Lays out the GROUP BY map and the output functions of the grouping over {@code input}: the aggregates' value
+     * columns, the column keys, then the computed keys, recording each key's map slot in {@code keySlots}.
      */
-    private static void assemble(
-            AggregatePlan plan,
+    public static void assemble(
+            GroupingPlan plan,
+            OutputSchema input,
             RecordMetadata inputMetadata,
             FunctionInstantiator instantiator,
             SqlExecutionContext executionContext,
@@ -158,9 +159,8 @@ final class AggregateFactoryGenerator {
             ListColumnFilter columnFilter,
             IntList keySlots
     ) throws SqlException {
-        instantiateAggregates(plan, inputMetadata, instantiator, executionContext, aggregates, recordFunctions, valueTypes);
-        layOutColumnKeys(plan, inputMetadata, recordFunctions, keyTypes, valueTypes, columnFilter, keySlots);
-        final OutputSchema input = plan.getChild().getOutput();
+        instantiateAggregates(plan, input, inputMetadata, instantiator, executionContext, aggregates, recordFunctions, valueTypes);
+        layOutColumnKeys(plan, input, inputMetadata, recordFunctions, keyTypes, valueTypes, columnFilter, keySlots);
         final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final BoundExpression key = keys.getQuick(i);
@@ -277,8 +277,8 @@ final class AggregateFactoryGenerator {
             keyTypes.clear();
             valueTypes.clear();
             columnFilter.clear();
-            assemble(plan, base.getMetadata(), functionInstantiator, executionContext, aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes,
-                    columnFilter, frame.intListA);
+            assemble(plan, plan.getChild().getOutput(), base.getMetadata(), functionInstantiator, executionContext, aggregates, keyFunctions,
+                    recordFunctions, keyTypes, valueTypes, columnFilter, frame.intListA);
             final GenericRecordMetadata metadata = metadata(plan, base.getMetadata(), recordFunctions);
             final int sharedConsumerCount = plan.getSharedConsumerCount();
             if (sharedConsumerCount > 0) {
@@ -528,11 +528,12 @@ final class AggregateFactoryGenerator {
     }
 
     /**
-     * Instantiates the aggregates of the plan into their output slots of {@code recordFunctions}, after the keys, and
-     * appends their map value types.
+     * Instantiates the aggregates of the plan over {@code input} into their output slots of {@code recordFunctions},
+     * after the keys, and appends their map value types.
      */
-    static void instantiateAggregates(
+    public static void instantiateAggregates(
             GroupingPlan plan,
+            OutputSchema input,
             RecordMetadata inputMetadata,
             FunctionInstantiator instantiator,
             SqlExecutionContext executionContext,
@@ -540,7 +541,6 @@ final class AggregateFactoryGenerator {
             ObjList<Function> recordFunctions,
             ArrayColumnTypes valueTypes
     ) throws SqlException {
-        final OutputSchema input = plan.getChild().getOutput();
         final int keyCount = plan.getGroupingExpressions().size();
         recordFunctions.setPos(plan.getOutput().getColumnCount());
         for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
@@ -557,12 +557,13 @@ final class AggregateFactoryGenerator {
     }
 
     /**
-     * Lays out the column keys of the plan in the GROUP BY map after its value columns, and builds the output function
+     * Lays out the column keys of the plan, which read {@code input}, in the GROUP BY map after its value columns, and builds the output function
      * of each over its map slot, which {@code keySlots} records by key position: a column repeated consecutively takes
      * one slot, and the bucket timestamp of a SAMPLE BY none, -1. The computed keys follow in the map.
      */
-    static void layOutColumnKeys(
+    public static void layOutColumnKeys(
             GroupingPlan plan,
+            OutputSchema input,
             RecordMetadata inputMetadata,
             ObjList<Function> recordFunctions,
             ArrayColumnTypes keyTypes,
@@ -570,7 +571,6 @@ final class AggregateFactoryGenerator {
             ListColumnFilter columnFilter,
             IntList keySlots
     ) {
-        final OutputSchema input = plan.getChild().getOutput();
         final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
         final int bucketColumnId = plan instanceof SampleByPlan sample ? sample.getTimestampColumnId() : -1;
         keySlots.setAll(keys.size(), -1);
@@ -643,7 +643,7 @@ final class AggregateFactoryGenerator {
 
     RecordCursorFactory generateAggregate(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext) throws SqlException {
         if (aggregate.getAlgorithm() == AggregatePlan.Algorithm.HASH_JOIN) {
-            return hashJoinGroupByGenerator.generate(frame, aggregate.getHashJoinGroupBy(), executionContext);
+            return hashJoinGroupByGenerator.generate(frame, aggregate.getHashJoin(), executionContext);
         }
         final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
         if (factory == PlanToFactoryRules.AggregateFactory.HORIZON) {
@@ -809,7 +809,7 @@ final class AggregateFactoryGenerator {
                 }
                 case AGGREGATE -> {
                     assert plan != null;
-                    assemble(plan, innerMetadata, functionInstantiator, executionContext,
+                    assemble(plan, plan.getChild().getOutput(), innerMetadata, functionInstantiator, executionContext,
                             aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter, frame.intListA);
                     metadata = metadata(plan, innerMetadata, recordFunctions);
                     isParallel = plan.getAlgorithm() != null && plan.getAlgorithm() != AggregatePlan.Algorithm.SERIAL;
