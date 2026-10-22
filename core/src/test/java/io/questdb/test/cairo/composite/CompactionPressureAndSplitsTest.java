@@ -61,9 +61,6 @@ public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
 
     @Test
     public void testCommitCapChoosesSmallestColdAdjacentPair() throws Exception {
-        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
-        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             createFiveFolders();
             final long sourceTimestamp;
@@ -86,6 +83,9 @@ public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
                 prefixRows = tx.getPartitionSize(0);
             }
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 4);
+            // Under a save point the squash copies a plain target instead of appending to it, which this write
+            // count would see; a save point past the siblings lets it append in place.
+            releaseSavePointHolds("x");
             final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             appendNextDay();
             Assert.assertEquals(sourceRows + 1,

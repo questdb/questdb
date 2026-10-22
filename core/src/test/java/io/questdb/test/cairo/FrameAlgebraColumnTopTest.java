@@ -76,9 +76,6 @@ public class FrameAlgebraColumnTopTest extends AbstractCairoTest {
         // target the damage would be silent, so this pins the conservative branch with an assertion.
         // The fold has to be the OPPORTUNISTIC (housekeeping) one - a forced SQUASH PARTITIONS flattens
         // the target to plain first, so it never reaches the composite path at all.
-        // ADAPTIVE defers that fold until the next save point moves the durable-epoch pin off the range (a
-        // composite target is never folded by copy), so this pins NOSYNC like O3SquashPartitionTest.
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         setUpSplitLimits();
         assertMemoryLeak(() -> {
             createDaySplitInTwo();

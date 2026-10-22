@@ -283,9 +283,6 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
 
     @Test
     public void testSwapMetaOpenFailureBreaksNextCommit() throws Exception {
-        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
-        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         final AtomicBoolean armed = new AtomicBoolean();
         assertMemoryLeak(metaOpenFailureFacade(armed), () -> {
             createSwapFixture();
@@ -300,9 +297,6 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
 
     @Test
     public void testSwapMetaOpenFailureBreaksNextCommitQueued() throws Exception {
-        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
-        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         final AtomicBoolean armed = new AtomicBoolean();
         assertMemoryLeak(metaOpenFailureFacade(armed), () -> {
             createSwapFixture();
@@ -360,6 +354,8 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
         try (TableReader reader = engine.getReader(tableToken)) {
             Assert.assertFalse(reader.getTxFile().isPartitionComposite(0));
         }
+        // The swapped-out directory waits for the save points that still list it.
+        releaseSavePointHolds("cx");
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-01");
             Assert.assertFalse("swapped-out source directory left behind", configuration.getFilesFacade().exists(path.$()));

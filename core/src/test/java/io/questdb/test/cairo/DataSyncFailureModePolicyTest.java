@@ -275,6 +275,15 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
                         : ""),
                 filesUsing(Pattern.compile("getCommitMode\\(\\)"), null)
         );
+        // TableWriter is on the list for two reads: the enrolment decision in the constructor and CREATE TABLE's
+        // symbol-map files. Every commit, column append and geometry publish inside it takes the writer's own grade
+        // (effectiveCommitMode, applyColumnSyncMode(), getFlushCommitMode()): a table held at SYNC until its first
+        // save point exists must flush its housekeeping commits too, and a replica resolves ADAPTIVE to NOSYNC.
+        Assert.assertEquals(
+                "TableWriter reads the configured commit mode",
+                2,
+                occurrencesIn("TableWriter.java", "configuration.getCommitMode()")
+        );
         // poisonOnDataSyncFailure returns null when the failure is not fatal: each caller is inside a fatal branch.
         final List<String> unguarded = new ArrayList<>();
         for (Path root : sourceRoots()) {
@@ -500,6 +509,24 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
 
     private static boolean hasEnterpriseSources() {
         return sourceRoots().size() > 1;
+    }
+
+    /**
+     * How many non-comment lines of {@code fileName}, under the OSS source root, contain {@code token}.
+     */
+    private static int occurrencesIn(String fileName, String token) throws IOException {
+        int count = 0;
+        try (Stream<Path> files = Files.walk(sourceRoots().get(0))) {
+            for (Path file : (Iterable<Path>) files.filter(p -> p.getFileName().toString().equals(fileName))::iterator) {
+                for (String line : Files.readAllLines(file)) {
+                    final String trimmed = line.trim();
+                    if (!trimmed.startsWith("//") && !trimmed.startsWith("*") && line.contains(token)) {
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
     }
 
     private static String pathToString(LPSZ name) {

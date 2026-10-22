@@ -1843,9 +1843,6 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      */
     @Test
     public void testScanDeletesTheRetiredDirectoryWhileTheWriterStaysLive() throws Exception {
-        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
-        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
@@ -1892,6 +1889,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 Assert.assertFalse("2020-01-01 should have been compacted", reader.getTxFile().isPartitionComposite(0));
             }
             engine.releaseAllReaders();
+            // The retired directory waits for the save points that still list it.
+            releaseSavePointHolds("cx");
             Assert.assertFalse("the retired directory is still on disk", dirExists(ff, retiredDir));
             assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
         });
@@ -2597,9 +2596,6 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      */
     @Test
     public void testScanMergeSurvivesMakePlainTrimmingTheFrontItCopies() throws Exception {
-        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
-        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
@@ -2671,6 +2667,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 try {
                     // Past the decline backoff, a commit elsewhere lets the writer MAKE-PLAIN the front.
                     setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+                    // MAKE-PLAIN shortens the front's files, so it waits for a save point past the front's geometry.
+                    releaseSavePointHolds("x");
                     execute("INSERT INTO x SELECT x::INT + 900_000 i, 'd' s," +
                             " timestamp_sequence('2024-03-20', 60_000_000L) ts FROM long_sequence(2)");
                     drainWalQueue();

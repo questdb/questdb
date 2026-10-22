@@ -31,11 +31,13 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
@@ -1059,6 +1061,29 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.getMemoryTrackerProvider().clear();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+    }
+
+    /**
+     * Lets partition housekeeping that deletes or shortens files (MAKE-PLAIN, a retired geometry generation's
+     * purge, a superseded directory's removal) run now, whatever commit mode the suite runs under. Under
+     * ADAPTIVE those steps wait until no save point names the files, a superseded directory until neither
+     * save-point generation lists it, so this takes two save points on the table and then drains the partition
+     * purge job, which is where an enrolled writer sends a directory it could not remove inline; under every
+     * other mode it does nothing, and the test asserts what master wrote it to assert. Call it before draining
+     * a purge job of your own or asserting that a compaction ran. A fold that only appends needs no save point.
+     */
+    protected static void releaseSavePointHolds(CharSequence tableName) {
+        if (engine.getResolvedCommitMode() != CommitMode.ADAPTIVE) {
+            return;
+        }
+        try (TableWriter writer = getWriter(tableName)) {
+            for (int i = 0; i < 2; i++) {
+                writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+            }
+        }
+        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+            purgeJob.drain(0);
+        }
     }
 
     protected static void replicate(String tableName, String wal, QuestDBTestNode srcNode, QuestDBTestNode dstNode) {

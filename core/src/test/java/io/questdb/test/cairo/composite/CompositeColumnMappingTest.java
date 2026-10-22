@@ -287,9 +287,6 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
      */
     @Test
     public void testPooledReaderAfterMakePlainClampOfEmptyColumn() throws Exception {
-        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
-        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> checkPooledReaderAcrossMakePlainClamp(false));
     }
 
@@ -298,9 +295,6 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
      */
     @Test
     public void testPooledReaderAfterMakePlainClampOfMappedColumn() throws Exception {
-        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
-        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> checkPooledReaderAcrossMakePlainClamp(true));
     }
 
@@ -325,9 +319,6 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
      */
     @Test
     public void testSplitRemovalThenMergeKeepsPinnedReaderRows() throws Exception {
-        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
-        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             enableMergeAppend();
             enableMoveTail();
@@ -341,6 +332,8 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
                 execute("INSERT INTO x SELECT x::INT + 800_000 i, timestamp_sequence('2024-03-0" + (k + 1) + "', 60_000_000L) ts" +
                         " FROM long_sequence(2)");
                 drainWalQueue();
+                // MAKE-PLAIN shortens the front's files, so it waits for a save point past MOVE-TAIL's commit.
+                releaseSavePointHolds("x");
             }
             Assert.assertEquals("fixture: MOVE-TAIL must leave front + one sibling", 2,
                     scalar("SELECT count() FROM table_partitions('x') WHERE name LIKE '2024-01-01%'"));
@@ -717,6 +710,8 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
             execute("INSERT INTO x (i, ts) SELECT x::INT + 800_000 i, timestamp_sequence('2024-03-0" + (k + 1) + "', 60_000_000L) ts" +
                     " FROM long_sequence(2)");
             drainWalQueue();
+            // MAKE-PLAIN shortens the front's files, so it waits for a save point past MOVE-TAIL's commit.
+            releaseSavePointHolds("x");
         }
         Assert.assertEquals("fixture: MOVE-TAIL must leave front + one sibling", 2,
                 scalar("SELECT count() FROM table_partitions('x') WHERE name LIKE '2024-01-01%'"));

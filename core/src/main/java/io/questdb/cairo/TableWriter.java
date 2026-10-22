@@ -224,6 +224,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // next commit can reach JOIN or MOVE-TAIL the moment their shape appears.
     private static final int COMPACTION_SKIPPED_HOT = 5;
     private static final int COMPACTION_SQUASHED = 6;
+    // MAKE-PLAIN was declined only because the durable-epoch pin holds the range it would trim. Distinct from
+    // COMPACTION_NONE because it must NOT earn the decline backoff: the next save point moves the pin, not time,
+    // so the partition stays eligible for the first commit after it.
+    private static final int COMPACTION_WAITING_FOR_SAVE_POINT = 7;
     private static final long IGNORE = -1L;
     // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
     @SuppressWarnings("FieldMayBeFinal")
@@ -496,6 +500,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long lastWalCommitTimestampMicros;
     private LifecycleManager lifecycleManager;
     private long lockFd = -2;
+    // Set by makePartitionPlain() when it declined only because the durable-epoch pin holds the range: the
+    // compaction passes then take no decline backoff, since the next save point is what frees it.
+    private boolean makePlainWaitsForSavePoint;
     private long masterRef = 0L;
     // A flag that during WAL processing o3MemColumns1 or o3MemColumns2 were
     // set to a "shifted" state and the state has to be cleaned.
@@ -4922,7 +4929,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        commitTxWriterAndPublishPendingPostingSealPurges(effectiveCommitMode);
 
         // Drained here rather than parked on partitionRemoveCandidates, which the next commit clears without draining.
         try {
@@ -5083,7 +5090,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        commitTxWriterAndPublishPendingPostingSealPurges(effectiveCommitMode);
 
         // Filled and drained here, the way safeDeletePartitionDir does it for a single directory: a list built
         // before the commit is one the commit may clear without draining.
@@ -7350,7 +7357,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * binary and is refused by an older one) and self-heals on the next commit.
      */
     private void commitTxWithStorageVersionSync() {
-        commitTxWithStorageVersionSync(configuration.getCommitMode());
+        commitTxWithStorageVersionSync(effectiveCommitMode);
     }
 
     private void commitTxWithStorageVersionSync(int commitMode) {
@@ -7595,7 +7602,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        commitTxWriterAndPublishPendingPostingSealPurges(effectiveCommitMode);
         return true;
     }
 
@@ -7664,7 +7671,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                     final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
-                    FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                    FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, txWriter.getTxn() + 1L, applyColumnSyncMode());
                     addPhysicallyWrittenRows(rowCount);
                     compactionWrittenRows += rowCount;
                 }
@@ -7709,11 +7716,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The _txn flag, not the geometry's shape: MAKE-PLAIN's halfway state is one piece at row 0 with E at the
         // live rows, which the geometry reads as plain while _txn still names its record.
         while (txWriter.isPartitionComposite(partitionIndex)) {
-            if (compactPhysicalPartition(partitionIndex, false, true, Long.MIN_VALUE, Long.MAX_VALUE, PartitionCompactionPolicy.REASON_NONE) != COMPACTION_NONE) {
+            final int result = compactPhysicalPartition(partitionIndex, false, true, Long.MIN_VALUE, Long.MAX_VALUE, PartitionCompactionPolicy.REASON_NONE);
+            if (result != COMPACTION_NONE && result != COMPACTION_WAITING_FOR_SAVE_POINT) {
                 continue;
             }
-            // MAKE-PLAIN can decline on a reader still resolving the geometry record; REWRITE copies into
-            // a directory no reader has heard of, so fall back to it rather than fail the caller.
+            // MAKE-PLAIN can decline on a reader still resolving the geometry record, or on the durable-epoch
+            // pin; REWRITE copies into a directory no reader or save point has heard of, so fall back to it
+            // rather than fail the caller.
             if (compactPartition(partitionIndex)) {
                 continue;
             }
@@ -7730,7 +7739,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Compacts ONE partition, reclaiming the dead space a merge-append left in its column files.
      *
      * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL}, {@link
-     * #COMPACTION_MADE_PLAIN} or {@link #COMPACTION_REWRITTEN}
+     * #COMPACTION_MADE_PLAIN}, {@link #COMPACTION_WAITING_FOR_SAVE_POINT}, {@link #COMPACTION_SKIPPED_HOT} or
+     * {@link #COMPACTION_REWRITTEN}
      */
     private int compactPhysicalPartition(int partitionIndex, boolean allowMoveTail, boolean allowRewrite, long futureFloor, long deadlineMicros, int reason) {
         if (txWriter.isPartitionReadOnly(partitionIndex)) {
@@ -7757,7 +7767,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isMakePlainEligible(partitionIndex)) {
             // MAKE-PLAIN reaches REWRITE's result for free on this shape, so it is always its call - even
             // when it is still waiting on a reader, which the caller's decline/backoff handles.
-            return makePartitionPlain(partitionIndex) ? COMPACTION_MADE_PLAIN : COMPACTION_NONE;
+            if (makePartitionPlain(partitionIndex)) {
+                return COMPACTION_MADE_PLAIN;
+            }
+            return makePlainWaitsForSavePoint ? COMPACTION_WAITING_FOR_SAVE_POINT : COMPACTION_NONE;
         }
         if ((reason == PartitionCompactionPolicy.REASON_AGE || reason == PartitionCompactionPolicy.REASON_TABLE_PRESSURE)
                 && squashColdLogicalPartition(partitionIndex, deadlineMicros)) {
@@ -9979,14 +9992,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.getTxn() + 1,
                     getCompositePartitionSeqTxn(),
                     configuration.getMicrosecondClock().getTicks(),
-                    configuration.getCommitMode()
+                    getFlushCommitMode()
             );
             setGeometryRefRetiringGenerations(partitionTs, geometryRef);
         } else {
             geometry.abandonUpdate();
             setGeometryRefRetiringGenerations(partitionTs, NO_GEOMETRY_REF);
         }
-        commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        commitTxWriterAndPublishPendingPostingSealPurges(effectiveCommitMode);
         return true;
     }
 
@@ -11510,7 +11523,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // PARTITION_COMPACTION.md's canMakePlain.
         final long fromTxn = Math.max(0, txWriter.getPartitionNameTxn(partitionIndex));
         final long toTxn = geometry.getWriterTxn(partitionIndex);
-        if (toTxn <= fromTxn || !txnScoreboard.isRangeAvailable(fromTxn, toTxn)) {
+        makePlainWaitsForSavePoint = false;
+        if (toTxn <= fromTxn) {
+            return false;
+        }
+        final int holders = txnScoreboard.scanRangeHolders(fromTxn, toTxn);
+        if (holders != TxnScoreboard.RANGE_FREE) {
+            // TRIM-FILES shortens files a save point may still name, so the durable-epoch pin must leave the range
+            // first; unlike a reader, it leaves at the next save point, not with time, so the caller takes no backoff.
+            makePlainWaitsForSavePoint = (holders & TxnScoreboard.RANGE_HELD_BY_OTHER) == 0;
             return false;
         }
         // MAKE-PLAIN clamps column tops and TRIM-FILES shortens the files: no merge-append frame stays open across it.
@@ -11535,7 +11556,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.getTxn() + 1,
                     getCompositePartitionSeqTxn(),
                     configuration.getMicrosecondClock().getTicks(),
-                    configuration.getCommitMode()
+                    getFlushCommitMode()
             );
             setGeometryRefRetiringGenerations(partitionTs, geometryRef);
             // The partition ends up plain with fewer rows under the same name txn, and later in-place appends
@@ -11550,7 +11571,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnVersionWriter.commit();
                 txWriter.setColumnVersion(columnVersionWriter.getVersion());
             }
-            commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+            commitTxWriterAndPublishPendingPostingSealPurges(effectiveCommitMode);
         }
         // TRIM-FILES needs no reader wait of its own. A reader maps a partition's column files only as far as
         // its highest live piece reaches (TableReader#mappedRowCount), and the check at the top of this method
@@ -11577,7 +11598,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         setGeometryRefRetiringGenerations(partitionTs, NO_GEOMETRY_REF);
-        commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        commitTxWriterAndPublishPendingPostingSealPurges(effectiveCommitMode);
         return true;
     }
 
@@ -11702,7 +11723,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return;
             }
             from = partitionIndex + 1;
-            if (!makePartitionPlain(partitionIndex)) {
+            if (!makePartitionPlain(partitionIndex) && !makePlainWaitsForSavePoint) {
                 partitionCompactionPolicy.onDeclined(txWriter.getPartitionTimestampByIndex(partitionIndex), wallClockMicros);
             }
             if (configuration.getMicrosecondClock().getTicks() > deadline) {
@@ -11932,7 +11953,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                     final long rowOffset = O3CompositeMergeStrategy.getRowOffset(bounds, p);
-                    FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                    FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, txWriter.getTxn() + 1L, applyColumnSyncMode());
                     addPhysicallyWrittenRows(rowCount);
                     compactionWrittenRows += rowCount;
                     written += rowCount;
@@ -11971,7 +11992,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.getTxn() + 1,
                 getCompositePartitionSeqTxn(),
                 configuration.getMicrosecondClock().getTicks(),
-                configuration.getCommitMode()
+                getFlushCommitMode()
         );
         setGeometryRefRetiringGenerations(partitionTs, geometryRef);
 
@@ -12000,7 +12021,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        commitTxWriterAndPublishPendingPostingSealPurges(effectiveCommitMode);
         return COMPACTION_MOVED_TAIL;
     }
 
@@ -15965,7 +15986,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.getTxn() + 1,
                 getCompositePartitionSeqTxn(),
                 configuration.getMicrosecondClock().getTicks(),
-                configuration.getCommitMode()
+                getFlushCommitMode()
         );
         setGeometryRefRetiringGenerations(partitionTs, geometryRef);
     }
@@ -18127,7 +18148,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionCompactionPolicy.onCompacted(partitionTs);
             }
             case COMPACTION_NONE -> partitionCompactionPolicy.onDeclined(partitionTs, wallClockMicros);
-            // COMPACTION_SKIPPED_HOT takes no backoff on purpose - see the constant.
+            // COMPACTION_SKIPPED_HOT and COMPACTION_WAITING_FOR_SAVE_POINT take no backoff on purpose - see the constants.
             default -> {
             }
         }
@@ -18863,6 +18884,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long targetPartition = Long.MIN_VALUE;
         boolean copyTargetFrame = false;
+        boolean targetHeldByEpochOnly = false;
         final PartitionGeometry geometry = getGeometry();
 
         // Move targetPartitionIndex to the first unlocked partition in the range.
@@ -18878,6 +18900,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (canOverwrite || force || (holders & TxnScoreboard.RANGE_HELD_BY_OTHER) == 0) {
                 targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
                 copyTargetFrame = !canOverwrite;
+                targetHeldByEpochOnly = !canOverwrite && (holders & TxnScoreboard.RANGE_HELD_BY_OTHER) == 0;
                 break;
             }
         }
@@ -18929,9 +18952,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (targetIsComposite && copyTargetFrame) {
             // The copy republishes the target under a new name txn, and a name txn is half the key its
             // geometry record is filed under, so the pieces below would be written against a directory the
-            // geometry no longer knows. It would also duplicate the dead space on the way. Leave the fold
-            // to a later pass, once the readers have moved off and the append can go in place.
-            return;
+            // geometry no longer knows. It would also duplicate the dead space on the way.
+            if (!targetHeldByEpochOnly) {
+                // Leave the fold to a later pass, once the readers have moved off and the append can go in
+                // place.
+                return;
+            }
+            // Only the durable-epoch pin holds the target: append in place. That is safe for the save point,
+            // which pins the record, not the files past it: the fold writes past the extent E that record
+            // describes and publishes a new geometry record beside the old one, the state a crash in the
+            // middle of an ordinary merge-append leaves and recovery already reads past. The sources it
+            // empties go through the epoch-aware removal queue like every superseded version. Without this
+            // a composite target under steady writes would never fold: each new save point pins the range again.
+            copyTargetFrame = false;
         }
         long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
         setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
@@ -19179,7 +19212,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.getTxn() + 1,
                             getCompositePartitionSeqTxn(),
                             configuration.getMicrosecondClock().getTicks(),
-                            configuration.getCommitMode()
+                            getFlushCommitMode()
                     );
                     txWriter.updatePartitionSizeByTimestamp(targetPartition, newLiveRows);
                     setGeometryRefRetiringGenerations(targetPartition, targetGeometryRef);
@@ -20182,7 +20215,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.getTxn() + 1,
                 getCompositePartitionSeqTxn(),
                 configuration.getMicrosecondClock().getTicks(),
-                configuration.getCommitMode()
+                getFlushCommitMode()
         );
         setGeometryRefRetiringGenerations(partitionTs, geometryRef);
     }
