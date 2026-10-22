@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -57,7 +58,9 @@ import org.junit.Test;
  * out-of-order corrections, matching a fresh recompute of the plain query throughout.
  * {@link #testBoundedRowsRestoresExactValuesAcrossRestart()} pins the restored values
  * against hand-computed ones, including a frame whose only ring pair is a restored
- * half-NULL pair.
+ * half-NULL pair. {@link #testBoundedRowsContinuesBitExactlyAcrossRestart()} proves on
+ * tick-like data that every row before and after a restart equals the plain query's bit for
+ * bit, which only a restore that carries the five running sums verbatim achieves.
  */
 public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
 
@@ -74,6 +77,17 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
     // Distinct ascending seconds per key per commit. Well above every frame width, so the
     // frames fill and the sealed roots carry a warmed-up ring.
     private static final int ROWS_PER_COMMIT = 40;
+    // Seconds per commit in the bit-exact case.
+    private static final int TICK_COMMIT_SECONDS = 60;
+    // The bit-exact case's frames: the issue's short form (frameIncludesCurrentValue), a lagged
+    // high bound, and EXCLUDE CURRENT ROW, which folds into a high bound one row down. All three
+    // drop a pair from the running sums on every row once full, so the sums carry the rounding
+    // of hundreds of adds and drops by the time the view seals.
+    private static final String[] TICK_FRAMES = {
+            FRAME_ISSUE,
+            "PARTITION BY sym ORDER BY ts ROWS BETWEEN 12 PRECEDING AND 3 PRECEDING",
+            FRAME_EXCLUDED
+    };
 
     @After
     public void resetClock() {
@@ -86,6 +100,55 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
         // checkpoint timeline a restart restores from is deep.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setCurrentMicros(0);
+    }
+
+    @Test
+    public void testBoundedRowsContinuesBitExactlyAcrossRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            createBase();
+            // Tick-like data: prices on a one-cent random walk near 65_000 and 3_100 against
+            // sizes in thousandths. The products and squares leave rounding residue in the five
+            // sums as pairs enter and leave the frame, and the covariance and correlation
+            // formulas subtract nearly equal sums, which amplifies it. A restore that re-summed
+            // the ring instead of taking the carried sums emits different bits from the plain
+            // query here; integer data would hide that, as it sums to the same doubles in every
+            // order.
+            final String projection = tickProjection();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, "
+                    + projection + " FROM fx");
+            final String plain = "(SELECT ts, sym, " + projection + " FROM fx) ORDER BY sym, ts";
+            final String view = "SELECT ts, sym, " + tickColumns() + " FROM lv ORDER BY sym, ts";
+            final Rnd rnd = new Rnd(4242, 42);
+            final double[] prices = {65_000.0, 3_100.0};
+            int second = 0;
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 0; commit < 5; commit++) {
+                    commitTicks(job, rnd, prices, second);
+                    second += TICK_COMMIT_SECONDS;
+                    if (commit == 0) {
+                        driveSeedToCompletion(job, "lv");
+                    }
+                    driveRefreshToQuiescence(job);
+                }
+                assertNoRefreshFaults("lv");
+                assertViewPrintsLikePlain(view, plain);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 0; commit < 3; commit++) {
+                    commitTicks(job, rnd, prices, second);
+                    second += TICK_COMMIT_SECONDS;
+                    driveRefreshToQuiescence(job);
+                }
+                assertRestoredFromTimeline("lv");
+                assertNoRefreshFaults("lv");
+                // The printed form is the shortest text that round-trips a double, so equal text
+                // is equal bits: every row after the restart runs on the carried sums.
+                assertViewPrintsLikePlain(view, plain);
+            }
+        });
     }
 
     @Test
@@ -319,6 +382,32 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
         return sb.toString();
     }
 
+    // Every function over every bit-exact frame, as columns c0 to c8.
+    private static String tickColumns() {
+        final StringBuilder sb = new StringBuilder();
+        for (int i = 0, n = TICK_FRAMES.length * FUNCTIONS.length; i < n; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append('c').append(i);
+        }
+        return sb.toString();
+    }
+
+    private static String tickProjection() {
+        final StringBuilder sb = new StringBuilder();
+        int column = 0;
+        for (String frame : TICK_FRAMES) {
+            for (String fn : FUNCTIONS) {
+                if (column > 0) {
+                    sb.append(", ");
+                }
+                sb.append(fn).append("(px, qty) OVER (").append(frame).append(") AS c").append(column++);
+            }
+        }
+        return sb.toString();
+    }
+
     private static String timestamp(int second) {
         return String.format(
                 "2026-01-%02dT%02d:%02d:%02d.000000Z",
@@ -377,6 +466,18 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
                 true
         );
         assertNoRefreshFaults(viewName);
+    }
+
+    // Prints the plain query and asserts the view prints the same text. Unlike the
+    // assertSqlCursors comparison, which allows a small tolerance on doubles, equal shortest
+    // round-trip text means equal bits.
+    private void assertViewPrintsLikePlain(String viewQuery, String plainQuery) throws Exception {
+        printSql(plainQuery);
+        final String expected = sink.toString();
+        assertQuery(viewQuery)
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertViewsMatchRecompute() throws Exception {
@@ -448,6 +549,36 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
         final String ts = timestamp(second).replace(".000000Z", ".500000Z");
         execute("INSERT INTO fx (ts, sym, px, qty) VALUES ('" + ts + "', '" + sym + "', " + px + ", " + qty + ")");
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
+    // Commits TICK_COMMIT_SECONDS ascending seconds from `firstSecond` of tick-like trades for
+    // 'btc' and 'eth' and gives the refresh job a turn. Each price walks in one-cent steps from
+    // where `prices` left it and each size is a whole number of thousandths, so no value is an
+    // integer. Every eleventh 'btc' second has a NULL price and every thirteenth 'eth' second a
+    // NULL size, which land as half-NaN pairs in the ring.
+    private void commitTicks(LiveViewRefreshJob job, Rnd rnd, double[] prices, int firstSecond) throws Exception {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final StringBuilder sql = new StringBuilder("INSERT INTO fx (ts, sym, px, qty) VALUES ");
+        for (int i = 0; i < TICK_COMMIT_SECONDS; i++) {
+            final int second = firstSecond + i;
+            final String ts = timestamp(second);
+            for (int s = 0; s < 2; s++) {
+                prices[s] += (rnd.nextInt(201) - 100) * 0.01;
+                final double qty = (1 + rnd.nextInt(2_500)) * 0.001;
+                final boolean isPxNull = s == 0 && second % 11 == 5;
+                final boolean isQtyNull = s == 1 && second % 13 == 7;
+                if (i > 0 || s > 0) {
+                    sql.append(", ");
+                }
+                sql.append("('").append(ts).append("', '").append(s == 0 ? "btc" : "eth").append("', ")
+                        .append(isPxNull ? "null" : Double.toString(prices[s])).append(", ")
+                        .append(isQtyNull ? "null" : Double.toString(qty)).append(')');
+            }
+        }
+        execute(sql.toString());
         drainWalQueue();
         drainJob(job);
         drainWalQueue();
