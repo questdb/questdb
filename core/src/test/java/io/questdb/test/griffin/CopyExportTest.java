@@ -326,6 +326,21 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyFusedInnerJoinGroupBySurvivesBuildTableGrowthAfterQueue() throws Exception {
+        assertMemoryLeak(() -> assertCopyOfFusedJoinGroupByAfterBuildTableGrowth("INT", "(x % 5)::INT", "", "fused_inner_growth"));
+    }
+
+    @Test
+    public void testCopyFusedLeftJoinGroupBySurvivesBuildTableGrowthAfterQueue() throws Exception {
+        assertMemoryLeak(() -> assertCopyOfFusedJoinGroupByAfterBuildTableGrowth("INT", "(x % 5)::INT", "LEFT ", "fused_left_growth"));
+    }
+
+    @Test
+    public void testCopyFusedSymbolKeyJoinGroupBySurvivesBuildTableGrowthAfterQueue() throws Exception {
+        assertMemoryLeak(() -> assertCopyOfFusedJoinGroupByAfterBuildTableGrowth("SYMBOL", "('k' || (x % 5))::SYMBOL", "", "fused_symbol_growth"));
+    }
+
+    @Test
     public void testCopyOptionError() throws Exception {
         assertQuery("copy test_table to 'test_table'  with format parquet1;")
                 .fails(45, "unsupported format, only 'parquet' is supported");
@@ -4416,6 +4431,58 @@ public class CopyExportTest extends AbstractCairoTest {
 
     private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test) throws Exception {
         testCopyExport(statement, test, true, 1);
+    }
+
+    private void assertCopyOfFusedJoinGroupByAfterBuildTableGrowth(
+            String keyType,
+            String keyExpr,
+            String joinType,
+            String fileName
+    ) throws Exception {
+        // f holds 10 rows and d holds 5, so the fused GROUP BY builds d and presizes its key table
+        // by d's rows. COPY compiles the SELECT when it queues the export, and the export job runs
+        // that factory later with no way to compile it again. The callback grows d to 21 rows,
+        // past twice f's rows, after the export is queued and before it starts.
+        execute("CREATE TABLE f (k " + keyType + ", v LONG)");
+        execute("CREATE TABLE d (k " + keyType + ", g SYMBOL)");
+        execute("INSERT INTO f SELECT " + keyExpr + ", x FROM long_sequence(10)");
+        final String insertIntoD = "INSERT INTO d SELECT " + keyExpr + ", ('g' || (x % 2))::SYMBOL FROM long_sequence(";
+        execute(insertIntoD + "5)");
+        final String selectSql = "SELECT d.g, sum(f.v) FROM f " + joinType + "JOIN d ON f.k = d.k GROUP BY d.g";
+        assertQuery(selectSql)
+                .noLeakCheck()
+                .assertsPlanContaining("Async Hash Join Group By", "inputSwapped: false");
+
+        final String expected = """
+                g\tsum
+                g0\t106
+                g1\t121
+                """;
+        CopyExportRunnable statement = () -> runAndFetchCopyExportID(
+                "COPY (" + selectSql + ") TO '" + fileName + "' WITH FORMAT PARQUET",
+                sqlExecutionContext
+        );
+        Callable<Exception> callback = () -> {
+            execute(insertIntoD + "16)");
+            return null;
+        };
+        CopyExportRunnable test = () -> assertEventually(() -> {
+            assertQuery("SELECT num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("num_exported_files\tstatus\n1\tfinished\n");
+            assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + fileName + ".parquet') ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+        });
+        testCopyExport(statement, test, callback);
+
+        // A new compile of the same SELECT returns the rows that the export wrote.
+        assertQuery(selectSql + " ORDER BY g")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
