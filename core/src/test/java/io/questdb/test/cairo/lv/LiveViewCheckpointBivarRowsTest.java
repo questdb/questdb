@@ -54,8 +54,11 @@ import org.junit.Test;
  * <p>
  * {@link #testBoundedRowsFramesDeclareWholeStateCheckpoint()} pins the disposition per
  * function and frame shape. {@link #testBoundedRowsSurvivesRestartAndRepair()} proves the
- * image round-trips: the views restore from the timeline after a restart and localize
- * out-of-order corrections, matching a fresh recompute of the plain query throughout.
+ * image round-trips: the views restore from the timeline after a restart, and an
+ * out-of-order correction resumes each of them from a sealed root, matching a fresh
+ * recompute of the plain query throughout. The class declines frame-local state, so no
+ * correction takes the localized rebuild: its warm-up would re-sum the frame and drift from
+ * the plain query's running sums past the contract's floating ceiling.
  * {@link #testBoundedRowsRestoresExactValuesAcrossRestart()} pins the restored values
  * against hand-computed ones, including a frame whose only ring pair is a restored
  * half-NULL pair. {@link #testBoundedRowsContinuesBitExactlyAcrossRestart()} proves on
@@ -330,12 +333,12 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
                 commitOutOfOrderHalfSecond(job, 57, "a", "4242", "17");
                 driveRefreshToQuiescence(job);
                 assertViewsMatchRecompute();
-                assertRepairLocalized();
+                assertRepairResumedFromRoot();
 
                 commitOutOfOrderHalfSecond(job, 133, "b", "1500", "null");
                 driveRefreshToQuiescence(job);
                 assertViewsMatchRecompute();
-                assertRepairLocalized();
+                assertRepairResumedFromRoot();
             }
         });
     }
@@ -418,26 +421,25 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
         );
     }
 
-    private void assertRepairLocalized() {
+    private void assertRepairResumedFromRoot() {
         for (String view : new String[]{"lv_cur", "lv_lag", "lv_excl", "lv1"}) {
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(view);
             Assert.assertNotNull(view, instance);
-            // The frame-local claim is what gives the view a ROWS repair plan, and the plan
-            // is what bounds the repair below by the frame's warm-up rather than rebuilding
-            // the whole view from its START FROM boundary. Either localized executor will do:
-            // a rebuild that read only [L, H) or a resume from a sealed root below the change.
-            Assert.assertEquals(view, LiveViewInstance.REPAIR_PLAN_ROWS, instance.getCheckpointRepairDependencyPlans());
+            // The function declines frame-local state, so the view has no ROWS repair plan and
+            // the late row cannot take the localized rebuild, whose warm-up would re-sum the
+            // frame. It resumes from the sealed root below the change instead, restoring the
+            // whole-state image the root carries and replaying forward from it.
+            Assert.assertEquals(view, LiveViewInstance.REPAIR_PLAN_NONE, instance.getCheckpointRepairDependencyPlans());
             final int denial = instance.getCheckpointRepairLastDenialReason();
-            final String disposition = LiveViewCheckpointRepairPlan.dispositionName(
-                    instance.getCheckpointRepairLastDisposition(),
-                    denial
+            Assert.assertEquals(
+                    view + " must lose the localized plan to the declined frame-local claim",
+                    "incomplete dependency",
+                    LiveViewCheckpointRepairPlan.denialReasonName(denial)
             );
-            Assert.assertNotNull(view + " must have run a repair", disposition);
-            Assert.assertNotEquals(
-                    view + " must localize the repair [denial="
-                            + LiveViewCheckpointRepairPlan.denialReasonName(denial) + ']',
-                    "boundary rebuild",
-                    disposition
+            Assert.assertEquals(
+                    view + " must resume from a sealed root",
+                    "resume from anchor",
+                    LiveViewCheckpointRepairPlan.dispositionName(instance.getCheckpointRepairLastDisposition(), denial)
             );
         }
     }
@@ -498,12 +500,15 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
         );
         // The image carries the frame's ring, so its width is not fixed.
         Assert.assertEquals(label, -1, compiled.fixedStateLength);
-        Assert.assertTrue(label + " must declare frame-local state", compiled.hasFrameLocalCheckpointState);
+        // A warm-up from the frame's lower edge would re-sum the running sums, and the
+        // formula's cancellation would carry the difference past the floating ceiling, so the
+        // class declines the frame-local claim and every repair it takes is exact.
+        Assert.assertFalse(label + " must decline frame-local state", compiled.hasFrameLocalCheckpointState);
         final LiveViewCheckpointDependency dependency = compiled.dependency;
         Assert.assertNotNull(label, dependency);
         Assert.assertTrue(label, dependency.isFiniteRows());
-        Assert.assertTrue(label, dependency.hasFrameLocalState());
-        Assert.assertEquals(label, NumericConvergence.FLOATING_TOLERANCE, dependency.getNumericConvergence());
+        Assert.assertFalse(label, dependency.hasFrameLocalState());
+        Assert.assertEquals(label, NumericConvergence.EXACT, dependency.getNumericConvergence());
     }
 
     // Commits ROWS_PER_COMMIT ascending seconds and gives the refresh job a turn. Each second
@@ -511,9 +516,7 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
     // plus a run of NULL px for 'b' longer than every frame, put half- and fully-NaN pairs in
     // the ring and drive the finite count to zero across the freeze/restore round trip. Both
     // sides are small integers, so the five sums stay exact in double whatever order a frame
-    // adds and drops pairs; that keeps the exact recompute comparison valid after a
-    // warm-up-localized repair, which otherwise reaches the same value only up to
-    // floating-point rounding.
+    // adds and drops pairs.
     private void commitDense(LiveViewRefreshJob job, int commit) throws Exception {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
         final StringBuilder sql = new StringBuilder("INSERT INTO fx (ts, sym, px, qty) VALUES ");

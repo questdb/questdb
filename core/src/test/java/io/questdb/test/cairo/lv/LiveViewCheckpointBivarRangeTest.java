@@ -35,7 +35,6 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
-import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
@@ -78,10 +77,13 @@ import org.junit.Test;
  * {@link #testBoundedRangeFramesDeclareRingCheckpoint()} pins the disposition per function
  * and frame shape. {@link #testBoundedRangeSurvivesRestartAndRepair()} proves the durable
  * ring round-trips: the views restore from the timeline after a restart, share chunk pages
- * across roots, and survive out-of-order corrections; the last one resumes every view from
- * a sealed root, so the repair itself restores the ring. {@link
- * #testBoundedRangeRepairCopiesStateAsideWithoutIsolatedRuntime()} drives the in-RAM form
- * through the repair's copy-aside overlay. {@link
+ * across roots, and survive out-of-order corrections, each of which resumes every view from
+ * a sealed root, so the repair itself restores the ring. The class declines frame-local
+ * state, so no correction takes the localized rebuild, whose warm-up would re-sum the frame
+ * and drift from the plain query's running sums past the contract's floating ceiling. {@link
+ * #testBoundedRangeRepairResumesOnPrimaryWithoutIsolatedRuntime()} pins that a correction
+ * whose influence converges still resumes on the primary runtime rather than copying its
+ * state aside, which leaves the in-RAM form to the direct restore case. {@link
  * #testBoundedRangeRestoresExactValuesAcrossRestart()} pins restored values against
  * hand-computed ones, including a ring that restores a pair the frame has not reached yet.
  * {@link #testBoundedRangeContinuesBitExactlyAcrossRestartAndRepair()} proves on tick-like
@@ -97,10 +99,10 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
 
     private static final String CLASS_NAME = "BivarStatOverPartitionRangeFrameFunction";
     private static final int COMMITS = 6;
-    // Commits the copy-aside case lays down before its correction: enough history above
-    // DEEP_SECOND_A that every narrow frame's influence stops short of the head, which is what
-    // makes its repair converge.
-    private static final int COPY_ASIDE_COMMITS = 9;
+    // Commits the primary-runtime case lays down before its correction: enough history above
+    // DEEP_SECOND_A that every narrow frame's influence stops short of the head, so the repair
+    // would converge, and copy its state aside, if the class claimed frame-local state.
+    private static final int PRIMARY_RUNTIME_COMMITS = 9;
     // Where the deep corrections land: above the widest frame's width, so no frame's reach
     // runs down into the views' START FROM floor, and below the restart's head.
     private static final int DEEP_SECOND_A = 217;
@@ -228,12 +230,11 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
                 // is equal bits: every row after the restart runs on the carried sums.
                 assertViewPrintsLikePlain(view, plain);
 
-                // A short tail, then a late row just above the root sealed below it. Replaying
-                // the tail from that root reads fewer base rows than rebuilding the widest
-                // frame's reach, so the repair resumes from the root and restores every
-                // partition's ring from the timeline before it replays. That root holds the
-                // state forward processing reached, so the repaired rows match the plain query
-                // bit for bit as well.
+                // A short tail, then a late row just above the root sealed below it. The class
+                // declines the localized rebuild, so the repair resumes from that root and
+                // restores every partition's ring from the timeline before it replays. That root
+                // holds the state forward processing reached, so the repaired rows match the
+                // plain query bit for bit as well.
                 final int tailSecond = second;
                 commitTicks(job, rnd, prices, second, TAIL_ROWS);
                 second += TAIL_ROWS;
@@ -327,45 +328,37 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBoundedRangeRepairCopiesStateAsideWithoutIsolatedRuntime() throws Exception {
-        // With the isolated repair runtime declined, a repair whose influence converges below
-        // the frontier replays on the primary runtime and copies every partition's state aside
-        // first, through the in-RAM freezeCheckpointState / restoreCheckpointState pair. A
-        // one-row replay budget parks the repair after the copy, which is what lets the test
-        // see it was taken. The narrow frames are the ones whose localized rebuild beats a
-        // resume from the root below the change; the wide one resumes instead, through the
-        // durable ring, which testBoundedRangeSurvivesRestartAndRepair covers.
+    public void testBoundedRangeRepairResumesOnPrimaryWithoutIsolatedRuntime() throws Exception {
+        // With the isolated repair runtime declined, a localized repair whose influence
+        // converges below the frontier replays on the primary runtime after copying every
+        // partition's state aside. The narrow frames' influence converges here, but the class
+        // declines frame-local state, so the view has no localized plan: the correction resumes
+        // from the root below it on the primary runtime, restoring the durable ring, and
+        // nothing is copied aside or replayed in an isolated runtime.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "false");
         assertMemoryLeak(() -> {
             createBase();
             createViews(NARROW_VIEWS);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int commit = 1; commit <= COPY_ASIDE_COMMITS; commit++) {
+                for (int commit = 1; commit <= PRIMARY_RUNTIME_COMMITS; commit++) {
                     commitDense(job, commit);
                 }
                 driveRefreshToQuiescence(job);
                 assertViewsMatchRecompute(NARROW_VIEWS);
 
-                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
-                commitOutOfOrderHalfSecond(null, DEEP_SECOND_A, "a", "4242", "17");
+                commitOutOfOrderHalfSecond(job, DEEP_SECOND_A, "a", "4242", "17");
+                driveRefreshToQuiescence(job);
                 for (String view : NARROW_VIEWS) {
                     final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(view);
                     Assert.assertNotNull(view, instance);
-                    driveUntilRepairParks(job, instance);
-                    final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
-                    Assert.assertTrue(
-                            view + ": a converging repair on the primary must have copied its state aside",
-                            parked.getOverlay().isCaptured()
-                    );
+                    Assert.assertNull(view + ": the repair must not build an isolated runtime", instance.getRepairRuntime());
                 }
-                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000);
-                driveRefreshToQuiescence(job);
                 assertViewsMatchRecompute(NARROW_VIEWS);
-                assertRepairLocalized(NARROW_VIEWS);
+                assertRepairResumedFromRoot(NARROW_VIEWS);
 
-                // The forward drain after the repair runs on whatever the copy-aside put back,
-                // so a state image that lost a pair or a sum shows up here.
-                for (int commit = COPY_ASIDE_COMMITS + 1; commit <= COPY_ASIDE_COMMITS + 2; commit++) {
+                // The forward drain after the repair runs on the state the resume restored, so a
+                // ring that lost a pair or a sum shows up here.
+                for (int commit = PRIMARY_RUNTIME_COMMITS + 1; commit <= PRIMARY_RUNTIME_COMMITS + 2; commit++) {
                     commitDense(job, commit);
                 }
                 driveRefreshToQuiescence(job);
@@ -641,17 +634,16 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
                 commitOutOfOrderHalfSecond(job, DEEP_SECOND_A, "a", "4242", "17");
                 driveRefreshToQuiescence(job);
                 assertViewsMatchRecompute(VIEWS);
-                assertRepairLocalized(VIEWS);
+                assertRepairResumedFromRoot(VIEWS);
 
                 commitOutOfOrderHalfSecond(job, DEEP_SECOND_B, "b", "1500", "null");
                 driveRefreshToQuiescence(job);
                 assertViewsMatchRecompute(VIEWS);
-                assertRepairLocalized(VIEWS);
+                assertRepairResumedFromRoot(VIEWS);
 
-                // A short tail, then a correction just above the root sealed below it: replaying
-                // the tail from that root reads fewer base rows than rebuilding the frame's
-                // reach, so the repair resumes from the root, restoring every partition's ring
-                // from the timeline before it replays.
+                // A short tail, then a correction just above the root sealed below it, which the
+                // repair resumes from, restoring every partition's ring from the timeline before
+                // it replays.
                 final int tailSecond = (COMMITS + 3) * ROWS_PER_COMMIT;
                 commitSeconds(job, tailSecond, TAIL_ROWS);
                 driveRefreshToQuiescence(job);
@@ -793,25 +785,25 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
         );
     }
 
-    private void assertRepairLocalized(String[] views) {
+    private void assertRepairResumedFromRoot(String[] views) {
         for (String view : views) {
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(view);
             Assert.assertNotNull(view, instance);
-            // The frame-local claim is what gives the view a RANGE repair plan, and the plan
-            // is what bounds the repair below by the frame's width rather than rebuilding the
-            // whole view from its START FROM boundary.
-            Assert.assertEquals(view, LiveViewInstance.REPAIR_PLAN_RANGE, instance.getCheckpointRepairDependencyPlans());
+            // The function declines frame-local state, so the view has no RANGE repair plan and
+            // the correction cannot take the localized rebuild, whose warm-up would re-sum the
+            // frame. It resumes from the sealed root below the change instead, restoring the
+            // durable ring and the sums it carries.
+            Assert.assertEquals(view, LiveViewInstance.REPAIR_PLAN_NONE, instance.getCheckpointRepairDependencyPlans());
             final int denial = instance.getCheckpointRepairLastDenialReason();
-            final String disposition = LiveViewCheckpointRepairPlan.dispositionName(
-                    instance.getCheckpointRepairLastDisposition(),
-                    denial
+            Assert.assertEquals(
+                    view + " must lose the localized plan to the declined frame-local claim",
+                    "incomplete dependency",
+                    LiveViewCheckpointRepairPlan.denialReasonName(denial)
             );
-            Assert.assertNotNull(view + " must have run a repair", disposition);
-            Assert.assertNotEquals(
-                    view + " must localize the repair [denial="
-                            + LiveViewCheckpointRepairPlan.denialReasonName(denial) + ']',
-                    "boundary rebuild",
-                    disposition
+            Assert.assertEquals(
+                    view + " must resume from a sealed root",
+                    "resume from anchor",
+                    LiveViewCheckpointRepairPlan.dispositionName(instance.getCheckpointRepairLastDisposition(), denial)
             );
         }
     }
@@ -835,12 +827,15 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
         Assert.assertTrue(label + " must expose its ring arena", compiled.hasRingArena);
         // A ring-shaped function never declares a fixed image width.
         Assert.assertEquals(label, -1, compiled.fixedStateLength);
-        Assert.assertTrue(label + " must declare frame-local state", compiled.hasFrameLocalCheckpointState);
+        // A warm-up from the frame's lower edge would re-sum the running sums, and the
+        // formula's cancellation would carry the difference past the floating ceiling, so the
+        // class declines the frame-local claim and every repair it takes is exact.
+        Assert.assertFalse(label + " must decline frame-local state", compiled.hasFrameLocalCheckpointState);
         final LiveViewCheckpointDependency dependency = compiled.dependency;
         Assert.assertNotNull(label, dependency);
         Assert.assertTrue(label, dependency.isFiniteRange());
-        Assert.assertTrue(label, dependency.hasFrameLocalState());
-        Assert.assertEquals(label, NumericConvergence.FLOATING_TOLERANCE, dependency.getNumericConvergence());
+        Assert.assertFalse(label, dependency.hasFrameLocalState());
+        Assert.assertEquals(label, NumericConvergence.EXACT, dependency.getNumericConvergence());
     }
 
     private void assertSomeSegmentShared(String viewName) {
@@ -924,9 +919,7 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
     // than the one-minute frame, keep half- and fully-NULL pairs out of the ring and drive the
     // finite count to zero across a seal. Both sides are integers whose squares and products
     // sum well under 2^53, so the five sums stay exact in double whatever order a frame adds
-    // and drops pairs. That keeps the exact recompute comparison valid after a localized
-    // repair, which re-accumulates the sums from the frame's lower edge and otherwise reaches
-    // the same value only up to floating-point rounding. Restores carry the sums, which
+    // and drops pairs. Restores carry the sums, which
     // testBoundedRangeContinuesBitExactlyAcrossRestartAndRepair pins on non-integer data.
     private void commitDense(LiveViewRefreshJob job, int commit) throws Exception {
         commitSeconds(job, (commit - 1) * ROWS_PER_COMMIT, ROWS_PER_COMMIT);
@@ -1015,18 +1008,6 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW " + view + " FLUSH EVERY 100ms START FROM NOW AS SELECT ts, sym, "
                     + ("lv_issue".equals(view) ? ISSUE_PROJECTION : projection(frameOf(view))) + " FROM fx");
         }
-    }
-
-    private void driveUntilRepairParks(LiveViewRefreshJob job, LiveViewInstance instance) {
-        for (int pass = 0; pass < 64; pass++) {
-            if (instance.getSuspendedRepair() != null) {
-                return;
-            }
-            if (!job.processNotificationsForTest()) {
-                break;
-            }
-        }
-        Assert.assertNotNull("the repair never parked on its turn budget", instance.getSuspendedRepair());
     }
 
     private LiveViewCheckpointMetaStore openStore(LiveViewInstance instance) {

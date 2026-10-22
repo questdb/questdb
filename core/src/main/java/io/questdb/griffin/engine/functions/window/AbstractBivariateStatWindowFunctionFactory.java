@@ -934,7 +934,9 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
          * The durable checkpoint uses the chunked ring form
          * {@link #freezeCheckpointRingState(LiveViewCheckpointRingStateSink, MapValue)} instead,
          * which shares pages across roots. Both carry the same words, so a state-layout change
-         * must move both together.
+         * must move both together. Only a converging localized repair copies state aside, and
+         * {@link #hasFrameLocalCheckpointState()} declines that repair, so no production path
+         * reaches this form today; it stays in step for the snapshot contract.
          */
         @Override
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
@@ -1001,13 +1003,17 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
         @Override
         public boolean hasFrameLocalCheckpointState() {
-            // With a bounded frame start the ring holds the frame's own pairs, plus those a
-            // trailing frame end has not reached yet, and the five sums and the count accumulate
-            // over exactly the in-frame prefix. Replaying from the frame's lower edge rebuilds
-            // all of it; the replayed sums skip the rounding the expired pairs left behind, which
-            // the contract allows: the values emitted are the same, up to the documented
-            // floating drift.
-            return true;
+            // Declined on numeric grounds, although the ring holds the whole frame. A replay from
+            // the frame's lower edge rebuilds the five sums from the frame alone, without the
+            // rounding the expired pairs left in the running sums. computeResultNaive() subtracts
+            // nearly equal terms (sumXY - sumX * sumY / n, and both variances for corr), which
+            // scales that difference by mean^2 / variance: on tick-like prices the replayed
+            // output drifts from the whole-history output well past
+            // LiveViewCheckpointContracts.FLOATING_RELATIVE_TOLERANCE, and no fixed ceiling
+            // bounds it. Without the claim a late row resumes from a sealed root, whose sums the
+            // ring codec carries verbatim, or rebuilds from the view's boundary; both re-emit the
+            // plain query's bits.
+            return false;
         }
 
         @Override
@@ -1511,12 +1517,17 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
         @Override
         public boolean hasFrameLocalCheckpointState() {
-            // The ring holds the frame's own N (x, y) pairs and the five sums plus the count
-            // accumulate over exactly those, so a warm-up of N predecessors reconstructs the
-            // state. The replayed ring starts at a different rotation and the replayed sums
-            // skip the rounding the dropped rows left behind, which the contract allows: the
-            // values emitted are the same, up to the documented floating drift.
-            return true;
+            // Declined on numeric grounds, although the ring holds the frame's own N (x, y)
+            // pairs. A warm-up of N predecessors rebuilds the five sums from the frame alone,
+            // without the rounding the dropped rows left in the running sums.
+            // computeResultNaive() subtracts nearly equal terms (sumXY - sumX * sumY / n, and both
+            // variances for corr), which scales that difference by mean^2 / variance: on
+            // tick-like prices the replayed output drifts from the whole-history output well
+            // past LiveViewCheckpointContracts.FLOATING_RELATIVE_TOLERANCE, and no fixed ceiling
+            // bounds it. Without the claim a late row resumes from a sealed root, whose sums the
+            // whole-state image carries verbatim, or rebuilds from the view's boundary; both
+            // re-emit the plain query's bits.
+            return false;
         }
 
         @Override

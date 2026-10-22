@@ -1125,24 +1125,18 @@ public final class LiveViewCheckpointFunctionCompiler {
 
     private static NumericConvergence numericConvergence(WindowFunction function) {
         // Floating accumulators may leave a sub-ULP difference after a localized replay; the same
-        // functions over DECIMAL are exact. The stddev/variance family re-accumulates a floating
-        // (sum, sumSq) pair over a bounded frame, so it carries the same tolerance, and so does
-        // the covariance/correlation family with its five floating sums.
+        // functions over DECIMAL are exact. The stddev/variance and covariance/correlation
+        // families stay EXACT: their formulas subtract nearly equal running sums, which would
+        // amplify that difference past the contract's ceiling, so their bounded frames decline
+        // frame-local state and no localized replay reaches them. Every repair they take starts
+        // from state the plain query also holds - a sealed root carried verbatim, an anchor's
+        // reset or the view's boundary - and re-emits the same bits.
         final CharSequence name = function.getName();
         return ColumnType.tagOf(function.getType()) == ColumnType.DOUBLE
                 && (Chars.equalsIgnoreCase(name, "avg")
                 || Chars.equalsIgnoreCase(name, "sum")
                 || Chars.equalsIgnoreCase(name, "ksum")
-                || Chars.equalsIgnoreCase(name, "nsum")
-                || Chars.equalsIgnoreCase(name, "stddev")
-                || Chars.equalsIgnoreCase(name, "stddev_samp")
-                || Chars.equalsIgnoreCase(name, "stddev_pop")
-                || Chars.equalsIgnoreCase(name, "variance")
-                || Chars.equalsIgnoreCase(name, "var_samp")
-                || Chars.equalsIgnoreCase(name, "var_pop")
-                || Chars.equalsIgnoreCase(name, "covar_samp")
-                || Chars.equalsIgnoreCase(name, "covar_pop")
-                || Chars.equalsIgnoreCase(name, "corr"))
+                || Chars.equalsIgnoreCase(name, "nsum"))
                 ? NumericConvergence.FLOATING_TOLERANCE
                 : NumericConvergence.EXACT;
     }

@@ -58,13 +58,20 @@ import org.junit.Test;
  * sums lose the add/drop rounding history the plain query's sliding sums carry. The contract
  * caps what that may cost: approved floating outputs after a localized replay stay within
  * {@link LiveViewCheckpointContracts#FLOATING_RELATIVE_TOLERANCE} of a fresh recompute. The
- * {@code ...LocalizedRepairStaysWithinFloatingCeiling...} cases pin that bound row by row on
- * tick-like data, with {@code avg} (and {@code ksum} over RANGE) on the same frames as
- * controls, on both repair runtimes: the isolated one, and the primary one that copies its
- * state aside first.
- * Pathological data stays out of those cases: after an extreme value leaves a sliding frame
- * the plain query's own sums stay corrupted, so any re-accumulation departs from it, the
- * released {@code avg} included.
+ * stddev/variance and covariance/correlation formulas subtract nearly equal sums, which
+ * scales that difference by mean^2 / variance: on this class's tick-like prices a warm-up
+ * drifted from the plain query by as much as 1.5e-4 relative, and no fixed ceiling bounds it
+ * in general. Their bounded frames therefore decline frame-local state, and a late row
+ * resumes the view from a sealed root, whose carried sums re-emit the plain query's bits.
+ * <p>
+ * The {@code ...LocalizedRepairStaysWithinFloatingCeiling...} cases pin both halves on the
+ * same tick-like data and the same deep late row, on both repair runtimes: the isolated one,
+ * and the primary one that copies its state aside first. A control view of {@code avg} (and
+ * {@code ksum} over RANGE) takes the localized rebuild and stays within the ceiling row by
+ * row. A view that adds the four cancelling functions loses the localized plan, resumes from
+ * a sealed root, and prints exactly what the plain query prints. Pathological data stays out
+ * of those cases: after an extreme value leaves a sliding frame the plain query's own sums
+ * stay corrupted, so any re-accumulation departs from it, the released {@code avg} included.
  */
 public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
 
@@ -73,12 +80,14 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
             "PARTITION BY sym ORDER BY ts RANGE BETWEEN '20' SECOND PRECEDING AND CURRENT ROW",
             "PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND '3' SECOND PRECEDING"
     };
+    // The RANGE control view's functions: formulas that do not subtract nearly equal sums, so
+    // they keep frame-local state and the localized rebuild.
+    private static final String[] RANGE_CONTROL_FUNCTIONS = {"avg(px)", "ksum(px)"};
     // Where the RANGE case's late row lands: 50 seconds below the head of five 60-second
     // commits, deep enough that rebuilding the frame's reach reads fewer rows than resuming
     // from a sealed root and replaying everything above it.
     private static final int RANGE_LATE_SECOND = 250;
-    // Two controls whose formulas do not subtract nearly equal sums, then the four functions
-    // whose formulas do.
+    // The controls, then the four functions whose formulas subtract nearly equal sums.
     private static final String[] RANGE_REPAIR_FUNCTIONS = {
             "avg(px)", "ksum(px)", "stddev_samp(px)", "var_pop(px)", "covar_samp(px, qty)", "corr(px, qty)"
     };
@@ -87,9 +96,10 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
             "PARTITION BY sym ORDER BY ts ROWS 19 PRECEDING",
             "PARTITION BY sym ORDER BY ts ROWS BETWEEN 12 PRECEDING AND 3 PRECEDING"
     };
-    // ksum over a bounded ROWS frame declares no frame-local state, so it would deny the view
-    // a ROWS repair plan and turn the repair into a resume from a sealed root; avg is the
-    // sole control here.
+    // ksum over a bounded ROWS frame declares no frame-local state, so it would deny the
+    // control view its ROWS repair plan; avg is the sole control here.
+    private static final String[] ROWS_CONTROL_FUNCTIONS = {"avg(px)"};
+    // The control, then the four functions whose formulas subtract nearly equal sums.
     private static final String[] ROWS_REPAIR_FUNCTIONS = {
             "avg(px)", "stddev_samp(px)", "var_pop(px)", "covar_samp(px, qty)", "corr(px, qty)"
     };
@@ -112,12 +122,12 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
 
     @Test
     public void testRangeLocalizedRepairStaysWithinFloatingCeiling() throws Exception {
-        assertLocalizedRepairStaysWithinFloatingCeiling(RANGE_FRAMES, RANGE_REPAIR_FUNCTIONS, RANGE_LATE_SECOND, false);
+        assertLocalizedRepairStaysWithinFloatingCeiling(RANGE_FRAMES, RANGE_REPAIR_FUNCTIONS, RANGE_CONTROL_FUNCTIONS, RANGE_LATE_SECOND, false);
     }
 
     @Test
     public void testRangeLocalizedRepairStaysWithinFloatingCeilingWithoutIsolatedRuntime() throws Exception {
-        assertLocalizedRepairStaysWithinFloatingCeiling(RANGE_FRAMES, RANGE_REPAIR_FUNCTIONS, RANGE_LATE_SECOND, true);
+        assertLocalizedRepairStaysWithinFloatingCeiling(RANGE_FRAMES, RANGE_REPAIR_FUNCTIONS, RANGE_CONTROL_FUNCTIONS, RANGE_LATE_SECOND, true);
     }
 
     @Test
@@ -210,12 +220,12 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
 
     @Test
     public void testRowsLocalizedRepairStaysWithinFloatingCeiling() throws Exception {
-        assertLocalizedRepairStaysWithinFloatingCeiling(ROWS_FRAMES, ROWS_REPAIR_FUNCTIONS, ROWS_LATE_SECOND, false);
+        assertLocalizedRepairStaysWithinFloatingCeiling(ROWS_FRAMES, ROWS_REPAIR_FUNCTIONS, ROWS_CONTROL_FUNCTIONS, ROWS_LATE_SECOND, false);
     }
 
     @Test
     public void testRowsLocalizedRepairStaysWithinFloatingCeilingWithoutIsolatedRuntime() throws Exception {
-        assertLocalizedRepairStaysWithinFloatingCeiling(ROWS_FRAMES, ROWS_REPAIR_FUNCTIONS, ROWS_LATE_SECOND, true);
+        assertLocalizedRepairStaysWithinFloatingCeiling(ROWS_FRAMES, ROWS_REPAIR_FUNCTIONS, ROWS_CONTROL_FUNCTIONS, ROWS_LATE_SECOND, true);
     }
 
     // Each function over each frame, as columns named <function>_w<frame index>.
@@ -332,16 +342,21 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
         }
     }
 
-    // Lays down five 60-second commits of tick-like data under a view of every repair function
-    // over both frames, checks forward processing is bit-exact, then commits one late row deep
-    // below the head. The repair must take the localized rebuild, whose warm-up re-accumulates
-    // the frame, and after two more in-order commits every output must sit within the
-    // contract's floating ceiling of the plain query. With the isolated runtime declined, the
-    // repair replays on the primary runtime after copying every partition's state aside; a
-    // one-row replay budget parks it after the copy, which is what proves that route ran.
+    // Lays down five 60-second commits of tick-like data under two views over the same frames:
+    // `lv` carries every repair function and `lv_ctl` only the controls. Checks forward
+    // processing is bit-exact, then commits one late row deep below the head. The control view
+    // must take the localized rebuild, whose warm-up re-accumulates the frame, and after two
+    // more in-order commits every output must sit within the contract's floating ceiling of
+    // the plain query. The cancelling functions decline frame-local state, so `lv` must lose
+    // the localized plan, resume from a sealed root and print exactly what the plain query
+    // prints. With the isolated runtime declined, the control view's repair replays on the
+    // primary runtime after copying every partition's state aside; a one-row replay budget
+    // parks it after the copy, which is what proves that route ran, while `lv` resumes on the
+    // primary runtime without one.
     private void assertLocalizedRepairStaysWithinFloatingCeiling(
             String[] frames,
             String[] functions,
+            String[] controlFunctions,
             int lateSecond,
             boolean isCopyAside
     ) throws Exception {
@@ -351,10 +366,16 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
         final String projection = repairProjection(frames, functions);
         final String plain = "(SELECT ts, sym, " + projection + " FROM fx) ORDER BY sym, ts";
         final String view = "SELECT ts, sym, " + repairColumns(frames, functions) + " FROM lv ORDER BY sym, ts";
+        final String controlProjection = repairProjection(frames, controlFunctions);
+        final String controlPlain = "(SELECT ts, sym, " + controlProjection + " FROM fx) ORDER BY sym, ts";
+        final String controlView = "SELECT ts, sym, " + repairColumns(frames, controlFunctions)
+                + " FROM lv_ctl ORDER BY sym, ts";
         assertMemoryLeak(() -> {
             createBase();
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, "
                     + projection + " FROM fx");
+            execute("CREATE LIVE VIEW lv_ctl FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, "
+                    + controlProjection + " FROM fx");
             final Rnd rnd = new Rnd(42, 4242);
             final double[] prices = {65_000.0, 3_100.0};
             int second = 0;
@@ -364,50 +385,76 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
                     second += TICK_COMMIT_SECONDS;
                     if (c == 0) {
                         driveSeedToCompletion(job, "lv");
+                        driveSeedToCompletion(job, "lv_ctl");
                     }
                     driveRefreshToQuiescence(job);
                 }
                 assertNoRefreshFaults("lv");
+                assertNoRefreshFaults("lv_ctl");
                 // Forward processing runs the same sliding sums as the plain query, so up to the
-                // repair the view matches it bit for bit. Whatever drifts below comes from the
+                // repair both views match it bit for bit. Whatever drifts below comes from the
                 // repair.
                 assertViewPrintsLikePlain(view, plain);
+                assertViewPrintsLikePlain(controlView, controlPlain);
 
                 final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(instance);
+                final LiveViewInstance controlInstance = engine.getLiveViewRegistry().getViewInstance("lv_ctl");
+                Assert.assertNotNull(controlInstance);
                 if (isCopyAside) {
                     setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
                     commitLateRow(null, lateSecond);
-                    driveUntilParked(job, "lv");
+                    driveUntilParked(job, "lv_ctl");
                     Assert.assertTrue(
                             "a converging repair on the primary runtime must have copied its state aside",
-                            instance.getSuspendedRepair().getOverlay().isCaptured()
+                            controlInstance.getSuspendedRepair().getOverlay().isCaptured()
                     );
                     setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000);
                 } else {
                     commitLateRow(job, lateSecond);
                 }
                 driveRefreshToQuiescence(job);
+                final int controlDenial = controlInstance.getCheckpointRepairLastDenialReason();
+                Assert.assertEquals(
+                        "the control view's late row must take the localized rebuild, whose warm-up re-accumulates the frame [denial="
+                                + LiveViewCheckpointRepairPlan.denialReasonName(controlDenial) + ']',
+                        "localized rebuild",
+                        LiveViewCheckpointRepairPlan.dispositionName(controlInstance.getCheckpointRepairLastDisposition(), controlDenial)
+                );
+                // The cancelling functions decline frame-local state, which leaves the view
+                // without a localized plan, so the late row resumes from the root sealed below it.
                 final int denial = instance.getCheckpointRepairLastDenialReason();
                 Assert.assertEquals(
-                        "the late row must take the localized rebuild, whose warm-up re-accumulates the frame [denial="
-                                + LiveViewCheckpointRepairPlan.denialReasonName(denial) + ']',
-                        "localized rebuild",
+                        "the cancelling functions must deny the view its localized plan",
+                        "incomplete dependency",
+                        LiveViewCheckpointRepairPlan.denialReasonName(denial)
+                );
+                Assert.assertEquals(
+                        "the late row must resume the view from a sealed root",
+                        "resume from anchor",
                         LiveViewCheckpointRepairPlan.dispositionName(instance.getCheckpointRepairLastDisposition(), denial)
                 );
+                if (isCopyAside) {
+                    Assert.assertNull("the resume must run on the primary runtime", instance.getRepairRuntime());
+                }
 
-                // In-order commits keep running on the state the repair left behind.
+                // In-order commits keep running on the state the repairs left behind.
                 for (int c = 0; c < 2; c++) {
                     commitTicks(job, rnd, prices, second);
                     second += TICK_COMMIT_SECONDS;
                     driveRefreshToQuiescence(job);
                 }
-                assertNoRefreshFaults("lv");
-                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .returns("view_status\nactive\n");
-                assertAllRowsWithinFloatingCeiling(view, plain);
+                for (String name : new String[]{"lv", "lv_ctl"}) {
+                    assertNoRefreshFaults(name);
+                    assertQuery("SELECT view_status FROM live_views() WHERE view_name = '" + name + "'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("view_status\nactive\n");
+                }
+                assertAllRowsWithinFloatingCeiling(controlView, controlPlain);
+                // Equal shortest round-trip text is equal bits: the resumed view carries the
+                // plain query's rounding history through the repair and after it.
+                assertViewPrintsLikePlain(view, plain);
             }
         });
     }

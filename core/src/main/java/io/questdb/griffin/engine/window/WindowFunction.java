@@ -647,6 +647,14 @@ public interface WindowFunction extends Function {
      * produce the same values from the output floor onward, which is what the contract
      * asks for.
      * <p>
+     * A floating accumulator's warm-up re-sums the extent without the add/drop rounding the
+     * whole-history running sums carry, so its values match only up to
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointContracts#FLOATING_RELATIVE_TOLERANCE}.
+     * A function whose formula subtracts nearly equal running sums - the bounded-frame
+     * {@code stddev}/{@code variance} and {@code covar_*}/{@code corr} - scales that
+     * difference past any fixed ceiling, so it answers {@code false} even though its frame
+     * holds every row its state needs.
+     * <p>
      * Default {@code false} fails closed: a function is enabled here only once its state
      * is proven to converge, one function and type at a time.
      */
