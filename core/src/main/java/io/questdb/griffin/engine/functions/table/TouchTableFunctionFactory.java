@@ -25,27 +25,33 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameTouch;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.table.AsyncFilterAtom;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 
@@ -79,9 +85,9 @@ public class TouchTableFunctionFactory implements FunctionFactory {
     }
 
     private static class TouchTableFunc extends StrFunction implements UnaryFunction {
-        private static final Log LOG = LogFactory.getLog(TouchTableFunc.class);
-
         private final Function arg;
+        private final IntIntHashMap parquetColumnIds = new IntIntHashMap();
+        private final IntHashSet selectedParquetColumns = new IntHashSet();
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private long dataPages = 0;
@@ -144,52 +150,84 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                     .put(indexValuePages).put("}");
         }
 
-        private long touchMemory(long pageSize, long baseAddress, long memorySize) {
-            if (baseAddress == 0) {
-                return 0;
+        private void prepareParquetColumns(PageFrameCursor cursor, ParquetDecoder decoder, DirectIntList columns) {
+            columns.clear();
+            parquetColumnIds.clear();
+            selectedParquetColumns.clear();
+            for (int i = 0, n = decoder.getColumnCount(); i < n; i++) {
+                parquetColumnIds.put(decoder.getColumnId(i), i);
             }
-            final long pageCount = (memorySize + pageSize - 1) / pageSize;
-
-            for (long i = 0; i < pageCount; i++) {
-                final byte v = Unsafe.getByte(baseAddress + i * pageSize);
-                // Use the same blackhole as in async offload's column pre-touch.
-                AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.add(v);
+            final ColumnMapping mapping = cursor.getColumnMapping();
+            for (int i = 0, n = mapping.getColumnCount(); i < n; i++) {
+                int column = parquetColumnIds.get(mapping.getWriterIndex(i));
+                if (column < 0 && mapping.getOriginalWriterIndex(i) >= 0) {
+                    column = parquetColumnIds.get(mapping.getOriginalWriterIndex(i));
+                }
+                if (column >= 0 && selectedParquetColumns.add(column)) {
+                    columns.add(column);
+                    columns.add(decoder.getColumnType(column));
+                }
             }
-
-            return pageCount;
         }
 
         private void touchTable() {
             clearCounters();
-            final long pageSize = Files.PAGE_SIZE;
+            final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+            final MemoryTracker tracker = sqlExecutionContext.getMemoryTracker();
+            final long trackerAddr = tracker == null ? 0 : tracker.nativeAddress();
             // factory belongs to the function, do not close
             final RecordCursorFactory recordCursorFactory = arg.getRecordCursorFactory();
+            DirectIntList parquetColumns = null;
             try (PageFrameCursor pageFrameCursor = recordCursorFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                int previousPartition = -1;
+                int previousRowGroup = -1;
                 PageFrame frame;
                 RecordMetadata metadata = recordCursorFactory.getMetadata();
                 while ((frame = pageFrameCursor.next()) != null) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    final boolean isParquet = frame.getFormat() == PartitionFormat.PARQUET;
+                    if (isParquet) {
+                        if (parquetColumns == null) {
+                            parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
+                        }
+                        final ParquetDecoder decoder = frame.getParquetDecoder();
+                        if (frame.getPartitionIndex() != previousPartition) {
+                            prepareParquetColumns(pageFrameCursor, decoder, parquetColumns);
+                            previousPartition = frame.getPartitionIndex();
+                            previousRowGroup = -1;
+                        }
+                        if (frame.getParquetRowGroup() != previousRowGroup) {
+                            dataPages += decoder.touchRowGroup(parquetColumns, frame.getParquetRowGroup(), circuitBreaker, trackerAddr);
+                            previousRowGroup = frame.getParquetRowGroup();
+                        }
+                    }
                     for (int columnIndex = 0, sz = metadata.getColumnCount(); columnIndex < sz; columnIndex++) {
+                        // Parquet frames have no native pages, but their bitmap indexes are local files.
+                        if (!isParquet) {
+                            final long columnMemorySize = frame.getPageSize(columnIndex);
+                            final long columnBaseAddress = frame.getPageAddress(columnIndex);
+                            dataPages += PageFrameTouch.touchMemory(columnBaseAddress, columnMemorySize, circuitBreaker);
 
-                        final long columnMemorySize = frame.getPageSize(columnIndex);
-                        final long columnBaseAddress = frame.getPageAddress(columnIndex);
-                        dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
+                            dataPages += PageFrameTouch.touchMemory(frame.getAuxPageAddress(columnIndex), frame.getAuxPageSize(columnIndex), circuitBreaker);
+                        }
 
                         if (metadata.isColumnIndexed(columnIndex)) {
                             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
 
                             final long keyBaseAddress = indexReader.getKeyBaseAddress();
                             final long keyMemorySize = indexReader.getKeyMemorySize();
-                            indexKeyPages += touchMemory(pageSize, keyBaseAddress, keyMemorySize);
+                            indexKeyPages += PageFrameTouch.touchMemory(keyBaseAddress, keyMemorySize, circuitBreaker);
 
                             final long valueBaseAddress = indexReader.getValueBaseAddress();
                             final long valueMemorySize = indexReader.getValueMemorySize();
-                            indexValuePages += touchMemory(pageSize, valueBaseAddress, valueMemorySize);
+                            indexValuePages += PageFrameTouch.touchMemory(valueBaseAddress, valueMemorySize, circuitBreaker);
                         }
                     }
                 }
             } catch (SqlException e) {
-                // do not propagate
-                LOG.error().$("cannot acquire page frame cursor: ").$((Sinkable) e).$();
+                throw CairoException.nonCritical().put("cannot acquire page frame cursor during TOUCH: ").put(e.getFlyweightMessage());
+            } finally {
+                Misc.free(parquetColumns);
             }
         }
     }
