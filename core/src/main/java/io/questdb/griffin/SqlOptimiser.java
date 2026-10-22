@@ -14643,7 +14643,8 @@ public class SqlOptimiser implements Mutable {
         final ObjList<IQueryModel> joinModels = baseModel.getJoinModels();
         int index = -1;
         if (dot == -1) {
-            if (innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(literal) && !groupByCall) {
+            if (innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(literal) && !groupByCall
+                    && columnNotExistsInJoinModels(baseModel, literal)) {
                 // For now, most places ignore the return values, except one - adding missing table prefixes in group-by
                 // cases. We do not yet support projection reference in group-by. When we do, we will need to deal with
                 // -1 there.

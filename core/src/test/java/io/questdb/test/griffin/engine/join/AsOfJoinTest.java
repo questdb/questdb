@@ -117,6 +117,60 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinAmbiguousBareColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE t (sym SYMBOL, val DOUBLE, ts #TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE q (sym SYMBOL, val DOUBLE, ts #TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // `val` exists on both sides of the join; a bare reference must
+            // fail with Ambiguous column, not crash the code generator.
+            assertExceptionNoLeakCheck(
+                    "SELECT q.val, val FROM t ASOF JOIN q ON (sym)",
+                    14,
+                    "Ambiguous column [name=val]"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "SELECT q.val, val FROM t JOIN q ON (sym)",
+                    14,
+                    "Ambiguous column [name=val]"
+            );
+        });
+    }
+
+    @Test
+    public void testSameNameAndAliasReferencesStillResolve() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE)");
+            execute("INSERT INTO t VALUES (10.0)");
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE q (sym SYMBOL, val DOUBLE, ts #TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+            // unambiguous bare reuse of the same table's column still works
+            assertQuery("SELECT t.val, val FROM t")
+                    .expectSize()
+                    .returns("val\tval1\n10.0\t10.0\n");
+            // genuine projection reference: v exists only as an alias
+            assertQuery("SELECT val AS v, v FROM t")
+                    .expectSize()
+                    .returns("v\tv1\n10.0\t10.0\n");
+        });
+    }
+
+    @Test
     public void testAsOfJoinCombinedWithInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table t1 as (select x as id, cast(x as #TIMESTAMP) ts from long_sequence(5)) timestamp(ts) partition by day;", leftTableTimestampType.getTypeName());
