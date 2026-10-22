@@ -28,7 +28,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 
 /**
- * Used for partition squashing in {@link io.questdb.cairo.TableWriter}.
+ * Frame-level algebra: whole partitions and pieces in, bytes appended at a target's tail.
+ * <p>
+ * Used for partition squashing in {@link io.questdb.cairo.TableWriter}, and for writing COMPOSITE
+ * partitions, where the two operations map onto the two actions that write anything: a NEW_PIECE is
+ * {@link #append} of the incoming rows, and a MERGE is {@link #merge} of a piece with the rows landing
+ * inside it. A KEEP writes nothing at all, which is why it has no operation here.
  */
 public class FrameAlgebra {
 
@@ -46,19 +51,50 @@ public class FrameAlgebra {
      */
     public static void append(Frame target, Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode) {
         if (sourceLo < sourceHi) {
-            for (int i = 0, n = source.columnCount(); i < n; i++) {
-                try (
-                        FrameColumn sourceColumn = source.createColumn(i);
-                        FrameColumn targetColumn = target.createColumn(i)
-                ) {
-                    if (sourceColumn.getColumnType() >= 0) {
-                        targetColumn.setUpcomingTableTxn(upcomingTableTxn);
-                        append(targetColumn, target.getRowCount(), sourceColumn, sourceLo, sourceHi, commitMode);
-                        target.saveChanges(targetColumn);
-                    }
-                }
-            }
+            target.appendColumns(source, sourceLo, sourceHi, upcomingTableTxn, commitMode);
+            // Every column of this append has reported, so the join point is here: the sink applies
+            // whatever the per-column reports staged. See ColumnTopSink#commitColumnTops.
+            target.commitColumnTops();
             target.setRowCount(target.getRowCount() + (sourceHi - sourceLo));
+        }
+    }
+
+    /**
+     * Appends the MERGE of two frames to {@code target}'s tail, interleaved by {@code mergeIndexAddr}.
+     *
+     * @param mergeIndexAddr native address of the merge index over {@code [source1Lo, source1Hi)} and {@code
+     *                       [source2Lo, source2Hi)}
+     */
+    public static void merge(
+            Frame target,
+            Frame source1,
+            long source1Lo,
+            long source1Hi,
+            Frame source2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            long upcomingTableTxn,
+            int commitMode
+    ) {
+        // The caller passes the index's OWN length rather than letting this derive it from the two source ranges.
+        assert mergeIndexRows <= (source1Hi - source1Lo) + (source2Hi - source2Lo);
+        if (mergeIndexRows > 0) {
+            target.mergeColumns(
+                    source1,
+                    source1Lo,
+                    source1Hi,
+                    source2,
+                    source2Lo,
+                    source2Hi,
+                    mergeIndexAddr,
+                    mergeIndexRows,
+                    upcomingTableTxn,
+                    commitMode
+            );
+            target.commitColumnTops();
+            target.setRowCount(target.getRowCount() + mergeIndexRows);
         }
     }
 
@@ -121,7 +157,16 @@ public class FrameAlgebra {
         }
     }
 
-    private static void append(FrameColumn targetColumn, long targetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
+    /**
+     * One column's share of {@link #append}, which is what a frame runs per column task.
+     *
+     * @param targetRowCount     the target's physical extent {@code E}: the file row this append writes at
+     * @param targetLiveRowCount how many of those rows are LIVE. Equal to {@code targetRowCount} for a PLAIN
+     *                           target; smaller for a COMPOSITE one, whose pieces have moved off part of its
+     *                           extent. A column top describes a flat run from row 0, so it can only stand in
+     *                           for the source's leading NULLs while the two agree - see below.
+     */
+    public static void appendColumn(FrameColumn targetColumn, long targetRowCount, long targetLiveRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         int columnType = sourceColumn.getColumnType();
         if (columnType != targetColumn.getColumnType()) {
             throw new UnsupportedOperationException();
@@ -131,7 +176,11 @@ public class FrameAlgebra {
         final long nullPaddingRowCount = Math.max(0, Math.min(sourceColumnTop, sourceHi) - sourceLo);
         if (nullPaddingRowCount > 0) {
             long targetColTop = targetColumn.getColumnTop();
-            if (targetColTop == targetRowCount) {
+            // Two conditions, one per number: the target column reaches this append with no data of its own
+            // (its top runs all the way to E), and every row below E is live. A COMPOSITE target fails the
+            // second - the dead rows its pieces moved off sit between row 0 and E - and a top pushed past
+            // them would claim to describe rows that are not this run's NULLs.
+            if (targetColTop == targetRowCount && targetRowCount == targetLiveRowCount) {
                 // Increase target column top
                 targetColumn.addTop(nullPaddingRowCount);
             } else {

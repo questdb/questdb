@@ -63,6 +63,7 @@ import org.junit.Test;
 
 public class HorizonJoinTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(HorizonJoinTest.class);
+    private final boolean isCompositePartitionEnabled;
     private final TestTimestampType leftTableTimestampType;
     private final boolean parallelHorizonJoinEnabled;
     private final TestTimestampType rightTableTimestampType;
@@ -72,6 +73,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
         this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
         this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
         this.parallelHorizonJoinEnabled = rnd.nextBoolean();
+        this.isCompositePartitionEnabled = rnd.nextBoolean();
     }
 
     @Override
@@ -79,6 +81,9 @@ public class HorizonJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(parallelHorizonJoinEnabled));
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
+        if (isCompositePartitionEnabled) {
+            enableCompositePartitionRandomisation();
+        }
     }
 
     @Test
@@ -1863,7 +1868,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             final int workerCount = 4;
             WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
                         sqlExecutionContext.setParallelHorizonJoinEnabled(true);
@@ -1877,6 +1882,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                         """,
                                 sqlExecutionContext
                         );
+                        // Drain quotes before copying it: with composite randomisation on, tables are WAL.
+                        randomiseCompositePartitions(engine, sqlExecutionContext);
                         engine.execute("CREATE TABLE bids AS (SELECT * FROM quotes) TIMESTAMP(ts) PARTITION BY HOUR", sqlExecutionContext);
                         engine.execute("CREATE TABLE asks AS (SELECT sym, bid + 1 ask, ts FROM quotes) TIMESTAMP(ts) PARTITION BY HOUR", sqlExecutionContext);
                         engine.execute(
@@ -1889,6 +1896,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                         """,
                                 sqlExecutionContext
                         );
+                        randomiseCompositePartitions(engine, sqlExecutionContext);
 
                         assertQuery("""
                                 SELECT t.sym, count() c, count(q.bid) m, sum(abs(q.bid - t.price)) d
@@ -1952,9 +1960,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                         m\td\te
                                         10000\t0.0\t0.0
                                         """);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -3019,7 +3025,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             final int workerCount = 4;
             WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
                         String symbolGen = "rnd_symbol_zipf(1000, 2.0)";
@@ -3077,6 +3083,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         );
 
                         // HORIZON JOIN query with RANGE -600s to 600s step 1s (1201 offsets)
+                        randomiseCompositePartitions(engine, sqlExecutionContext);
+
                         final String sql = """
                                 SELECT
                                     h.offset / 1000000 AS sec_offs,
@@ -3102,9 +3110,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         engine.print(sql, result, sqlExecutionContext);
                         // Verify we got results (1201 offset values)
                         TestUtils.assertContains(result, "sec_offs");
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -3364,11 +3370,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testHorizonJoinRightFilterCursorClose() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 16 * 1024 * 1024L);
-            TestUtils.execute(null, (engine, _, context) -> {
+            executeWithPool(null, (engine, _, context) -> {
                 engine.execute("CREATE TABLE trades (ts TIMESTAMP) TIMESTAMP(ts)", context);
                 engine.execute("CREATE TABLE quotes (ts TIMESTAMP, stamp STRING, price DOUBLE) TIMESTAMP(ts)", context);
                 engine.execute("INSERT INTO trades VALUES ('2000-01-01T00:00:02Z')", context);
                 engine.execute("INSERT INTO quotes VALUES ('2000-01-01T00:00:00Z', '2000-01-01', 10.0), ('2000-01-01T00:00:01Z', '2000-01-02', 999.0)", context);
+                randomiseCompositePartitions(engine, context);
                 for (boolean isParallel : new boolean[]{false, true}) {
                     context.setParallelHorizonJoinEnabled(isParallel);
                     for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
@@ -3399,7 +3406,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         }
                     }
                 }
-            }, configuration, LOG);
+            });
         });
     }
 
@@ -3499,7 +3506,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 16);
             setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 16);
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(pool, (engine, _, context) -> {
+            executeWithPool(pool, (engine, _, context) -> {
                 // Every 'B' quote fails the filter, so 'B' trades never match in any master frame.
                 engine.execute("""
                         CREATE TABLE trades AS (
@@ -3517,6 +3524,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             FROM long_sequence(512)
                         ) TIMESTAMP(ts)
                         """, context);
+                randomiseCompositePartitions(engine, context);
                 for (boolean isParallel : new boolean[]{false, true}) {
                     context.setParallelHorizonJoinEnabled(isParallel);
                     for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
@@ -3546,7 +3554,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         }
                     }
                 }
-            }, configuration, LOG);
+            });
         });
     }
 
@@ -3558,7 +3566,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 16);
             setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 16);
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(pool, (engine, _, context) -> {
+            executeWithPool(pool, (engine, _, context) -> {
                 // 'B' quotes pass the filter only in the second half, so 'B' trades miss
                 // in the early master frames and must match in the later ones, in a
                 // later quotes partition than the recorded misses.
@@ -3578,6 +3586,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             FROM long_sequence(512)
                         ) TIMESTAMP(ts) PARTITION BY HOUR
                         """, context);
+                randomiseCompositePartitions(engine, context);
                 for (boolean isParallel : new boolean[]{false, true}) {
                     context.setParallelHorizonJoinEnabled(isParallel);
                     for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
@@ -3606,7 +3615,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         }
                     }
                 }
-            }, configuration, LOG);
+            });
         });
     }
 
@@ -3795,7 +3804,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 1);
             setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 0);
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(pool, (engine, _, context) -> {
+            executeWithPool(pool, (engine, _, context) -> {
                 engine.execute("CREATE TABLE trades AS (SELECT (x % 3)::SYMBOL sym, "
                         + "timestamp_sequence('2000-01-01'::TIMESTAMP, 21_600_000_000L) ts "
                         + "FROM long_sequence(512)) TIMESTAMP(ts) PARTITION BY DAY", context);
@@ -3803,10 +3812,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         + "CASE WHEN x <= 3 THEN 'pass' ELSE 'reject' END::VARCHAR tag, "
                         + "timestamp_sequence('2000-01-01'::TIMESTAMP, 3_600_000_000L) ts "
                         + "FROM long_sequence(4_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
+                // The shifted copies below read trades, so its WAL must be applied first.
+                randomiseCompositePartitions(engine, context);
                 for (int offset = -1; offset <= 1; offset++) {
                     engine.execute("CREATE TABLE shifted" + (offset + 1) + " AS (SELECT sym, dateadd('h', "
                             + offset + ", ts) ts FROM trades) TIMESTAMP(ts)", context);
                 }
+                randomiseCompositePartitions(engine, context);
                 for (boolean isParallel : new boolean[]{false, true}) {
                     context.setParallelHorizonJoinEnabled(isParallel);
                     for (boolean hasJoinKeys : new boolean[]{false, true}) {
@@ -3845,7 +3857,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         }
                     }
                 }
-            }, configuration, LOG);
+            });
         });
     }
 
@@ -3910,12 +3922,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 16);
             setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 16);
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(pool, (engine, _, context) -> {
+            executeWithPool(pool, (engine, _, context) -> {
                 context.setParallelHorizonJoinEnabled(true);
                 engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2000-01-01T00:00:02Z'::TIMESTAMP, 1) ts "
                         + "FROM long_sequence(256)) TIMESTAMP(ts)", context);
                 engine.execute("CREATE TABLE quotes (ts TIMESTAMP, stamp STRING, price DOUBLE) TIMESTAMP(ts)", context);
                 engine.execute("INSERT INTO quotes VALUES ('2000-01-01T00:00:00Z', '2000-01-01', 10.0), ('2000-01-01T00:00:01Z', '2000-01-02', 999.0)", context);
+                randomiseCompositePartitions(engine, context);
                 for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
                     for (boolean hasGroupKeys : new boolean[]{false, true}) {
                         final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "") + "avg(q.price) FROM trades t "
@@ -3942,7 +3955,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         }
                     }
                 }
-            }, configuration, LOG);
+            });
         });
     }
 

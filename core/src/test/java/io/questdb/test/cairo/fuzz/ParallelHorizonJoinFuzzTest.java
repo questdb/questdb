@@ -26,6 +26,7 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -38,6 +39,7 @@ import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFac
 import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -500,6 +502,8 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         } finally {
                             isWriterDone.set(true);
                             Path.clearThreadLocals();
+                            // Applying WAL on this thread builds the O3 job's carrier-local contexts.
+                            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                             haltLatch.countDown();
                         }
                     }).start();
