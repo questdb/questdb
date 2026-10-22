@@ -58,6 +58,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean allocate(long fd, long allocatedSize, long size) {
+        return Files.allocate(fd, allocatedSize, size);
+    }
+
+    @Override
     public boolean allocateRange(long fd, long offset, long size) {
         return Files.allocateRange(fd, offset, size);
     }

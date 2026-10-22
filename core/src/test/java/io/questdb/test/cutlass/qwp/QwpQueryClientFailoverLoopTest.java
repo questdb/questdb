@@ -286,7 +286,7 @@ public class QwpQueryClientFailoverLoopTest extends AbstractQwpBootstrapTest {
         // the Fake401Server (UNKNOWN, priority 2) over HTTP_PORT
         // (TRANSPORT_ERROR, priority 4). The Fake401 then returns 401,
         // walkTracker rethrows, execute() catches and surfaces a clean
-        // "auth failure during failover reconnect" message.
+        // "auth-rejected during failover reconnect" message.
         TestUtils.assertMemoryLeak(() -> {
             TestServerMain serverMain = startFragmented();
             boolean serverMainClosed = false;
@@ -313,11 +313,12 @@ public class QwpQueryClientFailoverLoopTest extends AbstractQwpBootstrapTest {
 
                     Assert.assertNotNull("onError must fire", h.lastMessage);
                     String msg = h.lastMessage;
-                    // Spec-mandated wording: distinct from generic
-                    // "failover reconnect failed" so monitoring can pull
-                    // out auth incidents specifically.
+                    // Spec-mandated wording: names the auth-rejected failure
+                    // class and stays distinct from the generic "failover
+                    // reconnect failed", so monitoring can pull out auth
+                    // incidents specifically.
                     Assert.assertTrue("auth-failure path message expected: " + msg,
-                            msg.contains("auth failure during failover reconnect")
+                            msg.contains("auth-rejected during failover reconnect")
                                     && msg.contains("status=401"));
                     Assert.assertEquals("no failover-reset must have fired", 0,
                             h.failoverResetCount);

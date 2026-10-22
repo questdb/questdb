@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.WriterInvariantChecker;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
@@ -88,6 +89,25 @@ public class AbstractTest {
     private static volatile String testThreadName;
     @Rule
     public final TestName testName = new TestName();
+    /**
+     * Fails the test on any writer invariant violation (debug.cairo.writer.invariant.check.enabled) reported while it
+     * ran. A rule rather than a tearDown() assertion: it wraps every @Before and @After, so it also sees violations
+     * reported while a subclass's tearDown closes its writers, and failing here skips none of that cleanup. Covers
+     * tests that do not run inside assertMemoryLeak, whose LeakCheck does the same.
+     */
+    @Rule
+    public final TestRule writerInvariantCheck = (base, _) -> new Statement() {
+        @Override
+        public void evaluate() throws Throwable {
+            final long violationsBefore = WriterInvariantChecker.getViolationCount();
+            base.evaluate();
+            final long violations = WriterInvariantChecker.getViolationCount() - violationsBefore;
+            if (violations > 0) {
+                Assert.fail("writer invariant violated " + violations + " time(s), last: "
+                        + WriterInvariantChecker.getLastViolation());
+            }
+        }
+    };
 
     @BeforeClass
     public static void setUpStatic() throws Exception {

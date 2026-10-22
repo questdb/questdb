@@ -124,6 +124,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     public void testDedupCountNotInflatedBySkippedReplaceRange() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 1);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
             execute("CREATE TABLE wa_dedup (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
             engine.getRecentWriteTracker().clear();
 
@@ -858,6 +859,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     public void testWriteAmpNotInflatedBySkippedReplaceRange() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 1);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
             execute("CREATE TABLE wa_skip (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
             engine.getRecentWriteTracker().clear();
 
@@ -934,6 +936,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     public void testWriteAmpNotInflatedBySkippedTruncate() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 1);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
             execute("CREATE TABLE wa_truncate_skip (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             TableToken tt = engine.verifyTableName("wa_truncate_skip");

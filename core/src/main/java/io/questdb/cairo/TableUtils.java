@@ -94,8 +94,9 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
-import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
+import static io.questdb.tasks.TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP;
+import static io.questdb.tasks.TableWriterTask.CMD_PARQUET_PARTITION_SWAP;
 import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
 import static io.questdb.tasks.TableWriterTask.getCommandName;
 
@@ -109,6 +110,11 @@ public final class TableUtils {
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    /**
+     * Marks a composite-partition REWRITE built off a {@link io.questdb.cairo.TableReader} snapshot, staged next to the
+     * source directory before the writer has agreed to swap it in - see {@code PartitionCompactionScanJob}.
+     */
+    public static final String COMPACTING_DIR_MARKER = ".compacting";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     // A DETACH's temporary name, <partition>.<txn of its commit>.detaching, until the commit is final.
@@ -127,6 +133,12 @@ public final class TableUtils {
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
+    /**
+     * Marks a whole LOGICAL partition's merge - every folder of one period, the main directory and all its splits,
+     * copied into one - staged next to the source directories before the writer has agreed to swap it in. Named
+     * {@code <logicalPartition>.<firstFolderNameTxn>.merging<folderCount>}; see {@code PartitionCompactionScanJob}.
+     */
+    public static final String MERGING_DIR_MARKER = ".merging";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -152,6 +164,7 @@ public final class TableUtils {
     public static final String PARQUET_METADATA_STAGING_FILE_NAME = "_pm.staging";
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String PARQUET_PARTITION_STAGING_NAME = "data.parquet.staging";
+    public static final String PARTITION_GEOMETRY_FILE_NAME = "_geometry";
     public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -208,9 +221,15 @@ public final class TableUtils {
     public static final long TX_BASE_OFFSET_A_32 = TX_BASE_OFFSET_VERSION_64 + 8;
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 = TX_BASE_OFFSET_A_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 + 4;
+    // geometryVersion moved into the per-slot base-header padding when the record-body checksum claimed
+    // bytes [116,128). The txn-derived stamp distinguishes this layout from files written by older binaries.
+    public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_A_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4;
+    public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32 = TX_BASE_OFFSET_GEOMETRY_VERSION_A_32 + 4;
     public static final long TX_BASE_OFFSET_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4 + TX_BASE_HEADER_SECTION_PADDING;
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
+    public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4;
+    public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32 = TX_BASE_OFFSET_GEOMETRY_VERSION_B_32 + 4;
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final long TX_OFFSET_TXN_64 = 0;
@@ -229,36 +248,25 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
-    // Body checksum over the fields only a commit changes (see calculateTxnBodyChecksum). It takes 8 of the
-    // 12 bytes between the last lag field (ends at 116) and TX_OFFSET_MAP_WRITER_COUNT_32 (128), which
-    // released versions leave unused. The stamp decides presence: with a matching stamp, a zero checksum
-    // is a torn write.
-    public static final long TX_OFFSET_BODY_CHECKSUM_64 = 116;
-    // Keeps a stamp from matching a small count. Released binaries never wrote the stamp's gap, and their
-    // allocator places an area over the bytes of older, larger records, so a released record's gap can hold
-    // a stale count equal to its txn. Flipping the top bit makes that match need a count of 2^31 or more.
-    public static final int TX_BODY_CHECKSUM_STAMP_XOR = 0x8000_0000;
-    // The low 32 bits of the txn XOR TX_BODY_CHECKSUM_STAMP_XOR, in the remaining gap bytes [124,128). The
-    // stamp names the record a checksum belongs to: a stamp naming another txn means the slot holds leftover
-    // bytes and the record reads as unverified, while a stamp naming this record makes a zero or wrong
-    // checksum a torn write. The stamp lies outside the checksummed range, and released versions neither
-    // read nor write it.
-    public static final long TX_OFFSET_BODY_CHECKSUM_STAMP_32 = 124;
+    // Legacy location used by binaries that introduced composite geometry before body checksums. A merged writer
+    // stores geometryVersion in the per-slot base-header padding and uses this range for checksum data instead.
+    public static final long TX_OFFSET_GEOMETRY_VERSION_32 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_BODY_CHECKSUM_64 = TX_OFFSET_GEOMETRY_VERSION_32;
+    public static final long TX_OFFSET_BODY_CHECKSUM_STAMP_32 = TX_OFFSET_BODY_CHECKSUM_64 + Long.BYTES;
+    // The pre-geometry adaptive branch used the legacy XOR. New records use a distinct stamp so a missing
+    // base-header geometry slot is detectable rather than being mistaken for a pre-merge record.
+    public static final int TX_BODY_CHECKSUM_LEGACY_STAMP_XOR = 0x8000_0000;
+    public static final int TX_BODY_CHECKSUM_STAMP_XOR = 0xA13F_7C29;
+    public static final int TX_GEOMETRY_VERSION_STAMP_XOR = 0x4745_4F4D;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
+    // Magic of the 16-byte checksum trailer after each _cv area; spells " CVCHKSM" little-endian.
+    public static final long CV_CHECKSUM_MAGIC = 0x4D534B4843564320L;
+    public static final int CV_CHECKSUM_TRAILER_SIZE = 2 * Long.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     public static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
-    // Magic of the 16-byte checksum trailer after each _cv area, at [offset + size, offset + size + 16): this
-    // magic, then the area checksum. A reader verifies an area only when the file holds the trailer and it
-    // starts with the magic. A zero sentinel cannot mark absence: a _cv file written by a released version is
-    // page-rounded and packs its areas back to back, so the bytes after an area often hold another area's
-    // data. OFFSET_SIZE_{A,B} still records the data size only, so released readers ignore the trailer.
-    // Spells " CVCHKSM" in little-endian order.
-    public static final long CV_CHECKSUM_MAGIC = 0x4D534B4843564320L;
-    // On-disk size of the _cv checksum trailer: the 8-byte magic and the 8-byte checksum.
-    public static final int CV_CHECKSUM_TRAILER_SIZE = 2 * Long.BYTES;
     // Column flag bit layout (on-disk in _meta).
     // Bits 0, 2, 3 match the pre-posting-index layout, so tables written by
     // older versions keep meaning when read by new binaries, and tables
@@ -1150,6 +1158,10 @@ public final class TableUtils {
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
         txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_A_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_B_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32, 0);
         resetTxn(
                 txMem,
                 TX_BASE_HEADER_SIZE,
@@ -1158,6 +1170,7 @@ public final class TableUtils {
                 seqTxn,
                 dataVersion,
                 partitionTableVersion,
+                0,
                 structureVersion,
                 columnVersion,
                 truncateVersion
@@ -1672,12 +1685,18 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
 
+    /**
+     * A lock reason the WAL apply machinery did not arrange itself is unsolicited - including {@link
+     * io.questdb.cairo.pool.WriterPool#OWNERSHIP_REASON_UNKNOWN}, reported while a holder is still constructing the
+     * writer and has not stamped its reason yet.
+     */
     public static boolean isUnsolicitedTableLock(String lockReason) {
-        //noinspection StringEquality
-        return lockReason != NO_LOCK_REASON
-                && !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
+        return !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
                 && !WAL_2_TABLE_RESUME_REASON.equals(lockReason)
-                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason);
+                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason)
+                // The compaction sweep holds the writer to land its swap the same way STORAGE POLICY does.
+                && !getCommandName(CMD_COMPOSITE_PARTITION_SWAP).equals(lockReason)
+                && !getCommandName(CMD_PARQUET_PARTITION_SWAP).equals(lockReason);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
@@ -3008,6 +3027,7 @@ public final class TableUtils {
             long seqTxn,
             long dataVersion,
             long partitionTableVersion,
+            int geometryVersion,
             long structureVersion,
             long columnVersion,
             long truncateVersion
@@ -3035,6 +3055,7 @@ public final class TableUtils {
         txMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         // sequencer txn
         txMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        txMem.putInt(baseOffset + TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
 
         txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);
 
@@ -3044,10 +3065,10 @@ public final class TableUtils {
         txMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, EMPTY_TABLE_LAG_CHECKSUM);
 
-        // Zero the body checksum slot [116,124), so a stale checksum from a reused A/B area cannot survive.
-        // A record that createTxn() starts carries no checksum until its first versioned commit;
-        // TxWriter.truncate() writes the checksum and its stamp right after this, in finishABHeader().
-        txMem.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, 0L);
+        // This reset record uses the legacy in-body geometry field until finishABHeader() publishes the
+        // base-header geometry slot and a body checksum. Clear the body-checksum stamp so readers do not
+        // interpret the geometry bytes as a checksum.
+        txMem.putInt(baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
 
         for (int i = 0; i < symbolMapCount; i++) {
             long offset = getSymbolWriterIndexOffset(i);
@@ -3314,7 +3335,7 @@ public final class TableUtils {
     ) {
         try {
             final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion);
+            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion, ColumnType.MAX_STORAGE_VERSION);
             final int columnCount = getColumnCount(metaPath, metaMem, META_OFFSET_COUNT);
 
             long offset = getColumnNameOffset(columnCount);
@@ -3393,8 +3414,20 @@ public final class TableUtils {
     }
 
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+        // Exact-version check for metadata whose version has a single supported value, such as the
+        // sequencer WAL format version. Table metadata that may carry the composite storage marker
+        // must use the range overload below; do not widen this one, it also guards the WAL format.
+        validateMetaVersion(metaPath, metaMem, metaVersionOffset, expectedVersion, expectedVersion);
+    }
+
+    public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion, int maxVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
-        if (expectedVersion != metaVersion) {
+        // A table that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION
+        // rather than ColumnType.VERSION; both are readable by this binary, so accept the whole
+        // [expectedVersion, maxVersion] range. A version below expectedVersion is a table
+        // that predates a migration (migrations bring it up before it is opened), and a version
+        // above maxVersion comes from a newer binary this one cannot read.
+        if (metaVersion < expectedVersion || metaVersion > maxVersion) {
             throw CairoException.metadataVersionMismatch(metaPath, expectedVersion, metaVersion);
         }
     }

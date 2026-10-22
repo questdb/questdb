@@ -104,6 +104,16 @@ public final class Files {
     }
 
     /**
+     * Grows the file to {@code size} bytes, allocating only from {@code allocatedSize}: the caller knows the file
+     * already holds that many bytes. Growing a file from offset 0 is not free over the part already allocated - XFS
+     * opens a transaction for every extent in the range - so a caller that tracks its file's length should grow it
+     * this way rather than with {@link #allocate(long, long)}.
+     */
+    public static boolean allocate(long fd, long allocatedSize, long size) {
+        return allocateRange(toOsFd(fd), allocatedSize, size);
+    }
+
+    /**
      * Like {@link #allocate(long, long)}, but reserves disk space only for {@code [offset, size)}.
      * The caller vouches that the file already has disk space for {@code [0, offset)}.
      */

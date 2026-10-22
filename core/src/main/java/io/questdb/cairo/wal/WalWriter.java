@@ -1883,18 +1883,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
             if (dirFd != -1) {
                 final long fd = dirFd;
-                dirFd = -1; // clear before fsyncAndClose so the finally never double-closes (it closes even if the fsync fails)
+                dirFd = -1; // fsyncAndClose closes the fd even when the flush fails.
                 ff.fsyncAndClose(fd);
                 fsyncSegmentDirEntries(commitMode, newSegmentId);
             }
             lastSegmentTxn = -1;
             path.trimTo(pathSize).slash().put(newSegmentId);
-            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path).I$();
+            LOG.debug().$("opened WAL segment [path=").$substr(pathRootSize, path).I$();
         } finally {
             if (dirFd != -1) {
                 // A column/event file open above faulted before the success fsyncAndClose; release the
-                // segment-dir fd (opened under non-NOSYNC) so it does not leak. No fsync - the segment is
-                // being abandoned - and no throw, so the in-flight exception is not masked.
+                // segment-dir fd. No fsync: the segment is being abandoned.
                 ff.close(dirFd);
             }
             int oldMinSegmentLocked = minSegmentLocked;

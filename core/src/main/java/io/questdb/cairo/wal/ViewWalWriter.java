@@ -210,14 +210,14 @@ public class ViewWalWriter extends WalWriterBase {
 
             if (dirFd != -1) {
                 final long fd = dirFd;
-                // fsyncAndClose closes the fd even when the flush fails
+                // fsyncAndClose closes the fd even when the flush fails.
                 dirFd = -1;
                 ff.fsyncAndClose(fd);
                 fsyncSegmentDirEntries(commitMode, newSegmentId);
             }
             lastSegmentTxn = -1;
             path.trimTo(pathSize).slash().put(newSegmentId);
-            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path).I$();
+            LOG.debug().$("opened WAL segment [path=").$substr(pathRootSize, path).I$();
         } finally {
             if (dirFd != -1) {
                 // An event file open or flush failed before the segment directory was flushed: release its fd.

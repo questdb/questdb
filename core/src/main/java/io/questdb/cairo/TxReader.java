@@ -47,9 +47,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
-    // Counts loads that found the selected area torn under a stable version and fell back to the other A/B
-    // area. A healthy table keeps it at 0, including under the in-place writeTransientSymbolCount and
-    // resetLag writes. Tests read it; production logic does not.
+    // Counts stable-version loads that fell back from a torn selected area to the other A/B area.
     @TestOnly
     static volatile long bodyChecksumFallbackCount = 0;
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
@@ -70,6 +68,15 @@ public class TxReader implements Closeable, Mutable {
     public static final long PARTITION_VERSION_FLAGS_MASK = 0xFFL << 56;
     public static final long PARTITION_VERSION_VALUE_MASK = ~PARTITION_VERSION_FLAGS_MASK;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
+    // COMPOSITE re-reads the offset-3 word's VALUE field (the 56 bits under PARTITION_VERSION_VALUE_MASK) as a pointer
+    // into the partition's own _geometry.<generation> file.
+    protected static final long PARTITION_COMPOSITE_FLAG = 1L << 61;
+    protected static final int PARTITION_GEOMETRY_GENERATION_BIT_OFFSET = 24;
+    protected static final long PARTITION_GEOMETRY_GENERATION_MASK = 0x0F000000L; // bits 24-27 (4 bits)
+    protected static final int PARTITION_GEOMETRY_MAX_GENERATION = 15;
+    protected static final long PARTITION_GEOMETRY_OFFSET_MASK = 0x00FFFFFFL; // bits 0-23 (24 bits, 8-byte units)
+    // Every packed offset is this many bits narrower than the byte offset it represents.
+    protected static final int PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT = 3;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
@@ -112,6 +119,7 @@ public class TxReader implements Closeable, Mutable {
     protected long columnVersion;
     protected long dataVersion;
     protected long fixedRowCount;
+    protected int geometryVersion;
     protected long lagMaxTimestamp;
     protected long lagMinTimestamp;
     protected boolean lagOrdered;
@@ -184,14 +192,13 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        mem.putInt(baseOffset + TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
         mem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
         mem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, lagOrdered ? lagTxnCount : -lagTxnCount);
-        // A dumped record carries no body checksum: write the absent (0) checksum and clear the stamp. Both
-        // are explicit because `mem` may be a reused buffer, where a stale stamp naming this record would make
-        // the zero checksum read as torn. The first commit after a restore from this dump writes a real pair.
-        mem.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, 0L);
+        // A dump has no base header for the merged geometry slot, so it keeps geometryVersion in the legacy
+        // body field and clears the overlapping checksum stamp. The first commit migrates both pieces.
         mem.putInt(baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
@@ -226,7 +233,11 @@ public class TxReader implements Closeable, Mutable {
                 // hold the file size and are valid without the bit; leave them. The cleared 0L/-1L
                 // sentinels scrub to the canonical 0L, a no-op in meaning.
                 final int partitionIndex = i / LONGS_PER_TX_ATTACHED_PARTITION;
+                // A COMPOSITE word legitimately lacks the VALID bit - it spends the value field on
+                // its geometry pointer, not on a stamp - and scrubbing it would strand the partition's
+                // _geometry record, losing its piece layout for good. Its seqTxn lives in that record.
                 if (!isPartitionParquet(partitionIndex)
+                        && !isPartitionCompositeByRawIndex(i - PARTITION_VERSION_OFFSET)
                         && (isPartitionOffset3Cleared(value) || (value & PARTITION_SEQ_TXN_VALID_BIT) == 0)) {
                     value = 0L;
                 }
@@ -351,6 +362,10 @@ public class TxReader implements Closeable, Mutable {
     public long getNativePartitionSeqTxn(int partitionIndex) {
         assert !isPartitionParquet(partitionIndex);
         final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (isPartitionCompositeByRawIndex(rawIndex)) {
+            // The value field is this partition's geometry pointer, not a stamp.
+            return -1L;
+        }
         // getPartitionOffset3 folds the cleared 0L/-1L sentinels to 0 before the bit test;
         // the legacy all-ones word has bit 62 set and must not read as a valid stamp.
         if ((getPartitionOffset3(rawIndex) & PARTITION_SEQ_TXN_VALID_BIT) == 0) {
@@ -473,6 +488,10 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionSquashCountByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
+    public int getGeometryVersion() {
+        return geometryVersion;
+    }
+
     public long getPartitionTableVersion() {
         return partitionTableVersion;
     }
@@ -538,6 +557,15 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
+    public boolean hasCompositePartitions() {
+        for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            if (isPartitionCompositeByRawIndex(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @TestOnly
     public static long getBodyChecksumFallbackCount() {
         return bodyChecksumFallbackCount;
@@ -577,6 +605,62 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isLagOrdered() {
         return lagOrdered;
+    }
+
+    /**
+     * The {@code _geometry.<generation>} file a slot-3 geometry pointer names.
+     */
+    public static int geometryGeneration(long geometryRef) {
+        return (int) ((geometryRef & PARTITION_GEOMETRY_GENERATION_MASK) >>> PARTITION_GEOMETRY_GENERATION_BIT_OFFSET);
+    }
+
+    public static long geometryOffset(long geometryRef) {
+        return (geometryRef & PARTITION_GEOMETRY_OFFSET_MASK) << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+    }
+
+    /**
+     * Packs a slot-3 geometry pointer from its components.
+     *
+     * @param byteOffset must be 8-byte aligned, as every real geometry record start is
+     */
+    @TestOnly
+    public static long packGeometryRef(int generation, long byteOffset) {
+        assert generation >= 0 && generation <= PARTITION_GEOMETRY_MAX_GENERATION : "generation out of range";
+        assert (byteOffset & ((1L << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT) - 1)) == 0 : "byteOffset must be 8-byte aligned";
+        final long packedOffset = byteOffset >>> PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+        assert (packedOffset & ~PARTITION_GEOMETRY_OFFSET_MASK) == 0 : "byteOffset out of range";
+        return PARTITION_COMPOSITE_FLAG
+                | ((long) generation << PARTITION_GEOMETRY_GENERATION_BIT_OFFSET)
+                | packedOffset;
+    }
+
+    public long getGeometryRef(int partitionIndex) {
+        final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (!isPartitionCompositeByRawIndex(rawIndex)) {
+            // -1 is the "no committed geometry record yet" sentinel that starts a chain at offset 0 of the first
+            // generation with no file in the directory - see PartitionGeometry#publish.
+            return -1L;
+        }
+        // Strip the flags that are not ours - REMOTE and SEQ_TXN_VALID share this word - so a ref only
+        // ever carries COMPOSITE, its generation and its offset.
+        return getPartitionOffset3(rawIndex)
+                & (PARTITION_COMPOSITE_FLAG | PARTITION_GEOMETRY_GENERATION_MASK | PARTITION_GEOMETRY_OFFSET_MASK);
+    }
+
+    /**
+     * Whether the partition is composite - has a {@code _geometry} record to resolve.
+     */
+    public boolean isPartitionComposite(int partitionIndex) {
+        return isPartitionCompositeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean isPartitionCompositeByRawIndex(int indexRaw) {
+        if (isPartitionParquetByRawIndex(indexRaw) || isPartitionParquetGeneratedByRawIndex(indexRaw)) {
+            return false;
+        }
+        // getPartitionOffset3 folds the cleared 0L/-1L sentinels to 0, so a legacy all-ones word
+        // (which has bit 61 set) never reads as composite.
+        return (getPartitionOffset3(indexRaw) & PARTITION_COMPOSITE_FLAG) != 0;
     }
 
     public boolean isPartitionParquet(int i) {
@@ -661,6 +745,7 @@ public class TxReader implements Closeable, Mutable {
         this.structureVersion = srcReader.structureVersion;
         this.dataVersion = srcReader.dataVersion;
         this.partitionTableVersion = srcReader.partitionTableVersion;
+        this.geometryVersion = srcReader.geometryVersion;
         this.columnVersion = srcReader.columnVersion;
         this.truncateVersion = srcReader.truncateVersion;
         this.seqTxn = srcReader.seqTxn;
@@ -734,6 +819,7 @@ public class TxReader implements Closeable, Mutable {
         sink.put("', dataVersion: ").put(dataVersion);
         sink.put(", structureVersion: ").put(structureVersion);
         sink.put(", partitionTableVersion: ").put(partitionTableVersion);
+        sink.put(", geometryVersion: ").put(geometryVersion);
         sink.put(", columnVersion: ").put(columnVersion);
         sink.put(", truncateVersion: ").put(truncateVersion);
         sink.put(", seqTxn: ").put(seqTxn);
@@ -751,10 +837,7 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean unsafeLoadAll() {
         if (unsafeReadLiveAreaGeometry()) {
-            // The version that selected this area. The fallback changes `version`, so keep a copy to re-validate
-            // against: only a stable selected version makes a mismatch real.
             final long selectedVersion = version;
-            // The fallback re-points baseOffset and size at the other area; keep the live geometry for the error.
             final int liveBaseOffset = baseOffset;
             final long liveSize = size;
             if (isInitialChecksumVerificationRequired) {
@@ -762,9 +845,6 @@ public class TxReader implements Closeable, Mutable {
                 partitionTableVersion = -1;
                 attachedPartitionsSize = -1;
             }
-            // Check persisted integrity on first open, not on every live transaction refresh. A live area that
-            // runs past the end of the file is torn the same way as one whose checksum does not match: a crash
-            // made the header durable before the file grew to hold the area.
             if (unsafeMapArea(baseOffset, size)
                     && unsafeLoadAreaFields()
                     && (!isInitialChecksumVerificationRequired || unsafeVerifyBodyChecksum())) {
@@ -773,25 +853,18 @@ public class TxReader implements Closeable, Mutable {
                     isInitialChecksumVerificationRequired = false;
                     return true;
                 }
-                // The version moved: a concurrent commit. Fall through to retry (return false).
             } else {
-                // The area failed its txn guard or its body checksum. If the version is unchanged, the area is
-                // torn (a partial or reordered msync left a bumped version word over an incomplete body), and
-                // the load falls back to the other A/B area; otherwise a concurrent write raced the load, and
-                // the caller retries.
                 Unsafe.loadFence();
                 if (selectedVersion == unsafeReadVersion()) {
-                    // Stable version, yet the selected area is torn: fall back to the other A/B area.
+                    // Stable version with a torn selected area: try the settled previous A/B record.
                     //noinspection NonAtomicOperationOnVolatileField
                     bodyChecksumFallbackCount++;
-                    boolean otherOk = unsafeLoadAndVerifyOtherArea(selectedVersion);
+                    final boolean otherOk = unsafeLoadAndVerifyOtherArea(selectedVersion);
                     Unsafe.loadFence();
                     if (selectedVersion == unsafeReadVersion()) {
-                        // The header and both areas stayed stable across the fallback.
                         if (otherOk) {
                             return true;
                         }
-                        // Neither area is consistent: fail the read rather than return a wrong record.
                         clearData();
                         throw CairoException.critical(0)
                                 .put("_txn body checksum mismatch in both A and B areas [baseOffset=").put(liveBaseOffset)
@@ -799,9 +872,7 @@ public class TxReader implements Closeable, Mutable {
                                 .put(", version=").put(selectedVersion)
                                 .put(']');
                     }
-                    // Version changed during the fallback: concurrent write, retry.
                 }
-                // Version changed: concurrent write, retry.
             }
         }
 
@@ -833,6 +904,10 @@ public class TxReader implements Closeable, Mutable {
         columnVersion = unsafeReadColumnVersion();
         truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
         seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
+        geometryVersion = unsafeReadGeometryVersion();
+        if (geometryVersion < 0) {
+            return false;
+        }
         symbolColumnCount = symbolsSize / Long.BYTES;
         lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
         lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
@@ -917,7 +992,8 @@ public class TxReader implements Closeable, Mutable {
      */
     private boolean unsafeChecksumStampNamesThisRecord(long areaBaseOffset, long areaTxn) {
         final int stamp = roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
-        return stamp != 0 && stamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_STAMP_XOR);
+        return stamp != 0 && (stamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_STAMP_XOR)
+                || stamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_LEGACY_STAMP_XOR));
     }
 
     /**
@@ -1000,6 +1076,31 @@ public class TxReader implements Closeable, Mutable {
 
     public long unsafeReadColumnVersion() {
         return getLong(TX_OFFSET_COLUMN_VERSION_64);
+    }
+
+    private int unsafeReadGeometryVersion() {
+        final boolean isA = (version & 1) == 0;
+        final long geometryOffset = isA
+                ? TX_BASE_OFFSET_GEOMETRY_VERSION_A_32
+                : TX_BASE_OFFSET_GEOMETRY_VERSION_B_32;
+        final long stampOffset = isA
+                ? TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32
+                : TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32;
+        final int stamp = roTxMemBase.getInt(stampOffset);
+        if (stamp != 0 && stamp == ((int) txn ^ TX_GEOMETRY_VERSION_STAMP_XOR)) {
+            return roTxMemBase.getInt(geometryOffset);
+        }
+        final int bodyStamp = roTxMemBase.getInt(baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
+        if (bodyStamp != 0 && bodyStamp == ((int) txn ^ TX_BODY_CHECKSUM_STAMP_XOR)) {
+            // A merged-format record must have a matching base-header geometry slot. Treat its absence as tearing.
+            return -1;
+        }
+        // A pre-merge adaptive record has the legacy body-checksum stamp and no geometry field.
+        if (bodyStamp != 0 && bodyStamp == ((int) txn ^ TX_BODY_CHECKSUM_LEGACY_STAMP_XOR)) {
+            return 0;
+        }
+        // An upstream record has no body-checksum stamp and keeps geometryVersion in the legacy body slot.
+        return getInt(TX_OFFSET_GEOMETRY_VERSION_32);
     }
 
     public int unsafeReadSymbolColumnCount() {
@@ -1217,6 +1318,7 @@ public class TxReader implements Closeable, Mutable {
         baseOffset = 0;
         size = 0;
         partitionTableVersion = -1;
+        geometryVersion = -1;
         attachedPartitionsSize = -1;
         attachedPartitions.clear();
         version = -1;

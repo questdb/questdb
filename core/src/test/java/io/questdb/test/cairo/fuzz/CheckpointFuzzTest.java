@@ -26,6 +26,7 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
@@ -108,7 +109,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 5 + rnd.nextInt(10)
         );
 
-        setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
+        setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3, getRndWalApplyBlockMaxRows(rnd));
         runFuzzWithCheckpoint(rnd);
     }
 
@@ -116,7 +117,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     public void testCheckpointFullFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fullFuzz(rnd);
-        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
+        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3, getRndWalApplyBlockMaxRows(rnd));
         runFuzzWithCheckpoint(rnd);
     }
 
@@ -332,7 +333,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 getRndO3PartitionSplit(rnd),
                 getRndO3PartitionSplitMaxCount(rnd),
                 10 * Numbers.SIZE_1MB,
-                3
+                3,
+                getRndWalApplyBlockMaxRows(rnd)
         );
         runFuzzWithCheckpoint(rnd);
     }
@@ -377,6 +379,13 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                     } catch (Throwable th) {
                         ex.set(th);
                     } finally {
+                        // drainWalQueue() runs O3PartitionJob inline on this thread, outside any
+                        // WorkerPool - so the O3PartitionJob.COMPOSITE_CONTEXT/PARQUET_MERGE_CONTEXT
+                        // CarrierLocal slots it may have populated (e.g. a composite-partition merge's
+                        // _geometry scratch buffer) never see WorkerPool's worker-halt cleanup. This
+                        // thread is single-use, so free them here, the same way a WorkerPool worker
+                        // would on halt.
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                         Path.clearThreadLocals();
                     }
                 });
