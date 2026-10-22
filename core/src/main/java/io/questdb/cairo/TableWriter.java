@@ -1147,6 +1147,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         parquetFileSize = ff.length(path.$());
                     }
                     path.trimTo(partitionPathLen);
+                    if (parquetFileSize >= 0) {
+                        attachValidateParquetColumnTypes(partitionPathLen, parquetFileSize);
+                    }
                     attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize, isSymbolNullKnown);
                     checkPassed = true;
                 } finally {
@@ -5451,6 +5454,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 partitionPath.trimTo(rootLen);
             }
+        }
+    }
+
+    // _pm stores type -1 for a foreign Parquet column QuestDB cannot read. Such a column is
+    // harmless while no live table column maps to it, but reads of a mapped one cannot succeed.
+    private void attachValidateParquetColumnTypes(int partitionPathLen, long parquetFileSize) {
+        try {
+            openParquetMetadataOrThrow(path, partitionPathLen, parquetFileSize);
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getColumnType(i) <= 0) {
+                    continue;
+                }
+                final int parquetColumnIndex = findParquetColumnIndex(parquetMetaReader, i);
+                if (parquetColumnIndex < 0) {
+                    continue;
+                }
+                final int columnType = parquetMetaReader.getColumnType(parquetColumnIndex);
+                if (columnType <= 0 || ColumnType.sizeOf(columnType) == -1) {
+                    throw CairoException.nonCritical().put("invalid parquet column type [column=")
+                            .put(metadata.getColumnName(i)).put(", type=").put(columnType).put(']');
+                }
+            }
+        } finally {
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(partitionPathLen);
         }
     }
 

@@ -59,9 +59,14 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.CRC32;
 
 import static io.questdb.cairo.AttachDetachStatus.ATTACH_ERR_RENAME;
 
@@ -420,6 +425,81 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 TestUtils.assertContains(e.getFlyweightMessage(), "detachStatus=ATTACH_ERR_MISSING_PARQUET_DATA");
             }
+        });
+    }
+
+    @Test
+    public void testAttachParquetPartitionWithDroppedUnknownColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE t DROP COLUMN x");
+            stageForeignParquet();
+            execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+            engine.clear();
+            assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
+                    ts
+                    2024-01-01T00:00:00.000000Z
+                    2024-01-01T06:00:00.000000Z
+                    2024-01-01T18:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testAttachParquetPartitionWithUnknownColumnTypeFailsCleanly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00.000000Z', 100)");
+            final java.nio.file.Path attachable = stageForeignParquet();
+            final java.nio.file.Path pm = attachable.resolve(TableUtils.PARQUET_METADATA_FILE_NAME);
+            // The first attempt generates _pm. Later attempts validate that existing
+            // sidecar, including invalid codes other than the inference sentinel.
+            for (int code : new int[]{-1, -1, 0, 255}) {
+                if (java.nio.file.Files.exists(pm)) {
+                    patchParquetColumnType(pm, code);
+                }
+                try {
+                    execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+                    Assert.fail("unsupported mapped column must prevent attachment");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid parquet column type [column=x, type=" + code + "]");
+                }
+                Assert.assertTrue(java.nio.file.Files.exists(attachable.resolve(TableUtils.PARQUET_PARTITION_NAME)));
+                Assert.assertTrue(java.nio.file.Files.exists(pm));
+                assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
+                        ts\tx
+                        2024-01-05T00:00:00.000000Z\t100
+                        """);
+                engine.clear();
+                assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
+                        ts\tx
+                        2024-01-05T00:00:00.000000Z\t100
+                        """);
+            }
+            // A failed ATTACH must not leave the writer distressed or column versions dirty.
+            execute("INSERT INTO t VALUES ('2024-01-06T00:00:00.000000Z', 101)");
+            engine.clear();
+            assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    2024-01-05T00:00:00.000000Z\t100
+                    2024-01-06T00:00:00.000000Z\t101
+                    """);
+        });
+    }
+
+    @Test
+    public void testAttachParquetPartitionWithUnmappedUnknownColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            stageForeignParquet();
+            execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+            engine.clear();
+            assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
+                    ts
+                    2024-01-01T00:00:00.000000Z
+                    2024-01-01T06:00:00.000000Z
+                    2024-01-01T18:00:00.000000Z
+                    """);
         });
     }
 
@@ -1287,6 +1367,50 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    @Test
+    public void testReadParquetPartitionWithUnknownColumnTypeFailsCleanly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // The active partition cannot be converted, so keep a later native partition.
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 100),
+                        ('2024-01-01T01:00:00.000000Z', NULL),
+                        ('2024-01-02T00:00:00.000000Z', 101)
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            final long partitionNameTxn;
+            try (TableReader reader = getReader("t")) {
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            final java.nio.file.Path pm = Paths.get(
+                    configuration.getDbRoot(),
+                    engine.verifyTableName("t").getDirName(),
+                    "2024-01-01." + partitionNameTxn,
+                    TableUtils.PARQUET_METADATA_FILE_NAME
+            );
+            engine.clear();
+            final int originalType = patchParquetColumnType(pm, -1);
+            for (int code : new int[]{-1, 0, 255}) {
+                patchParquetColumnType(pm, code);
+                try {
+                    printSql("SELECT * FROM t");
+                    Assert.fail("invalid persisted type must fail decoding");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), code <= 0 ? "invalid column type code <= 0" : "unknown QuestDB column tag code");
+                }
+                engine.clear();
+            }
+            patchParquetColumnType(pm, originalType);
+            assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    2024-01-01T00:00:00.000000Z\t100
+                    2024-01-01T01:00:00.000000Z\tnull
+                    2024-01-02T00:00:00.000000Z\t101
+                    """);
+        });
+    }
+
     private void assertSchemaMatch(AddColumn tm, int idx) throws Exception {
         if (idx > 0) {
             setUp();
@@ -1468,6 +1592,24 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         }
     }
 
+    // Replaces the type of the second _pm column descriptor and returns the previous type.
+    private static int patchParquetColumnType(java.nio.file.Path pm, int code) throws Exception {
+        final byte[] bytes = java.nio.file.Files.readAllBytes(pm);
+        final ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        // A 32-byte header precedes 32-byte column descriptors; the type is at offset 12.
+        final int typeOffset = 32 + 32 + 12;
+        final int previousType = buffer.getInt(typeOffset);
+        buffer.putInt(typeOffset, code);
+        // The file ends with the CRC32 and a 4-byte footer length. The CRC covers every
+        // byte after the leading 8-byte file size up to the CRC itself.
+        final int crcOffset = (int) buffer.getLong(0) - 8;
+        final CRC32 crc = new CRC32();
+        crc.update(bytes, 8, crcOffset - 8);
+        buffer.putInt(crcOffset, (int) crc.getValue());
+        java.nio.file.Files.write(pm, bytes);
+        return previousType;
+    }
+
     private int readAllRows(String tableName) {
         try (FullFwdPartitionFrameCursor cursor = new FullFwdPartitionFrameCursor()) {
             cursor.of(getReader(tableName));
@@ -1486,6 +1628,28 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
     private String replaceTimestampSuffix(String expected) {
         return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replace("Z\t", "000Z\t").replace("Z\n", "000Z\n") : expected;
+    }
+
+    private java.nio.file.Path stageForeignParquet() throws Exception {
+        final byte[] foreignParquet = Base64.getMimeDecoder().decode("""
+                UEFSMRUEFTAVNEwVBhUAEgAAGFwAICEQ1w0GAAD4lhfcDQYAAKiCJuYNBgAVABUIFQwsFQYVEBUG
+                FQYcGAgAqIIm5g0GABgIACAhENcNBgAWACgIAKiCJuYNBgAYCAAgIRDXDQYAEREAAAAEDAIDJAAV
+                BBUwFSxMFQYVABIAABgAYQ0BPGJiYmJiYmJiY2NjY2NjY2MVABUIFQwsFQYVEBUGFQYcNgAoCGNj
+                Y2NjY2NjGAhhYWFhYWFhYRERAAAABAwCAyQAFQQZPDUAGAZzY2hlbWEVBAAVBCUAGAJ0cyUUNQAc
+                jBIcLAAAAAAAFQ4VEBUAGAF4VQIAFgYZHBksJgAcFQQZNQAGEBkYAnRzFQIWBhbSARbaASZYJggc
+                GAgAqIIm5g0GABgIACAhENcNBgAWACgIAKiCJuYNBgAYCAAgIRDXDQYAEREAGSwVBBUAFQIAFQAV
+                EBUCAAAAJgAcFQ4ZNQAGEBkYAXgVAhYGFqoBFqoBJqoCJuIBHDYAKAhjY2NjY2NjYxgIYWFhYWFh
+                YWEREQAZLBUEFQAVAgAVABUQFQIAAAAW/AIWBhkcFQASEgAWCBaEAwAoIHBhcnF1ZXQtY3BwLWFy
+                cm93IHZlcnNpb24gMjMuMC4wGSwcAAAcAAAAHQEAAFBBUjE=
+                """);
+        final java.nio.file.Path attachable = Paths.get(
+                configuration.getDbRoot(),
+                engine.verifyTableName("t").getDirName(),
+                "2024-01-01" + configuration.getAttachPartitionSuffix()
+        );
+        java.nio.file.Files.createDirectories(attachable);
+        java.nio.file.Files.write(attachable.resolve(TableUtils.PARQUET_PARTITION_NAME), foreignParquet);
+        return attachable;
     }
 
     private void testAttachPartitionWrongFixedColumn(int columnType) throws Exception {
