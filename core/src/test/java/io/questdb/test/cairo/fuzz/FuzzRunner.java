@@ -38,6 +38,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
@@ -94,13 +95,17 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 public class FuzzRunner {
     public final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
     protected static final Log LOG = LogFactory.getLog(AbstractFuzzTest.class);
-    private static final int MAX_COVERED_KEYS_CHECKED = 32;
     protected static final StringSink sink = new StringSink();
+    private static final int MAX_COVERED_KEYS_CHECKED = 32;
+    // Share of fuzz runs that use TIMESTAMP_NS designated timestamp instead of TIMESTAMP
+    private static final int NANOS_TIMESTAMP_PERCENT = 40;
     private static final long OPEN_RETRY_TIMEOUT_MILLIS = 10_000;
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     protected int initialRowCount;
     protected int partitionCount;
     private double addCoveringIndexProb;
+    private long applySeed0;
+    private long applySeed1;
     private double cancelRowsProb;
     private double colAddProb;
     private double colRemoveProb;
@@ -112,6 +117,7 @@ public class FuzzRunner {
     private double equalTsRowsProb;
     private FailureFileFacade ff;
     private int fuzzRowCount;
+    private boolean hasApplySeeds;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
     private boolean isO3;
@@ -135,6 +141,7 @@ public class FuzzRunner {
     private int symbolCountMax;
     private int symbolStrLenMax;
     private double tableDropProb;
+    private int timestampType = ColumnType.TIMESTAMP_MICRO;
     private int transactionCount;
     private double truncateProb;
 
@@ -262,7 +269,7 @@ public class FuzzRunner {
 
         try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
             int transactionSize = transactions.size();
-            Rnd rnd = new Rnd();
+            Rnd rnd = newApplyRnd();
             int failuresObserved = 0;
             for (int i = 0; i < transactionSize; i++) {
                 if (ioFailureCreatedCount < ioFailureCount && failuresObserved == ff.failureGenerated()) {
@@ -380,7 +387,7 @@ public class FuzzRunner {
             writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
         }
 
-        Rnd tempRnd = new Rnd();
+        Rnd tempRnd = newApplyRnd();
         for (int i = 0, n = transactions.size(); i < n; i++) {
             WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
             writer.goActive();
@@ -470,7 +477,8 @@ public class FuzzRunner {
     }
 
     public void createInitialTableWal(String tableName, String timestampType) throws SqlException {
-        createInitialTable(tableName, initialRowCount, timestampType);
+        createInitialTable(tableName, true, initialRowCount, ColumnType.typeOf(timestampType));
+        engine.verifyTableName(tableName);
     }
 
     public TableToken createInitialTableWal(String tableName, int initialRowCount) throws SqlException {
@@ -481,6 +489,7 @@ public class FuzzRunner {
         Rnd rnd = TestUtils.generateRandom(log);
         s0 = rnd.getSeed0();
         s1 = rnd.getSeed1();
+        initRandomParams(rnd, log);
         return rnd;
     }
 
@@ -488,9 +497,14 @@ public class FuzzRunner {
         Rnd rnd = TestUtils.generateRandom(log, s0, s1);
         this.s0 = rnd.getSeed0();
         this.s1 = rnd.getSeed1();
+        initRandomParams(rnd, log);
         return rnd;
     }
 
+    /**
+     * Generates fuzz transactions for the table. <code>start</code> and <code>end</code> are
+     * in microseconds, this method converts them to the unit of the table's designated timestamp.
+     */
     public ObjList<FuzzTransaction> generateSet(
             Rnd rnd,
             TableRecordMetadata sequencerMetadata,
@@ -499,13 +513,14 @@ public class FuzzRunner {
             long end,
             String tableName
     ) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(sequencerMetadata.getTimestampType());
         return FuzzTransactionGenerator.generateSet(
                 initialRowCount,
                 sequencerMetadata,
                 tableMetadata,
                 rnd,
-                start,
-                end,
+                driver.fromMicros(start),
+                driver.fromMicros(end),
                 Math.max(1, fuzzRowCount),
                 transactionCount,
                 isO3,
@@ -560,6 +575,10 @@ public class FuzzRunner {
 
     public FilesFacade getFileFacade() {
         return ff;
+    }
+
+    public int getTimestampType() {
+        return timestampType;
     }
 
     public int getTransactionCount() {
@@ -817,10 +836,23 @@ public class FuzzRunner {
         this.addCoveringIndexProb = addCoveringIndexProb;
     }
 
+    /**
+     * Sets designated timestamp type of the tables the runner creates. {@link #generateRandom(Log)}
+     * picks it randomly, call this after it to pin the type.
+     */
+    public void setTimestampType(int timestampType) {
+        this.timestampType = timestampType;
+    }
+
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         this.engine = engine;
         this.sqlExecutionContext = sqlExecutionContext;
         this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
+    }
+
+    // Tables with different designated timestamp types need separate source tables
+    private static String getDataTempTableName(int timestampType) {
+        return timestampType == ColumnType.TIMESTAMP_NANO ? "data_temp_ns" : "data_temp";
     }
 
     private static void reloadPartitions(TableReader rdr1) {
@@ -847,6 +879,12 @@ public class FuzzRunner {
         }
     }
 
+    private static String timestampToString(TimestampDriver driver, long timestamp) {
+        StringSink tsSink = new StringSink();
+        driver.append(tsSink, timestamp);
+        return tsSink.toString();
+    }
+
     private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
@@ -857,6 +895,7 @@ public class FuzzRunner {
 
     private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
         try (TableReader reader = getReader(tableName)) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
             if (reader.getMinTimestamp() != Long.MAX_VALUE) {
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, "select ts from " + tableName + " order by ts limit 1")
@@ -865,7 +904,7 @@ public class FuzzRunner {
                         .expectSize()
                         .returns(
                                 "ts\n" +
-                                        Micros.toUSecString(reader.getMinTimestamp())
+                                        timestampToString(driver, reader.getMinTimestamp())
                                         + "\n"
                         );
             }
@@ -878,7 +917,7 @@ public class FuzzRunner {
                         .expectSize()
                         .returns(
                                 "ts\n" +
-                                        Micros.toUSecString(reader.getMaxTimestamp())
+                                        timestampToString(driver, reader.getMaxTimestamp())
                                         + "\n"
                         );
             }
@@ -1141,14 +1180,16 @@ public class FuzzRunner {
     }
 
     private TableToken createInitialTable(String tableName, ObjList<FuzzTransaction> transactions) throws SqlException {
-        SharedRandom.RANDOM.set(new Rnd());
+        SharedRandom.RANDOM.set(newApplyRnd());
 
         if (engine.getTableTokenIfExists(tableName) == null) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
             sink.clear();
             sink.put("create atomic table ")
                     .put(tableName)
                     .put(" as (")
-                    .put("select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1 from data_temp");
+                    .put("select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1 from ")
+                    .put(getDataTempTableName(timestampType));
 
             if (transactions != null) {
                 LongList noCommitRanges = calculateReplaceRanges(transactions);
@@ -1161,7 +1202,7 @@ public class FuzzRunner {
                         if (i > 0) {
                             sink.put(" and");
                         }
-                        sink.put(" (ts not between '" + Micros.toUSecString(lo) + "' and '" + Micros.toUSecString(hi) + "')");
+                        sink.put(" (ts not between '" + timestampToString(driver, lo) + "' and '" + timestampToString(driver, hi) + "')");
                     }
                 }
             }
@@ -1179,15 +1220,24 @@ public class FuzzRunner {
     }
 
     private TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
-        SharedRandom.RANDOM.set(new Rnd());
-        TableToken tempTable = engine.getTableTokenIfExists("data_temp");
+        createInitialTable(tableName, isWal, rowCount, timestampType);
+        return engine.verifyTableName(tableName);
+    }
+
+    private void createInitialTable(String tableName, boolean isWal, int rowCount, int timestampType) throws SqlException {
+        SharedRandom.RANDOM.set(newApplyRnd());
+        final String dataTempTableName = getDataTempTableName(timestampType);
+        TableToken tempTable = engine.getTableTokenIfExists(dataTempTableName);
 
         if (tempTable == null) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            // timestamp_sequence() always returns TIMESTAMP, nanos need timestamp_sequence_ns()
+            final String tsSequence = timestampType == ColumnType.TIMESTAMP_NANO ? "timestamp_sequence_ns" : "timestamp_sequence";
             engine.execute(
-                    "create atomic table data_temp as (" +
+                    "create atomic table " + dataTempTableName + " as (" +
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                            " " + tsSequence + "('2022-02-24'::" + ColumnType.nameOf(timestampType) + ", " + driver.fromSeconds(1) + "L) ts, " +
                             " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
                             " cast(x as int) c3," +
                             " rnd_bin() c4," +
@@ -1209,7 +1259,7 @@ public class FuzzRunner {
             }
             engine.execute(
                     "create atomic table " + tableName + " as (" +
-                            "select * from data_temp" +
+                            "select * from " + dataTempTableName +
                             "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + tail,
                     sqlExecutionContext
             );
@@ -1220,47 +1270,6 @@ public class FuzzRunner {
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
-        return engine.verifyTableName(tableName);
-    }
-
-    private void createInitialTable(String tableName, int rowCount, String timestampType) throws SqlException {
-        SharedRandom.RANDOM.set(new Rnd());
-        TableToken tempTable = engine.getTableTokenIfExists("data_temp");
-
-        if (tempTable == null) {
-            engine.execute(
-                    "create atomic table data_temp as (" +
-                            "select x as c1, " +
-                            " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                            " timestamp_sequence('2022-02-24'::" + timestampType + ", 1000000L) ts, " +
-                            " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
-                            " cast(x as int) c3," +
-                            " rnd_bin() c4," +
-                            " to_long128(3 * x, 6 * x) c5," +
-                            " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
-                            " rnd_boolean() bool1 " +
-                            " from long_sequence(" + rowCount + ")" +
-                            ")",
-                    sqlExecutionContext
-            );
-        }
-
-        if (engine.getTableTokenIfExists(tableName) == null) {
-            engine.execute(
-                    "create atomic table " + tableName + " as (" +
-                            "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY "
-                            + (createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL"),
-                    sqlExecutionContext
-            );
-            // force few column tops
-            engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
-        }
-        engine.verifyTableName(tableName);
     }
 
     @NotNull
@@ -1296,12 +1305,12 @@ public class FuzzRunner {
             writerIndex = writers.size() - 1;
         }
 
+        final Rnd tempRnd = newApplyRnd();
         return new Thread(() -> {
             int opIndex;
 
             try {
                 String updatedTableName = tableName;
-                Rnd tempRnd = new Rnd();
                 while (errors.isEmpty() && (opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
                     FuzzTransaction transaction = transactions.getQuick(opIndex);
 
@@ -1452,6 +1461,30 @@ public class FuzzRunner {
     // isCancelled reports that the run is over while the open still waits for the recreate.
     private @Nullable TableReader getReaderWithRetries(String tableName, @Nullable BooleanSupplier isCancelled) {
         return openWithRetries(() -> getReader(tableName), true, isCancelled, OPEN_RETRY_TIMEOUT_MILLIS);
+    }
+
+    private void initRandomParams(Rnd rnd, Log log) {
+        timestampType = rnd.nextInt(100) < NANOS_TIMESTAMP_PERCENT
+                ? ColumnType.TIMESTAMP_NANO
+                : ColumnType.TIMESTAMP_MICRO;
+        applySeed0 = rnd.nextLong();
+        applySeed1 = rnd.nextLong();
+        hasApplySeeds = true;
+        log.info().$("fuzz designated timestamp type: ").$(ColumnType.nameOf(timestampType)).$();
+    }
+
+    // Every apply path (non-WAL, WAL, parallel WAL threads) gets an Rnd with the same seeds,
+    // so apply-time random choices match across the tables being compared.
+    // The seeds come from the test Rnd, see generateRandom().
+    private Rnd newApplyRnd() {
+        if (!hasApplySeeds) {
+            // The test did not call generateRandom(), draw the seeds from a fresh random
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            applySeed0 = rnd.nextLong();
+            applySeed1 = rnd.nextLong();
+            hasApplySeeds = true;
+        }
+        return new Rnd(applySeed0, applySeed1);
     }
 
     /**

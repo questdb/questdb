@@ -54,6 +54,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     // sub-second.
     private static final long RETRY_TIMEOUT_MILLIS = 300;
     private final FuzzRunner fuzzer = new FuzzRunner();
+    private final Rnd rnd = TestUtils.generateRandom(LOG);
 
     @Test
     public void testAssertStringColDensityUsesRetries() throws Exception {
@@ -92,7 +93,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             RetryInjectingFuzzRunner retryingFuzzer = newFuzzer(1, "Transaction read timeout [src=drain]");
             ObjList<FuzzTransaction> transactions = new ObjList<>();
 
-            retryingFuzzer.applyWal(transactions, "drain", 1, new Rnd());
+            retryingFuzzer.applyWal(transactions, "drain", 1, rnd);
 
             assertRetryRouting(retryingFuzzer, 4, 4, 0);
             Assert.assertEquals(2, retryingFuzzer.readTimeoutAttempts.get());
@@ -105,7 +106,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             createWalTable("symbols");
             RetryInjectingFuzzRunner retryingFuzzer = newFuzzer(1, "Column Version read timeout [src=symbols]");
 
-            String[] symbols = retryingFuzzer.generateSymbols(new Rnd(), 3, 4, "symbols");
+            String[] symbols = retryingFuzzer.generateSymbols(rnd, 3, 4, "symbols");
 
             Assert.assertEquals(3, symbols.length);
             assertRetryRouting(retryingFuzzer, 1, 0, 0);
@@ -118,7 +119,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createWalTable("generate");
             RetryInjectingFuzzRunner retryingFuzzer = newFuzzer(1, "Metadata read timeout [src=generate]");
-            ObjList<FuzzTransaction> transactions = retryingFuzzer.generateTransactions("generate", new Rnd(), 0, 1);
+            ObjList<FuzzTransaction> transactions = retryingFuzzer.generateTransactions("generate", rnd, 0, 1);
 
             try {
                 assertRetryRouting(retryingFuzzer, 1, 0, 0);
@@ -167,7 +168,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             transactions.add(new ObjList<>());
             Thread caller = new Thread(() -> {
                 try {
-                    failingFuzzer.applyManyWalParallel(transactions, new Rnd(), "late_error", false, true);
+                    failingFuzzer.applyManyWalParallel(transactions, rnd, "late_error", false, true);
                 } catch (Throwable e) {
                     callerFailure.set(e);
                 } finally {
@@ -225,7 +226,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             ObjList<ObjList<FuzzTransaction>> transactions = new ObjList<>();
             transactions.add(new ObjList<>());
 
-            retryingFuzzer.applyManyWalParallel(transactions, new Rnd(), "purge", false, true);
+            retryingFuzzer.applyManyWalParallel(transactions, rnd, "purge", false, true);
 
             assertRetryRouting(retryingFuzzer, 2, 2, 2);
         });

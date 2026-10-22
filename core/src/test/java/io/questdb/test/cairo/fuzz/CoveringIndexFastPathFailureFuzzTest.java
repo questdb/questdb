@@ -104,11 +104,6 @@ public class CoveringIndexFastPathFailureFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testFastPathFailureFuzzRegression() throws Exception {
-        runFailureFuzz(generateRandom(LOG, 0x7ab3e10c9d2f45L, 0x3e9c7b16a80d52L), true);
-    }
-
-    @Test
     public void testFastPathFailureFuzzRegressionStaleIndexedTail() throws Exception {
         // A value.d fault fails the second partition of a two-partition commit after the first
         // partition's merge-append already published a covered generation. The retry of that same

@@ -6208,6 +6208,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 pressureControl,
                 getWalMaxBlockRows(),
                 inOrderMinTimestamp,
+                isCommitDedupMode(),
                 blockSize > 0 ? walBlockBudget.of(blockSize) : null
         );
     }
@@ -13638,6 +13639,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", maxTs=").$ts(timestampDriver, maxTs)
                     .I$();
 
+            // calculateInsertTransactionBlock() caps every block that reaches this sort to fit the sort key
+            assert !WalTxnDetails.isTxnBlockSortKeyOverflow(minTs, maxTs, segmentCopyInfo.getTxnCount());
             long indexFormat = Vect.radixSortManySegmentsIndexAsc(
                     timestampAddr,
                     o3TimestampMemCpy.addressOf(0),
