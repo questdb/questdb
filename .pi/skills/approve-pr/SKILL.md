@@ -2,6 +2,7 @@
 name: approve-pr
 description: Approve the pull request for the currently checked-out branch. Posts the review from this conversation as an approving review and adds the "QUEUED FOR MERGE" label. Use after review-pr when you decide to approve.
 allowed-tools: bash read write
+disable-model-invocation: true
 metadata:
   argument-hint: "[optional PR number or URL to override auto-detection]"
 ---
