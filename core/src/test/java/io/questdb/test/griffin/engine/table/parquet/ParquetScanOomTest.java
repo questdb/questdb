@@ -52,9 +52,12 @@ public class ParquetScanOomTest extends AbstractOomSweepTest {
             execute("ALTER TABLE k CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
             final String query = "SELECT * FROM k WHERE ts IN '2024-01-01' ORDER BY s";
             drain(query);
-            // A budget below the six decoded row groups makes the key-ordered read recycle and trim cached buffers
-            // on every pass, so the sweep faults decodes into a recycled buffer as well as into a fresh one.
+            // A budget below the six decoded row groups makes the key-ordered read gather its rows in one pass,
+            // which recycles cached buffers, so the sweep faults decodes into a recycled buffer as well as into a
+            // fresh one, and the record chain the gathered rows fill. A small chain page keeps the chain's first
+            // allocation inside the swept range.
             node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 160);
+            node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 1024);
             assertCursorDrainOomSweep(24 * 1024, 64, null, query);
             drain(query);
         });

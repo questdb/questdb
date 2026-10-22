@@ -33,7 +33,9 @@ import org.jetbrains.annotations.Nullable;
 /**
  * A row cursor factory whose cursors emit the rows of a page frame key by key, in the key order a query requires, and
  * the rows of each key in its index direction. The record cursor reads such a factory key by key over all page frames,
- * so the keys stay ordered when the scan reads more than one page frame.
+ * so the keys stay ordered when the scan reads more than one page frame. When the Parquet page frames of the scan do
+ * not stay decoded across the passes of the keys, the record cursor instead gathers the rows of all keys in one pass
+ * over the page frames and returns them key by key.
  */
 interface KeyOrderedRowCursorFactory extends RowCursorFactory {
 

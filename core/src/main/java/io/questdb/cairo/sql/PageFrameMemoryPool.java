@@ -294,6 +294,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return decodeHint;
     }
 
+    /**
+     * True when this many Parquet frames, which decode to this many bytes in all, stay cached together under the
+     * current hint, so that a walk over them decodes each of them once however often it revisits them.
+     */
+    public boolean isCachingFrames(int frameCount, long decodedBytes) {
+        return frameCount <= maxCachedBuffers() && decodedBytes <= effectiveBudgetBytes;
+    }
+
     @TestOnly
     public long getEffectiveBudgetBytes() {
         return effectiveBudgetBytes;
