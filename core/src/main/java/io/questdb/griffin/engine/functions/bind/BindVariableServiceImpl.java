@@ -106,9 +106,8 @@ public class BindVariableServiceImpl implements BindVariableService {
      * snapshot() creates an independent deep copy of the given
      * BindVariableService's indexed and named variable values. The returned
      * instance owns its own Function objects, so it is safe to use on a
-     * different thread after the source is cleared. snapshot() does not
-     * deep-copy ARRAY values; these types are not expected in COPY subquery
-     * bind variables.
+     * different thread after the source is cleared. Array snapshots own heap
+     * copies of the shape and values, including sliced and transposed views.
      */
     public static BindVariableServiceImpl snapshot(
             BindVariableService source,
@@ -198,6 +197,13 @@ public class BindVariableServiceImpl implements BindVariableService {
             }
             case ColumnType.UUID -> copy.setUuid(index, f.getLong128Lo(null), f.getLong128Hi(null));
             case ColumnType.BINARY -> copy.setBin(index, copyBinarySequence(f.getBin(null)));
+            case ColumnType.ARRAY -> {
+                copy.define(index, type, 0);
+                ArrayView array = f.getArray(null);
+                if (!array.isNull()) {
+                    copy.setArray(index, new ArraySnapshot(array));
+                }
+            }
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
                     copy.setGeoHash(index, f.getGeoLong(null), type);
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
@@ -208,7 +214,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 f.getDecimal256(null, dec);
                 copy.setDecimal(index, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
             }
-            default -> // UNDEFINED, ARRAY, or unknown — define with type only (no value)
+            default -> // UNDEFINED or unknown — define with type only (no value)
                     copy.define(index, type, 0);
         }
         return dec;
