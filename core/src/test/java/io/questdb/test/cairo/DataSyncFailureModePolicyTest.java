@@ -252,13 +252,15 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
         // (TableWriter, WalPurgeJob, WalEvents) and primary-only upload. U: configuration definitions,
         // one-shot structural/checkpoint writers, lazy column/index seeds, cold storage's existing grade,
         // COPY (no replica ingress, including the import task), CREATE TABLE's file creation (TableUtils skips the
-        // per-symbol msync in nosync) and UDP refusal. CairoEngine and V1/V2 own the live resolution; the WAL table scan
-        // (TableSequencerAPI) applies the V1/V2 open's own rule through the same resolution.
+        // per-symbol msync in nosync). CairoEngine and V1/V2 own the live resolution; the WAL table scan
+        // (TableSequencerAPI) applies the V1/V2 open's own rule through the same resolution. Composite-partition
+        // writes (O3PartitionJob's geometry and piece flushes) take the writer's flush grade, and the compaction
+        // job (PartitionCompactionScanJob) the engine's resolved mode, so neither reads the configured mode.
         // A new file reading the configured mode needs classification here before it can bypass the policy.
         Assert.assertEquals(
                 "[BitmapIndexWriter.java, CairoConfiguration.java, CairoConfigurationWrapper.java, CairoEngine.java, "
                         + "ColumnVersionWriter.java, CopyImportTask.java, DatabaseCheckpointAgent.java, DefaultCairoConfiguration.java, "
-                        + "DefaultLineUdpReceiverConfiguration.java, IDGeneratorFactory.java, LineUdpParserImpl.java, "
+                        + "DefaultLineUdpReceiverConfiguration.java, IDGeneratorFactory.java, "
                         + "LineUdpReceiverConfiguration.java, LiveViewCheckpointDataSegmentWriter.java, "
                         + "LiveViewCheckpointMetaSegmentWriter.java, LiveViewCheckpointRepairMarker.java, "
                         + "LiveViewCheckpointRepairState.java, LiveViewCheckpointSuperblock.java, LiveViewRefreshJob.java, "

@@ -702,7 +702,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 tableWriter.getTxn() + 1,
                 tableWriter.getCompositePartitionSeqTxn(),
                 tableWriter.getConfiguration().getMicrosecondClock().getTicks(),
-                tableWriter.getConfiguration().getCommitMode()
+                tableWriter.getFlushCommitMode()
         );
 
         // The floor is the partition's OWN first piece, not the incoming o3TimestampMin, which under a rows-less
@@ -903,7 +903,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
-        final int commitMode = tableWriter.getConfiguration().getCommitMode();
+        final int commitMode = tableWriter.getFlushCommitMode();
         final long upcomingTableTxn = tableWriter.getTxn() + 1;
         final long nowMicros = tableWriter.getConfiguration().getMicrosecondClock().getTicks();
         partitionPath.of(pathToTable);
@@ -1250,7 +1250,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
         final FilesFacade ff = tableWriter.getFilesFacade();
-        final int commitMode = tableWriter.getConfiguration().getCommitMode();
+        final int commitMode = tableWriter.getFlushCommitMode();
         final long upcomingTableTxn = tableWriter.getTxn() + 1;
         final long stagingNameTxn = tableWriter.getTxn() + 1;
         final int columnCount = metadata.getColumnCount();
@@ -1571,7 +1571,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter.getTxn() + 1,
                     tableWriter.getCompositePartitionSeqTxn(),
                     tableWriter.getConfiguration().getMicrosecondClock().getTicks(),
-                    tableWriter.getConfiguration().getCommitMode()
+                    tableWriter.getFlushCommitMode()
             );
             published = true;
         } finally {
@@ -1657,7 +1657,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
-        final int commitMode = tableWriter.getConfiguration().getCommitMode();
+        final int commitMode = tableWriter.getFlushCommitMode();
         final long upcomingTableTxn = tableWriter.getTxn() + 1;
 
         // Owned by ctx rather than Path.getThreadLocal(), because this reference has to survive every
@@ -2827,6 +2827,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * Copies every live row group of a Parquet partition into a fresh {@code data.parquet} and {@code _pm} in {@code
      * dstPartitionDir}, dropping the dead bytes in-place O3 updates left behind.
      *
+     * @param commitMode      the grade for the new {@code _pm}'s barrier, resolved through the engine's durability
+     *                        policy ({@link CairoEngine#getResolvedCommitMode()}), never the configured mode: a
+     *                        replica under ADAPTIVE takes no barrier here
      * @param srcPartitionDir the live partition directory, {@code <partition>.<nameTxn>}; trimmed back on return
      * @param dstPartitionDir the staging directory to build into, created here; trimmed back on return
      * @param fallbackSeqTxn  stamped into the new {@code _pm} only when the source footer carries no
@@ -2836,6 +2839,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      */
     static void compactParquetPartition(
             CairoConfiguration configuration,
+            int commitMode,
             FilesFacade ff,
             TableToken tableToken,
             TableRecordMetadata metadata,
@@ -3003,7 +3007,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
             final long newParquetSize = partitionUpdater.updateFileMetadata();
             final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
-            partitionUpdater.commitParquetMeta(configuration.getCommitMode() != CommitMode.NOSYNC);
+            partitionUpdater.commitParquetMeta(commitMode != CommitMode.NOSYNC);
             LOG.info().$("parquet partition compacted off reader snapshot [table=").$(tableToken)
                     .$(", partition=").$ts(partitionTimestamp)
                     .$(", rowGroups=").$(rowGroupCount)
