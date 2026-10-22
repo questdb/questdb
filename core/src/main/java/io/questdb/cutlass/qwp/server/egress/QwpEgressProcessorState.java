@@ -127,6 +127,16 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * fragmented send buffer.
      */
     private boolean handshakeFlushPending;
+    /**
+     * True when the current query carried a per-query timeout
+     * ({@code QwpEgressMsgKind#QUERY_FLAG_TIMEOUT}). Such a client understands
+     * {@code STATUS_QUERY_TIMEOUT}, so the processor reports a timeout of its
+     * query with that status rather than {@code STATUS_LIMIT_EXCEEDED}.
+     * {@code handleQueryRequest} sets it per {@code QUERY_REQUEST}, and it lasts
+     * until the next one, so the error paths of a streaming continuation
+     * ({@code resumeSend}, a {@code CREDIT} resume) still see it.
+     */
+    private boolean hasQueryTimeout;
     // Effective per-batch row cap for this connection: the minimum of the
     // server's hard cap ({@code QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH})
     // and any client-requested limit sent via {@code X-QWP-Max-Batch-Rows} or
@@ -502,6 +512,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         recvBufferLen = 0;
         wsHandshakeSent = false;
         handshakeFlushPending = false;
+        hasQueryTimeout = false;
         pendingCacheResetMask = 0;
         pendingDisconnectAfterFlush = false;
         pendingHandshakeBytes = 0;
@@ -831,6 +842,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingPageFrameCursor != null ? streamingPageFrameCursor : streamingCursor;
     }
 
+    public boolean hasQueryTimeout() {
+        return hasQueryTimeout;
+    }
+
     public boolean isHandshakeFlushPending() {
         return handshakeFlushPending;
     }
@@ -1008,6 +1023,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public void setHandshakeFlushPending(boolean pending) {
         this.handshakeFlushPending = pending;
+    }
+
+    public void setHasQueryTimeout(boolean hasQueryTimeout) {
+        this.hasQueryTimeout = hasQueryTimeout;
     }
 
     public void setPendingCacheResetMask(byte mask) {
