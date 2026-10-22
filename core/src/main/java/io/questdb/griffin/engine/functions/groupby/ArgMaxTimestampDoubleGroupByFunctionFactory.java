@@ -40,7 +40,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactory implements FunctionFact
 
     @Override
     public int getResultType(IntList argTypes) {
-        return ColumnType.getTimestampType(argTypes.getQuick(0));
+        return ColumnType.getImplicitTimestampType(argTypes.getQuick(0));
     }
 
     @Override
@@ -56,6 +56,6 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactory implements FunctionFact
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function valueArg = args.getQuick(0);
-        return new ArgMaxTimestampDoubleGroupByFunction(valueArg, args.getQuick(1), ColumnType.getTimestampType(valueArg.getType()));
+        return new ArgMaxTimestampDoubleGroupByFunction(valueArg, args.getQuick(1), ColumnType.getImplicitTimestampType(valueArg.getType()));
     }
 }

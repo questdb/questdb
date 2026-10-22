@@ -54,6 +54,45 @@ final class OverloadResolver {
     private OverloadResolver() {
     }
 
+    /**
+     * Breaks a tie between two equally good overloads that no function list orders, so the result never depends on
+     * the order the classes were found in. The overload that converts the first argument where the two differ less
+     * wins, which keeps the type of the leading arguments: {@code arg_max(LONG, LONG)} returns LONG and
+     * {@code generate_series(DATE, $1, LONG)} returns timestamps. When the conversions are the same, an untyped NULL
+     * argument prefers a parameter type that can hold NULL.
+     */
+    private static boolean isPreferredOnTie(
+            FunctionFactoryDescriptor descriptor,
+            IntList distances,
+            FunctionFactoryDescriptor candidate,
+            IntList candidateDistances,
+            IntList argTypes
+    ) {
+        if (descriptor.isListed() || candidate.isListed()) {
+            return false;
+        }
+        final int n = Math.min(distances.size(), candidateDistances.size());
+        for (int i = 0; i < n; i++) {
+            final int distance = distances.getQuick(i);
+            final int candidateDistance = candidateDistances.getQuick(i);
+            if (distance != candidateDistance) {
+                return distance < candidateDistance;
+            }
+        }
+        for (int i = 0; i < n; i++) {
+            if (ColumnType.tagOf(argTypes.getQuick(i)) == ColumnType.NULL) {
+                final boolean hasNoNull = ColumnType.isNoNullSentinelFixedType(
+                        FunctionFactoryDescriptor.toTypeTag(descriptor.getArgTypeWithFlags(i)));
+                final boolean candidateHasNoNull = ColumnType.isNoNullSentinelFixedType(
+                        FunctionFactoryDescriptor.toTypeTag(candidate.getArgTypeWithFlags(i)));
+                if (hasNoNull != candidateHasNoNull) {
+                    return candidateHasNoNull;
+                }
+            }
+        }
+        return false;
+    }
+
     private static int mergeWithExactMatch(int match) {
         return match == MATCH_NO_MATCH ? MATCH_EXACT_MATCH
                 : match == MATCH_FUZZY_MATCH ? MATCH_PARTIAL_MATCH
@@ -63,17 +102,23 @@ final class OverloadResolver {
     /**
      * Returns the overload the call binds to, or null when no signature accepts the arguments.
      *
-     * @param argTypes  the argument types, UNDEFINED for an untyped bind variable
-     * @param argTraits the {@code ARG_*} bits of each argument
+     * @param argTypes   the argument types, UNDEFINED for an untyped bind variable
+     * @param argTraits  the {@code ARG_*} bits of each argument
+     * @param distancesA scratch for the per-argument conversion distances of one overload
+     * @param distancesB scratch for the per-argument conversion distances of another overload
      */
     static FunctionFactoryDescriptor resolve(
             ObjList<FunctionFactoryDescriptor> overloads,
             IntList argTypes,
             IntList argTraits,
             boolean isCast,
-            boolean isWindowContext
+            boolean isWindowContext,
+            IntList distancesA,
+            IntList distancesB
     ) {
         final int argCount = argTypes.size();
+        IntList distances = distancesA;
+        IntList candidateDistances = distancesB;
         FunctionFactoryDescriptor candidate = null;
         boolean candidateSigVarArg = true;
         int candidateSigArgTypeScore = -1;
@@ -121,6 +166,7 @@ final class OverloadResolver {
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
                 int match = sigArgCount == 0 ? MATCH_EXACT_MATCH : MATCH_NO_MATCH;
                 int sigArgTypeScore = 0;
+                distances.setAll(sigArgCount, 0);
                 for (int argIdx = 0; argIdx < sigArgCount; argIdx++) {
                     final int argTraitBits = argTraits.getQuick(argIdx);
                     final boolean isArgConstant = (argTraitBits & ARG_CONSTANT) != 0;
@@ -192,6 +238,7 @@ final class OverloadResolver {
                         }
 
                         sigArgTypeScore += overloadDistance;
+                        distances.setQuick(argIdx, overloadDistance);
                         overloadPossible = overloadDistance != ColumnType.OVERLOAD_NONE;
                         overloadPossible |= argType == ColumnType.UNDEFINED;
                     }
@@ -230,10 +277,15 @@ final class OverloadResolver {
                     }
 
                     if (match != MATCH_EXACT_MATCH) {
-                        if (candidateSigArgTypeScore > sigArgTypeScore || bestMatch < match) {
+                        if (candidateSigArgTypeScore > sigArgTypeScore || bestMatch < match
+                                || (candidateSigArgTypeScore == sigArgTypeScore
+                                && isPreferredOnTie(descriptor, distances, candidate, candidateDistances, argTypes))) {
                             candidate = descriptor;
                             candidateSigVarArg = sigVarArg;
                             candidateSigArgTypeScore = sigArgTypeScore;
+                            final IntList swap = candidateDistances;
+                            candidateDistances = distances;
+                            distances = swap;
                         }
                         bestMatch = match;
                     } else {

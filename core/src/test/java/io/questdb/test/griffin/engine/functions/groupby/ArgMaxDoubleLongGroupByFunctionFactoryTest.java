@@ -110,6 +110,14 @@ public class ArgMaxDoubleLongGroupByFunctionFactoryTest extends AbstractCairoTes
     }
 
     @Test
+    public void testArgMaxUntypedNullValue() throws Exception {
+        assertQuery("select arg_max(null, x) from long_sequence(3)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\nnull\n");
+    }
+
+    @Test
     public void testArgMaxWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value double, key long)");
         execute("insert into tab values ('A', 10.5, 1)");

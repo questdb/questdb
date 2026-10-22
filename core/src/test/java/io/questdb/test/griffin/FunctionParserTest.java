@@ -41,7 +41,6 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
-import io.questdb.griffin.FunctionFactoryScanner;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -96,6 +95,7 @@ import io.questdb.griffin.engine.functions.eq.EqDateFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMaxCharLongGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.ArgMaxDoubleLongGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.ArgMaxLongDoubleGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.ArgMaxLongTimestampGroupByFunctionFactory;
@@ -104,6 +104,9 @@ import io.questdb.griffin.engine.functions.groupby.ArgMinDoubleLongGroupByFuncti
 import io.questdb.griffin.engine.functions.groupby.ArgMinLongDoubleGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.ArgMinLongTimestampGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.ArgMinTimestampLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.BitAndByteGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.BitAndIntGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.BitAndShortGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
@@ -254,7 +257,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     functions.add(new ArgMinLongDoubleGroupByFunctionFactory());
                     functions.add(new ArgMinTimestampLongGroupByFunctionFactory());
                 }
-                FunctionFactoryScanner.sort(functions, "function_list.txt", FunctionFactoryScanner.class.getClassLoader());
                 final FunctionParser functionParser = createFunctionParser();
                 for (String call : new String[]{"arg_max(i, i)", "arg_max(l, l)", "arg_min(i, i)", "arg_min(l, l)"}) {
                     try (Function function = parseFunction(call, metadata, functionParser)) {
@@ -1177,6 +1179,33 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testUnknownFunctionClosesArgsAndKeepsError() {
         // invalidFunction(): the function name has no overloads at all.
         assertResolutionFailureClosesArgs(2, "unknown function name", "nonexistent(bad_arg(), bad_arg())", null);
+    }
+
+    @Test
+    public void testUntypedNullPrefersNullableOverload() throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("l", ColumnType.LONG));
+            final ObjList<FunctionFactory> factories = new ObjList<>();
+            factories.add(new ArgMaxCharLongGroupByFunctionFactory());
+            factories.add(new ArgMaxDoubleLongGroupByFunctionFactory());
+            factories.add(new BitAndByteGroupByFunctionFactory());
+            factories.add(new BitAndIntGroupByFunctionFactory());
+            factories.add(new BitAndShortGroupByFunctionFactory());
+            for (boolean isReversed : new boolean[]{false, true}) {
+                functions.clear();
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    functions.add(factories.getQuick(isReversed ? n - 1 - i : i));
+                }
+                final FunctionParser functionParser = createFunctionParser();
+                try (Function function = parseFunction("arg_max(null, l)", metadata, functionParser)) {
+                    assertEquals(ColumnType.DOUBLE, function.getType());
+                }
+                try (Function function = parseFunction("bit_and(null)", metadata, functionParser)) {
+                    assertEquals(ColumnType.INT, function.getType());
+                }
+            }
+        });
     }
 
     @Test

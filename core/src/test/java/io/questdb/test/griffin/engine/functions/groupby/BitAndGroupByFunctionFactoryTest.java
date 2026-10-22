@@ -273,4 +273,14 @@ public class BitAndGroupByFunctionFactoryTest extends AbstractCairoTest {
             }, configuration, LOG);
         }
     }
+
+    @Test
+    public void testBitAndUntypedNull() throws Exception {
+        assertQuery("select bit_and(null) from long_sequence(3)")
+                .expectSize()
+                .returns("""
+                        bit_and
+                        null
+                        """);
+    }
 }

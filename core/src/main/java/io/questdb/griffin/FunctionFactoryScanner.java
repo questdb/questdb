@@ -18,6 +18,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.jar.JarFile;
 import java.lang.reflect.Modifier;
 import java.util.zip.ZipFile;
@@ -35,6 +37,14 @@ import java.util.zip.ZipFile;
 // Loading when QuestDB runs as a JAR file
 // Loading when QuestDB runs as a directory, that happens when running tests from maven, IDEs
 public class FunctionFactoryScanner {
+    private static final Set<String> listedFactoryClassNames = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Whether a function list file that {@link #sort} loaded names the factory's class.
+     */
+    public static boolean isListed(FunctionFactory factory) {
+        return listedFactoryClassNames.contains(factory.getClass().getName());
+    }
 
     public static void scan(ArrayList<FunctionFactory> functionFactories, String packageName, String functionListFileName, Class<?> clazz, String moduleName, @Nullable Log log) {
         try {
@@ -94,12 +104,19 @@ public class FunctionFactoryScanner {
 
     /**
      * Orders the factories as the function list file lists them, then the unlisted ones by descending signature
-     * length and by class name, so that the overload a call resolves to never depends on the order the classes
-     * were found in.
+     * length and by class name, so that the order never depends on the order the classes were found in.
+     * {@link OverloadResolver} keeps this order between two equally good overloads when the file lists either of
+     * them, and otherwise prefers the one that converts the leading arguments least.
      */
     public static void sort(List<FunctionFactory> factories, String functionListFileName, ClassLoader classLoader) {
         final CharSequenceIntHashMap orderMap = new CharSequenceIntHashMap();
         loadFunctionOrderMap(functionListFileName, classLoader, orderMap);
+        for (int i = 0, n = factories.size(); i < n; i++) {
+            final String className = factories.get(i).getClass().getName();
+            if (orderMap.keyIndex(className) < 0) {
+                listedFactoryClassNames.add(className);
+            }
+        }
         factories.sort((f1, f2) -> compareFactories(f1, f2, orderMap));
     }
 

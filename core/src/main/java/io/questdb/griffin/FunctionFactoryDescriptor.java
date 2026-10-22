@@ -54,6 +54,7 @@ public class FunctionFactoryDescriptor {
     private final boolean isArrayColumnLayoutSensitive;
     private final boolean isArrayElementWiseScalar;
     private final boolean isCase;
+    private final boolean isListed;
     private final boolean isOr;
     private final boolean isRelocatableScalar;
     private final boolean isRowCount;
@@ -79,6 +80,7 @@ public class FunctionFactoryDescriptor {
                 || factory.getClass() == DoubleArrayElemMinFunctionFactory.class
                 || factory.getClass() == DoubleArrayElemSumFunctionFactory.class;
         this.isCase = factory.getClass() == CaseFunctionFactory.class;
+        this.isListed = FunctionFactoryScanner.isListed(factory);
         this.isOr = factory.getClass() == OrFunctionFactory.class;
         this.isSwitch = factory.getClass() == SwitchFunctionFactory.class;
         this.isRelocatableScalar = isRelocatableScalar;
@@ -340,6 +342,14 @@ public class FunctionFactoryDescriptor {
 
     public boolean isCase() {
         return isCase;
+    }
+
+    /**
+     * Whether a function list file orders this factory, so that {@link OverloadResolver} keeps the list order on a
+     * tie with it instead of comparing the arguments.
+     */
+    public boolean isListed() {
+        return isListed;
     }
 
     public boolean isOr() {

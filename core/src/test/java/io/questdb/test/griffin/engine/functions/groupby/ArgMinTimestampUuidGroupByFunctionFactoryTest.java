@@ -97,6 +97,25 @@ public class ArgMinTimestampUuidGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testArgMinIntValueConvertsToTimestamp() throws Exception {
+        execute("create table tab (value int, key uuid)");
+        execute("""
+                insert into tab values
+                (1, '11111111-1111-1111-1111-111111111111'),
+                (3, '33333333-3333-3333-3333-333333333333'),
+                (2, '22222222-2222-2222-2222-222222222222')
+                """);
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        arg_min
+                        1970-01-01T00:00:00.000001Z
+                        """);
+    }
+
+    @Test
     public void testArgMinSimple() throws Exception {
         execute("create table tab (value timestamp, key uuid)");
         execute("insert into tab values ('2023-01-01T00:00:00.000000Z', '11111111-1111-1111-1111-111111111111')");

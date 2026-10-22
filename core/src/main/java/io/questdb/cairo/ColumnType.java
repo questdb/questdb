@@ -383,6 +383,15 @@ public final class ColumnType {
         return leftPriority >= rightPriority ? left : right;
     }
 
+    /**
+     * The timestamp type of a {@code type} value that a timestamp parameter receives through an implicit conversion:
+     * {@link #getTimestampType(int)}, and a microsecond timestamp for the numeric and NULL types, whose
+     * {@code getTimestamp()} returns the value itself.
+     */
+    public static int getImplicitTimestampType(int type) {
+        return getHigherPrecisionTimestampType(getTimestampType(type), TIMESTAMP_MICRO);
+    }
+
     public static TimestampDriver getTimestampDriver(int timestampType) {
         final short tag = tagOf(timestampType);
         // null and UNDEFINED use MicrosTimestamp

@@ -282,6 +282,26 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testIntegerStartWithStringArgumentsGeneratesLongs() throws Exception {
+        assertQuery("generate_series(1::byte, '30', '10');")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        1
+                        11
+                        21
+                        """);
+        assertQuery("generate_series(1L, 30L, '10');")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        1
+                        11
+                        21
+                        """);
+    }
+
+    @Test
     public void testLongBindVariables() throws Exception {
         bindVariableService.setLong("l1", -5);
         bindVariableService.setLong("l2", 5);

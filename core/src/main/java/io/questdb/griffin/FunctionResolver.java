@@ -155,6 +155,8 @@ import static io.questdb.griffin.SqlKeywords.*;
 public class FunctionResolver implements Mutable, SwitchFunctionFactory.EqualityFactory {
     private static final boolean ASSERTIONS_ENABLED = FunctionResolver.class.desiredAssertionStatus();
     private static final Log LOG = LogFactory.getLog(FunctionResolver.class);
+    private final IntList argDistancesA = new IntList();
+    private final IntList argDistancesB = new IntList();
     private final IntList argTraits = new IntList();
     private final IntList argTypes = new IntList();
     private final CairoConfiguration configuration;
@@ -1145,7 +1147,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                     | (isConstant && ColumnType.tagOf(type) == ColumnType.STRING && arg.getStrLen(null) > 1 ? OverloadResolver.ARG_MULTI_CHAR : 0));
         }
         final FunctionFactoryDescriptor candidateDescriptor = OverloadResolver.resolve(
-                overload, argTypes, argTraits, SqlKeywords.isCastKeyword(name), isWindowContext);
+                overload, argTypes, argTraits, SqlKeywords.isCastKeyword(name), isWindowContext, argDistancesA, argDistancesB);
         if (candidateDescriptor != null) {
             return candidateDescriptor;
         }
