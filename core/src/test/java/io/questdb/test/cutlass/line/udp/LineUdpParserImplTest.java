@@ -1084,20 +1084,17 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         });
     }
 
-    // Another session can create a table as WAL while the parser is inside a line that creates it as non-WAL (WAL
-    // default off). ADAPTIVE refuses the table then too, with its later lines; other modes write all its lines.
+    // Another session can create a table as WAL while the parser is inside a line that creates it as non-WAL. The
+    // table is refused then too, with its later lines, in every commit mode.
     @Test
-    public void testWalTableCreatedMidLineRefusedInAdaptiveOnly() throws Exception {
+    public void testWalTableCreatedMidLineRefused() throws Exception {
         assertMemoryLeak(() -> {
             final LogCapture capture = new LogCapture();
             capture.start();
             try {
-                setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "false");
                 for (String mode : new String[]{"nosync", "async", "sync", "adaptive"}) {
                     setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
                     Assert.assertEquals(mode, CommitMode.fromString(mode), engine.getConfiguration().getCommitMode());
-                    Assert.assertFalse(mode, engine.getConfiguration().getWalEnabledDefault());
-                    final boolean refused = "adaptive".equals(mode);
                     final String r = "r_" + mode;
                     try (
                             LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
@@ -1116,32 +1113,26 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .timestamp("timestamp")
                             .expectSize()
-                            .returns(refused
-                                    ? "s\tv\ttimestamp\n"
-                                    : """
-                                    s\tv\ttimestamp
-                                    a\t1\t2024-01-02T00:00:00.000000Z
-                                    b\t2\t2024-01-02T01:00:00.000000Z
-                                    """);
+                            .returns("s\tv\ttimestamp\n");
                 }
                 capture.drain();
-                for (String mode : new String[]{"nosync", "async", "sync"}) {
-                    capture.assertNotLogged("table=r_" + mode + ']');
+                for (String mode : new String[]{"nosync", "async", "sync", "adaptive"}) {
+                    // A WAL table's token logs as its directory name, the table name with a ~id suffix.
+                    capture.assertOnlyOnce("ILP over UDP cannot write to a WAL table.*table=r_" + mode + "~");
                 }
-                capture.assertOnlyOnce("cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart.*table=r_adaptive]");
             } finally {
                 capture.stop();
             }
         });
     }
 
-    // The parser writes a WAL table through its writer, outside the WAL, and an ADAPTIVE start-up rolls such a table
-    // back to its last save point. So ADAPTIVE refuses the lines of a WAL table, existing or one a line would create,
-    // with one error per table, and still writes the non-WAL tables of the same datagrams; other modes write them all.
-    // The second datagram meets each refused table again between lines of two written tables: its lines, and the
-    // columns they add, must not land in either.
+    // The parser writes through a TableWriter, outside the WAL, the sequencer and replication, so it refuses the
+    // lines of a WAL table in every commit mode, with one error per table, and still writes the non-WAL tables of
+    // the same datagrams. A table a line creates is non-WAL whatever cairo.wal.enabled.default says, so its lines
+    // are written. The second datagram meets the refused table again between lines of two written tables: its
+    // lines, and the columns they add, must not land in either.
     @Test
-    public void testWalTablesRefusedInAdaptiveOnly() throws Exception {
+    public void testWalTablesRefused() throws Exception {
         assertMemoryLeak(() -> {
             final LogCapture capture = new LogCapture();
             capture.start();
@@ -1150,7 +1141,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 for (String mode : new String[]{"nosync", "async", "sync", "adaptive"}) {
                     setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
                     Assert.assertEquals(mode, CommitMode.fromString(mode), engine.getConfiguration().getCommitMode());
-                    final boolean refused = "adaptive".equals(mode);
+                    Assert.assertTrue(mode, engine.getConfiguration().getWalEnabledDefault());
                     final String n = "n_" + mode;
                     final String w = "w_" + mode;
                     final String m = "m_" + mode;
@@ -1214,44 +1205,29 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()
-                            .returns(refused
-                                    ? """
+                            .returns("""
                                     s\tv\tts
                                     wal\t0\t2024-01-01T00:00:00.000000Z
-                                    """
-                                    : """
-                                    s\tv\tts\tx\ty
-                                    wal\t0\t2024-01-01T00:00:00.000000Z\tnull\tnull
-                                    b\t2\t2024-01-02T01:00:00.000000Z\tnull\tnull
-                                    c\t3\t2024-01-02T02:00:00.000000Z\tnull\tnull
-                                    g\t7\t2024-01-02T06:00:00.000000Z\t1\tnull
-                                    j\t10\t2024-01-02T09:00:00.000000Z\tnull\tnull
-                                    k\t11\t2024-01-02T10:00:00.000000Z\tnull\t1
                                     """);
-                    if (refused) {
-                        Assert.assertNull(mode, engine.getTableTokenIfExists(m));
-                    } else {
-                        Assert.assertTrue(mode, engine.verifyTableName(m).isWal());
-                        assertQuery("select * from " + m)
-                                .noLeakCheck()
-                                .timestamp("timestamp")
-                                .expectSize()
-                                .returns("""
-                                        s\tv\ttimestamp\tz
-                                        e\t5\t2024-01-02T04:00:00.000000Z\tnull
-                                        f\t6\t2024-01-02T05:00:00.000000Z\tnull
-                                        m\t13\t2024-01-02T12:00:00.000000Z\tnull
-                                        n\t14\t2024-01-02T13:00:00.000000Z\t1
-                                        """);
-                    }
+                    Assert.assertFalse(mode, engine.verifyTableName(m).isWal());
+                    assertQuery("select * from " + m)
+                            .noLeakCheck()
+                            .timestamp("timestamp")
+                            .expectSize()
+                            .returns("""
+                                    s\tv\ttimestamp\tz
+                                    e\t5\t2024-01-02T04:00:00.000000Z\tnull
+                                    f\t6\t2024-01-02T05:00:00.000000Z\tnull
+                                    m\t13\t2024-01-02T12:00:00.000000Z\tnull
+                                    n\t14\t2024-01-02T13:00:00.000000Z\t1
+                                    """);
                 }
                 capture.drain();
-                for (String mode : new String[]{"nosync", "async", "sync"}) {
-                    capture.assertNotLogged("table=w_" + mode + ']');
-                    capture.assertNotLogged("table=m_" + mode + ']');
+                for (String mode : new String[]{"nosync", "async", "sync", "adaptive"}) {
+                    // A WAL table's token logs as its directory name, the table name with a ~id suffix.
+                    capture.assertOnlyOnce("ILP over UDP cannot write to a WAL table.*table=w_" + mode + "~");
+                    capture.assertNotLogged("convert the table to non-WAL [table=m_" + mode);
                 }
-                capture.assertOnlyOnce("cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart.*table=w_adaptive]");
-                capture.assertOnlyOnce("cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart.*table=m_adaptive]");
             } finally {
                 capture.stop();
             }
