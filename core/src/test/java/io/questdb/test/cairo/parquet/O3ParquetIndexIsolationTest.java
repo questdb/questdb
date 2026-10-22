@@ -122,6 +122,44 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddIndexOverAbsentColumnThenInPlaceUpdate() throws Exception {
+        // The column is added after the partition, which then holds no rows of it (column top -1). ADD INDEX
+        // creates the index files of the parquet partition but adds nothing to them, so the first in-place
+        // update must build the index in full rather than append to it.
+        assertMemoryLeak(() -> {
+            createAllNullSymbolPartition(true, true);
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN s ADD " + indexClause);
+            drainWalQueue();
+            assertInPlaceUpdatesIndexAllNullSymbol();
+        });
+    }
+
+    @Test
+    public void testAddIndexOverAllNullColumnThenInPlaceUpdate() throws Exception {
+        // The column is added while the partition is the last one, so its column top spans the whole partition
+        assertMemoryLeak(() -> {
+            createAllNullSymbolPartition(false, true);
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN s ADD " + indexClause);
+            drainWalQueue();
+            assertInPlaceUpdatesIndexAllNullSymbol();
+        });
+    }
+
+    @Test
+    public void testAddIndexOverAllNullColumnThenInPlaceUpdateNonWal() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllNullSymbolPartition(false, false);
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'");
+            execute("ALTER TABLE pt ALTER COLUMN s ADD " + indexClause);
+            assertInPlaceUpdatesIndexAllNullSymbol();
+        });
+    }
+
+    @Test
     public void testAppendAfterLastRowGroup() throws Exception {
         assertMemoryLeak(() -> {
             createParquetPartition("", true);
@@ -167,6 +205,20 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
             assertIndexQueriesMatchTruth();
             // the compacted partition keeps taking in-place updates
             assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('c', 102, '2024-01-01T02:30:00.000000Z')", true);
+        });
+    }
+
+    @Test
+    public void testConvertIndexedAllNullColumnThenInPlaceUpdate() throws Exception {
+        // CONVERT TO PARQUET fills the index of an all-NULL column with NULL entries but keeps the column
+        // top, so the first in-place update builds the index in full, over the files the conversion wrote
+        assertMemoryLeak(() -> {
+            createAllNullSymbolPartition(false, true);
+            execute("ALTER TABLE pt ALTER COLUMN s ADD " + indexClause);
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'");
+            drainWalQueue();
+            assertInPlaceUpdatesIndexAllNullSymbol();
         });
     }
 
@@ -702,6 +754,18 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
         });
     }
 
+    private void assertInPlaceUpdatesIndexAllNullSymbol() throws Exception {
+        // Before the update the column top answers the queries, and a covering index has no size to report.
+        assertKeyQueriesMatchTruth();
+        // The commit zeroes the column top, so the index must hold the kept row groups' NULL rows too.
+        assertIsolatedAcrossCommit(
+                "INSERT INTO pt (s, v, ts) VALUES ('a', 100, '2024-01-01T06:30:00.000000Z'), (NULL, 101, '2024-01-01T06:45:00.000000Z')",
+                true
+        );
+        // the next update appends to the index the first one built
+        assertIsolatedAcrossCommit("INSERT INTO pt (s, v, ts) VALUES ('b', 102, '2024-01-01T10:30:00.000000Z')", true);
+    }
+
     private void assertIndexQueriesMatchTruth() throws Exception {
         for (int key = 0; key < KEY_FILTERS.length; key++) {
             for (int order = 0; order < ORDERS.length; order++) {
@@ -745,6 +809,44 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
             Misc.freeObjList(pinned);
         }
         assertIndexQueriesMatchTruth();
+    }
+
+    // A native partition 2024-01-01 with the rows of createParquetPartition and an all-NULL symbol column s,
+    // whose column top there is either the whole partition or, when the column is absent, -1.
+    private void createAllNullSymbolPartition(boolean isColumnAbsent, boolean isWal) throws Exception {
+        execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        execute(
+                """
+                        INSERT INTO pt VALUES
+                        (1, '2024-01-01T01:00:00.000000Z'), (2, '2024-01-01T02:00:00.000000Z'),
+                        (3, '2024-01-01T03:00:00.000000Z'), (4, '2024-01-01T04:00:00.000000Z'),
+                        (5, '2024-01-01T05:00:00.000000Z'), (6, '2024-01-01T06:00:00.000000Z'),
+                        (7, '2024-01-01T07:00:00.000000Z'), (8, '2024-01-01T08:00:00.000000Z'),
+                        (9, '2024-01-01T09:00:00.000000Z'), (10, '2024-01-01T10:00:00.000000Z'),
+                        (11, '2024-01-01T11:00:00.000000Z'), (12, '2024-01-01T12:00:00.000000Z')
+                        """
+        );
+        drainWalQueue();
+        if (isColumnAbsent) {
+            execute("INSERT INTO pt VALUES (96, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+        }
+        execute("ALTER TABLE pt ADD COLUMN s SYMBOL");
+        drainWalQueue();
+        // every key of the queries must be in the symbol table
+        execute(
+                """
+                        INSERT INTO pt (s, v, ts) VALUES
+                        ('a', 97, '2024-01-02T01:00:00.000000Z'),
+                        ('b', 98, '2024-01-02T02:00:00.000000Z'),
+                        ('c', 99, '2024-01-02T03:00:00.000000Z')
+                        """
+        );
+        drainWalQueue();
+        try (TableReader reader = getReader("pt")) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("s"));
+            Assert.assertEquals(isColumnAbsent ? -1 : 12, reader.getColumnVersionReader().getColumnTop(PARTITION_TIMESTAMP, writerIndex));
+        }
     }
 
     private void createParquetPartition(String dedupClause, boolean isIndexed) throws Exception {

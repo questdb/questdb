@@ -16368,7 +16368,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                          rows, which the native partition shares. False when an in-place
      *                          O3 update moved row groups to other index rows, see
      *                          {@link ParquetMetaFileReader#getRowGroupIndexRowLo}; the index
-     *                          is then rebuilt from the decoded column.
+     *                          is then rebuilt from the decoded column. The index is also
+     *                          rebuilt when the conversion published a column top: the parquet
+     *                          index holds explicit NULL postings for the rows under it, which
+     *                          the native index readers synthesize from the top instead.
      */
     private void restoreIndexFilesAfterParquetToNative(
             long partitionTimestamp,
@@ -16395,7 +16398,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
                 // Prefer linking the existing index files
-                if (canLinkIndexFiles && ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                if (canLinkIndexFiles && columnTop == 0 && ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
                     linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, partitionTimestamp, parquetNameTxn);
                     continue;
                 }

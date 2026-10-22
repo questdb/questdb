@@ -29,10 +29,17 @@ import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.cairo.wal.WalTxnDetails;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -44,10 +51,13 @@ import org.junit.Test;
  * A requested parquet conversion writes a whole logical partition - one plain folder, a composite folder whose pieces
  * sit anywhere in its files, a run of MOVE-TAIL splits - into one parquet file in a single pass, its live pieces handed
  * to the encoder as frames that need not line up with row groups. Every test compares the converted table against a
- * native copy taken before the conversion, and reads it through its symbol index too.
+ * native copy taken before the conversion, and reads it through its symbol index too. The {@code DiscardsTheSwap}
+ * tests commit into the day between the conversion's build and its swap, which the swap has to decline.
  */
 public class PartitionCompactionParquetConversionTest extends AbstractCairoTest {
     private static final long DAY = parse("2020-01-01T00:00:00.000000Z");
+    // The rows a test commits into the day between the conversion's build and its swap.
+    private static final int LATE_ROWS = 200;
 
     @Override
     @Before
@@ -139,6 +149,65 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     /**
+     * A non-WAL writer - the one ILP holds - appends rows past the day's last row in place: the folder keeps its
+     * name txn and grows. The swap's row-count check is the one that catches it.
+     */
+    @Test
+    public void testDiscardsTheSwapWhenANonWalWriterAppendsToTheDayBetweenBuildAndSwap() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("na", false);
+            assertFolders("na", 1, false);
+            assertWriteBetweenBuildAndSwapIsKept("na", false, "2020-01-01T23:30:00.000000Z", 1, false);
+        });
+    }
+
+    /**
+     * A WAL transaction appends rows past the day's last row in place: the folder keeps its name txn and grows.
+     * The swap's row-count check is the one that catches it.
+     */
+    @Test
+    public void testDiscardsTheSwapWhenAWalTransactionAppendsToTheDayBetweenBuildAndSwap() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("wa", true);
+            assertFolders("wa", 1, false);
+            assertWriteBetweenBuildAndSwapIsKept("wa", true, "2020-01-01T23:30:00.000000Z", 1, false);
+        });
+    }
+
+    /**
+     * A WAL transaction landing near the end of the day splits it: a second folder of the same day appears
+     * behind the one the build read, taking the day's tail rows with it. The swap's run-shape check catches it,
+     * and so does the first folder's row count on its own.
+     */
+    @Test
+    public void testDiscardsTheSwapWhenAWalTransactionSplitsTheDayBetweenBuildAndSwap() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+        assertMemoryLeak(() -> {
+            createTable("ws", true);
+            assertFolders("ws", 1, false);
+            assertWriteBetweenBuildAndSwapIsKept("ws", true, "2020-01-01T22:00:07.000000Z", 2, false);
+        });
+    }
+
+    /**
+     * A WAL transaction landing inside the day turns it composite in place: the folder keeps its name txn, grows
+     * and moves its generation. The swap's row-count and generation checks are the ones that catch it.
+     */
+    @Test
+    public void testDiscardsTheSwapWhenAWalTransactionTurnsTheDayCompositeBetweenBuildAndSwap() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        assertMemoryLeak(() -> {
+            createTable("wc", true);
+            assertFolders("wc", 1, false);
+            assertWriteBetweenBuildAndSwapIsKept("wc", true, "2020-01-01T04:00:07.000000Z", 1, true);
+        });
+    }
+
+    /**
      * The conversion never touches the active logical partition, nor one already in parquet.
      */
     @Test
@@ -190,6 +259,33 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         }
     }
 
+    private static void assertNoStagingDirectory(TableToken token) {
+        try (Path path = new Path()) {
+            final DirectUtf8StringZ name = new DirectUtf8StringZ();
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            ff.iterateDir(path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).$(), (pUtf8NameZ, _) -> {
+                final String entry = name.of(pUtf8NameZ).toString();
+                Assert.assertFalse("a declined swap must remove its staging directory: " + entry, entry.contains(TableUtils.MERGING_DIR_MARKER));
+            });
+        }
+    }
+
+    private static long dayNameTxn(String tableName) {
+        try (TableReader reader = engine.getReader(tableName)) {
+            final TxReader tx = reader.getTxFile();
+            return tx.getPartitionNameTxn(tx.getPartitionIndex(DAY));
+        }
+    }
+
+    /**
+     * {@link #LATE_ROWS} rows every 5 seconds from {@code from}, deterministic so {@link #commitLateRows} can write
+     * the same rows without SQL.
+     */
+    private static String lateRowsInsert(String tableName, String from) {
+        return "INSERT INTO " + tableName + " (i, s, late, ts) SELECT x::INT + 80_000, CASE WHEN x % 2 = 0 THEN 'k1' ELSE 'k2' END," +
+                " x + 2_000_000, timestamp_sequence('" + from + "', 5 * 1_000_000L) FROM long_sequence(" + LATE_ROWS + ")";
+    }
+
     private static long parse(String timestamp) {
         try {
             return MicrosFormatUtils.parseTimestamp(timestamp);
@@ -219,6 +315,10 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
 
     private void assertConversion(String tableName, boolean isWal) throws Exception {
         execute("CREATE TABLE " + tableName + "_oracle AS (SELECT * FROM " + tableName + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        assertConversionMatchesOracle(tableName, isWal);
+    }
+
+    private void assertConversionMatchesOracle(String tableName, boolean isWal) throws Exception {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         final TableToken token = engine.verifyTableName(tableName);
@@ -246,6 +346,86 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     /**
+     * Requests the conversion while holding the writer, so the job builds the file off its reader snapshot and
+     * queues the swap; commits {@link #LATE_ROWS} rows from {@code from} into the day through the held writer; then
+     * ticks the swap - the order the WAL apply loop runs a swap queued mid-batch in. The swap must decline: the
+     * day stays native in the shape the write left it, under the same name txn, with every row, and the next
+     * request converts it with the late rows in the file.
+     */
+    private void assertWriteBetweenBuildAndSwapIsKept(
+            String tableName,
+            boolean isWal,
+            String from,
+            int folderCount,
+            boolean isComposite
+    ) throws Exception {
+        execute("CREATE TABLE " + tableName + "_oracle AS (SELECT * FROM " + tableName + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        final TableToken token = engine.verifyTableName(tableName);
+        Assert.assertEquals(isWal, token.isWal());
+        final long nameTxnBefore = dayNameTxn(tableName);
+
+        try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+            Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+            runJobOnAnotherThread();
+            commitLateRows(ownerWriter, from);
+            Assert.assertFalse(ownerWriter.inTransaction());
+            // The queued swap runs against the day as the commit left it.
+            ownerWriter.tick();
+        }
+        execute(lateRowsInsert(tableName + "_oracle", from));
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+
+        assertFolders(tableName, folderCount, isComposite);
+        try (TableReader reader = engine.getReader(tableName)) {
+            final TxReader tx = reader.getTxFile();
+            Assert.assertFalse("a declined swap must leave the day native", tx.isPartitionParquet(tx.getPartitionIndex(DAY)));
+        }
+        // Every write here leaves the folder's name txn alone, so the swap's name txn check cannot be what declined it.
+        Assert.assertEquals("the day's name txn", nameTxnBefore, dayNameTxn(tableName));
+        assertNoStagingDirectory(token);
+        TestUtils.assertSqlCursors(
+                engine, sqlExecutionContext, "SELECT * FROM " + tableName + "_oracle", "SELECT * FROM " + tableName, LOG
+        );
+        // The next request builds off the day as the write left it.
+        assertConversionMatchesOracle(tableName, isWal);
+    }
+
+    /**
+     * Commits {@link #lateRowsInsert}'s rows through the held writer. A non-WAL writer takes them as rows; a WAL
+     * table takes them as a WAL transaction, applied on the held writer the way {@code ApplyWal2TableJob} does.
+     */
+    private void commitLateRows(TableWriter ownerWriter, String from) throws Exception {
+        final TableToken token = ownerWriter.getTableToken();
+        if (!token.isWal()) {
+            final long fromTs = parse(from);
+            for (int k = 1; k <= LATE_ROWS; k++) {
+                final TableWriter.Row row = ownerWriter.newRow(fromTs + (k - 1) * 5_000_000L);
+                row.putInt(0, 80_000 + k);
+                row.putSym(1, k % 2 == 0 ? "k1" : "k2");
+                row.putLong(7, 2_000_000 + k);
+                row.append();
+            }
+            ownerWriter.commit();
+            return;
+        }
+        execute(lateRowsInsert(token.getTableName(), from));
+        final long seqTxn = ownerWriter.getAppliedSeqTxn() + 1;
+        try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(token, ownerWriter.getAppliedSeqTxn())) {
+            ownerWriter.readWalTxnDetails(cursor);
+        }
+        final WalTxnDetails details = ownerWriter.getWalTnxDetails();
+        try (Path walPath = new Path()) {
+            walPath.of(configuration.getDbRoot()).concat(token).slash()
+                    .putAscii(WalUtils.WAL_NAME_BASE).put(details.getWalId(seqTxn)).slash().put(details.getSegmentId(seqTxn));
+            ownerWriter.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY);
+        }
+        Assert.assertEquals("the late rows must be applied before the swap runs", seqTxn, ownerWriter.getAppliedSeqTxn());
+    }
+
+    /**
      * 2020-01-01 with 5760 rows, a column added part-way through so the day's folders carry a column top, every
      * kind of column the frames have to slice - fixed, symbol, var-size of both aux layouts, array - and an active
      * 2020-01-03.
@@ -255,15 +435,15 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
                 " TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
         execute("INSERT INTO " + tableName + " SELECT x::INT i, rnd_symbol('k1', 'k2', NULL) s," +
                 " rnd_varchar(1, 40, 1) v, rnd_str(1, 30, 1) str, rnd_double(2) d, rnd_double_array(1, 1) arr," +
-                " timestamp_sequence('2020-01-01', 10 * 1000000L) ts FROM long_sequence(4000)");
+                " timestamp_sequence('2020-01-01', 10 * 1_000_000L) ts FROM long_sequence(4000)");
         drainWalQueue();
         execute("ALTER TABLE " + tableName + " ADD COLUMN late LONG");
         drainWalQueue();
         execute("INSERT INTO " + tableName + " SELECT x::INT + 10_000 i, rnd_symbol('k1', 'k2', NULL) s," +
                 " rnd_varchar(1, 40, 1) v, rnd_str(1, 30, 1) str, rnd_double(2) d, rnd_double_array(1, 1) arr," +
-                " timestamp_sequence('2020-01-01T11:06:40', 25 * 1000000L) ts, x late FROM long_sequence(1760)");
+                " timestamp_sequence('2020-01-01T11:06:40', 25 * 1_000_000L) ts, x late FROM long_sequence(1760)");
         drainWalQueue();
-        execute("INSERT INTO " + tableName + " (i, ts) SELECT x::INT + 90_000 i, timestamp_sequence('2020-01-03', 60 * 1000000L) ts" +
+        execute("INSERT INTO " + tableName + " (i, ts) SELECT x::INT + 90_000 i, timestamp_sequence('2020-01-03', 60 * 1_000_000L) ts" +
                 " FROM long_sequence(50)");
         drainWalQueue();
     }
@@ -271,7 +451,7 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     private void insertBackfill(String tableName, String from) throws Exception {
         execute("INSERT INTO " + tableName + " SELECT x::INT + 70_000 i, rnd_symbol('k1', 'k2', NULL) s," +
                 " rnd_varchar(1, 40, 1) v, rnd_str(1, 30, 1) str, rnd_double(2) d, rnd_double_array(1, 1) arr," +
-                " timestamp_sequence('" + from + "', 5 * 1000000L) ts, x + 1_000_000 late FROM long_sequence(200)");
+                " timestamp_sequence('" + from + "', 5 * 1_000_000L) ts, x + 1_000_000 late FROM long_sequence(200)");
         drainWalQueue();
     }
 }

@@ -5910,8 +5910,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * committed snapshot keep using. The update keeps the index rows of the row groups it kept
      * and gives the row groups it wrote fresh index rows past {@code prevIndexRowCount}, so this
      * method only appends those rows to the existing indexes. Entries a reader's snapshot refers
-     * to stay as they are. In rewrite mode, and for a fresh partition, the indexes are built
-     * from scratch in the new directory.
+     * to stay as they are. A column whose committed column top is nonzero has an index without
+     * the committed rows, so update mode builds it in full. In rewrite mode, and for a fresh
+     * partition, the indexes are built from scratch in the new directory.
      *
      * @param srcNameTxn        name txn of the directory that holds the file and its indexes
      * @param isInPlaceUpdate   true when the O3 job updated the file in its live directory
@@ -6013,9 +6014,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             continue;
                         }
 
-                        // Update mode appends to the committed index, unless the column has no
-                        // index files yet, which a full build then creates.
+                        // Update mode appends to the committed index, which must then hold every index
+                        // row below prevIndexRowCount. It does when the committed column top is 0. A
+                        // nonzero top on a parquet partition spans the whole partition (or the column
+                        // is absent there, -1), and an index built under it, e.g. by ADD INDEX, holds
+                        // none of its rows. The commit zeroes the top, so a full build replaces that
+                        // index. Readers of the committed snapshot answer such a column with stand-in
+                        // null readers and never open its index files. A full build also creates the
+                        // index files of a column that has none yet.
                         final boolean isAppend = isInPlaceUpdate
+                                && tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex) == 0
                                 && ff.exists(IndexFactory.keyFileName(indexType, path.trimTo(pLen), columnName, columnNameTxn));
                         if (isAppend) {
                             indexWriter.of(path.trimTo(pLen), columnName, columnNameTxn, false);

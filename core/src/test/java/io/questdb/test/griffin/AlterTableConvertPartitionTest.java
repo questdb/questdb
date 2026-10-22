@@ -1430,6 +1430,26 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsBitmap() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE BITMAP", true);
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsBitmapNonWal() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE BITMAP", false);
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsPosting() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE POSTING", true);
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsPostingNonWal() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE POSTING", false);
+    }
+
+    @Test
     public void testConvertSecondCallIgnored() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute(
@@ -1551,6 +1571,74 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertConvertToNativeIndexesSymbolColTopOnce(String indexClause, boolean isWal) throws Exception {
+        // Converting to parquet writes the column top's rows into the symbol index as explicit NULL
+        // postings and zeroes the top. Converting back to native publishes the leading row groups
+        // the decoder skips as the column top again, and the native index readers synthesize NULL
+        // rows for it, so the native partition's index must not hold those rows as well. 10 rows
+        // before the column was added, row groups of 4: the top covers two whole row groups.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+            execute("INSERT INTO t SELECT x::INT, '2024-01-01'::TIMESTAMP + x * 60_000_000L FROM long_sequence(10)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL " + indexClause);
+            execute("""
+                    INSERT INTO t
+                    SELECT (10 + x)::INT, '2024-01-01'::TIMESTAMP + (10 + x) * 60_000_000L,
+                           CASE WHEN x % 3 = 1 THEN 'aa' WHEN x % 3 = 2 THEN 'bb' END
+                    FROM long_sequence(6)
+                    """);
+            execute("INSERT INTO t (x, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            final String expectedNull = """
+                    x\tts\ts
+                    1\t2024-01-01T00:01:00.000000Z\t
+                    2\t2024-01-01T00:02:00.000000Z\t
+                    3\t2024-01-01T00:03:00.000000Z\t
+                    4\t2024-01-01T00:04:00.000000Z\t
+                    5\t2024-01-01T00:05:00.000000Z\t
+                    6\t2024-01-01T00:06:00.000000Z\t
+                    7\t2024-01-01T00:07:00.000000Z\t
+                    8\t2024-01-01T00:08:00.000000Z\t
+                    9\t2024-01-01T00:09:00.000000Z\t
+                    10\t2024-01-01T00:10:00.000000Z\t
+                    13\t2024-01-01T00:13:00.000000Z\t
+                    16\t2024-01-01T00:16:00.000000Z\t
+                    """;
+            final String expectedAa = """
+                    x\tts\ts
+                    11\t2024-01-01T00:11:00.000000Z\taa
+                    14\t2024-01-01T00:14:00.000000Z\taa
+                    """;
+            // the second round trip converts the native partition the first one wrote: the
+            // column top it published and the index it rebuilt
+            for (int i = 0; i < 2; i++) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                assertIndexQueryMatchesTruth("s IS NULL", "s::STRING IS NULL", expectedNull);
+                assertIndexQueryMatchesTruth("s = 'aa'", "s::STRING = 'aa'", expectedAa);
+                execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+                assertIndexQueryMatchesTruth("s IS NULL", "s::STRING IS NULL", expectedNull);
+                assertIndexQueryMatchesTruth("s = 'aa'", "s::STRING = 'aa'", expectedAa);
+            }
+        });
+    }
+
+    private void assertIndexQueryMatchesTruth(String indexFilter, String truthFilter, String expected) throws Exception {
+        final String partitionFilter = " FROM t WHERE ts IN '2024-01-01' AND ";
+        // the cast keeps the truth query off the index
+        assertQuery("SELECT x, ts, s" + partitionFilter + truthFilter).noLeakCheck().timestamp("ts").returns(expected);
+        final String indexQuery = "SELECT x, ts, s" + partitionFilter + indexFilter;
+        assertQuery(indexQuery).noLeakCheck().assertsPlanContaining("on: s");
+        sink.clear();
+        printSql(indexQuery, sink);
+        TestUtils.assertEquals(expected, sink);
+        assertQuery(indexQuery).noLeakCheck().timestamp("ts").returns(expected);
     }
 
     private void assertPartitionExists(String tableName, String partition) {
