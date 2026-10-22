@@ -3634,6 +3634,77 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testADeduplicatingBacklogThatReachesTheFrontierStillRefusesALostHourInACompositeViewPartition() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // testADeduplicatingBacklogThatReachesTheFrontierStillRefusesALostMiddleDay, over a
+            // base partitioned by HOUR and a view's table partitioned by DAY, so the lost partition
+            // check has to find the view's row inside one partition of the view's table rather
+            // than read it off that table's partition list. A late row the view repairs in makes
+            // the day composite: the repair rewrites the day from the late row up at the tail of
+            // the column files and leaves the rows it superseded behind as dead space, and every
+            // row after it appends at the tail too. The base then loses the hour of a row appended
+            // after the repair, which sits past the day's first liveRows file rows, where the check
+            // only finds it by walking the day's pieces. A binary search of those file rows reads
+            // the dead rows instead, misses the row, and lets the rebuild drop it.
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) "
+                    + "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            createBaseView("PARTITION BY DAY START FROM BEGINNING", true);
+            // Ten minutes apart, so no row falls inside another's 9-minute RANGE frame.
+            refreshIntoFilteredView("""
+                    INSERT INTO base (ts, sym, i) VALUES
+                        ('2026-01-01T00:01:00.000000Z', 'a', 100),
+                        ('2026-01-01T00:21:00.000000Z', 'a', 200),
+                        ('2026-01-01T00:31:00.000000Z', 'a', 300),
+                        ('2026-01-01T00:41:00.000000Z', 'a', 400),
+                        ('2026-01-01T00:51:00.000000Z', 'a', 500)""");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (String row : new String[]{
+                        "('2026-01-01T00:11:00.000000Z', 'a', 150)",
+                        "('2026-01-01T01:05:00.000000Z', 'a', 600)",
+                        "('2026-01-01T02:05:00.000000Z', 'a', 700)"
+                }) {
+                    execute("INSERT INTO base (ts, sym, i) VALUES " + row);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                }
+            }
+            assertNoRefreshFaults("lv");
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            final String rows = """
+                    ts\tsym\ti\tv
+                    2026-01-01T00:01:00.000000Z\ta\t100\t100.0
+                    2026-01-01T00:11:00.000000Z\ta\t150\t150.0
+                    2026-01-01T00:21:00.000000Z\ta\t200\t200.0
+                    2026-01-01T00:31:00.000000Z\ta\t300\t300.0
+                    2026-01-01T00:41:00.000000Z\ta\t400\t400.0
+                    2026-01-01T00:51:00.000000Z\ta\t500\t500.0
+                    2026-01-01T01:05:00.000000Z\ta\t600\t600.0
+                    2026-01-01T02:05:00.000000Z\ta\t700\t700.0
+                    """;
+            assertFilteredViewRows(rows);
+            assertViewRowPastLiveFilePrefix("lv", "2026-01-01T01:05:00.000000Z");
+            applyUnconsumedBacklog(
+                    "ALTER TABLE base DROP PARTITION LIST '2026-01-01T01'",
+                    "INSERT INTO base (ts, sym, i) VALUES ('2026-01-01T02:03:00.000000Z', 'a', -1)"
+            );
+            fault.disarm();
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            assertLostPartitionRefused(
+                    guard,
+                    "timeline is absent",
+                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                    "the view holds a row at 2026-01-01T01:05:00.000000Z but the base table holds no partition "
+                            + "between 2026-01-01T01:00:00.000000Z and 2026-01-01T02:00:00.000000Z",
+                    rows
+            );
+        });
+    }
+
+    @Test
     public void testAFilteredCommitAboveTheFrontierKeepsTheRowShortfallBehindADedupChange() throws Exception {
         final TimelineOpenFault fault = new TimelineOpenFault();
         assertMemoryLeak(fault, () -> {

@@ -788,6 +788,72 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
+    public void testRestartDeclinesToHealALostRowInACompositePartitionOfTheViewsTable() throws Exception {
+        // testRestartDeclinesToHealALostRowOnItsIntervalsLastTimestamp, over a view's table
+        // partitioned by DAY. A late row of another symbol, which the view repairs in, makes the
+        // day composite: the repair rewrites the day from the late row up at the tail of the column
+        // files, and every row after it appends there too. So the lost row sits past the day's
+        // first liveRows file rows, where the per-timestamp walk only finds it by walking the day's
+        // pieces. A walk of those file rows reads the dead rows the repair superseded instead,
+        // never meets the lost row, and the heal goes ahead.
+        setCadenceForAGroupSplitAcrossTheFrontier();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms PARTITION BY DAY START FROM NOW AS " + VIEW_SQL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int second = 0; second <= 30; second += 10) {
+                    appendAndRefresh(job, second, 1);
+                }
+                final long repairedBefore = repairedRows(viewInstance());
+                commitAndRefresh(job, "('2026-01-01T00:00:05.000000Z', 'c', 1)");
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue("the late row must be repaired in", repairedRows(viewInstance()) > repairedBefore);
+                commitAndRefresh(job, "('2026-01-01T00:59:00.000000Z', 'a', 5)");
+                commitAndRefresh(job, "('2026-01-01T00:59:30.000000Z', 'a', 6)");
+                commitAndRefresh(job, "('2026-01-01T01:59:50.000000Z', 'a', 7)");
+                commitAndRefresh(job, "('2026-01-01T02:00:10.000000Z', 'a', 8)");
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(ts("2026-01-01T01:59:50.000000Z"), viewInstance().getHeadCheckpointMaxTs());
+                assertViewRowPastLiveFilePrefix("lv", "2026-01-01T01:59:50.000000Z");
+                execute("ALTER TABLE base DROP PARTITION LIST '2026-01-01T01'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                execute("INSERT INTO base VALUES ('2026-01-01T00:58:00.000000Z', 'b', 100)");
+                drainWalQueue();
+                corruptNewestRootDataSegment(viewInstance());
+            }
+
+            final LogCapture capture = restartAndRefreshCapturingLog();
+            assertRebuiltFromAppliedBase("lv");
+            Assert.assertFalse(
+                    "the rebuild from the applied base must not be refused",
+                    viewInstance().isCheckpointRecoveryBlocked()
+            );
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                commitAndRefresh(resumed, "('2026-01-01T02:00:20.000000Z', 'a', 9)");
+                driveRefreshToQuiescence(resumed);
+            }
+            assertViewRows("""
+                    ts\tsym\ts
+                    2026-01-01T00:00:00.000000Z\ta\t1.0
+                    2026-01-01T00:00:05.000000Z\tc\t1.0
+                    2026-01-01T00:00:10.000000Z\ta\t2.0
+                    2026-01-01T00:00:20.000000Z\ta\t3.0
+                    2026-01-01T00:00:30.000000Z\ta\t4.0
+                    2026-01-01T00:58:00.000000Z\tb\t100.0
+                    2026-01-01T00:59:00.000000Z\ta\t5.0
+                    2026-01-01T00:59:30.000000Z\ta\t11.0
+                    2026-01-01T02:00:10.000000Z\ta\t8.0
+                    2026-01-01T02:00:20.000000Z\ta\t17.0
+                    """);
+            assertViewMatchesRecompute();
+            capture.assertLogged(HEAL_DECLINED_ROWS + " on a timestamp [view=lv, "
+                    + "timestamp=2026-01-01T01:59:50.000000Z, durableRows=1, baseRows=0]");
+            capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
+        });
+    }
+
+    @Test
     public void testRestartDeclinesToHealALostRowOnItsIntervalsLastTimestamp() throws Exception {
         // The newest root at 01:59:50 sits alone in its hour, which the base loses while the view
         // keeps its row. The base then applies a row the view has not consumed into the root's
