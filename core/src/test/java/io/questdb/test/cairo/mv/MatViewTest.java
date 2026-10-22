@@ -1080,6 +1080,7 @@ public class MatViewTest extends AbstractCairoTest {
                     Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
                 }
 
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
