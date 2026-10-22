@@ -768,8 +768,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean reload() {
+        final boolean wasActive = txnAcquired;
         if (acquireTxn()) {
             return false;
+        }
+        if (wasActive && partitionOverwriteControl != null) {
+            // readTxnSlow() releases the old txn in the scoreboard; drop the old partition sizes first,
+            // or the control flags a writer that legitimately appends once the scoreboard allows it
+            partitionOverwriteControl.releasePartitions(this);
         }
         try {
             reloadSlow(true);
@@ -782,6 +788,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             txPartitionVersion = txFile.getPartitionTableVersion();
             txColumnVersion = txFile.getColumnVersion();
             txTruncateVersion = txFile.getTruncateVersion();
+            if (wasActive && partitionOverwriteControl != null) {
+                partitionOverwriteControl.acquirePartitions(this);
+            }
 
             // Useful for debugging
             // assert DebugUtils.reconcileColumnTops(PARTITIONS_SLOT_SIZE, openPartitionInfo, columnVersionReader, this);

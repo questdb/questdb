@@ -3223,6 +3223,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.isPartitionReadOnly(partitionIndex);
     }
 
+    /**
+     * An O3 split shrinks the parent's row count but leaves the moved rows in its column files.
+     * Returns true while a reader locked in [parentNameTxn + 1, splitNameTxn] can still read them,
+     * so the parent's tail must not be written in place. Rewrites of the split move its name txn
+     * forward, so the range may include readers that never saw the moved rows: a needless merge,
+     * never a missed reader.
+     */
+    public boolean isPartitionTailPinnedByReaders(long partitionTimestamp) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        assert partitionIndex > -1 : "partition does not exist [timestamp=" + partitionTimestamp + ']';
+        return isPartitionTailPinned(partitionIndex);
+    }
+
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
     }
@@ -3556,6 +3569,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public void notifyPartitionAppend(long partitionTimestamp, long partitionNameTxn, long fromRow) {
+        engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, partitionTimestamp, partitionNameTxn, fromRow);
+    }
+
     public void o3BumpErrorCount(boolean oom) {
         o3ErrorCount.incrementAndGet();
         if (oom) {
@@ -3748,6 +3765,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
         rowAction = ROW_ACTION_OPEN_PARTITION;
+        // Reset the append horizon with the partitions, as the replace-commit truncate does. A stale
+        // partitionTimestampHi survives a block commit into an earlier partition and, on a parquet table,
+        // trips the partition consistency assert of the next processWalCommit().
+        partitionTimestampHi = Long.MIN_VALUE;
+        lastPartitionTimestamp = Long.MIN_VALUE;
 
         closeActivePartition(false);
         processPartitionRemoveCandidates();
@@ -6210,25 +6232,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 inOrderMinTimestamp,
                 blockSize > 0 ? walBlockBudget.of(blockSize) : null
         );
-    }
-
-    private boolean canSquashOverwritePartitionTail(int partitionIndex) {
-        long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        if (fromTxn < 0) {
-            fromTxn = 0;
-        }
-        long toTxn = txWriter.getTxn();
-        if (partitionIndex + 1 < txWriter.getPartitionCount()) {
-            // If the next partition is a split partition part of same logical partition
-            // for example if the partition is '2020-01-01' and the next partition is '2020-01-01T12.3'
-            // then if there are no readers between transaction range [0, 3) the partition is unlocked to append.
-            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex)) ==
-                    txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1))) {
-                toTxn = Math.max(fromTxn + 1, getPartitionNameTxn(partitionIndex + 1) + 1);
-            }
-        }
-
-        return txnScoreboard.isRangeAvailable(fromTxn, toTxn);
     }
 
     private void cancelRowAndBump() {
@@ -10215,6 +10218,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isLastPartitionParquet() {
         int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
+    }
+
+    private boolean isPartitionTailPinned(int partitionIndex) {
+        if (partitionIndex + 1 >= txWriter.getPartitionCount()) {
+            return false;
+        }
+        final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex + 1);
+        if (txWriter.getLogicalPartitionTimestamp(partitionTimestamp) != txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp)) {
+            return false;
+        }
+        // a partition named N is first visible to readers at txn N + 1
+        final long fromTxn = txWriter.getPartitionNameTxn(partitionIndex) + 1;
+        final long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1) + 1;
+        return !txnScoreboard.isRangeAvailable(fromTxn, toTxn);
     }
 
     /**
@@ -17352,7 +17370,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long smallestRows = Long.MAX_VALUE;
             for (int i = partitionIndexLo; i < partitionIndexHi - 1; i++) {
                 if ((!isAllCold && (!isColdSquashPartition(i, lastCommitTxn) || !isColdSquashPartition(i + 1, lastCommitTxn)))
-                        || !canSquashOverwritePartitionTail(i)
+                        || isPartitionTailPinned(i)
                         || (i + 2 == txWriter.getPartitionCount() && txWriter.isPartitionComposite(i + 1))) {
                     continue;
                 }
@@ -17469,7 +17487,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Move targetPartitionIndex to the first unlocked partition in the range.
         int targetPartitionIndex = partitionIndexLo;
         for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
-            boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
+            boolean canOverwrite = !isPartitionTailPinned(targetPartitionIndex);
             if (canOverwrite || force) {
                 targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
                 copyTargetFrame = !canOverwrite;
@@ -18979,7 +18997,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         int target = lo;
-        while (target < hi - 1 && !canSquashOverwritePartitionTail(target)) {
+        while (target < hi - 1 && isPartitionTailPinned(target)) {
             target++;
         }
         final int squashCount = Math.min(hi - target - 1, hi - lo - optimalCount);

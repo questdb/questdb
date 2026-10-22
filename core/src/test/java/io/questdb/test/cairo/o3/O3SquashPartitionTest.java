@@ -32,15 +32,18 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
@@ -56,11 +59,14 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class O3SquashPartitionTest extends AbstractCairoTest {
     private static final TimestampDriver MICRO_DRIVER = MicrosTimestampDriver.INSTANCE;
@@ -159,6 +165,33 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             assertRowCount(211, rowCount);
         });
+    }
+
+    @Test
+    public void testMergeBelowColumnTopLastPartition() throws Exception {
+        assertMergeBelowColumnTop(true, true);
+    }
+
+    @Test
+    public void testMergeBelowColumnTopLastPartitionNoColumnData() throws Exception {
+        assertMergeBelowColumnTop(true, false);
+    }
+
+    @Test
+    public void testMergeBelowColumnTopMidPartition() throws Exception {
+        assertMergeBelowColumnTop(false, true);
+    }
+
+    @Test
+    public void testMergeBelowColumnTopMidPartitionSyncCommit() throws Exception {
+        // the copy job trims the column top scratch before it syncs the merged columns
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        assertMergeBelowColumnTop(false, true);
+    }
+
+    @Test
+    public void testMergeBelowColumnTopMidPartitionNoColumnData() throws Exception {
+        assertMergeBelowColumnTop(false, false);
     }
 
     @Test
@@ -335,7 +368,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                         sqlExecutionContext
                 );
 
-                // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
+                // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader.
+                // The reader never saw the new split, so the older split squashes into it.
                 assertQuery(partitionsSql)
                         .noLeakCheck()
                         .expectSize()
@@ -343,14 +377,13 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                         .returns(replaceTimestampSuffix1("""
                                 minTimestamp\tnumRows\tname
                                 2020-02-04T00:00:00.000000Z\t1081\t2020-02-04
-                                2020-02-04T18:01:00.000000Z\t170\t2020-02-04T180000-000001
-                                2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001
+                                2020-02-04T18:01:00.000000Z\t489\t2020-02-04T180000-000001
                                 """, timestampType.getTypeName()));
 
-                rowCount = assertRowCount(170, rowCount);
+                rowCount = assertRowCount(170 + 319, rowCount);
             }
 
-            // should squash partitions into 2 pieces
+            // two pieces already match the max split count, the new rows merge into the split
             execute(sqlPrefix +
                             " timestamp_sequence('2020-02-04T18:01', 1000000L) ts" +
                             " from long_sequence(50)",
@@ -363,11 +396,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns(replaceTimestampSuffix1("""
                             minTimestamp\tnumRows\tname
-                            2020-02-04T00:00:00.000000Z\t1301\t2020-02-04
-                            2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001
+                            2020-02-04T00:00:00.000000Z\t1081\t2020-02-04
+                            2020-02-04T18:01:00.000000Z\t539\t2020-02-04T180000-000001
                             """, timestampType.getTypeName()));
 
-            rowCount = assertRowCount((170 + 50) * 2, rowCount);
+            // the merge rewrites the split
+            rowCount = assertRowCount(489 + 50, rowCount);
 
 
             execute(sqlPrefix +
@@ -382,8 +416,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns(replaceTimestampSuffix1("""
                             minTimestamp\tnumRows\tname
-                            2020-02-04T00:00:00.000000Z\t1301\t2020-02-04
-                            2020-02-04T20:01:00.000000Z\t369\t2020-02-04T200000-000001
+                            2020-02-04T00:00:00.000000Z\t1081\t2020-02-04
+                            2020-02-04T18:01:00.000000Z\t589\t2020-02-04T180000-000001
                             """, timestampType.getTypeName()));
 
             int delta = 50;
@@ -406,7 +440,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             2020-02-05T01:01:15.000000Z\t50\t2020-02-05
                             """, timestampType.getTypeName()));
 
-            delta = 369 + 50;
+            delta = 589 + 50;
             assertRowCount(delta, rowCount);
         });
     }
@@ -950,6 +984,376 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             2020-02-04T00:00:00.000000Z\t1640\t2020-02-04
                             2020-02-05T00:00:00.000000Z\t720\t2020-02-05
                             """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testSplitParentAppendAfterNeighborRewriteLateReader() throws Exception {
+        // The reader opened after the split and never saw the moved rows, but the neighbor's rewrite moved
+        // its name txn past the reader's txn, so the pin check counts the reader and copies the parent.
+        assertSplitParentAppendAfterNeighborRewrite(false);
+    }
+
+    @Test
+    public void testSplitParentAppendAfterNeighborRewrite() throws Exception {
+        // The reader opened before the split and still reads the parent's old tail. All parent rows share
+        // the max timestamp, so the writer cannot resplit and copies the parent.
+        assertSplitParentAppendAfterNeighborRewrite(true);
+    }
+
+    @Test
+    public void testPinnedSplitParentAppendResplitTooSmall() throws Exception {
+        // the split threshold rejects the re-split, so the writer copies the parent instead
+        assertPinnedSplitParentAppendAtMaxTimestamp(false);
+    }
+
+    @Test
+    public void testPinnedSplitParentAppendAtMaxTimestamp() throws Exception {
+        // A reader pinned before a split still reads the parent's old tail. An O3 row at the
+        // parent's max timestamp goes into a new split together with the parent's rows at that timestamp.
+        assertPinnedSplitParentAppendAtMaxTimestamp(true);
+    }
+
+    @Test
+    public void testPinnedSplitParentDedupAppend() throws Exception {
+        // The dedup step can turn a merge back into an in-place append when every parent row shares
+        // the O3 rows' timestamp. The parent's tail is pinned, so the writer must keep the merge.
+        // merge-append never opens a split directory; this test covers the plain split path
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (k INT, s STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)",
+                    timestampType.getTypeName()
+            );
+            execute(
+                    """
+                            INSERT INTO x SELECT x::INT, 'str-' || x, '2020-02-03T10' FROM long_sequence(100)
+                            UNION ALL
+                            SELECT (100 + x)::INT, 'str-' || (100 + x), '2020-02-03T12'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(5)
+                            """
+            );
+            drainWalQueue();
+
+            try (
+                    RecordCursorFactory cursorFactory = select("SELECT * FROM x");
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(cursorFactory, cursor);
+                final String expected = sink.toString();
+
+                // split at 11:00: the parent keeps the 100 rows that all sit at 10:00
+                execute("INSERT INTO x VALUES (1_000, 'split', '2020-02-03T11')");
+                drainWalQueue();
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(100, reader.getPartitionRowCountFromMetadata(0));
+                }
+
+                // new keys at the parent's only timestamp: dedup finds no duplicates
+                execute("INSERT INTO x SELECT (2_000 + x)::INT, 'new-' || x, '2020-02-03T10' FROM long_sequence(3)");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+                cursor.toTop();
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expected, sink);
+            }
+
+            assertQuery("SELECT count() FROM x WHERE ts = '2020-02-03T10'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n103\n");
+            assertQuery("SELECT k, s FROM x WHERE ts >= '2020-02-03T11'")
+                    .noLeakCheck()
+                    .returns(
+                            """
+                                    k\ts
+                                    1000\tsplit
+                                    101\tstr-101
+                                    102\tstr-102
+                                    103\tstr-103
+                                    104\tstr-104
+                                    105\tstr-105
+                                    """
+                    );
+        });
+    }
+
+    @Test
+    public void testPinnedSplitParentGapAboveMax() throws Exception {
+        // A range-replace commit trims the parent and leaves a gap below its split neighbor. A late row in
+        // the gap sits above the parent's max; while the parent counts as pinned, the writer copies it.
+        // merge-append never opens a split directory; this test covers the plain split path
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // keeps the trimmed parent and its split apart: no reader can pin a partition version it never saw
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 2);
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", timestampType.getTypeName());
+            // one row per minute from 00:00 to 01:39
+            execute(
+                    """
+                            INSERT INTO x
+                            SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(100)
+                            UNION ALL
+                            SELECT 1_000, '2020-02-04'::TIMESTAMP FROM long_sequence(1)
+                            """
+            );
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            try (
+                    RecordCursorFactory factoryBeforeSplit = select("SELECT * FROM x");
+                    RecordCursor cursorBeforeSplit = factoryBeforeSplit.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(factoryBeforeSplit, cursorBeforeSplit);
+                final String expectedBeforeSplit = sink.toString();
+
+                // split at 01:20: the parent keeps the rows up to 01:20
+                execute("INSERT INTO x VALUES (2_000, '2020-02-03T01:20:30')");
+                drainWalQueue();
+                final long splitTimestamp;
+                final long rangeLo;
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(3, reader.getPartitionCount());
+                    Assert.assertEquals(81, reader.getPartitionRowCountFromMetadata(0));
+                    splitTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
+                    rangeLo = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()).parseFloorLiteral("2020-02-03T01:10");
+                }
+
+                // delete from 01:10 up to the split: the parent keeps the rows up to 01:09
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walWriter.commitWithParams(rangeLo, splitTimestamp, WAL_DEDUP_MODE_REPLACE_RANGE);
+                }
+                drainWalQueue();
+                final long trimmedNameTxn;
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(3, reader.getPartitionCount());
+                    Assert.assertEquals(70, reader.getPartitionRowCountFromMetadata(0));
+                    Assert.assertEquals(splitTimestamp, reader.getTxFile().getPartitionTimestampByIndex(1));
+                    trimmedNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                }
+
+                try (
+                        RecordCursorFactory factoryAfterReplace = select("SELECT * FROM x");
+                        // sees the trimmed parent; once the split is rewritten past this txn, the parent counts as pinned
+                        RecordCursor cursorAfterReplace = factoryAfterReplace.getCursor(sqlExecutionContext)
+                ) {
+                    sink.clear();
+                    println(factoryAfterReplace, cursorAfterReplace);
+                    final String expectedAfterReplace = sink.toString();
+
+                    // rewrite the split: its name txn moves past the txn the open cursor holds
+                    execute("INSERT INTO x VALUES (2_001, '2020-02-03T01:30:30')");
+                    drainWalQueue();
+                    try (TableReader reader = getReader("x")) {
+                        Assert.assertEquals(3, reader.getPartitionCount());
+                        Assert.assertEquals(trimmedNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                        Assert.assertEquals(21, reader.getPartitionRowCountFromMetadata(1));
+                    }
+
+                    // a late row in the gap between the parent's max and the split
+                    execute("INSERT INTO x VALUES (2_002, '2020-02-03T01:15')");
+                    drainWalQueue();
+                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                    try (TableReader reader = getReader("x")) {
+                        // the pinned parent got a new version with the late row; the split stays apart
+                        Assert.assertEquals(3, reader.getPartitionCount());
+                        Assert.assertEquals(71, reader.getPartitionRowCountFromMetadata(0));
+                        Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(0) > trimmedNameTxn);
+                    }
+
+                    cursorAfterReplace.toTop();
+                    sink.clear();
+                    println(factoryAfterReplace, cursorAfterReplace);
+                    TestUtils.assertEquals(expectedAfterReplace, sink);
+                }
+
+                cursorBeforeSplit.toTop();
+                sink.clear();
+                println(factoryBeforeSplit, cursorBeforeSplit);
+                TestUtils.assertEquals(expectedBeforeSplit, sink);
+            }
+
+            assertQuery("SELECT i, ts FROM x WHERE ts BETWEEN '2020-02-03T01:08' AND '2020-02-03T01:21'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1(
+                            """
+                                    i\tts
+                                    69\t2020-02-03T01:08:00.000000Z
+                                    70\t2020-02-03T01:09:00.000000Z
+                                    2002\t2020-02-03T01:15:00.000000Z
+                                    2000\t2020-02-03T01:20:30.000000Z
+                                    82\t2020-02-03T01:21:00.000000Z
+                                    """,
+                            timestampType.getTypeName()
+                    ));
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n93\n");
+        });
+    }
+
+    @Test
+    public void testPinnedSplitParentLargeAppend() throws Exception {
+        // the merge rows outweigh the prefix, so the writer copies the parent
+        assertPinnedSplitParentLargeAppend(false);
+    }
+
+    @Test
+    public void testPinnedSplitParentLargeAppendSpanningSplit() throws Exception {
+        assertPinnedSplitParentLargeAppend(true);
+    }
+
+    @Test
+    public void testPinnedSplitParentMergeBelowColumnTop() throws Exception {
+        // the merge materializes the column top nulls; the pinned reader keeps its rows
+        assertPinnedSplitParentColumnTopMerge(false);
+    }
+
+    @Test
+    public void testSplitParentO3AfterSquashOfNewerSplit() throws Exception {
+        assertO3IntoSplitParentAfterSquashOfNewerSplit(false);
+    }
+
+    @Test
+    public void testSplitParentO3AfterSquashOfNewerSplitWal() throws Exception {
+        assertO3IntoSplitParentAfterSquashOfNewerSplit(true);
+    }
+
+    @Test
+    public void testPinnedSplitParentResplitCyclesBelowColumnTop() throws Exception {
+        // A reader pinned before the split keeps the parent's moved rows readable. Each resplit materializes the
+        // column top nulls in scratch space of the new split's files, so the parent's files keep their size.
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
+            execute("ALTER TABLE x ADD COLUMN l LONG");
+            execute("ALTER TABLE x ADD COLUMN s STRING");
+            execute("ALTER TABLE x ADD COLUMN v VARCHAR");
+            execute(
+                    """
+                            INSERT INTO x (i, ts, l, s, v)
+                            SELECT (1000 + x)::INT, '2020-02-03T20'::TIMESTAMP + (x - 1) * 1_000_000L, x,
+                                'string-value-' || x, 'varchar-value-' || x
+                            FROM long_sequence(100)
+                            """
+            );
+            execute("INSERT INTO x (i, ts, l, s, v) VALUES (2_000_000, '2020-02-04', 1, 'a', 'b')");
+
+            final ObjList<String> files = new ObjList<>("l", "s", "s.i", "v", "v.i");
+            final long[] sizesBeforeSplit = new long[files.size()];
+            final long[][] sizes = new long[7][files.size()];
+            columnFileSizes("x", "2020-02-03", files, sizesBeforeSplit);
+            final String expected;
+            try (
+                    RecordCursorFactory cursorFactory = select("SELECT * FROM x WHERE ts >= '2020-02-03T20'");
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(cursorFactory, cursor);
+                expected = sink.toString();
+
+                execute("INSERT INTO x (i, ts) VALUES (2_999_999, '2020-02-03'::TIMESTAMP + 995 * 60_000_000L + 30_000_000L)");
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(3, reader.getPartitionCount());
+                    Assert.assertEquals(996, reader.getPartitionRowCountFromMetadata(0));
+                }
+                columnFileSizes("x", "2020-02-03", files, sizes[0]);
+
+                for (int cycle = 1; cycle < sizes.length; cycle++) {
+                    // a late row just below the column top: the pinned parent resplits
+                    execute("INSERT INTO x (i, ts) VALUES (" + (3_000_000 + cycle) + ", '2020-02-03'::TIMESTAMP + " + (991 - cycle) + " * 60_000_000L + 30_000_000L)");
+                    columnFileSizes("x", "2020-02-03", files, sizes[cycle]);
+
+                    cursor.toTop();
+                    sink.clear();
+                    println(cursorFactory, cursor);
+                    TestUtils.assertEquals(expected, sink);
+                }
+                try (TableReader reader = getReader("x")) {
+                    // the last cycle splits after row 991 - (cycles - 1)
+                    Assert.assertEquals(993 - sizes.length, reader.getPartitionRowCountFromMetadata(0));
+                }
+            }
+
+            for (int f = 0, n = files.size(); f < n; f++) {
+                final String file = files.getQuick(f);
+                for (int cycle = 0; cycle < sizes.length; cycle++) {
+                    Assert.assertEquals(file + " of the pinned parent changed size, split " + cycle, sizesBeforeSplit[f], sizes[cycle][f]);
+                }
+            }
+
+            // the parent's moved rows survive every resplit and the squash after the reader releases
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-02-03T20'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + (1101 + sizes.length) + "\n");
+            assertQuery("SELECT count() FROM x WHERE l IS NULL AND s IS NULL AND v IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + (1000 + sizes.length) + "\n");
+        });
+    }
+
+    @Test
+    public void testPinnedSplitParentResplitBelowColumnTop() throws Exception {
+        assertPinnedSplitParentColumnTopMerge(true);
+    }
+
+    @Test
+    public void testSplitParentResplitCyclesBelowColumnTop() throws Exception {
+        // Without an open reader, each resplit below the column top is squashed back into the parent. The merge
+        // materializes the column top in the split's files, so the parent's column file grows only by the squashed rows.
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
+            execute("ALTER TABLE x ADD COLUMN l LONG");
+            execute(
+                    """
+                            INSERT INTO x (i, ts, l)
+                            SELECT (1000 + x)::INT, '2020-02-03T20'::TIMESTAMP + (x - 1) * 1_000_000L, x
+                            FROM long_sequence(100)
+                            """
+            );
+            execute("INSERT INTO x (i, ts, l) VALUES (2_000_000, '2020-02-04', 1)");
+
+            final long[] columnFileSizes = new long[5];
+            for (int cycle = 0; cycle < columnFileSizes.length; cycle++) {
+                // a late row just below the column top, close enough to the end that the partition resplits
+                execute("INSERT INTO x (i, ts) VALUES (" + (3_000_000 + cycle) + ", '2020-02-03'::TIMESTAMP + " + (990 - cycle) + " * 60_000_000L + 30_000_000L)");
+                columnFileSizes[cycle] = columnFileSize("x", "2020-02-03", "l");
+            }
+            // allocation granularity differs between platforms, so the check bounds the growth instead of exact sizes
+            final long growth = columnFileSizes[columnFileSizes.length - 1] - columnFileSizes[0];
+            Assert.assertTrue("column file grows with every cycle: " + Arrays.toString(columnFileSizes), growth < columnFileSizes[0]);
+
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1106\n");
+            assertQuery("SELECT count() FROM x WHERE l IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n101\n");
         });
     }
 
@@ -1810,6 +2214,70 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSquashOrphanSplitWithReaderAtLatestTxn() throws Exception {
+        // A split without a parent gets a fresh parent named with the in-flight txn. A reader at the latest
+        // txn counted as pinning it, so the squash copied into a same-named directory and then purged it.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT" +
+                            " x::INT i," +
+                            " -x j," +
+                            " timestamp_sequence('2020-02-04T00', 60*1000000L)::" + timestampType.getTypeName() + " ts" +
+                            " FROM long_sequence(60*(23*2))" +
+                            ") TIMESTAMP (ts) PARTITION BY DAY",
+                    sqlExecutionContext
+            );
+
+            String partitionsSql = "SELECT minTimestamp, numRows, name FROM table_partitions('x')";
+            // the first reader keeps the split apart from its parent
+            try (TableReader ignore = getReader("x")) {
+                execute(
+                        "INSERT INTO x SELECT x::INT * 1000000 i, -x - 1000000L j," +
+                                " timestamp_sequence('2020-02-04T20:01', 1000000L) ts FROM long_sequence(200)",
+                        sqlExecutionContext
+                );
+                execute("ALTER TABLE x FORCE DROP PARTITION LIST '2020-02-04'", sqlExecutionContext);
+                assertQuery(partitionsSql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("minTimestamp\tnumRows\tname\n" +
+                                replaceTimestampSuffix1("""
+                                        2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001
+                                        2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
+                                        """, timestampType.getTypeName()));
+
+                // the second reader holds the latest committed txn while the squash runs
+                try (TableReader ignore2 = getReader("x")) {
+                    execute("ALTER TABLE x SQUASH PARTITIONS", sqlExecutionContext);
+                }
+
+                assertQuery(partitionsSql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("minTimestamp\tnumRows\tname\n" +
+                                replaceTimestampSuffix1("""
+                                        2020-02-04T20:01:00.000000Z\t439\t2020-02-04
+                                        2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
+                                        """, timestampType.getTypeName()));
+            }
+
+            // 439 squashed rows and 1320 in the next day; an interval scan would miss the squashed partition
+            // because the force drop left the table's min timestamp at the next day
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1759\n");
+        });
+    }
+
+    @Test
     public void testSquashPartitionsOnEmptyTable() throws Exception {
         testSquashPartitionsOnEmptyTable("");
     }
@@ -1829,11 +2297,574 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         testSquashPartitionsOnNonEmptyTable("WAL");
     }
 
+    // mid partitions also check file sizes; the writer may resize the last partition's files
+    private void assertMergeBelowColumnTop(boolean isLastPartition, boolean hasColumnData) throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
+            execute("ALTER TABLE x ADD COLUMN l LONG");
+            execute("ALTER TABLE x ADD COLUMN s STRING");
+            execute("ALTER TABLE x ADD COLUMN v VARCHAR");
+            execute("ALTER TABLE x ADD COLUMN b BINARY");
+            execute("ALTER TABLE x ADD COLUMN a DOUBLE[]");
+            if (hasColumnData) {
+                execute(
+                        """
+                                INSERT INTO x (i, ts, l, s, v, b, a)
+                                SELECT (1_000 + x)::INT, '2020-02-03T20'::TIMESTAMP + (x - 1) * 1_000_000L, x,
+                                    'string-value-' || x, 'varchar-value-' || x, rnd_bin(16, 16, 0), ARRAY[x::DOUBLE, -x::DOUBLE]
+                                FROM long_sequence(100)
+                                """
+                );
+            }
+            if (!isLastPartition) {
+                execute("INSERT INTO x (i, ts) VALUES (2_000_000, '2020-02-04')");
+            }
+            final int rowCount = hasColumnData ? 1100 : 1000;
+            final ObjList<String> files = new ObjList<>("l", "s", "s.i", "v", "v.i", "b", "b.i", "a", "a.i");
+            final long[] sourceSizes = new long[files.size()];
+            final long partitionTimestamp;
+            final long sourceNameTxn;
+            try (TableReader reader = getReader("x")) {
+                partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                sourceNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                for (int f = 0, n = files.size(); f < n; f++) {
+                    sourceSizes[f] = columnFileSize(reader, partitionTimestamp, sourceNameTxn, files.getQuick(f));
+                }
+            }
+
+            final String expected;
+            try (
+                    RecordCursorFactory cursorFactory = select("SELECT * FROM x");
+                    // keeps the source version of the partition on disk
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(cursorFactory, cursor);
+                expected = sink.toString();
+
+                // a late row below the column top, with too few rows before it to split: the writer merges the
+                // whole partition and materializes the column top nulls of the added columns
+                execute("INSERT INTO x (i, ts, l, s, v, a) VALUES (3_000_000, '2020-02-03T00:30:30', 7, 'late', 'late', ARRAY[7.0])");
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(rowCount + 1, reader.getPartitionRowCountFromMetadata(0));
+                    final long nameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                    Assert.assertTrue(nameTxn > sourceNameTxn);
+                    for (int f = 0, n = files.size(); f < n; f++) {
+                        final String file = files.getQuick(f);
+                        final long size = columnFileSize(reader, partitionTimestamp, sourceNameTxn, file);
+                        if (sourceSizes[f] < 0) {
+                            // the merge may create the missing source file, but never writes to it
+                            Assert.assertTrue(file + " of the source partition: " + size, size <= 0);
+                        } else if (!isLastPartition) {
+                            // the writer owns the last partition's files and may resize them
+                            Assert.assertEquals(file + " of the source partition", sourceSizes[f], size);
+                        }
+                    }
+                    if (!isLastPartition) {
+                        // the merged partition has no column top, and its files end at their logical size
+                        final long mergedRows = rowCount + 1;
+                        assertMergedColumnFileSize(reader, partitionTimestamp, nameTxn, "l", mergedRows * Long.BYTES);
+                        assertMergedColumnFileSize(reader, partitionTimestamp, nameTxn, "s.i", (mergedRows + 1) * Long.BYTES);
+                        assertMergedColumnFileSize(reader, partitionTimestamp, nameTxn, "v.i", mergedRows * 2 * Long.BYTES);
+                        assertMergedColumnFileSize(reader, partitionTimestamp, nameTxn, "b.i", (mergedRows + 1) * Long.BYTES);
+                        assertMergedColumnFileSize(reader, partitionTimestamp, nameTxn, "a.i", mergedRows * 2 * Long.BYTES);
+                    }
+                }
+
+                cursor.toTop();
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expected, sink);
+            }
+
+            // every row that existed before the merge reads the same, including BINARY and array values
+            assertQuery("SELECT * FROM x WHERE i != 3_000_000")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            final int nullCount = 1000 + (isLastPartition ? 0 : 1);
+            assertQuery("SELECT count() FROM x WHERE l IS NULL AND s IS NULL AND v IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + nullCount + "\n");
+            assertQuery("SELECT count() FROM x WHERE b IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + (nullCount + 1) + "\n");
+            // a column top row, the late row and the first and last rows with column data
+            assertQuery("SELECT i, l, s, v, a FROM x WHERE ts IN '2020-02-03T00:30:30' OR i IN (1, 1_001, 1_100)")
+                    .noLeakCheck()
+                    .returns(
+                            "i\tl\ts\tv\ta\n"
+                                    + "1\tnull\t\t\tnull\n"
+                                    + "3000000\t7\tlate\tlate\t[7.0]\n"
+                                    + (hasColumnData ? "1001\t1\tstring-value-1\tvarchar-value-1\t[1.0,-1.0]\n1100\t100\tstring-value-100\tvarchar-value-100\t[100.0,-100.0]\n" : "")
+                    );
+        });
+    }
+
+    private void assertMergedColumnFileSize(TableReader reader, long partitionTimestamp, long partitionNameTxn, String file, long logicalSize) {
+        final long size = columnFileSize(reader, partitionTimestamp, partitionNameTxn, file);
+        Assert.assertTrue(file + " of the merged partition is shorter than its data: " + size, size >= logicalSize);
+        Assert.assertTrue(file + " of the merged partition keeps column top scratch: " + size, size <= Files.ceilPageSize(logicalSize));
+    }
+
+    private void assertO3IntoSplitParentAfterSquashOfNewerSplit(boolean isWal) throws Exception {
+        // merge-append never opens a split directory; this test covers the plain split path
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 2);
+            // a WAL table squashes only cold splits above the cap; count every split as cold at once
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : " BYPASS WAL"),
+                    timestampType.getTypeName()
+            );
+            // one row per minute from 00:00 to 16:39
+            execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
+            drainWalQueue();
+
+            // Splits at 15:00 then 12:00 exceed the cap of two. Non-WAL folds the 12:00 split into the parent,
+            // WAL folds the two splits together; either way the parent's neighbor gets a newer name txn.
+            execute("INSERT INTO x VALUES (1_001, '2020-02-03T15:00:30')");
+            drainWalQueue();
+            execute("INSERT INTO x VALUES (1_002, '2020-02-03T12:00:30')");
+            drainWalQueue();
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(2, reader.getPartitionCount());
+                Assert.assertEquals(isWal ? 721 : 902, reader.getPartitionRowCountFromMetadata(0));
+            }
+
+            // the next late row lands in the parent
+            execute("INSERT INTO x VALUES (1_003, '2020-02-03T11:00:30')");
+            drainWalQueue();
+            if (isWal) {
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+            }
+
+            assertQuery("SELECT i, ts FROM x WHERE i > 1_000")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1(
+                            """
+                                    i\tts
+                                    1003\t2020-02-03T11:00:30.000000Z
+                                    1002\t2020-02-03T12:00:30.000000Z
+                                    1001\t2020-02-03T15:00:30.000000Z
+                                    """,
+                            timestampType.getTypeName()
+                    ));
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1003\n");
+        });
+    }
+
+    private void assertPinnedSplitParentLargeAppend(boolean isSpanningIntoSplit) throws Exception {
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // a single O3 row re-splits this layout, see testPinnedSplitParentAppendAtMaxTimestamp
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, str STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO x SELECT x::INT, 'str-' || x, '2020-02-03T16' FROM long_sequence(20)");
+            execute("INSERT INTO x SELECT (20 + x)::INT, 'str-' || (20 + x), '2020-02-03T17' FROM long_sequence(2)");
+            execute("INSERT INTO x SELECT (22 + x)::INT, 'str-' || (22 + x), '2020-02-03T18' FROM long_sequence(2)");
+
+            final String expectedPinned = replaceTimestampSuffix1(
+                    """
+                            i\tstr\tts
+                            21\tstr-21\t2020-02-03T17:00:00.000000Z
+                            22\tstr-22\t2020-02-03T17:00:00.000000Z
+                            23\tstr-23\t2020-02-03T18:00:00.000000Z
+                            24\tstr-24\t2020-02-03T18:00:00.000000Z
+                            """,
+                    timestampType.getTypeName()
+            );
+            final int o3RowsInSplit = isSpanningIntoSplit ? 5 : 0;
+
+            try (
+                    RecordCursorFactory cursorFactory = select("SELECT * FROM x WHERE ts BETWEEN '2020-02-03T17' AND '2020-02-03T18'");
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expectedPinned, sink);
+
+                // split at 17:30: the parent keeps the rows up to 17:00
+                execute("INSERT INTO x VALUES (1_000_000, 'split', '2020-02-03T17:30')");
+                final long parentNameTxn;
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(22, reader.getPartitionRowCountFromMetadata(0));
+                    Assert.assertEquals(3, reader.getPartitionRowCountFromMetadata(1));
+                    parentNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                }
+
+                // 22 merge rows outweigh the 20-row prefix, so the writer copies the parent instead of re-splitting
+                execute(
+                        "INSERT INTO x SELECT (100 + x)::INT, 'o3-' || x, "
+                                + "CASE WHEN x <= 20 THEN '2020-02-03T17' ELSE '2020-02-03T17:45' END "
+                                + "FROM long_sequence(" + (20 + o3RowsInSplit) + ")"
+                );
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(42, reader.getPartitionRowCountFromMetadata(0));
+                    Assert.assertEquals(3 + o3RowsInSplit, reader.getPartitionRowCountFromMetadata(1));
+                    Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(0) > parentNameTxn);
+                }
+
+                cursor.toTop();
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expectedPinned, sink);
+            }
+
+            final StringBuilder expectedAt17 = new StringBuilder("i\tstr\n21\tstr-21\n22\tstr-22\n");
+            for (int i = 1; i <= 20; i++) {
+                expectedAt17.append(100 + i).append("\to3-").append(i).append('\n');
+            }
+            assertQuery("SELECT i, str FROM x WHERE ts = '2020-02-03T17'")
+                    .noLeakCheck()
+                    .returns(expectedAt17.toString());
+
+            final String o3InSplit = isSpanningIntoSplit
+                    ? """
+                    121\to3-21\t2020-02-03T17:45:00.000000Z
+                    122\to3-22\t2020-02-03T17:45:00.000000Z
+                    123\to3-23\t2020-02-03T17:45:00.000000Z
+                    124\to3-24\t2020-02-03T17:45:00.000000Z
+                    125\to3-25\t2020-02-03T17:45:00.000000Z
+                    """
+                    : "";
+            assertQuery("SELECT * FROM x WHERE ts > '2020-02-03T17'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1(
+                            "i\tstr\tts\n"
+                                    + "1000000\tsplit\t2020-02-03T17:30:00.000000Z\n"
+                                    + o3InSplit
+                                    + "23\tstr-23\t2020-02-03T18:00:00.000000Z\n"
+                                    + "24\tstr-24\t2020-02-03T18:00:00.000000Z\n",
+                            timestampType.getTypeName()
+                    ));
+        });
+    }
+
+    private void assertPinnedSplitParentColumnTopMerge(boolean isResplit) throws Exception {
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO x SELECT x::INT, '2020-02-03T10'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(100)");
+            execute("ALTER TABLE x ADD COLUMN l LONG");
+            execute("ALTER TABLE x ADD COLUMN s STRING");
+            execute("ALTER TABLE x ADD COLUMN v VARCHAR");
+            execute("ALTER TABLE x ADD COLUMN sym SYMBOL");
+            execute(
+                    """
+                            INSERT INTO x (i, ts, l, s, v, sym)
+                            SELECT (100 + x)::INT, '2020-02-03T12'::TIMESTAMP + (x - 1) * 60_000_000L, x * 1_000,
+                                'string-value-' || x, 'varchar-value-' || x, 'sym-' || (x % 3)
+                            FROM long_sequence(48)
+                            """
+            );
+
+            final String expected;
+            try (
+                    // the fixed-size columns get their own cursor, so a fault there does not hide behind a string read error
+                    RecordCursorFactory fixFactory = select("SELECT i, l, sym, ts FROM x WHERE ts >= '2020-02-03T12'");
+                    RecordCursorFactory cursorFactory = select("SELECT i, l, s, v, sym, ts FROM x WHERE ts >= '2020-02-03T12'");
+                    // each cursor pins a reader before the split
+                    RecordCursor fixCursor = fixFactory.getCursor(sqlExecutionContext);
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(fixFactory, fixCursor);
+                final String expectedFix = sink.toString();
+                sink.clear();
+                println(cursorFactory, cursor);
+                expected = sink.toString();
+
+                // split right after the first row with values: the parent keeps 101 rows, 1 past the column top
+                execute("INSERT INTO x (i, ts) VALUES (1_000_000, '2020-02-03T12:00:30')");
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(101, reader.getPartitionRowCountFromMetadata(0));
+                }
+
+                // The O3 row lands below the column top, so the merge materializes the column top nulls.
+                // A resplit keeps the parent in place, a full merge rewrites it.
+                execute("INSERT INTO x (i, ts) VALUES (1_000_001, '" + (isResplit ? "2020-02-03T11:35:30" : "2020-02-03T10:30:30") + "')");
+                try (TableReader reader = getReader("x")) {
+                    if (isResplit) {
+                        Assert.assertEquals(3, reader.getPartitionCount());
+                        Assert.assertEquals(96, reader.getPartitionRowCountFromMetadata(0));
+                    } else {
+                        Assert.assertEquals(2, reader.getPartitionCount());
+                        Assert.assertEquals(102, reader.getPartitionRowCountFromMetadata(0));
+                    }
+                }
+
+                fixCursor.toTop();
+                sink.clear();
+                println(fixFactory, fixCursor);
+                TestUtils.assertEquals(expectedFix, sink);
+
+                cursor.toTop();
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expected, sink);
+            }
+
+            // the 100 rows below the column top, plus the two inserted rows, read the materialized nulls
+            assertQuery("SELECT count() FROM x WHERE l IS NULL AND s IS NULL AND v IS NULL AND sym IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n102\n");
+            assertQuery("SELECT i, l, s, v, sym, ts FROM x WHERE ts >= '2020-02-03T12' AND i < 1_000_000")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n150\n");
+        });
+    }
+
     private int assertRowCount(int delta, int rowCount) {
         Assert.assertEquals(delta, getPhysicalRowsSinceLastCommit());
         rowCount += delta;
         Assert.assertEquals(rowCount, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows());
         return rowCount;
+    }
+
+    private void assertSplitParentAppendAfterNeighborRewrite(boolean isReaderBeforeSplit) throws Exception {
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            // 1000 rows at the parent's max timestamp and a tail to split off
+            execute("INSERT INTO x SELECT x::INT, '2020-02-03T10' FROM long_sequence(1000)");
+            execute("INSERT INTO x SELECT (1000 + x)::INT, '2020-02-03T12' FROM long_sequence(10)");
+
+            RecordCursorFactory cursorFactory = null;
+            RecordCursor cursor = null;
+            try {
+                if (isReaderBeforeSplit) {
+                    cursorFactory = select("SELECT count() FROM x");
+                    cursor = cursorFactory.getCursor(sqlExecutionContext);
+                }
+
+                // split off the tail: the parent keeps the 1000 rows at 10:00
+                execute("INSERT INTO x VALUES (1_000_000, '2020-02-03T11')");
+                final long parentNameTxn;
+                final long splitNameTxn;
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(1000, reader.getPartitionRowCountFromMetadata(0));
+                    parentNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                    splitNameTxn = reader.getTxFile().getPartitionNameTxn(1);
+                }
+
+                if (!isReaderBeforeSplit) {
+                    cursorFactory = select("SELECT count() FROM x");
+                    cursor = cursorFactory.getCursor(sqlExecutionContext);
+                }
+                final int expectedCount = isReaderBeforeSplit ? 1010 : 1011;
+
+                // rewrite the neighboring split: the O3 row lands inside it and the split is too small to resplit
+                execute("INSERT INTO x VALUES (1_000_001, '2020-02-03T11:30')");
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                    Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(1) > splitNameTxn);
+                }
+
+                long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+                // one row at the parent's max timestamp: the writer copies the parent
+                execute("INSERT INTO x VALUES (1_000_002, '2020-02-03T10')");
+                Assert.assertEquals(1001, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore);
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(1001, reader.getPartitionRowCountFromMetadata(0));
+                    Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(0) > parentNameTxn);
+                }
+
+                cursor.toTop();
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals("count\n" + expectedCount + "\n", sink);
+            } finally {
+                Misc.free(cursor);
+                Misc.free(cursorFactory);
+            }
+
+            // The copy has a fresh name txn, newer than the neighbor's, so without the reader the next
+            // row at the parent's max timestamp appends in place.
+            final long copyNameTxn;
+            try (TableReader reader = getReader("x")) {
+                copyNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+            execute("INSERT INTO x VALUES (1_000_003, '2020-02-03T10')");
+            Assert.assertEquals(1, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore);
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(2, reader.getPartitionCount());
+                Assert.assertEquals(1002, reader.getPartitionRowCountFromMetadata(0));
+                Assert.assertEquals(copyNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+            }
+
+            final StringBuilder expectedAt10 = new StringBuilder("i\n");
+            for (int i = 1; i <= 1000; i++) {
+                expectedAt10.append(i).append('\n');
+            }
+            expectedAt10.append("1000002\n1000003\n");
+            assertQuery("SELECT i FROM x WHERE ts = '2020-02-03T10'")
+                    .noLeakCheck()
+                    .returns(expectedAt10.toString());
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1014\n");
+        });
+    }
+
+    private void assertPinnedSplitParentAppendAtMaxTimestamp(boolean canResplit) throws Exception {
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // rows at 16:00, 17:00 and 18:00; the re-split needs the rows before the parent's max
+            // timestamp to outnumber the rows at it by more than 2x
+            final int at16 = canResplit ? 20 : 2;
+            final int at17 = canResplit ? 2 : 20;
+            final int at18 = 2;
+            executeWithRewriteTimestamp("create table x (i int, str string, ts #TIMESTAMP) timestamp(ts) partition by DAY", timestampType.getTypeName());
+            execute("insert into x select cast(x as int), 'str-' || x, '2020-02-03T16' from long_sequence(" + at16 + ")");
+            execute("insert into x select cast(" + at16 + " + x as int), 'str-' || (" + at16 + " + x), '2020-02-03T17' from long_sequence(" + at17 + ")");
+            execute("insert into x select cast(" + (at16 + at17) + " + x as int), 'str-' || (" + (at16 + at17) + " + x), '2020-02-03T18' from long_sequence(" + at18 + ")");
+
+            final StringBuilder expected = new StringBuilder("i\tstr\tts\n");
+            for (int i = at16 + 1; i <= at16 + at17 + at18; i++) {
+                expected.append(i).append("\tstr-").append(i).append(i <= at16 + at17 ? "\t2020-02-03T17:00:00.000000Z\n" : "\t2020-02-03T18:00:00.000000Z\n");
+            }
+            final String expectedStr = replaceTimestampSuffix1(expected.toString(), timestampType.getTypeName());
+
+            final long parentNameTxn;
+            try (
+                    RecordCursorFactory cursorFactory = select("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'");
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expectedStr, sink);
+
+                // split at 17:30: the parent keeps the rows up to 17:00
+                execute("insert into x values (1000000, 'split', '2020-02-03T17:30')");
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                    Assert.assertEquals(at16 + at17, reader.getPartitionRowCountFromMetadata(0));
+                    parentNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                }
+
+                // O3 row at exactly the parent's max timestamp; appending it in place would
+                // overwrite the row at 18:00 the pinned reader still reads from the parent
+                execute("insert into x values (1000001, 'X', '2020-02-03T17')");
+                try (TableReader reader = getReader("x")) {
+                    if (canResplit) {
+                        Assert.assertEquals(3, reader.getPartitionCount());
+                        Assert.assertEquals(at16, reader.getPartitionRowCountFromMetadata(0));
+                        Assert.assertEquals(at17 + 1, reader.getPartitionRowCountFromMetadata(1));
+                        Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                    } else {
+                        Assert.assertEquals(2, reader.getPartitionCount());
+                        Assert.assertEquals(at16 + at17 + 1, reader.getPartitionRowCountFromMetadata(0));
+                        Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(0) > parentNameTxn);
+                    }
+                }
+
+                cursor.toTop();
+                sink.clear();
+                println(cursorFactory, cursor);
+                TestUtils.assertEquals(expectedStr, sink);
+            }
+
+            // no reader pins the parent's tail anymore: the next row at the parent's max
+            // timestamp is appended in place
+            final int partitionCount;
+            final long parentRowCount;
+            final long parentNameTxn2;
+            try (TableReader reader = getReader("x")) {
+                partitionCount = reader.getPartitionCount();
+                parentRowCount = reader.getPartitionRowCountFromMetadata(0);
+                parentNameTxn2 = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            execute("insert into x values (1000002, 'Y', '2020-02-03T" + (canResplit ? "16" : "17") + "')");
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(partitionCount, reader.getPartitionCount());
+                Assert.assertEquals(parentRowCount + 1, reader.getPartitionRowCountFromMetadata(0));
+                Assert.assertEquals(parentNameTxn2, reader.getTxFile().getPartitionNameTxn(0));
+            }
+
+            // existing rows at 17:00 stay ahead of the O3 rows inserted at the same timestamp
+            final StringBuilder expectedAt17 = new StringBuilder("i\tstr\n");
+            for (int i = at16 + 1; i <= at16 + at17; i++) {
+                expectedAt17.append(i).append("\tstr-").append(i).append('\n');
+            }
+            expectedAt17.append("1000001\tX\n");
+            if (!canResplit) {
+                expectedAt17.append("1000002\tY\n");
+            }
+            assertQuery("select i, str from x where ts = '2020-02-03T17'")
+                    .noLeakCheck()
+                    .returns(expectedAt17.toString());
+            assertQuery("select count() from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + (at16 + at17 + at18 + 3) + "\n");
+        });
+    }
+
+    private long columnFileSize(String tableName, String partition, String columnName) throws NumericException {
+        try (TableReader reader = getReader(tableName)) {
+            return columnFileSize(reader, partition, columnName);
+        }
+    }
+
+    private long columnFileSize(TableReader reader, String partition, String columnName) throws NumericException {
+        final long partitionTimestamp = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()).parseFloorLiteral(partition);
+        final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
+        return columnFileSize(reader, partitionTimestamp, reader.getTxFile().getPartitionNameTxn(partitionIndex), columnName);
+    }
+
+    // columnName with a ".i" suffix selects the aux file of a var-size column; returns -1 when the file does not exist
+    private long columnFileSize(TableReader reader, long partitionTimestamp, long partitionNameTxn, String columnName) {
+        final boolean isAuxFile = columnName.endsWith(".i");
+        if (isAuxFile) {
+            columnName = columnName.substring(0, columnName.length() - 2);
+        }
+        final int columnIndex = reader.getMetadata().getColumnIndex(columnName);
+        final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, reader.getMetadata().getWriterIndex(columnIndex));
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            final LPSZ file = isAuxFile ? TableUtils.iFile(path, columnName, columnNameTxn) : TableUtils.dFile(path, columnName, columnNameTxn);
+            return Files.exists(file) ? Files.length(file) : -1;
+        }
+    }
+
+    private void columnFileSizes(String tableName, String partition, ObjList<String> columnNames, long[] sizes) throws NumericException {
+        try (TableReader reader = getReader(tableName)) {
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                sizes[i] = columnFileSize(reader, partition, columnNames.getQuick(i));
+            }
+        }
     }
 
     private long getPhysicalRowsSinceLastCommit() {
