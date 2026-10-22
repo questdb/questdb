@@ -890,6 +890,19 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampReadAfterMasterSidesSettle() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE l (vk VARCHAR, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE r (vk VARCHAR, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String join = "l JOIN r ON r.vk = l.vk";
+            assertMasterSideBindsTimestamp("SELECT count() FROM " + join + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION", "SampleByPlan");
+            assertMasterSideBindsTimestamp("SELECT q.ts, a.v FROM (SELECT l.ts, l.vk FROM " + join + ") q ASOF JOIN r a ON (vk)", "JoinPlan");
+            assertMasterSideBindsTimestamp("SELECT a.ts, q.v FROM r a LT JOIN (SELECT l.ts, l.v, l.vk FROM " + join + ") q ON (vk)", "JoinPlan");
+            assertMasterSideBindsTimestamp("SELECT l.ts, sum(l.v) OVER (ORDER BY l.ts RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW) FROM " + join, "WindowPlan");
+        });
+    }
+
+    @Test
     public void testTimestampType() {
         final FunctionSourcePlan source = source();
         source.getOutput().setTimestampIndex(0);
@@ -1101,6 +1114,20 @@ public class PlanVerifierTest extends AbstractCairoTest {
     /**
      * A leaf with an INT column {@code a} and a BOOLEAN column {@code b} under the given ids (1 and 2 by default).
      */
+    private static JoinInput lightHashStep(LogicalPlan plan) {
+        if (plan instanceof JoinPlan join && join.getOrderedInputs().size() > 1
+                && join.getOrderedInputs().getQuick(1).getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH) {
+            return join.getOrderedInputs().getQuick(1);
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final JoinInput step = lightHashStep(plan.inputAt(i));
+            if (step != null) {
+                return step;
+            }
+        }
+        return null;
+    }
+
     private static FunctionSourcePlan source(int... columnIds) {
         final FunctionSourcePlan source = FunctionSourcePlan.FACTORY.newInstance().of(0);
         source.getOutput().add(columnIds.length > 0 ? columnIds[0] : 1, "a", ColumnType.INT, true);
@@ -1144,6 +1171,25 @@ public class PlanVerifierTest extends AbstractCairoTest {
             change.apply(node);
             verifier.verify(plan, PASS);
             assertAccessPathsFail(plan, PlanVerifier.CHOICE_UNPLANNED, type.getSimpleName());
+        }
+    }
+
+    /**
+     * The consumer reads the designated timestamp of the light hash join of l and r, so operator planning fixes the
+     * join's master side; a side left to the smaller input drops the timestamp and fails the plan.
+     */
+    private void assertMasterSideBindsTimestamp(String sql, String consumer) throws Exception {
+        try (
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            final LogicalPlan plan = compiler.getPlanForTesting();
+            final JoinInput step = lightHashStep(plan);
+            Assert.assertNotNull(sql, step);
+            Assert.assertEquals(sql, JoinInput.MasterSide.FIXED, step.getMasterSide());
+            verifier.verifyAccessPaths(plan);
+            step.setMasterSide(JoinInput.MasterSide.SMALLER);
+            assertAccessPathsFail(plan, PlanVerifier.TIMESTAMP_READ, consumer);
         }
     }
 

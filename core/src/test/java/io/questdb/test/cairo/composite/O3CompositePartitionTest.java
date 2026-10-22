@@ -1313,7 +1313,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
 
             // min(ts) answers off _txn, the ordered read off the rows; both have to name the same row.
             assertQuery("SELECT min(ts) lo FROM x")
-                    .timestamp("lo").expectSize()
+                    .expectSize()
                     .returns("lo\n2020-02-03T01:30:00.000000Z\n");
             assertQuery("SELECT ts FROM x ORDER BY ts LIMIT 1")
                     .timestamp("ts").expectSize()
@@ -1496,7 +1496,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse("the replace commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
-            assertQuery("SELECT min(ts) mn FROM x").expectSize().timestamp("mn")
+            assertQuery("SELECT min(ts) mn FROM x").expectSize()
                     .returns("mn\n2022-02-24T00:00:00.000000Z\n");
         });
     }

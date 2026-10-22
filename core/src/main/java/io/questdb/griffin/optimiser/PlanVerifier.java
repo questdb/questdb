@@ -146,6 +146,7 @@ public final class PlanVerifier {
     public static final String SORT_ALGORITHM = "sort algorithm contradicts the sort or its input";
     public static final String SORT_KEYS = "sort has no keys or keys and directions differ in length";
     public static final String SORT_TIMESTAMP = "sort designates a timestamp other than its first key";
+    public static final String TIMESTAMP_READ = "consumer reads a designated timestamp its input does not designate";
     public static final String TIMESTAMP_TYPE = "designated timestamp is not a timestamp column";
     public static final String UNRESOLVED_COLUMN = "column id is not in scope";
     public static final String WINDOW_ALGORITHM = "window algorithm contradicts whether every window function streams";
@@ -827,6 +828,7 @@ public final class PlanVerifier {
             default -> {
             }
         }
+        failIfViolated(PhysicalChoiceVerifier.timestampReads(plan, isAccessPathRequired));
         site = null;
         reads(plan);
     }

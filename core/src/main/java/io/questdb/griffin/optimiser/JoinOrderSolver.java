@@ -26,6 +26,7 @@ package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.JoinDependency;
 import io.questdb.griffin.plan.logical.JoinEquality;
 import io.questdb.griffin.plan.logical.JoinGraph;
@@ -51,6 +52,7 @@ final class JoinOrderSolver implements Mutable {
     private final IntList candidateOrder;
     private final ObjList<IntHashSet> children;
     private final ObjectPool<IntHashSet> childrenPool;
+    private final OptimiserContext context;
     private final ObjectPool<JoinDependency> dependencyPool;
     private final IntList inCounts;
     private final ObjList<JoinKind> joinTypes;
@@ -72,6 +74,7 @@ final class JoinOrderSolver implements Mutable {
      * child sets as temporaries of one ordering.
      */
     JoinOrderSolver(
+            OptimiserContext context,
             PlanNodePools planNodes,
             IntHashSet markedIndexes,
             IntList stagedIndexes,
@@ -86,6 +89,7 @@ final class JoinOrderSolver implements Mutable {
             ObjList<JoinKind> joinTypes,
             ObjList<JoinDependency> stagedDependencies
     ) {
+        this.context = context;
         this.dependencyPool = planNodes.joinDependencies;
         this.markedIndexes = markedIndexes;
         this.stagedIndexes = stagedIndexes;
@@ -119,7 +123,7 @@ final class JoinOrderSolver implements Mutable {
      * stays first when an input may yield other rows on another evaluation, judged by the columns the query reads,
      * {@code readColumnIds}.
      */
-    void order(JoinPlan join, boolean isTimestampRequired, IntHashSet readColumnIds) {
+    void order(JoinPlan join, boolean isTimestampRequired, IntHashSet readColumnIds) throws SqlException {
         of(join, join.getGraph(), isTimestampRequired, readColumnIds);
         try {
             for (int i = dependencies.size(), n = join.getInputs().size(); i < n; i++) {
@@ -161,11 +165,10 @@ final class JoinOrderSolver implements Mutable {
                     final ObjList<JoinEquality> keys = dependency.getKeys();
                     for (int k = 0, count = keys.size(); k < count; k++) {
                         final JoinEquality key = keys.getQuick(k);
-                        final boolean isLeftSlave = key.getLeftSource() == source;
-                        if (isLeftSlave) {
-                            input.addKey(key.getRightColumnId(), key.getLeftColumnId(), key.getRightName(), key.getLeftName(), key.getLeftPosition());
+                        if (key.getLeftSource() == source) {
+                            addKey(input, key.getRightColumnId(), key.getLeftColumnId(), key.getRightName(), key.getLeftName(), key.getLeftPosition());
                         } else {
-                            input.addKey(key.getLeftColumnId(), key.getRightColumnId(), key.getLeftName(), key.getRightName(), key.getRightPosition());
+                            addKey(input, key.getLeftColumnId(), key.getRightColumnId(), key.getLeftName(), key.getRightName(), key.getRightPosition());
                         }
                     }
                 }
@@ -174,6 +177,21 @@ final class JoinOrderSolver implements Mutable {
             join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, bestOrder.size()));
         } finally {
             clear();
+        }
+    }
+
+    /**
+     * Keys the input on the master and the slave column. A LEFT input that a key already keys on the master column
+     * filters its input on the equality of the two slave columns instead, see {@link OptimiserContext#addKeyFilter}:
+     * binding merges such keys only for an input it joins without crossing an outer or temporal step, see
+     * {@code JoinGraphBuilder}, and a RIGHT or FULL input keeps the input rows the filter would drop.
+     */
+    private void addKey(JoinInput input, int masterId, int slaveId, CharSequence masterName, CharSequence slaveName, int position) throws SqlException {
+        final int keyIndex = input.getJoinType() == JoinKind.LEFT_OUTER ? input.indexOfMasterKey(masterId) : -1;
+        if (keyIndex > -1) {
+            context.addKeyFilter(input, keyIndex, slaveId, input.getSourceOutput(), position);
+        } else {
+            input.addKey(masterId, slaveId, masterName, slaveName, position);
         }
     }
 

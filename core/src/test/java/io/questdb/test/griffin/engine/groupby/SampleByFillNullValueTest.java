@@ -202,6 +202,47 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullBucketWhenQualifiedFloorSpansDays() throws Exception {
+        // A function of the table-qualified timestamp computes on the bucket, as its unqualified spelling does, so
+        // FILL emits one row per bucket and a bucket that an OFFSET starts on the previous day floors to that day.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1.0, '2024-01-01T00:00:00.000000Z'),
+                        (2.0, '2024-01-01T05:00:00.000000Z'),
+                        (3.0, '2024-01-02T01:00:00.000000Z'),
+                        (4.0, '2024-01-03T02:00:00.000000Z')""");
+            for (String timestamp : new String[]{"t.ts", "ts"}) {
+                assertQuery("SELECT ts, timestamp_floor('1d', " + timestamp + ") d, avg(val) v FROM t SAMPLE BY 12h FILL(NULL)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\td\tv
+                                2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.5
+                                2024-01-01T12:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                                2024-01-02T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z\t3.0
+                                2024-01-02T12:00:00.000000Z\t2024-01-02T00:00:00.000000Z\tnull
+                                2024-01-03T00:00:00.000000Z\t2024-01-03T00:00:00.000000Z\t4.0
+                                """);
+                assertQuery("SELECT ts, timestamp_floor('1d', " + timestamp + ") d, avg(val) v FROM t SAMPLE BY 12h FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '20:00'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\td\tv
+                                2023-12-31T20:00:00.000000Z\t2023-12-31T00:00:00.000000Z\t1.5
+                                2024-01-01T08:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                                2024-01-01T20:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t3.0
+                                2024-01-02T08:00:00.000000Z\t2024-01-02T00:00:00.000000Z\tnull
+                                2024-01-02T20:00:00.000000Z\t2024-01-02T00:00:00.000000Z\t4.0
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testFillNullBucketKeyRenamedByAggregateAlias() throws Exception {
         assertMemoryLeak(() -> {
             createBucketAliasTable();
@@ -574,10 +615,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillNoneTwiceRejectedBeforeOwnershipCheck() throws Exception {
-        // An all-NONE fill list carries no ownership signal on the group-by model, so
-        // generateFill runs its FILL(NONE) validation before the ownership check. This
-        // keeps FILL(NONE, NONE) rejected on the fast path, like the legacy path does.
+    public void testFillNoneTwiceRejected() throws Exception {
+        // A fill list of two or more values plans a fill even when every value is NONE,
+        // so SampleByBinder validates the list and rejects NONE among other values.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT ts, avg(val) AS a, sum(val) AS s FROM t SAMPLE BY 1h FILL(NONE, NONE)")
@@ -669,11 +709,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     @Test
     public void testFillNullOuterGroupByDoesNotRefill() throws Exception {
         // An outer GROUP BY over a SAMPLE BY ... FILL sub-query must not re-apply the
-        // inner fill. SqlOptimiser.rewriteSelectClause0 exposes the fill only on the
-        // group-by whose own base model carries it, and generateFill returns the plain
-        // group-by factory when that list is empty. Before, generateFill walked into
-        // the inner model, found its fill, matched the outer ts by name and stacked a
-        // second Sample By Fill on the outer GROUP BY (16 rows instead of 4).
+        // inner fill: AggregateBinder plans a fill only for the query block whose source
+        // carries the SAMPLE BY, so the outer GROUP BY gets none (4 rows, not 16).
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""
@@ -738,9 +775,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullOuterGroupByOverJoinFillDoesNotRefill() throws Exception {
-        // With a JOIN the fill parameters sit two models below the inner group-by
-        // (GROUP BY, CHOOSE, base). The downward walk still reaches them from the
-        // outer GROUP BY; the ownership check must keep the outer query empty-handed.
+        // The same with a JOIN under the inner SAMPLE BY: the fill stays with the
+        // inner query block, and the outer GROUP BY fills nothing.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""

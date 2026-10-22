@@ -139,7 +139,7 @@ public final class SqlOptimiser implements Mutable {
                 tmpKeys, columnIds, substitution, tmpSlaveKeys, tmpIndexes, tmpValues);
         passes.add(aggregateRewrite);
         final ColumnReads columnReads = new ColumnReads();
-        joinOrdering = new JoinOrdering(context, columnReads, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
+        joinOrdering = new JoinOrdering(context, columnReads, filters, new JoinOrderSolver(context, planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
                 tmpOrder, tmpPending, temporaries.readyInputs, temporaries.joinChildren, temporaries.joinChildrenPool, temporaries.joinTypes,
                 temporaries.joinDependencies), tmpConjuncts);
         passes.add(new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, tmpColumnMap, tmpSlaveKeys, tmpValues,

@@ -1479,9 +1479,8 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLateralLatestOnSampleByFillNoneLeavesRowsUnfilled() throws Exception {
-        // FILL(NONE) under the same LATEST ON fallback: the group-by output carries the
-        // bucket node, so the ownership check passes, and the NONE token then skips the
-        // fill as it does outside LATERAL. No gap row, no fill node.
+        // FILL(NONE) under the same LATEST ON ranking: SampleByBinder plans no fill for
+        // NONE, as outside LATERAL. No gap row, no fill node.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
@@ -1507,10 +1506,9 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLateralLatestOnSampleByFillNullKeepsGapRows() throws Exception {
-        // LATEST ON with a non-equality correlation takes LateralJoinRewriter's row_number
-        // fallback, which inserts a filter model and a window model between the SAMPLE BY
-        // select and the table model that holds the fill. The group-by must still own the
-        // fill, otherwise every gap row disappears.
+        // LATEST ON with a non-equality correlation becomes a per-outer-row row_number
+        // ranking (CorrelatedChainRewriter), a window and a filter below the SAMPLE BY.
+        // The fill SampleByBinder planned above the aggregate must keep every gap row.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
@@ -1566,10 +1564,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralLatestOnSampleByFillUnderOuterGroupBy() throws Exception {
         // An outer GROUP BY over the lateral join must still see the inner gap row
-        // (3 rows for id 1, not 2). The fill-holding model sits under join model x, so
-        // generateFill's nested-model walk from the outer group-by never reaches it;
-        // this test pins that the fill survives under an outer aggregate. The outer
-        // GROUP BY ownership shapes are pinned by the SampleByFill*Test classes.
+        // (3 rows for id 1, not 2): the fill belongs to the lateral body's query block
+        // and survives under an outer aggregate. The SampleByFill*Test classes pin the
+        // outer GROUP BY shapes.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");

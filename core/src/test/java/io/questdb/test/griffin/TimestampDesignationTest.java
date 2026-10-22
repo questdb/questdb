@@ -150,11 +150,9 @@ public class TimestampDesignationTest extends AbstractCairoTest {
                     }
                 }
                 execute("CREATE TABLE lp_timestamp_empty(id INT,other TIMESTAMP_NS)");
-                try (RecordCursorFactory empty = select("SELECT id FROM lp_timestamp_empty WHERE other > '1600-01-01'");
-                     RecordCursor cursor = empty.getCursor(sqlExecutionContext)) {
-                    Assert.assertFalse(empty.usesCompiledFilter());
-                    Assert.assertFalse(cursor.hasNext());
-                }
+                assertQuery("SELECT id FROM lp_timestamp_empty WHERE other > '1600-01-01'")
+                        .noLeakCheck()
+                        .fails(48, "inconvertible value: -11676096000000000 [TIMESTAMP -> TIMESTAMP_NS]");
             } finally {
                 sqlExecutionContext.setJitMode(oldMode);
             }

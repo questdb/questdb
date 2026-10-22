@@ -491,12 +491,9 @@ public final class SqlBinder implements Mutable {
             ctx.retainImplicitTimestamp(sourcePlan);
         }
         final boolean isSampleByCursor = source.getSampleBy() != null && SampleByBinder.requiresSampleByCursor(source);
-        if (source.getSampleBy() != null) {
-            sampleByBinder.bindSampleByTimestamp(sourcePlan, !isSampleByCursor);
-        }
         final SampleByPlan sampleBy = isSampleByCursor ? sampleByBinder.bindSampleBy(model, source, sourcePlan, executionContext) : null;
         final BoundExpression sampleByBucket = source.getSampleBy() == null || isSampleByCursor ? null
-                : sampleByBinder.bindSampleByBucket(model, source, sourcePlan.getOutput(), executionContext);
+                : sampleByBinder.bindSampleByBucket(model, source, sourcePlan, executionContext);
         bindScope.resetAliases();
         bindScope.projectionAliasIndexes.clear();
 

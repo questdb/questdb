@@ -521,7 +521,7 @@ final class Decorrelation implements OptimiserPass {
                 final int keyIndex = scalarBody == null ? step.indexOfMasterKey(masterId) : -1;
                 ctx.addCarrier(step, columnId);
                 if (keyIndex > -1) {
-                    keys.addKeyFilter(step, columnId, step.getKeys().getQuick(keyIndex).getSlaveColumnId(), output);
+                    context.addKeyFilter(step, keyIndex, columnId, output, step.getPosition());
                 } else {
                     step.addKey(masterId, columnId, ctx.masterColumnName(mapping.outerIdAt(i)),
                             ctx.qualifiedName(step.getBindingAlias(), output.getColumnName(output.getColumnIndexById(columnId))), step.getPosition());

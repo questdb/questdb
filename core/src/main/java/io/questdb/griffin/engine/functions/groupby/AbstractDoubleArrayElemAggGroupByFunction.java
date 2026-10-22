@@ -165,8 +165,8 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         this.maxArrayElementCount = configuration.maxArrayElementCount();
         // Weak-dim array types (bind variables with unresolved dimensionality) cannot
         // reach GROUP BY aggregate args: column refs always carry strong dims, UNION
-        // rejects array bind variables, and FunctionResolver.createFunction rejects a
-        // weak-dim argument of any aggregate.
+        // rejects array bind variables, and each subclass factory rejects a weak-dim
+        // argument through SqlUtil.checkArrayDimensionsKnown.
         // decodeArrayDimensionality asserts dims > 0 as a safety net.
         this.nDims = ColumnType.decodeArrayDimensionality(type);
         this.headerSize = Integer.BYTES * (1 + nDims);

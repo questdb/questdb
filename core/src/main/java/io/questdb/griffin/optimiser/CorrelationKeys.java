@@ -226,16 +226,6 @@ final class CorrelationKeys implements Mutable {
     }
 
     /**
-     * A second key of the step on the same master column holds as an equality between the two columns of the
-     * input.
-     */
-    void addKeyFilter(JoinInput step, int columnId, int keyId, OutputSchema output) throws SqlException {
-        final int position = step.getPosition();
-        final BoundExpression equality = context.bindCall("=", position, ctx.column(output, columnId, position), ctx.column(output, keyId, position), output);
-        step.setKeyFilter(step.getKeyFilter() == null ? equality : context.getRewriter().combineConjunction(step.getKeyFilter(), equality, position));
-    }
-
-    /**
      * Records the equalities of the predicate between an outer column and a column of its input that can carry
      * it; {@code source} is the block's source join, or null.
      */

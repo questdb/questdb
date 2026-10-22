@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.optimiser;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
@@ -35,8 +34,6 @@ import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
-import io.questdb.griffin.plan.logical.JoinKey;
-import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -47,7 +44,6 @@ import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
@@ -71,7 +67,6 @@ final class JoinOrdering implements OptimiserPass {
     private final ObjList<BoundExpression> placed;
     private final IntHashSet readColumnIds = new IntHashSet();
     private final JoinOrderSolver solver;
-    private final IntIntHashMap slaveKeyByMaster = new IntIntHashMap();
     private int lastPosition;
     private JoinPlan readJoin;
     private final ExpressionVisitor orderedInputReads = expression -> {
@@ -109,7 +104,6 @@ final class JoinOrdering implements OptimiserPass {
         solver.clear();
         columnReads.clear();
         readColumnIds.clear();
-        slaveKeyByMaster.clear();
         readJoin = null;
     }
 
@@ -264,52 +258,12 @@ final class JoinOrdering implements OptimiserPass {
             if (join.getGraph() != null) {
                 solver.order(join, isTimestampRequired, readColumnIds);
                 place(join, join.getGraph());
-                reduceOuterKeys(join);
                 join.setGraph(null);
             }
             return;
         }
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             orderInputJoins(plan, i, plan.inputAt(i), isTimestampRequired);
-        }
-    }
-
-    /** Moves repeated-master textual LEFT keys into equality filters on the nullable input. */
-    private void reduceOuterKeys(JoinPlan join) throws SqlException {
-        final ObjList<JoinInput> steps = join.getOrderedInputs();
-        for (int i = 1; i < steps.size(); i++) {
-            final JoinInput step = steps.getQuick(i);
-            if (step.getJoinType() != JoinKind.LEFT_OUTER || step.getKeys().size() < 2) {
-                continue;
-            }
-            slaveKeyByMaster.clear();
-            final OutputSchema output = step.getSourceOutput();
-            final ObjList<JoinKey> keys = step.getKeys();
-            for (int k = 0; k < keys.size(); ) {
-                final JoinKey key = keys.getQuick(k);
-                final int masterId = key.getMasterColumnId();
-                final int previousId = slaveKeyByMaster.get(masterId);
-                final int slaveId = key.getSlaveColumnId();
-                if (previousId < 0) {
-                    slaveKeyByMaster.put(masterId, slaveId);
-                    k++;
-                    continue;
-                }
-                final int masterType = join.getOutput().getColumnType(join.getOutput().getColumnIndexById(masterId));
-                final int previousType = output.getColumnType(output.getColumnIndexById(previousId));
-                final int slaveType = output.getColumnType(output.getColumnIndexById(slaveId));
-                if (!ColumnType.isSymbolOrStringOrVarchar(masterType) || !ColumnType.isSymbolOrStringOrVarchar(previousType)
-                        || !ColumnType.isSymbolOrStringOrVarchar(slaveType)) {
-                    k++;
-                    continue;
-                }
-                final int position = key.getPosition();
-                final BoundExpression equality = context.bindCall("=", position,
-                        new ColumnExpression().of(previousId, previousType, position),
-                        new ColumnExpression().of(slaveId, slaveType, position), output);
-                step.setKeyFilter(context.getRewriter().combineConjunction(step.getKeyFilter(), equality, position));
-                step.removeKey(k);
-            }
         }
     }
 

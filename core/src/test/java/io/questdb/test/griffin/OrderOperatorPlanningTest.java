@@ -419,6 +419,21 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLightHashJoinMasterSideUnderConstantFalseFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String empty = "SELECT a.ts, a.x FROM t a JOIN u b ON a.x = b.x AND false";
+            assertPlanned(engine, sqlExecutionContext, empty, JoinPlan.class,
+                    join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
+            // The constant-false step emits no rows, yet its empty factory designates the timestamp the side keeps.
+            assertPlanned(engine, sqlExecutionContext, "SELECT ts, count() FROM (" + empty + ") SAMPLE BY 1d ALIGN TO FIRST OBSERVATION", JoinPlan.class,
+                    join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
+            assertPlanned(engine, sqlExecutionContext, "SELECT a.ts, count() FROM t a JOIN u b ON a.x = b.x WHERE false SAMPLE BY 1d ALIGN TO FIRST OBSERVATION", JoinPlan.class,
+                    join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
+        });
+    }
+
+    @Test
     public void testLimitApplication() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

@@ -34,7 +34,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TableFunctionSources;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Mutable;
@@ -73,6 +75,21 @@ final class OptimiserContext implements Mutable {
     @Override
     public void clear() {
         executionContext = null;
+    }
+
+    /**
+     * Holds a second key of the step on the master column of its key at {@code keyIndex} as an equality between the
+     * two slave columns of the step's input, {@code output}: the input rows that match the master column on both keys
+     * are the rows whose two columns are equal, so the step filters its input on that equality and keys on the first
+     * pair alone. The step must drop its unmatched input rows. A second key on the same slave column adds nothing.
+     */
+    void addKeyFilter(JoinInput step, int keyIndex, int slaveId, OutputSchema output, int position) throws SqlException {
+        final int keySlaveId = step.getKeys().getQuick(keyIndex).getSlaveColumnId();
+        if (keySlaveId == slaveId) {
+            return;
+        }
+        final BoundExpression equality = bindCall("=", position, column(output, slaveId, position), column(output, keySlaveId, position), output);
+        step.setKeyFilter(step.getKeyFilter() == null ? equality : rewriter.combineConjunction(step.getKeyFilter(), equality, position));
     }
 
     /**
@@ -140,5 +157,9 @@ final class OptimiserContext implements Mutable {
 
     void of(SqlExecutionContext executionContext) {
         this.executionContext = executionContext;
+    }
+
+    private ColumnExpression column(OutputSchema output, int columnId, int position) {
+        return planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position);
     }
 }

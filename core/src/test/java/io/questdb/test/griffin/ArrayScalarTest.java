@@ -260,10 +260,13 @@ public class ArrayScalarTest extends AbstractCairoTest {
             assertQuery("SELECT dim_length(m,0) FROM lp_array_scalar").noLeakCheck().fails(20, "array dimension out of bounds [dim=0]");
             assertQuery("SELECT array_sort(a,id>0) FROM lp_array_scalar").noLeakCheck().fails(7, "there is no matching function `array_sort` with the argument types: (DOUBLE[], BOOLEAN)");
             assertQuery("SELECT array_sort(a,true,id>0) FROM lp_array_scalar").noLeakCheck().fails(7, "there is no matching function `array_sort` with the argument types: (DOUBLE[], BOOLEAN, BOOLEAN)");
-            assertQuery("SELECT array_sum(ARRAY[])").noLeakCheck().fails(22, "argument type mismatch for function `array_sum` at #1 expected: DOUBLE, actual: ARRAY");
-            assertQuery("SELECT array_min(ARRAY[])").noLeakCheck().fails(22, "argument type mismatch for function `array_min` at #1 expected: DOUBLE, actual: ARRAY");
-            assertQuery("SELECT array_max(ARRAY[])").noLeakCheck().fails(22, "argument type mismatch for function `array_max` at #1 expected: DOUBLE, actual: ARRAY");
-            assertQuery("SELECT array_sort(ARRAY[])").noLeakCheck().fails(7, "there is no matching function `array_sort` with the argument types: (ARRAY)");
+            assertRowsOnly(
+                    "SELECT array_sum(ARRAY[]) s, array_min(ARRAY[]) mn, array_max(ARRAY[]) mx, array_sort(ARRAY[]) srt",
+                    """
+                            s\tmn\tmx\tsrt
+                            null\tnull\tnull\t[]
+                            """
+            );
             assertRowsOnly(
                     "SELECT dim_length(array_sort(ARRAY[3.0,1.0]),NULL::INT),"
                             + "array_sum(array_reverse(ARRAY[3.0,1.0]))",

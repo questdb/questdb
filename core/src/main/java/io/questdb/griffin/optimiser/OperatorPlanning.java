@@ -1025,14 +1025,8 @@ final class OperatorPlanning implements Mutable {
                 isConstantFolded = false;
             }
         }
-        if (filter != null) {
-            if (isConstantFolded && LogicalPlans.isConstant(filter)) {
-                if (LogicalPlans.constantTruth(filter) == 0) {
-                    return;
-                }
-            } else {
-                isAdviceRead = false;
-            }
+        if (filter != null && !(isConstantFolded && LogicalPlans.isConstant(filter))) {
+            isAdviceRead = false;
         }
         switch (step.getAlgorithm()) {
             case MARKOUT -> readJoinOrder(join, inputCount - 1, false, isDirectionRead);
@@ -1076,13 +1070,7 @@ final class OperatorPlanning implements Mutable {
                 if (PlanToFactoryRules.isFusedFilter(filter)) {
                     return;
                 }
-                if (LogicalPlans.isConstant(filter.getPredicate())) {
-                    if (LogicalPlans.constantTruth(filter.getPredicate()) != 0) {
-                        readOrder(filter.getChild(), isAdviceRead, isDirectionRead);
-                    }
-                } else {
-                    readOrder(filter.getChild(), false, isDirectionRead);
-                }
+                readOrder(filter.getChild(), isAdviceRead && LogicalPlans.isConstant(filter.getPredicate()), isDirectionRead);
             }
             case ProjectPlan project -> readOrder(project.getChild(), isAdviceRead, isDirectionRead);
             case SortPlan sort -> {

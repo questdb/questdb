@@ -45,7 +45,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class CatalogueQueryTest extends AbstractCairoTest {
-    private static final String PARTITION_COLUMNS = "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\thasParquetGenerated\tisParquet\tparquetFileSize\tseqTxn\tisRemotelyServed";
+    private static final String PARTITION_COLUMNS = "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\thasParquetGenerated\tisParquet\tparquetFileSize\tseqTxn\tisRemotelyServed\tdeadRows\tlastWriteTimestamp\tpieceCount";
 
     @Test
     public void testEmptyCataloguesPreserveAllColumnMetadata() throws Exception {
@@ -440,19 +440,19 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             assertPartitionMetadata("lp_meta_micro", ColumnType.TIMESTAMP_MICRO);
             assertPartitionMetadata("lp_meta_nano", ColumnType.TIMESTAMP_NANO);
             assertPartitionMetadata("lp_meta_plain", ColumnType.TIMESTAMP_NANO);
-            assertSourceHeader("SELECT * FROM table_partitions('lp_meta_micro')", PARTITION_COLUMNS, 18);
-            assertSourceHeader("SELECT * FROM table_partitions('lp_meta_nano')", PARTITION_COLUMNS, 18);
-            assertSourceHeader("SELECT * FROM table_partitions('lp_meta_plain')", PARTITION_COLUMNS, 18);
+            assertSourceHeader("SELECT * FROM table_partitions('lp_meta_micro')", PARTITION_COLUMNS, 21);
+            assertSourceHeader("SELECT * FROM table_partitions('lp_meta_nano')", PARTITION_COLUMNS, 21);
+            assertSourceHeader("SELECT * FROM table_partitions('lp_meta_plain')", PARTITION_COLUMNS, 21);
             assertSource("SELECT maxTimestamp AS hi,name,minTimestamp AS lo FROM table_partitions('lp_meta_micro') "
                     + "WHERE active ORDER BY minTimestamp DESC", """
                     hi	name	lo
                     2020-01-02T00:00:00.000009Z	2020-01-02	2020-01-02T00:00:00.000009Z
-                    """, 18);
+                    """, 21);
             assertSource("SELECT maxTimestamp AS hi,name,minTimestamp AS lo FROM table_partitions('lp_meta_nano') "
                     + "WHERE active ORDER BY minTimestamp DESC", """
                     hi	name	lo
                     2020-01-02T00:00:00.000000009Z	2020-01-02	2020-01-02T00:00:00.000000009Z
-                    """, 18);
+                    """, 21);
             assertSource("SELECT numRows FROM table_partitions('lp_meta_nano') ORDER BY maxTimestamp DESC LIMIT 1", """
                     numRows
                     1
@@ -465,7 +465,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                     answer
                     7
                     7
-                    """, 18);
+                    """, 21);
             assertRowsOnly("EXPLAIN SELECT * FROM table_partitions('lp_meta_nano')", """
                     QUERY PLAN
                     show_partitions of: lp_meta_nano
@@ -483,11 +483,11 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                     name	minTimestamp	maxTimestamp	numRows	hasParquetGenerated	isParquet	has_file
                     2020-01-01	2020-01-01T00:00:00.000000001Z	2020-01-01T00:00:00.000000001Z	1	true	true	true
                     2020-01-02	2020-01-02T00:00:00.000000009Z	2020-01-02T00:00:00.000000009Z	1	false	false	false
-                    """, 18);
+                    """, 21);
             assertSource("SELECT name,minTimestamp FROM table_partitions('lp_meta_parquet') WHERE isParquet", """
                     name	minTimestamp
                     2020-01-01	2020-01-01T00:00:00.000000001Z
-                    """, 18);
+                    """, 21);
         });
     }
 
@@ -1676,7 +1676,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             try (RecordCursorFactory factory = compiler.compile("SELECT * FROM table_partitions('" + table + "')", sqlExecutionContext).getRecordCursorFactory()) {
                 final RecordMetadata metadata = factory.getMetadata();
-                Assert.assertEquals(18, metadata.getColumnCount());
+                Assert.assertEquals(21, metadata.getColumnCount());
                 Assert.assertEquals(-1, metadata.getTimestampIndex());
                 Assert.assertEquals(timestampType, metadata.getColumnType(3));
                 Assert.assertEquals(timestampType, metadata.getColumnType(4));

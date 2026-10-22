@@ -12988,6 +12988,33 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByOverOuterJoinSubQueryRequiresTimestamp() throws Exception {
+        // Buckets floor the first input's timestamp of a RIGHT or FULL join that is the SAMPLE BY source itself. A
+        // sub-query over that join designates no timestamp, whether it renames or computes its columns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE l (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE r (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO l VALUES (1, '2024-01-01T00:00'), (2, '2024-01-01T02:00')");
+            execute("INSERT INTO r VALUES (1, 10.0, '2024-01-01T00:30'), (3, 30.0, '2024-01-01T01:30')");
+            assertQuery("SELECT l.ts, count() c, sum(r.v) v FROM l FULL JOIN r ON l.k = r.k SAMPLE BY 1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tc\tv
+                            \t1\t30.0
+                            2024-01-01T00:00:00.000000Z\t1\t10.0
+                            2024-01-01T02:00:00.000000Z\t1\tnull
+                            """);
+            for (String projection : new String[]{"l.ts, r.v * 2 v", "l.ts, r.v", "l.k, l.ts, r.k k1, r.v, r.ts ts1"}) {
+                for (String fill : new String[]{"", " FILL(NULL)"}) {
+                    assertQuery("SELECT ts, count() c FROM (SELECT " + projection + " FROM l FULL JOIN r ON l.k = r.k) SAMPLE BY 1h" + fill)
+                            .fails(0, "base query does not provide designated TIMESTAMP column");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSampleByOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE eq_equities_market_data (" +

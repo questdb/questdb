@@ -39,6 +39,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.IntList;
@@ -132,10 +133,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         // non-array arguments aren't allowed, because they must all come together to form
         // a new array with one more dimension.
         commonElemType = ColumnType.decodeArrayElementType(type0);
-        final int nestedDims = ColumnType.decodeWeakArrayDimensionality(arg0.getType());
-        if (nestedDims == -1) {
-            throw SqlException.$(arg0Pos, "array bind variable argument is not supported");
-        }
+        SqlUtil.checkArrayDimensionsKnown(type0, arg0Pos);
+        final int nestedDims = ColumnType.decodeArrayDimensionality(type0);
         for (int i = 1, n = args.size(); i < n; i++) {
             Function argI = args.getQuick(i);
             int typeI = argI.getType();
@@ -143,11 +142,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             if (!ColumnType.isArray(typeI)) {
                 throw SqlException.$(argPosI, "mixed array and non-array elements");
             }
-            int dims = ColumnType.decodeWeakArrayDimensionality(typeI);
-            if (dims == -1) {
-                throw SqlException.$(argPosI, "array bind variable argument is not supported");
-            }
-            if (dims != nestedDims) {
+            SqlUtil.checkArrayDimensionsKnown(typeI, argPosI);
+            if (ColumnType.decodeArrayDimensionality(typeI) != nestedDims) {
                 throw SqlException.$(argPosI, "sub-arrays don't match in number of dimensions");
             }
             commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));

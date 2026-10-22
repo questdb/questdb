@@ -150,7 +150,7 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FILL(PREV) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             4.0\t2024-01-01T02:00:00.000000Z\t2024-01-01T04:00:00.000000Z
@@ -165,8 +165,8 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevBucketWhenLastTimestampAliasedAsTimestamp() throws Exception {
-        // last(ts) AS ts takes the timestamp's name, so generateFill must fill by the recorded
-        // bucket and not by the TIMESTAMP column that merely carries the name ts (#7838).
+        // last(ts) AS ts takes the timestamp's name; the fill must key on the bucket the
+        // FillPlan records, not on the TIMESTAMP column that merely carries the name ts (#7838).
         assertMemoryLeak(() -> {
             SampleByFillNullValueTest.createBucketAliasTable();
             assertQuery("SELECT last(ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(PREV)")
@@ -184,10 +184,9 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevBucketWhenTimestampNamedLikeAggregate() throws Exception {
-        // The designated timestamp is named max, so max(v) carries the same token and
-        // rewriteSampleBy puts its bucket on the explicit GROUP BY list. The aggregate
-        // column surfaces as max1 because of the pre-existing alias de-duplication; the
-        // test pins the filled gap row, not that name.
+        // The designated timestamp is named max, so max(v) carries the same token. The
+        // aggregate column surfaces as max1 through alias de-duplication; the test pins
+        // the filled gap row, not that name.
         assertMemoryLeak(() -> {
             SampleByFillNullValueTest.createTimestampNamedMaxTable();
             assertQuery("SELECT max, max(v) FROM m SAMPLE BY 1h FILL(PREV)")
@@ -1269,16 +1268,12 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevKeyedBucketKeyRenamedByAggregateAlias() throws Exception {
-        // The emitted avg(val) aggregate claims the alias avg first, so the group-by model
-        // renames the bucket key to avg1. The column surfaces as avg1 instead of avg: that
-        // naming comes from the pre-existing key rename, not from fill, and this test does
-        // not endorse it.
         assertMemoryLeak(() -> {
             SampleByFillNullValueTest.createBucketAliasTable();
             assertQuery("SELECT k, avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(PREV) ORDER BY k, v")
                     .noLeakCheck()
                     .returns("""
-                            k\tv\tavg1
+                            k\tv\tavg
                             a\t2.0\t2024-01-01T00:00:00.000000Z
                             a\t2.0\t2024-01-01T01:00:00.000000Z
                             a\t2.0\t2024-01-01T02:00:00.000000Z

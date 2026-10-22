@@ -32,7 +32,6 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.FunctionResolver;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -108,6 +107,18 @@ final class SampleByBinder {
         this.configuration = configuration;
         this.functionResolver = functionResolver;
         this.windowBinder = windowBinder;
+    }
+
+    /**
+     * The column the buckets floor: the input's designated timestamp or, over a join whose step NULL-extends its first
+     * input and so designates none, the first input's. Bucketing requires no row order, and the NULL-extended rows form
+     * a NULL bucket.
+     */
+    private static int bucketTimestampColumnId(LogicalPlan input) {
+        final int timestampId = input.getOutput().getTimestampColumnId();
+        return timestampId < 0 && input instanceof JoinPlan join
+                ? join.getInputs().getQuick(0).getSourceOutput().getTimestampColumnId()
+                : timestampId;
     }
 
     private static boolean hasLinearFill(QueryModel source) {
@@ -721,6 +732,7 @@ final class SampleByBinder {
     SampleByPlan bindSampleBy(
             QueryModel model, QueryModel source, LogicalPlan input, SqlExecutionContext executionContext
     ) throws SqlException {
+        ctx.scope().sampleByTimestampColumnId = input.getOutput().getTimestampColumnId();
         final ExpressionNode sampleBy = source.getSampleBy();
         validateSampleByQuery(model, source, input.getOutput(), false);
         final int timestampIndex = sampleByTimestampIndex(input.getOutput());
@@ -758,8 +770,10 @@ final class SampleByBinder {
     }
 
     BoundExpression bindSampleByBucket(
-            QueryModel model, QueryModel source, OutputSchema input, SqlExecutionContext executionContext
+            QueryModel model, QueryModel source, LogicalPlan sourcePlan, SqlExecutionContext executionContext
     ) throws SqlException {
+        ctx.scope().sampleByTimestampColumnId = bucketTimestampColumnId(sourcePlan);
+        final OutputSchema input = sourcePlan.getOutput();
         final ExpressionNode sampleBy = source.getSampleBy();
         validateSampleByQuery(model, source, input, true);
         final ExpressionNode from = source.getSampleByFrom();
@@ -865,15 +879,6 @@ final class SampleByBinder {
             predicate = lo == null ? hi : ctx.expressionRewriter.combineConjunction(lo, hi, hi.getPosition());
         }
         return ctx.planNodes.filters.next().of(input, predicate, predicate.getPosition());
-    }
-
-    void bindSampleByTimestamp(LogicalPlan input, boolean isBucket) {
-        int timestampId = input.getOutput().getTimestampColumnId();
-        if (timestampId < 0 && isBucket && LogicalPlans.skipRenames(input) instanceof JoinPlan join) {
-            // Bucketing can group a null-extended master timestamp without promising ordered join output.
-            timestampId = join.getInputs().getQuick(0).getSourceOutput().getTimestampColumnId();
-        }
-        ctx.scope().sampleByTimestampColumnId = timestampId;
     }
 
     LogicalPlan bindSubsample(

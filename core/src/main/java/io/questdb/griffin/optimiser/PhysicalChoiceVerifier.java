@@ -49,6 +49,7 @@ import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -60,6 +61,32 @@ import org.jetbrains.annotations.Nullable;
 final class PhysicalChoiceVerifier {
 
     private PhysicalChoiceVerifier() {
+    }
+
+    private static boolean areInputTimestampsDesignated(LogicalPlan plan) {
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final LogicalPlan input = plan.inputAt(i);
+            if (!isTimestampDesignated(input, input.getOutput().getTimestampColumnId())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean areTemporalTimestampsDesignated(JoinPlan join) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        for (int i = 1, n = ordered.size(); i < n; i++) {
+            final JoinInput step = ordered.getQuick(i);
+            if (step.getJoinType().isTemporal()) {
+                final int masterIndex = PhysicalProperties.masterTimestampIndex(join, i);
+                if (masterIndex < 0
+                        || ordered.getQuick(0).getInput().getOutput().getColumnId(masterIndex) != LogicalPlans.joinTimestampColumnId(join, i)
+                        || !isTimestampDesignated(step.getInput(), step.getInput().getOutput().getTimestampColumnId())) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static boolean isBounded(SortPlan.Algorithm algorithm) {
@@ -236,6 +263,11 @@ final class PhysicalChoiceVerifier {
         return filter != null && !isUnsatisfied(PhysicalProperties.supportsLeafTimeFrameCursor(filter), isPlanned);
     }
 
+    private static boolean isTimestampDesignated(LogicalPlan input, int columnId) {
+        final int index = PhysicalProperties.timestampIndex(input);
+        return index >= 0 && input.getOutput().getColumnId(index) == columnId;
+    }
+
     private static boolean isTopK(SortPlan.Algorithm algorithm) {
         return algorithm == SortPlan.Algorithm.LONG_TOP_K || algorithm == SortPlan.Algorithm.PARALLEL_TOP_K
                 || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K;
@@ -247,6 +279,22 @@ final class PhysicalChoiceVerifier {
      */
     private static boolean isUnsatisfied(PhysicalProperties.Capability capability, boolean isPlanned) {
         return capability == PhysicalProperties.Capability.NO || isPlanned && capability == PhysicalProperties.Capability.UNKNOWN;
+    }
+
+    private static boolean isWindowTimestampDesignated(WindowPlan window) {
+        final LogicalPlan input = window.getChild();
+        final int timestampId = input.getOutput().getTimestampColumnId();
+        if (timestampId < 0) {
+            return true;
+        }
+        for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
+            final IntList order = window.getSpecs().getQuick(i).getOrderByColumnIds();
+            if ((window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.DESIGNATED_TIMESTAMP) != 0
+                    && order.size() > 0 && order.getQuick(0) == timestampId) {
+                return isTimestampDesignated(input, timestampId);
+            }
+        }
+        return true;
     }
 
     /**
@@ -502,6 +550,28 @@ final class PhysicalChoiceVerifier {
         }
         return isRowIdSort(algorithm) && isUnsatisfied(PhysicalProperties.supportsRandomAccess(sort.getChild()), isPlanned)
                 ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
+    }
+
+    /**
+     * Checks a consumer that reads the designated timestamp of its input against the factory of the input once every
+     * master side is decided: the input must still designate the timestamp the consumer bound. The consumers are a
+     * SAMPLE BY over its input's designated timestamp, the master and the slave of each temporal join step, the master
+     * and the slaves of a horizon or window join, and a window whose function relies on its ordering by the input's
+     * designated timestamp.
+     */
+    static String timestampReads(LogicalPlan plan, boolean isPlanned) {
+        if (!isPlanned) {
+            return null;
+        }
+        final boolean isBound = switch (plan) {
+            case SampleByPlan sample ->
+                    !sample.isTimestampRequired() || isTimestampDesignated(sample.getChild(), sample.getTimestampColumnId());
+            case JoinPlan join -> areTemporalTimestampsDesignated(join);
+            case HorizonJoinPlan _, WindowJoinPlan _ -> areInputTimestampsDesignated(plan);
+            case WindowPlan window -> isWindowTimestampDesignated(window);
+            default -> true;
+        };
+        return isBound ? null : PlanVerifier.TIMESTAMP_READ;
     }
 
     static String window(WindowPlan window, boolean isPlanned) {

@@ -219,14 +219,16 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                         id, k, u, s, arr
                     FROM big
                     """;
-            final String arrayForm = "SELECT d[1] p01, d[99] p99, c[1] c50, id, k, u, s, arr FROM ("
+            final String unlimitedArrayForm = "SELECT d[1] p01, d[99] p99, c[1] c50, id, k, u, s, arr FROM ("
                     + "SELECT percentile_disc(v, " + percentiles + ") OVER (PARTITION BY k) d, "
-                    + "percentile_cont(v, ARRAY[0.5]) OVER (PARTITION BY k) c, id, k, u, s, arr FROM big LIMIT 300)";
+                    + "percentile_cont(v, ARRAY[0.5]) OVER (PARTITION BY k) c, id, k, u, s, arr FROM big)";
+            final String arrayForm = unlimitedArrayForm.substring(0, unlimitedArrayForm.length() - 1) + " LIMIT 300)";
             assertWindowFactory(scalarForm, CachedWindowLightRecordCursorFactory.class, "p01,p99,c50,id,k,u,s,arr");
             assertWindowFactory(arrayForm, CachedWindowRecordCursorFactory.class, "d,c,id,k,u,s,arr");
             for (int copierType = 0; copierType < 4; copierType++) {
                 setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
                 assertSqlCursors(scalarForm, arrayForm);
+                assertSqlCursors(scalarForm, unlimitedArrayForm);
             }
         });
     }
@@ -258,22 +260,24 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                         id, k, s, u, bin, arr
                     FROM t
                     """;
-            // Keep the array outputs before the variable-size inputs in the cached window record.
-            final String arrayForm = """
+            final String unlimitedArrayForm = """
                     SELECT d[1] d50, c[1] c90, id, k, s, u, bin, arr
                     FROM (
                         SELECT
                             percentile_disc(v, ARRAY[0.5]) OVER (PARTITION BY k) d,
                             percentile_cont(v, ARRAY[0.9]) OVER (PARTITION BY k) c,
                             id, k, s, u, bin, arr
-                        FROM t LIMIT 10000
+                        FROM t
                     )
                     """;
+            // The LIMIT keeps the array outputs before the variable-size inputs in the cached window record.
+            final String arrayForm = unlimitedArrayForm.replace("FROM t\n", "FROM t LIMIT 10000\n");
             assertWindowFactory(scalarForm, CachedWindowLightRecordCursorFactory.class, "d50,c90,id,k,s,u,bin,arr");
             assertWindowFactory(arrayForm, CachedWindowRecordCursorFactory.class, "d,c,id,k,s,u,bin,arr");
             for (int copierType = 0; copierType < 4; copierType++) {
                 setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
                 assertSqlCursors(scalarForm, arrayForm);
+                assertSqlCursors(scalarForm, unlimitedArrayForm);
             }
         });
     }

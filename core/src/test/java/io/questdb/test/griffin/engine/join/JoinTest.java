@@ -2072,6 +2072,63 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFalseJoinKeepsDesignatedTimestamp() throws Exception {
+        // A constant-false ON or WHERE empties the join, whose empty factory copies the join's metadata. The consumers
+        // that read the join's designated timestamp still bind it, so they return no rows instead of failing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (vk VARCHAR, k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (vk VARCHAR, k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (vk VARCHAR, k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t0 VALUES ('x', 1, 1.0, '2024-01-02T12:00'), ('y', 2, 2.0, '2024-01-03T12:00')");
+            execute("INSERT INTO t1 VALUES ('x', 1, 10.0, '2024-01-02T13:00'), ('y', 2, 20.0, '2024-01-03T13:00')");
+            execute("INSERT INTO t2 VALUES ('x', 1, 100.0, '2024-01-02T14:00'), ('y', 2, 200.0, '2024-01-03T14:00')");
+
+            assertQuery("""
+                    SELECT r.ts e0, count() a1, count(r.k) a2
+                    FROM t1 l JOIN (SELECT vk, k, ts FROM t0) r ON r.vk = l.vk AND (NOT true)
+                    WHERE l.ts >= '2024-01-02T11:00' AND l.ts < '2024-01-04T11:00'
+                    SAMPLE BY 1d ALIGN TO FIRST OBSERVATION
+                    ORDER BY a2
+                    """)
+                    .returns("e0\ta1\ta2\n");
+            assertQuery("SELECT count() a1 FROM t1 l JOIN t0 r ON r.vk = l.vk WHERE false SAMPLE BY 1d ALIGN TO FIRST OBSERVATION")
+                    .noRandomAccess()
+                    .returns("a1\n");
+            // the step before the emptied one decides the master's timestamp too
+            assertQuery("SELECT count() a1 FROM t1 l JOIN t0 r ON r.vk = l.vk JOIN t2 s ON s.vk = l.vk AND false SAMPLE BY 1d ALIGN TO FIRST OBSERVATION")
+                    .noRandomAccess()
+                    .returns("a1\n");
+            assertQuery("SELECT l.ts, count() a1 FROM t1 l JOIN t0 r ON r.vk = l.vk AND false SAMPLE BY 1d ALIGN TO FIRST OBSERVATION")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\ta1\n");
+
+            final String empty = "(SELECT l.ts, l.v, l.vk FROM t1 l JOIN t0 r ON r.vk = l.vk AND false)";
+            assertQuery("SELECT q.ts, q.v, a.v FROM " + empty + " q ASOF JOIN t2 a ON (vk)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tv\tv1\n");
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT a.ts, a.v, q.v FROM t2 a " + join + " JOIN " + empty + " q ON (vk)")
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                ts\tv\tv1
+                                2024-01-02T14:00:00.000000Z\t100.0\tnull
+                                2024-01-03T14:00:00.000000Z\t200.0\tnull
+                                """);
+            }
+            for (String filter : new String[]{" AND false", " WHERE false"}) {
+                assertQuery("SELECT l.ts, sum(l.v) OVER (ORDER BY l.ts RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW) s FROM t1 l JOIN t0 r ON r.vk = l.vk" + filter)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("ts\ts\n");
+            }
+        });
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -7797,6 +7854,85 @@ public class JoinTest extends AbstractCairoTest {
                             null\t3\t5\t5
                             1\t1\t1\t1
                             2\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinRepeatedMasterKeyFiltersInput() throws Exception {
+        // A LEFT step keyed twice on one master column keys on the first pair and filters its input on the equality
+        // of the two slave columns, as an INNER step does. An exact repeat adds nothing. RIGHT and FULL steps keep
+        // both keys: a filter on their input would drop the rows they preserve.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ti (k INT, v DOUBLE)");
+            execute("CREATE TABLE tj (a INT, b INT, v DOUBLE)");
+            execute("INSERT INTO ti VALUES (1, 1.0), (2, 2.0), (3, 3.0), (null, 4.0)");
+            execute("INSERT INTO tj VALUES (1, 1, 10.0), (2, 3, 20.0), (3, 3, 30.0), (null, null, 40.0)");
+            assertQuery("SELECT ti.v, tj.v FROM ti LEFT JOIN tj ON ti.k = tj.a AND ti.k = tj.b")
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: tj.a=ti.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: ti
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: b=a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tj
+                            """);
+            assertQuery("SELECT ti.v, tj.v FROM ti LEFT JOIN tj ON ti.k = tj.a AND ti.k = tj.b ORDER BY 1")
+                    .returns("""
+                            v\tv1
+                            1.0\t10.0
+                            2.0\tnull
+                            3.0\t30.0
+                            4.0\t40.0
+                            """);
+            assertQuery("SELECT ti.v, tj.v FROM ti LEFT JOIN tj ON ti.k = tj.a AND ti.k = tj.a")
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: tj.a=ti.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: ti
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tj
+                            """);
+            assertQuery("SELECT ti.v, tj.v FROM ti FULL JOIN tj ON ti.k = tj.a AND ti.k = tj.b")
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Full Outer Join Light
+                                  condition: tj.a=ti.k and tj.b=ti.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: ti
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tj
+                            """);
+            assertQuery("SELECT ti.v, tj.v FROM ti FULL JOIN tj ON ti.k = tj.a AND ti.k = tj.b ORDER BY 2")
+                    .returns("""
+                            v\tv1
+                            1.0\t10.0
+                            null\t20.0
+                            3.0\t30.0
+                            4.0\t40.0
+                            2.0\tnull
+                            """);
+            assertQuery("SELECT ti.v, tj.v FROM ti RIGHT JOIN tj ON ti.k = tj.a AND ti.k = tj.b ORDER BY 2")
+                    .returns("""
+                            v\tv1
+                            1.0\t10.0
+                            null\t20.0
+                            3.0\t30.0
+                            4.0\t40.0
                             """);
         });
     }

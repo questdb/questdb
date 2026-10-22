@@ -7766,13 +7766,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: (null=T2.created or 0<T2.created::long)
-                                    Nested Loop Right Join
-                                      filter: T1.created<T2.created
-                                        Limit value: -1 skip-rows: 2 take-rows: 1
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
+                                Nested Loop Right Join
+                                  filter: T1.created<T2.created
+                                    Limit value: -1 skip-rows: 2 take-rows: 1
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    Async Filter workers: 1
+                                      filter: (null=created or 0<created::long)
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
@@ -7918,25 +7919,25 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: null=T4.created
-                                    Nested Loop Right Join
-                                      filter: T3.created<T4.created
-                                        Hash Right Outer Join Light
-                                          condition: T3.created=T2.created
-                                            Nested Loop Right Join
-                                              filter: T1.created<T2.created
-                                                Limit value: 2 skip-rows: 0 take-rows: 2
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: tab
+                                Nested Loop Right Join
+                                  filter: T3.created<T4.created
+                                    Hash Right Outer Join Light
+                                      condition: T3.created=T2.created
+                                        Nested Loop Right Join
+                                          filter: T1.created<T2.created
+                                            Limit value: 2 skip-rows: 0 take-rows: 2
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
-                                            Hash
-                                                Limit value: 3 skip-rows: 0 take-rows: 3
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: tab
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                        Hash
+                                            Limit value: 3 skip-rows: 0 take-rows: 3
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                    Filter filter: null=created
                                         Limit value: 4 skip-rows: 0 take-rows: 3
                                             PageFrame
                                                 Row forward scan

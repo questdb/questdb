@@ -148,8 +148,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketRenameKeepsConcatKeyNano() throws Exception {
-        // Nanosecond variant of the chained alias rename: avg(val) claims avg, the bucket
-        // is renamed avg1 and the concat key avg1 is renamed avg11. The fill must key on
+        // Nanosecond variant of the bucket aliased like an aggregate. The fill must key on
         // the bucket and print the TIMESTAMP_NS grid with nine fractional digits.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tn (k SYMBOL, val DOUBLE, ets TIMESTAMP_NS, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
@@ -162,7 +161,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, concat(k, 'x') AS avg1 FROM tn SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2024-01-01T00:00:00.000000000Z\tax
                             4.0\t2024-01-01T01:00:00.000000000Z\tbx
                             6.0\t2024-01-01T03:00:00.000000000Z\tax
