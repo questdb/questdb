@@ -361,6 +361,12 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         setAdaptiveWithFirstBatchEpochOnly();
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
+        // The test asserts on the squash of the commit's own split. Only the whole-partition rewrite splits the
+        // day: with merge-append on (the harness default) the late rows append a piece and nothing is split. And a
+        // partition written by one of the last hot commits is left out of the squash, so with the default of 10 the
+        // split would stand for a later commit to fold. Pin the production default of the first and zero hot commits.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
         assertMemoryLeak(() -> {
             execute("create table x (i int, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into x select cast(x as int) i, timestamp_sequence('2024-02-01T00', 60 * 1_000_000L) ts from long_sequence(600)");
