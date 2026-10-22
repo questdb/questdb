@@ -114,8 +114,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
     // Pool bind generation captured when boundPool was stamped. The pool bumps its
-    // generation when it closes buffers that records may still alias (failed decode,
-    // bulk release), so a stale generation forces a rebind instead of a freed read.
+    // generation when it closes a buffer that records may still alias (failed decode,
+    // budget eviction, row-filtered eviction, bulk release) and when it reuses an
+    // unpinned buffer's memory in place for a different frame (acquireBuffer), so a
+    // stale generation forces a rebind instead of a freed or repurposed read.
     protected long boundGeneration;
     // Pool that owns the parquet buffers this record currently points at, or null.
     // PageFrameMemoryPool.navigateTo() uses it to early-return only when the record
@@ -820,9 +822,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return TableUtils.NULL_LEN; // Column top.
     }
 
-    // Note: this method doesn't break caching in PageFrameMemoryPool
-    // as the method assumes that the record can't be used once
-    // the frame memory is switched to another frame.
+    // Note: this method doesn't pin the frame memory's buffer in PageFrameMemoryPool.
+    // Once the frame memory moves to another frame, the pool may repurpose or free
+    // that buffer; it bumps its bind generation when it does, so a later
+    // PageFrameMemoryPool.navigateTo(int, PageFrameMemoryRecord) rebinds this record
+    // instead of reading through the stale addresses.
     public void init(PageFrameMemory frameMemory) {
         this.frameIndex = frameMemory.getFrameIndex();
         this.frameFormat = frameMemory.getFrameFormat();
