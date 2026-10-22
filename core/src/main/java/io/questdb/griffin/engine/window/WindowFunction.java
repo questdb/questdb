@@ -1171,7 +1171,9 @@ public interface WindowFunction extends Function {
 
     /**
      * The words this function's checkpoint ring spends on its scalar continuation state:
-     * 1 (the default), 2 for a 128-bit decimal accumulator, or 4 for a 256-bit one. It is
+     * 1 (the default), 2 for a 128-bit decimal accumulator or two running sums, 4 for a
+     * 256-bit decimal accumulator, or 5 for the five running sums of
+     * {@code covar_samp}/{@code covar_pop}/{@code corr}. It is
      * independent of {@link #checkpointRingValueKind()} - a {@code decimal(20,4)}
      * {@code avg} holds a 64-bit value per row and a 256-bit running sum, while a
      * {@code decimal(38,4)} {@code first_value} holds a 128-bit value per row and no scalar

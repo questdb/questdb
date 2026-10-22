@@ -36,14 +36,18 @@ import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
@@ -51,7 +55,9 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -63,11 +69,11 @@ import org.junit.Test;
 /**
  * The covariance/correlation family over a bounded, partitioned RANGE frame persists each
  * partition's ring through the chunked ring codec: the buffered {@code (timestamp, x, y)}
- * triples, oldest first, as two-word rows, behind a frame size carrying the in-frame count.
- * Five running sums do not fit the codec's widest scalar, so no scalar word carries an
- * accumulator and restore re-accumulates the sums from the in-frame prefix of the ring. One
- * factory backs {@code covar_samp}, {@code covar_pop} and {@code corr}, so the same codec
- * covers all three.
+ * triples, oldest first, as two-word rows, behind the exact running
+ * {@code (sumX, sumXX, sumY, sumYY, sumXY)} as a five-word scalar and a frame size carrying
+ * the in-frame count. Restore takes the sums and the count verbatim and re-accumulates
+ * nothing. One factory backs {@code covar_samp}, {@code covar_pop} and {@code corr}, so the
+ * same codec covers all three.
  * <p>
  * {@link #testBoundedRangeFramesDeclareRingCheckpoint()} pins the disposition per function
  * and frame shape. {@link #testBoundedRangeSurvivesRestartAndRepair()} proves the durable
@@ -78,8 +84,10 @@ import org.junit.Test;
  * through the repair's copy-aside overlay. {@link
  * #testBoundedRangeRestoresExactValuesAcrossRestart()} pins restored values against
  * hand-computed ones, including a ring that restores a pair the frame has not reached yet.
- * {@link #testBoundedRangeRestoreRecomputesFromFramePrefixAndRejectsCorruptRing()} pins the
- * re-accumulation and every corrupt-ring rejection on the restore path directly.
+ * {@link #testBoundedRangeContinuesBitExactlyAcrossRestartAndRepair()} proves on tick-like
+ * data that every row after a restart and after a repair that restores the ring equals the
+ * plain query's bit for bit. {@link #testBoundedRangeRestoreCarriesSumsAndRejectsCorruptRing()}
+ * pins the carried words and every corrupt-ring rejection on the restore path directly.
  * <p>
  * The codec covers a bounded frame start only. The rejection cases pin that every
  * unbounded-start spelling stays out of a live view: the CREATE-time gates refuse the
@@ -116,6 +124,20 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
     private static final int ROWS_PER_COMMIT = 40;
     // Seconds in the short commit the near-head correction lands in.
     private static final int TAIL_ROWS = 3;
+    // Seconds per commit in the bit-exact case.
+    private static final int TICK_COMMIT_SECONDS = 60;
+    // The current-row frame of the bit-exact case: narrow enough that pairs expire from the
+    // first minute on, so the running sums carry the rounding of many adds and drops.
+    private static final String TICK_FRAME_CURRENT = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '20' SECOND PRECEDING AND CURRENT ROW";
+    // All three functions over all four frame shapes: frameIncludesCurrentValue (CURRENT ROW and
+    // the issue's short form) and not (N PRECEDING AND M PRECEDING, EXCLUDE CURRENT ROW).
+    private static final String TICK_PROJECTION = "covar_samp(px, qty) OVER (" + TICK_FRAME_CURRENT + ") AS c0, "
+            + "corr(px, qty) OVER (" + TICK_FRAME_CURRENT + ") AS c1, "
+            + "covar_pop(px, qty) OVER (" + FRAME_LAGGED + ") AS c2, "
+            + "corr(px, qty) OVER (" + FRAME_LAGGED + ") AS c3, "
+            + "covar_samp(px, qty) OVER (" + FRAME_EXCLUDED + ") AS c4, "
+            + "covar_pop(px, qty) OVER (" + FRAME_ISSUE + ") AS c5, "
+            + "corr(px, qty) OVER (" + FRAME_ISSUE + ") AS c6";
     private static final String[] VIEWS = {"lv_cur", "lv_lag", "lv_excl", "lv_issue"};
 
     @After
@@ -138,8 +160,7 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
             // EXCLUDE CURRENT ROW keeps the ANCHOR (the anchor validator reads the bounds, not
             // the exclusion) and the folded high bound sends the call to the bounded RANGE class
             // with an unbounded start. The finite-influence gate lets an anchored window through,
-            // so the class itself has to decline: restore re-accumulates the sums from the ring,
-            // which an unbounded start does not keep whole.
+            // so the class itself has to decline: its ring codec covers a bounded start only.
             final String frame = "PARTITION BY sym ORDER BY ts "
                     + "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW";
             for (String fn : FUNCTIONS) {
@@ -159,6 +180,84 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
                                     + "(); incremental snapshot is not supported for this function yet"
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testBoundedRangeContinuesBitExactlyAcrossRestartAndRepair() throws Exception {
+        assertMemoryLeak(() -> {
+            createBase();
+            // Tick-like data: prices on a one-cent random walk near 65_000 and 3_100 against
+            // sizes in thousandths. The products and squares leave rounding residue in the five
+            // sums as pairs enter and expire, and the covariance and correlation formulas
+            // subtract nearly equal sums, which amplifies it. A restore that re-summed the ring
+            // instead of taking the carried sums emits different bits from the plain query here;
+            // integer data would hide that, as it sums to the same doubles in every order.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, "
+                    + TICK_PROJECTION + " FROM fx");
+            final String plain = "(SELECT ts, sym, " + TICK_PROJECTION + " FROM fx) ORDER BY sym, ts";
+            final String view = "SELECT ts, sym, c0, c1, c2, c3, c4, c5, c6 FROM lv ORDER BY sym, ts";
+            final Rnd rnd = new Rnd(4242, 42);
+            final double[] prices = {65_000.0, 3_100.0};
+            int second = 0;
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 0; commit < 5; commit++) {
+                    commitTicks(job, rnd, prices, second, TICK_COMMIT_SECONDS);
+                    second += TICK_COMMIT_SECONDS;
+                    if (commit == 0) {
+                        driveSeedToCompletion(job, "lv");
+                    }
+                    driveRefreshToQuiescence(job);
+                }
+                assertNoRefreshFaults("lv");
+                assertViewPrintsLikePlain(view, plain);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 0; commit < 3; commit++) {
+                    commitTicks(job, rnd, prices, second, TICK_COMMIT_SECONDS);
+                    second += TICK_COMMIT_SECONDS;
+                    driveRefreshToQuiescence(job);
+                }
+                assertRestoredFromTimeline("lv");
+                assertNoRefreshFaults("lv");
+                // The printed form is the shortest text that round-trips a double, so equal text
+                // is equal bits: every row after the restart runs on the carried sums.
+                assertViewPrintsLikePlain(view, plain);
+
+                // A short tail, then a late row just above the root sealed below it. Replaying
+                // the tail from that root reads fewer base rows than rebuilding the widest
+                // frame's reach, so the repair resumes from the root and restores every
+                // partition's ring from the timeline before it replays. That root holds the
+                // state forward processing reached, so the repaired rows match the plain query
+                // bit for bit as well.
+                final int tailSecond = second;
+                commitTicks(job, rnd, prices, second, TAIL_ROWS);
+                second += TAIL_ROWS;
+                driveRefreshToQuiescence(job);
+                commitOutOfOrderHalfSecond(job, tailSecond, "btc", "65001.37", "0.731");
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(
+                        "the late row must resume the view from a sealed root",
+                        "resume from anchor",
+                        LiveViewCheckpointRepairPlan.dispositionName(
+                                instance.getCheckpointRepairLastDisposition(),
+                                instance.getCheckpointRepairLastDenialReason()
+                        )
+                );
+                assertNoRefreshFaults("lv");
+                assertViewPrintsLikePlain(view, plain);
+
+                // And the in-order path keeps going on the state the repair left behind.
+                commitTicks(job, rnd, prices, second, TICK_COMMIT_SECONDS);
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+                assertViewPrintsLikePlain(view, plain);
             }
         });
     }
@@ -265,8 +364,7 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
                 assertRepairLocalized(NARROW_VIEWS);
 
                 // The forward drain after the repair runs on whatever the copy-aside put back,
-                // so a state image that lost a pair or re-accumulated the wrong sums shows up
-                // here.
+                // so a state image that lost a pair or a sum shows up here.
                 for (int commit = COPY_ASIDE_COMMITS + 1; commit <= COPY_ASIDE_COMMITS + 2; commit++) {
                     commitDense(job, commit);
                 }
@@ -277,20 +375,21 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBoundedRangeRestoreRecomputesFromFramePrefixAndRejectsCorruptRing() throws Exception {
+    public void testBoundedRangeRestoreCarriesSumsAndRejectsCorruptRing() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
-            // A lagged frame, so the ring can legitimately hold a pair the frame has not
-            // reached: the re-accumulation must stop at the in-frame prefix.
+            // A lagged frame, so the ring can legitimately hold a pair the frame has not reached.
             final String sql = "SELECT ts, sym, covar_pop(px, qty) OVER (" + FRAME_LAGGED + ") AS v FROM fx";
             sqlExecutionContext.setLiveViewCompile(true);
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)
+                    RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext);
+                    MemoryCARWImpl page = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
             ) {
                 sqlExecutionContext.setLiveViewCompile(false);
                 final WindowFunction function = soleWindowFunction(factory, sql);
                 Assert.assertEquals(CLASS_NAME, function.getClass().getSimpleName());
+                Assert.assertEquals(5, function.checkpointRingScalarWords());
                 Assert.assertEquals(1, function.getCheckpointKeyColumnTypes().getColumnCount());
                 // A live view compile keys a SYMBOL partition by its resolved string.
                 Assert.assertEquals(ColumnType.STRING, function.getCheckpointKeyColumnTypes().getColumnType(0));
@@ -300,53 +399,99 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
                 function.onCheckpointRestoreBegin();
                 final Map map = function.getPartitionMap();
                 final StubRingSource source = new StubRingSource();
+                final int initialCapacity = configuration.getSqlWindowInitialRangeBufferSize();
 
-                // Two in-frame pairs and one pair the frame has not reached yet.
-                source.of(3, 2)
-                        .row(1_000_000, 2.0, 1.0)
-                        .row(2_000_000, 6.0, 3.0)
+                // Sums no summation over these pairs would produce, so a restore that re-summed
+                // the ring instead of taking the carried words shows up as different bits. Two
+                // in-frame pairs and one the frame has not reached yet: the count comes from the
+                // frame size, not from the ring's length.
+                final double[] carried = {42.5, 1_234.25, -7.125, 99.0625, -3.5};
+                source.of(3, 2, carried)
+                        .row(1_000_000, 0.1, 0.2)
+                        .row(2_000_000, 0.3, -0.7)
                         .row(9_000_000, 1_000.0, -1_000.0);
                 MapValue value = newValue(map, "a");
                 function.restoreCheckpointRingState(source, value);
-                // x is qty (the second argument), y is px.
-                Assert.assertEquals(8.0, value.getDouble(0), 0.0);    // sumX
-                Assert.assertEquals(40.0, value.getDouble(1), 0.0);   // sumXX
-                Assert.assertEquals(4.0, value.getDouble(2), 0.0);    // sumY
-                Assert.assertEquals(10.0, value.getDouble(3), 0.0);   // sumYY
-                Assert.assertEquals(20.0, value.getDouble(4), 0.0);   // sumXY
-                Assert.assertEquals(2, value.getLong(5));             // count
-                Assert.assertEquals(3, value.getLong(7));             // ring size
-                Assert.assertEquals(0, value.getLong(9));             // rebased to index 0
-                Assert.assertEquals(0, value.getByte(10));            // tombstone clear
+                assertRestoredState(value, carried, 2, 3, initialCapacity);
 
-                // An empty frame over a non-empty ring re-accumulates nothing.
-                source.of(1, 0).row(1_000_000, 5.0, 7.0);
+                // The durable form re-freezes to the words and rows it restored from.
+                final CapturingRingSink ringSink = new CapturingRingSink();
+                function.freezeCheckpointRingState(ringSink, value);
+                ringSink.assertCaptured(source);
+
+                // The in-RAM form carries the same words: (sumX, sumXX, sumY, sumYY, sumXY,
+                // count, size), then the triples. Freeze it, restore it into another partition,
+                // and the copy re-freezes to the same durable stream.
+                final LiveViewStatePageWriter writer = new LiveViewStatePageWriter();
+                final long length = writer.of(page).freeze(function, value);
+                Assert.assertEquals(7 * Long.BYTES + 3 * (Long.BYTES + 2 * Double.BYTES), length);
+                final LiveViewStatePageReader reader = new LiveViewStatePageReader().of(page, writer.getPageStart(), length);
+                // The map's value is a flyweight; `value` is not read past this point.
+                final MapValue copy = newValue(map, "a-copy");
+                Assert.assertEquals(length, function.restoreCheckpointState(reader, 0, copy));
+                assertRestoredState(copy, carried, 2, 3, initialCapacity);
+                ringSink.clear();
+                function.freezeCheckpointRingState(ringSink, copy);
+                ringSink.assertCaptured(source);
+
+                // An empty frame over a non-empty ring keeps its pair and its sums as carried.
+                final double[] zeros = new double[5];
+                source.of(1, 0, zeros).row(1_000_000, 5.0, 7.0);
                 value = newValue(map, "b");
                 function.restoreCheckpointRingState(source, value);
+                assertRestoredState(value, zeros, 0, 1, initialCapacity);
+
+                // A runtime sum can legitimately overflow: a pair of 1e200 squares to +Inf, and
+                // expiring it leaves Inf - Inf = NaN behind. The plain query carries the same
+                // bits, so restore takes non-finite sums verbatim rather than refusing them.
+                final double[] overflowed = {1e200, Double.POSITIVE_INFINITY, 1.0, 1.0, 1e200};
+                source.of(1, 1, overflowed).row(1_000_000, 1e200, 1.0);
+                value = newValue(map, "inf");
+                function.restoreCheckpointRingState(source, value);
+                assertRestoredState(value, overflowed, 1, 1, initialCapacity);
+                final double[] expired = {0.0, Double.NaN, 0.0, 0.0, Double.NaN};
+                source.of(0, 0, expired);
+                value = newValue(map, "nan");
+                function.restoreCheckpointRingState(source, value);
+                assertRestoredState(value, expired, 0, 0, initialCapacity);
+
+                // The in-RAM path validates the frame size the same way.
+                final long badStart = page.getAppendOffset();
                 for (int i = 0; i < 5; i++) {
-                    Assert.assertEquals(0.0, value.getDouble(i), 0.0);
+                    page.putDouble(1.0);
                 }
-                Assert.assertEquals(0, value.getLong(5));
-                Assert.assertEquals(1, value.getLong(7));
+                page.putLong(2); // frameSize past the single buffered pair
+                page.putLong(1);
+                page.putLong(1_000_000);
+                page.putDouble(1.0);
+                page.putDouble(1.0);
+                final long badLength = page.getAppendOffset() - badStart;
+                try {
+                    function.restoreCheckpointState(new LiveViewStatePageReader().of(page, badStart, badLength), 0, newValue(map, "c0"));
+                    Assert.fail("expected the in-RAM image's frame size to be rejected");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isCritical());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "live view checkpoint bivariate RANGE frame size out of range");
+                }
 
                 // The shared reader checks only the frame size's sign; the class refuses a
                 // frame that reaches past the ring, and a negative one.
-                assertCorruptRingRejected(function, map, "c1", source.of(1, 2).row(1_000_000, 1.0, 1.0), "frame size out of range");
-                assertCorruptRingRejected(function, map, "c2", source.of(1, -1).row(1_000_000, 1.0, 1.0), "frame size out of range");
+                final double[] ones = {1.0, 1.0, 1.0, 1.0, 1.0};
+                assertCorruptRingRejected(function, map, "c1", source.of(1, 2, ones).row(1_000_000, 1.0, 1.0), "frame size out of range");
+                assertCorruptRingRejected(function, map, "c2", source.of(1, -1, ones).row(1_000_000, 1.0, 1.0), "frame size out of range");
                 // computeNext buffers finite pairs only, so a non-finite half is a corrupt page.
-                assertCorruptRingRejected(function, map, "c3", source.of(1, 1).row(1_000_000, Double.NaN, 1.0), "ring pair is not finite");
+                assertCorruptRingRejected(function, map, "c3", source.of(1, 1, ones).row(1_000_000, Double.NaN, 1.0), "ring pair is not finite");
                 assertCorruptRingRejected(
-                        function, map, "c4", source.of(1, 1).row(1_000_000, 1.0, Double.POSITIVE_INFINITY), "ring pair is not finite"
+                        function, map, "c4", source.of(1, 1, ones).row(1_000_000, 1.0, Double.POSITIVE_INFINITY), "ring pair is not finite"
                 );
                 // The replay must deliver exactly the rows the root declares.
                 assertCorruptRingRejected(
-                        function, map, "c5", source.of(2, 1).row(1_000_000, 1.0, 1.0), "ring row count mismatch"
+                        function, map, "c5", source.of(2, 1, ones).row(1_000_000, 1.0, 1.0), "ring row count mismatch"
                 );
                 // A replay longer than the slab sized from the declared row count would write
                 // past it.
-                final int capacity = configuration.getSqlWindowInitialRangeBufferSize();
-                source.of(0, 0);
-                for (int i = 0; i <= capacity; i++) {
+                source.of(0, 0, zeros);
+                for (int i = 0; i <= initialCapacity; i++) {
                     source.row(1_000_000L * (i + 1), 1.0, 1.0);
                 }
                 assertCorruptRingRejected(function, map, "c6", source, "ring overflows its slab");
@@ -412,7 +557,7 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // a's w1 ring restores holding (4, 7), which 05s and 06s join: the frames there
-                // combine a restored pair with new ones, so sums a restore failed to rebuild
+                // combine a restored pair with new ones, so sums a restore failed to carry
                 // read wrong. 07s carries a NULL qty and only expires (4, 7). a's w2 ring
                 // restores holding (3, 6) in the frame and (4, 7) outside it: 05s expires the
                 // first and admits the second, so a ring that lost the waiting pair reads an
@@ -478,7 +623,7 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
 
             // A restart rebuilds each view's runtime RANGE state from the timeline through
             // restoreCheckpointRingState, so a following refresh that matches a fresh recompute
-            // proves the ring round-tripped and the re-accumulated sums are right.
+            // proves the ring and the carried sums round-tripped.
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 for (int commit = COMMITS + 1; commit <= COMMITS + 3; commit++) {
@@ -549,6 +694,26 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
             Assert.assertTrue(e.isCritical());
             TestUtils.assertContains(e.getFlyweightMessage(), "live view checkpoint bivariate RANGE " + expectedMessage);
         }
+    }
+
+    private static void assertRestoredState(
+            MapValue value,
+            double[] sums,
+            long frameSize,
+            long size,
+            int initialCapacity
+    ) {
+        // Raw bits: the five sums come back verbatim, a NaN included.
+        for (int i = 0; i < 5; i++) {
+            Assert.assertEquals("sum " + i, Double.doubleToRawLongBits(sums[i]), Double.doubleToRawLongBits(value.getDouble(i)));
+        }
+        Assert.assertEquals(frameSize, value.getLong(5));
+        Assert.assertEquals(size, value.getLong(7));
+        Assert.assertEquals(WindowFunction.restoredRingCapacity(size, initialCapacity), value.getLong(8));
+        // Rebased to index 0.
+        Assert.assertEquals(0, value.getLong(9));
+        // Tombstone clear.
+        Assert.assertEquals(0, value.getByte(10));
     }
 
     private static Path checkpointsDir(LiveViewInstance instance) {
@@ -657,8 +822,11 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
         Assert.assertEquals(label, CLASS_NAME, compiled.className);
         Assert.assertTrue(label + " must support checkpoint state", compiled.supportsCheckpointState);
         Assert.assertTrue(label + " must persist through the chunked ring codec", compiled.supportsCheckpointRingState);
-        // Five sums do not fit the widest scalar: the one word the format requires carries none.
-        Assert.assertEquals(label + " carries no accumulator in its scalar", 1, compiled.ringScalarWords);
+        Assert.assertEquals(
+                label + " carries (sumX, sumXX, sumY, sumYY, sumXY) as a five-word scalar",
+                5,
+                compiled.ringScalarWords
+        );
         Assert.assertEquals(
                 label + " stores (x, y) as a two-word row",
                 LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128,
@@ -727,6 +895,18 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
         assertNoRefreshFaults(viewName);
     }
 
+    // Prints the plain query and asserts the view prints the same text. Unlike the
+    // assertSqlCursors comparison, which allows a small tolerance on doubles, equal shortest
+    // round-trip text means equal bits.
+    private void assertViewPrintsLikePlain(String viewQuery, String plainQuery) throws Exception {
+        printSql(plainQuery);
+        final String expected = sink.toString();
+        assertQuery(viewQuery)
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
+    }
+
     private void assertViewsMatchRecompute(String[] views) throws Exception {
         for (String view : views) {
             if ("lv_issue".equals(view)) {
@@ -744,9 +924,10 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
     // than the one-minute frame, keep half- and fully-NULL pairs out of the ring and drive the
     // finite count to zero across a seal. Both sides are integers whose squares and products
     // sum well under 2^53, so the five sums stay exact in double whatever order a frame adds
-    // and drops pairs. That keeps the exact recompute comparison valid after a restore, which
-    // re-accumulates the sums, and after a localized repair; either otherwise reaches the same
-    // value only up to floating-point rounding.
+    // and drops pairs. That keeps the exact recompute comparison valid after a localized
+    // repair, which re-accumulates the sums from the frame's lower edge and otherwise reaches
+    // the same value only up to floating-point rounding. Restores carry the sums, which
+    // testBoundedRangeContinuesBitExactlyAcrossRestartAndRepair pins on non-integer data.
     private void commitDense(LiveViewRefreshJob job, int commit) throws Exception {
         commitSeconds(job, (commit - 1) * ROWS_PER_COMMIT, ROWS_PER_COMMIT);
     }
@@ -795,6 +976,36 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
         }
     }
 
+    // Commits `count` ascending seconds from `firstSecond` of tick-like trades for 'btc' and
+    // 'eth' and gives the refresh job a turn. Each price walks in one-cent steps from where
+    // `prices` left it and each size is a whole number of thousandths, so no value is an
+    // integer. Every eleventh 'btc' second has a NULL price and every thirteenth 'eth' second a
+    // NULL size; the ring never stores either half-NULL pair.
+    private void commitTicks(LiveViewRefreshJob job, Rnd rnd, double[] prices, int firstSecond, int count) throws Exception {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final StringBuilder sql = new StringBuilder("INSERT INTO fx (ts, sym, px, qty) VALUES ");
+        for (int i = 0; i < count; i++) {
+            final int second = firstSecond + i;
+            final String ts = timestamp(second);
+            for (int s = 0; s < 2; s++) {
+                prices[s] += (rnd.nextInt(201) - 100) * 0.01;
+                final double qty = (1 + rnd.nextInt(2_500)) * 0.001;
+                final boolean isPxNull = s == 0 && second % 11 == 5;
+                final boolean isQtyNull = s == 1 && second % 13 == 7;
+                if (i > 0 || s > 0) {
+                    sql.append(", ");
+                }
+                sql.append("('").append(ts).append("', '").append(s == 0 ? "btc" : "eth").append("', ")
+                        .append(isPxNull ? "null" : Double.toString(prices[s])).append(", ")
+                        .append(isQtyNull ? "null" : Double.toString(qty)).append(')');
+            }
+        }
+        execute(sql.toString());
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
     private void createBase() throws Exception {
         execute("CREATE TABLE fx (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
     }
@@ -831,6 +1042,85 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
         engine.buildViewGraphs();
     }
 
+    // Records what freezeCheckpointRingState streams, for comparison with the source a
+    // restore read.
+    private static class CapturingRingSink implements LiveViewCheckpointRingStateSink {
+        private final LongList rows = new LongList();
+        private final long[] scalarWords = new long[5];
+        private long frameSize = -1;
+        private int scalarWordCount;
+
+        @Override
+        public void putRow(long timestamp) {
+            throw new AssertionError("a bivariate ring streams two-word rows");
+        }
+
+        @Override
+        public void putRow(long timestamp, long valueBits) {
+            throw new AssertionError("a bivariate ring streams two-word rows");
+        }
+
+        @Override
+        public void putRow(long timestamp, long xBits, long yBits) {
+            rows.add(timestamp);
+            rows.add(xBits);
+            rows.add(yBits);
+        }
+
+        @Override
+        public void putRow(long timestamp, long hh, long hl, long lh, long ll) {
+            throw new AssertionError("a bivariate ring streams two-word rows");
+        }
+
+        @Override
+        public void putScalarState(long scalarBits, long frameSize) {
+            throw new AssertionError("a bivariate ring carries a five-word scalar");
+        }
+
+        @Override
+        public void putScalarState(long hi, long lo, long frameSize) {
+            throw new AssertionError("a bivariate ring carries a five-word scalar");
+        }
+
+        @Override
+        public void putScalarState(long hh, long hl, long lh, long ll, long frameSize) {
+            throw new AssertionError("a bivariate ring carries a five-word scalar");
+        }
+
+        @Override
+        public void putScalarState(long word0, long word1, long word2, long word3, long word4, long frameSize) {
+            Assert.assertEquals("one scalar per partition", 0, scalarWordCount);
+            Assert.assertEquals("the scalar precedes the rows", 0, rows.size());
+            this.scalarWordCount = 5;
+            scalarWords[0] = word0;
+            scalarWords[1] = word1;
+            scalarWords[2] = word2;
+            scalarWords[3] = word3;
+            scalarWords[4] = word4;
+            this.frameSize = frameSize;
+        }
+
+        private void assertCaptured(StubRingSource source) {
+            Assert.assertEquals(5, scalarWordCount);
+            Assert.assertEquals("sumX", source.getScalarWord(0), scalarWords[0]);
+            Assert.assertEquals("sumXX", source.getScalarWord(1), scalarWords[1]);
+            Assert.assertEquals("sumY", source.getScalarWord(2), scalarWords[2]);
+            Assert.assertEquals("sumYY", source.getScalarWord(3), scalarWords[3]);
+            Assert.assertEquals("sumXY", source.getScalarWord(4), scalarWords[4]);
+            Assert.assertEquals("count", source.frameSize, frameSize);
+            TestUtils.assertEquals(source.rows, rows);
+        }
+
+        private void clear() {
+            rows.clear();
+            frameSize = -1;
+            for (int i = 0; i < 5; i++) {
+                scalarWords[i] = 0;
+            }
+            scalarWordCount = 0;
+        }
+    }
+
     // What the assertions read off the sole window function, captured before the factory
     // closes.
     private static class CompiledFunction {
@@ -862,6 +1152,7 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
     // would never write, which is the point.
     private static class StubRingSource implements LiveViewCheckpointRingStateSource {
         private final LongList rows = new LongList();
+        private final long[] scalarWords = new long[5];
         private long frameSize;
         private long rowCount;
 
@@ -899,23 +1190,29 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
 
         @Override
         public long getScalarBits() {
-            return 0;
+            return scalarWords[0];
         }
 
         @Override
         public long getScalarWord(int index) {
-            Assert.assertEquals(0, index);
-            return 0;
+            if (index < 0 || index >= scalarWords.length) {
+                throw new AssertionError("a bivariate ring carries five scalar words, asked for " + index);
+            }
+            return scalarWords[index];
         }
 
         @Override
         public int getScalarWordCount() {
-            return 1;
+            return 5;
         }
 
-        private StubRingSource of(long rowCount, long frameSize) {
+        // sums are (sumX, sumXX, sumY, sumYY, sumXY).
+        private StubRingSource of(long rowCount, long frameSize, double[] sums) {
             this.rowCount = rowCount;
             this.frameSize = frameSize;
+            for (int i = 0; i < scalarWords.length; i++) {
+                scalarWords[i] = Double.doubleToRawLongBits(sums[i]);
+            }
             rows.clear();
             return this;
         }

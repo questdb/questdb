@@ -920,10 +920,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     @Test
     public void testFuzzStatRangeFrame() throws Exception {
         // stddev/variance, covar/corr and ksum over bounded RANGE frames: the ring checkpoint
-        // codecs. stddev/variance and ksum carry their running sums through the ring's scalar
-        // words; covar/corr re-accumulate theirs from the restored ring. Over the exact
-        // integer column both conventions continue at the same sums the recompute builds, so
-        // the standard oracle holds across every restore and repair route.
+        // codecs. Each carries its running sums through the ring's scalar words. A localized
+        // repair re-accumulates them from the frame's lower edge instead; over the exact
+        // integer column that reaches the same sums the recompute builds, so the standard
+        // oracle holds across every restore and repair route.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {

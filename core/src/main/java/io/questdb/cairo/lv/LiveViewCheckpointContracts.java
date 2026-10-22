@@ -100,12 +100,15 @@ public final class LiveViewCheckpointContracts {
      * different durable layouts, so the same checkpoint would be inline on one
      * and page-backed on the other with nothing in the entry to say which.
      * <p>
-     * 64 is what a RANGE ring entry already inlines at its widest
-     * ({@code LiveViewCheckpointRangeRingStateReader.scalarStateBytes(4)}), so a
-     * component admitted here is no wider than one the leaf format has carried in
-     * production already. It clears every fixed width the accumulator families
-     * declare today with room to spare - the widest is a DECIMAL sum's 33 bytes,
-     * a {@code Decimal256} accumulator beside its null-state flag.
+     * 64 is what a RANGE ring entry with a four-word scalar inlines
+     * ({@code LiveViewCheckpointRangeRingStateReader.scalarStateBytes(4)}), the
+     * widest entry the leaf format carried when this limit was set, so a component
+     * admitted here is no wider than a ring entry. The ring's widest entry has since
+     * grown to 72 bytes ({@code scalarStateBytes(5)}, the five running sums of
+     * {@code covar_samp}/{@code covar_pop}/{@code corr}) while this bound stayed at
+     * 64, so that still holds. It clears every fixed width the accumulator families
+     * declare today with room to spare - the widest is a DECIMAL sum's 33 bytes, a
+     * {@code Decimal256} accumulator beside its null-state flag.
      *
      * @see io.questdb.griffin.engine.window.WindowFunction#checkpointStateFixedLength()
      */
@@ -125,8 +128,8 @@ public final class LiveViewCheckpointContracts {
      * well clear of any shape a view plausibly compiles - 256 bytes admits
      * fifteen 16-byte components beside the anchor - and its job is to bound a
      * pathological leaf rather than to arbitrate the ordinary case. A full
-     * 64-entry leaf then holds at most 16 KB of scalar payload, four times what a
-     * leaf of RANGE ring entries already holds.
+     * 64-entry leaf then holds at most 16 KB of scalar payload, between three and
+     * four times the 4.5 KB a leaf of the widest RANGE ring entries holds.
      */
     public static final int MAX_INLINE_LEAF_STATE_BYTES = 256;
 

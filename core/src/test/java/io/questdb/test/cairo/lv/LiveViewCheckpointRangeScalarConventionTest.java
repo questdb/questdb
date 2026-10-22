@@ -61,11 +61,12 @@ import java.io.Closeable;
  *     <li>stddev/variance carry {@code (sum, sumSq)} by raw bits in the two-word scalar
  *     and ride the in-frame count on the {@code frameSize} slot, over a one-word DOUBLE
  *     ring. A restore continues bit-exactly.</li>
- *     <li>covar/corr hold five accumulators, more than the four-word scalar limit, so
- *     they store {@code (x, y)} per row in a two-word ring, leave the one-word scalar
- *     unused, ride the in-frame count on {@code frameSize}, and re-accumulate the sums
- *     from the in-frame ring prefix on restore.</li>
+ *     <li>covar/corr carry {@code (sumX, sumXX, sumY, sumYY, sumXY)} by raw bits in the
+ *     five-word scalar, store {@code (x, y)} per row in a two-word ring, and ride the
+ *     in-frame count on the {@code frameSize} slot. A restore continues bit-exactly.</li>
  * </ul>
+ * Neither family re-accumulates on restore: a fresh summation of the frame misses the
+ * rounding the incremental sums carry, which each case's data is built to leave behind.
  * The stubs model the runtime arithmetic of {@code StdDevOverPartitionRangeFrameFunction}
  * and {@code BivarStatOverPartitionRangeFrameFunction}: the ring holds finite rows only,
  * and the in-frame rows are its first {@code count} rows. The rest are rows an
@@ -90,7 +91,7 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
     }
 
     @Test
-    public void testBivariateConventionRecomputesTheSumsFromThePairRing() throws Exception {
+    public void testBivariateConventionCarriesTheFiveSumsBitExactly() throws Exception {
         assertMemoryLeak(() -> {
             try (Catalogue directory = new Catalogue();
                  LiveViewCheckpointRingSeal ringSeal = new LiveViewCheckpointRingSeal(configuration, null);
@@ -100,19 +101,31 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
                  LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
                  Path dir = new Path()) {
                 key.of(KEY);
-                final BivariateRing live = new BivariateRing(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128);
-                for (int i = 0; i < SEEDED_ROWS; i++) {
+                final BivariateRing live = newBivariateRing();
+                // The oldest pair dwarfs the rest, so expiring it leaves rounding residue in
+                // every running sum.
+                live.admit(0, 98_765.4321, -54_321.0123);
+                for (int i = 1; i < SEEDED_ROWS; i++) {
                     live.admit(i * 1_000L, pairX(i), pairY(i));
                 }
                 for (int i = 0; i < 3; i++) {
                     live.expireHead();
                 }
-                // Two rows the frame has not reached: a recompute that walked the whole ring
-                // instead of the in-frame prefix would fold them into every sum.
+                // Two rows the frame has not reached, so the count the scalar covers is not
+                // the ring's row count.
                 live.buffer(200_000, 4_096.5, -8_192.25);
                 live.buffer(FIRST_BOUNDARY, -1_024.75, 512.125);
                 Assert.assertEquals(197, live.count);
                 Assert.assertEquals(199, live.size());
+                // The add-then-expire history leaves the incremental sums off a fresh summation
+                // of the same rows. Without that, carrying and recomputing would restore the
+                // same bits and the assertions below could not tell them apart.
+                final double[] fresh = live.freshSums();
+                assertBitsDiffer("sumX", fresh[0], live.sumX);
+                assertBitsDiffer("sumXX", fresh[1], live.sumXX);
+                assertBitsDiffer("sumY", fresh[2], live.sumY);
+                assertBitsDiffer("sumYY", fresh[3], live.sumYY);
+                assertBitsDiffer("sumXY", fresh[4], live.sumXY);
 
                 seal(ringSeal, key, live, 11, null, 0, first, directory);
                 assertPageKinds(first, LiveViewCheckpointRangeRingStateReader.DECIMAL128_VALUE_PAGE_KIND);
@@ -121,22 +134,26 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
                 Assert.assertEquals(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128, reader.getValueKind());
                 Assert.assertEquals(199, reader.getRowCount());
                 Assert.assertEquals(197, reader.getFrameSize());
-                // No scalar word carries an accumulator: the one word the format requires
-                // stays zero.
-                Assert.assertEquals(1, reader.getScalarWordCount());
-                Assert.assertEquals(0, reader.getScalarWord(0));
-                final BivariateRing restored = new BivariateRing(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128);
+                // The five sums travel by their raw bits, each at the index it went in at.
+                Assert.assertEquals(5, reader.getScalarWordCount());
+                Assert.assertEquals(bits(live.sumX), reader.getScalarWord(0));
+                Assert.assertEquals(bits(live.sumXX), reader.getScalarWord(1));
+                Assert.assertEquals(bits(live.sumY), reader.getScalarWord(2));
+                Assert.assertEquals(bits(live.sumYY), reader.getScalarWord(3));
+                Assert.assertEquals(bits(live.sumXY), reader.getScalarWord(4));
+                final BivariateRing restored = newBivariateRing();
                 restored.restoreCheckpointRingState(reader, null);
                 // Every x and y comes back by its exact IEEE-754 bits through the two-word
-                // value page, -0.0, subnormals and negative values included.
-                assertSameRing(live, restored);
-                assertRecomputedFromPrefix(live, restored);
+                // value page, -0.0, subnormals and negative values included, and the sums and
+                // the count come back verbatim.
+                assertSameState(live, restored);
 
-                // The restored partition keeps running from its recomputed sums; the live one
-                // from its incremental sums. The rings stay identical, the sums need not.
+                // A restored partition and one that never stopped stay bit-identical as both
+                // keep running: the frame reaches the two buffered rows, expires five, admits
+                // three and buffers one more.
                 continueAfterFirstBoundary(live);
                 continueAfterFirstBoundary(restored);
-                assertSameRing(live, restored);
+                assertSameState(live, restored);
 
                 seal(ringSeal, key, restored, 12, first, FIRST_BOUNDARY, second, directory);
                 // The second root references the first root's chunk verbatim and pays only
@@ -152,10 +169,10 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
                 Assert.assertEquals(5, reader.getHeadOffset());
                 Assert.assertEquals(198, reader.getRowCount());
                 Assert.assertEquals(197, reader.getFrameSize());
-                final BivariateRing restoredAgain = new BivariateRing(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128);
+                Assert.assertEquals(5, reader.getScalarWordCount());
+                final BivariateRing restoredAgain = newBivariateRing();
                 restoredAgain.restoreCheckpointRingState(reader, null);
-                assertSameRing(live, restoredAgain);
-                assertRecomputedFromPrefix(live, restoredAgain);
+                assertSameState(live, restoredAgain);
             }
         });
     }
@@ -185,9 +202,23 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
                     );
                 }
 
+                // So is a covar/corr function that keeps the one-word default while calling
+                // the five-word overload.
+                final BivariateRing undeclaredSums = new BivariateRing(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128, 1);
+                undeclaredSums.admit(1_000, 1.5, -2.5);
+                try {
+                    seal(ringSeal, key, undeclaredSums, 24, null, 0, root, directory);
+                    Assert.fail("expected a scalar width mismatch");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "scalar width does not match the declared width [declared=1, actual=5]"
+                    );
+                }
+
                 // A covar/corr function that keeps the one-word DOUBLE default while
                 // streaming (x, y) pairs is refused at its first row.
-                final BivariateRing undeclaredPair = new BivariateRing(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE);
+                final BivariateRing undeclaredPair = new BivariateRing(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 5);
                 undeclaredPair.admit(1_000, 1.5, -2.5);
                 try {
                     seal(ringSeal, key, undeclaredPair, 22, null, 0, root, directory);
@@ -202,11 +233,12 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
                 // A pair root read back through the one-word row form, or asked for a
                 // scalar word it never carried, fails fast instead of handing back half
                 // of the state.
-                final BivariateRing pair = new BivariateRing(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128);
+                final BivariateRing pair = newBivariateRing();
                 pair.admit(1_000, 1.5, -2.5);
                 pair.admit(2_000, -0.0, 3.25);
                 seal(ringSeal, key, pair, 23, null, 0, root, directory);
                 reader.of(checkpointsDir(dir), directory.reader, root);
+                Assert.assertEquals(5, reader.getScalarWordCount());
                 try {
                     reader.forEachRow((timestamp, valueBits) -> Assert.fail("a pair ring must not replay one word per row"));
                     Assert.fail("expected a value width mismatch");
@@ -214,10 +246,10 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
                     TestUtils.assertContains(e.getFlyweightMessage(), "value width mismatch [expected=1, actual=2]");
                 }
                 try {
-                    reader.getScalarWord(1);
+                    reader.getScalarWord(5);
                     Assert.fail("expected a scalar word out of bounds");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "scalar word out of bounds [index=1, words=1]");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "scalar word out of bounds [index=5, words=5]");
                 }
             }
         });
@@ -300,6 +332,10 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
         Assert.assertEquals(what, bits(expected), bits(actual));
     }
 
+    private static void assertBitsDiffer(String what, double fresh, double incremental) {
+        Assert.assertNotEquals(what + ": a fresh summation must not reproduce the incremental bits", bits(fresh), bits(incremental));
+    }
+
     /**
      * Asserts every timestamp page and value page of {@code entry} carries the expected kind.
      */
@@ -313,21 +349,6 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
         }
     }
 
-    /**
-     * Asserts {@code restored} re-accumulated its five sums over exactly the in-frame prefix
-     * of the ring it read back, in ring order, which is the arithmetic a fresh summation of
-     * {@code live}'s in-frame rows performs.
-     */
-    private static void assertRecomputedFromPrefix(BivariateRing live, BivariateRing restored) {
-        Assert.assertEquals(live.count, restored.count);
-        final double[] expected = live.freshSums();
-        assertBits("sumX", expected[0], restored.sumX);
-        assertBits("sumXX", expected[1], restored.sumXX);
-        assertBits("sumY", expected[2], restored.sumY);
-        assertBits("sumYY", expected[3], restored.sumYY);
-        assertBits("sumXY", expected[4], restored.sumXY);
-    }
-
     private static void assertRefEquals(LiveViewCheckpointStatePageRef expected, LiveViewCheckpointStatePageRef actual) {
         Assert.assertEquals(expected.getSegmentId(), actual.getSegmentId());
         Assert.assertEquals(expected.getOffset(), actual.getOffset());
@@ -338,10 +359,16 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
         Assert.assertEquals(expected.getRowCount(), actual.getRowCount());
     }
 
-    private static void assertSameRing(BivariateRing expected, BivariateRing actual) {
+    private static void assertSameState(BivariateRing expected, BivariateRing actual) {
         TestUtils.assertEquals(expected.timestamps, actual.timestamps);
         TestUtils.assertEquals(expected.xBits, actual.xBits);
         TestUtils.assertEquals(expected.yBits, actual.yBits);
+        Assert.assertEquals(expected.count, actual.count);
+        assertBits("sumX", expected.sumX, actual.sumX);
+        assertBits("sumXX", expected.sumXX, actual.sumXX);
+        assertBits("sumY", expected.sumY, actual.sumY);
+        assertBits("sumYY", expected.sumYY, actual.sumYY);
+        assertBits("sumXY", expected.sumXY, actual.sumXY);
     }
 
     private static void assertSameState(StdDevRing expected, StdDevRing actual) {
@@ -387,6 +414,10 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
         ring.admit(203_000, -1.1, Double.MIN_VALUE);
         ring.admit(204_000, 2.3, -Math.PI);
         ring.buffer(205_000, 9.5, 19.75);
+    }
+
+    private static BivariateRing newBivariateRing() {
+        return new BivariateRing(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128, 5);
     }
 
     /**
@@ -444,6 +475,7 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
      * stub ignores the map value.
      */
     private static final class BivariateRing implements WindowFunction, LiveViewCheckpointRingStateSource.Decimal128RowConsumer {
+        private final int declaredScalarWords;
         private final int declaredValueKind;
         private final LongList timestamps = new LongList();
         private final LongList xBits = new LongList();
@@ -455,8 +487,9 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
         private double sumY;
         private double sumYY;
 
-        private BivariateRing(int declaredValueKind) {
+        private BivariateRing(int declaredValueKind, int declaredScalarWords) {
             this.declaredValueKind = declaredValueKind;
+            this.declaredScalarWords = declaredScalarWords;
         }
 
         @Override
@@ -467,15 +500,18 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
         }
 
         @Override
+        public int checkpointRingScalarWords() {
+            return declaredScalarWords;
+        }
+
+        @Override
         public int checkpointRingValueKind() {
             return declaredValueKind;
         }
 
         @Override
         public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
-            // Five accumulators do not fit the four-word scalar: the one word the format
-            // requires carries nothing, and frameSize carries the in-frame count.
-            sink.putScalarState(0L, count);
+            sink.putScalarState(bits(sumX), bits(sumXX), bits(sumY), bits(sumYY), bits(sumXY), count);
             for (int i = 0, n = timestamps.size(); i < n; i++) {
                 sink.putRow(timestamps.getQuick(i), xBits.getQuick(i), yBits.getQuick(i));
             }
@@ -502,16 +538,15 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
             yBits.clear();
             source.forEachRow(this);
             Assert.assertEquals(source.getRowCount(), timestamps.size());
+            sumX = Double.longBitsToDouble(source.getScalarWord(0));
+            sumXX = Double.longBitsToDouble(source.getScalarWord(1));
+            sumY = Double.longBitsToDouble(source.getScalarWord(2));
+            sumYY = Double.longBitsToDouble(source.getScalarWord(3));
+            sumXY = Double.longBitsToDouble(source.getScalarWord(4));
             count = source.getFrameSize();
             // The reader checks only the sign of frameSize. The in-frame rows are a prefix of
             // the ring, so a count past the ring is a corrupt root the function must refuse.
             Assert.assertTrue(count <= timestamps.size());
-            final double[] sums = freshSums();
-            sumX = sums[0];
-            sumXX = sums[1];
-            sumY = sums[2];
-            sumYY = sums[3];
-            sumXY = sums[4];
         }
 
         @Override
@@ -566,8 +601,9 @@ public class LiveViewCheckpointRangeScalarConventionTest extends AbstractCairoTe
         }
 
         /**
-         * @return sumX, sumXX, sumY, sumYY and sumXY re-accumulated over the in-frame prefix in
-         * ring order, with the operations {@link #enterFrame()} uses
+         * @return sumX, sumXX, sumY, sumYY and sumXY re-summed over the in-frame prefix in ring
+         * order, with the operations {@link #enterFrame()} uses: what a restore that recomputed
+         * the sums would hold
          */
         private double[] freshSums() {
             final double[] sums = new double[5];

@@ -677,6 +677,16 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128;
         }
 
+        /**
+         * The ring carries {@code (sumX, sumXX, sumY, sumYY, sumXY)} as its scalar continuation,
+         * so restore takes the five running sums verbatim instead of re-accumulating them.
+         * {@code count} rides the ring's {@code frameSize} slot.
+         */
+        @Override
+        public int checkpointRingScalarWords() {
+            return 5;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
@@ -885,14 +895,23 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         /**
-         * Streams the partition's buffered {@code (x, y)} pairs oldest first, behind the in-frame
-         * count as the ring's frame size. The five running sums do not fit the ring's widest
-         * (four-word) scalar, so the one scalar word the format requires carries nothing and
-         * restore re-accumulates the sums from the in-frame prefix of the ring instead.
+         * Streams the partition's buffered {@code (x, y)} pairs oldest first, behind the exact
+         * running {@code (sumX, sumXX, sumY, sumYY, sumXY)} as a five-word scalar and the
+         * in-frame count as its frame size. Restore takes all six verbatim, so a restored
+         * partition continues bit for bit where the runtime left it. A re-accumulated sum would
+         * miss the rounding the incremental adds and drops left behind, and the covariance and
+         * correlation formulas amplify that difference well past the sums' own precision.
          */
         @Override
         public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
-            sink.putScalarState(0L, value.getLong(5));
+            sink.putScalarState(
+                    Double.doubleToRawLongBits(value.getDouble(0)),
+                    Double.doubleToRawLongBits(value.getDouble(1)),
+                    Double.doubleToRawLongBits(value.getDouble(2)),
+                    Double.doubleToRawLongBits(value.getDouble(3)),
+                    Double.doubleToRawLongBits(value.getDouble(4)),
+                    value.getLong(5)
+            );
             final long startOffset = value.getLong(6);
             final long size = value.getLong(7);
             final long capacity = value.getLong(8);
@@ -910,16 +929,18 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         /**
          * The in-RAM whole-state form, used by
          * {@link io.questdb.cairo.lv.LiveViewFunctionSnapshot} to clone a partition into an
-         * out-of-order repair's scratch overlay: {@code (count, size)}, then the {@code size}
-         * buffered {@code (timestamp, x, y)} triples, oldest first. The durable checkpoint uses
-         * the chunked ring form
+         * out-of-order repair's scratch overlay: {@code (sumX, sumXX, sumY, sumYY, sumXY, count,
+         * size)}, then the {@code size} buffered {@code (timestamp, x, y)} triples, oldest first.
+         * The durable checkpoint uses the chunked ring form
          * {@link #freezeCheckpointRingState(LiveViewCheckpointRingStateSink, MapValue)} instead,
-         * which shares pages across roots. Neither carries an accumulator - both restores
-         * re-accumulate the sums from the ring - so a state-layout change must move both
-         * together.
+         * which shares pages across roots. Both carry the same words, so a state-layout change
+         * must move both together.
          */
         @Override
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            for (int i = 0; i < 5; i++) {
+                sink.putDouble(value.getDouble(i));
+            }
             sink.putLong(value.getLong(5));
             final long startOffset = value.getLong(6);
             final long size = value.getLong(7);
@@ -1055,6 +1076,9 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                         .put("live view checkpoint bivariate RANGE ring row count mismatch [expected=").put(size)
                         .put(", actual=").put(ringRestore.rows).put(']');
             }
+            for (int i = 0; i < 5; i++) {
+                value.putDouble(i, Double.longBitsToDouble(source.getScalarWord(i)));
+            }
             putRestoredState(value, newStartOffset, count, size, capacity);
         }
 
@@ -1062,11 +1086,20 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
          * Reads the in-RAM image
          * {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)} wrote, onto the same
          * convention as {@link #restoreCheckpointRingState(LiveViewCheckpointRingStateSource, MapValue)}:
-         * the count verbatim, the triples into a fresh slab rebased to index 0, and the five
-         * sums re-accumulated from the in-frame prefix.
+         * the five sums and the count verbatim, the triples into a fresh slab rebased to index 0.
          */
         @Override
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final double partitionSumX = source.getDouble(offset);
+            offset += Double.BYTES;
+            final double partitionSumXX = source.getDouble(offset);
+            offset += Double.BYTES;
+            final double partitionSumY = source.getDouble(offset);
+            offset += Double.BYTES;
+            final double partitionSumYY = source.getDouble(offset);
+            offset += Double.BYTES;
+            final double partitionSumXY = source.getDouble(offset);
+            offset += Double.BYTES;
             final long count = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -1083,6 +1116,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 memory.putDouble(rec + Long.BYTES + Double.BYTES, source.getDouble(offset));
                 offset += Double.BYTES;
             }
+            value.putDouble(0, partitionSumX);
+            value.putDouble(1, partitionSumXX);
+            value.putDouble(2, partitionSumY);
+            value.putDouble(3, partitionSumYY);
+            value.putDouble(4, partitionSumXY);
             putRestoredState(value, newStartOffset, count, size, capacity);
             return offset;
         }
@@ -1101,7 +1139,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public boolean supportsCheckpointState() {
             // A bounded frame start only. There the frame is a prefix of the ring, which is what
-            // restore re-accumulates the five sums from. An unbounded start folds expired pairs
+            // restore validates the carried count against. An unbounded start folds expired pairs
             // into the sums and drops them from the ring, so the ring no longer holds what the
             // sums cover. SqlParser's finite-influence gate rejects that shape at CREATE unless
             // an ANCHOR resets the window, and RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
@@ -1143,34 +1181,15 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         /**
-         * Publishes a restored partition: the ring sits in a fresh slab at
-         * {@code startOffset}, rebased to index 0, and the five sums are re-accumulated over its
-         * first {@code count} triples - the in-frame prefix - with the same {@code +=} arithmetic
-         * {@link #computeNext(Record)} applies when a pair enters the frame. The result is a
-         * fresh summation of the frame, so it can differ from the incrementally maintained sums
-         * in the last ULPs, which the frame-local contract allows.
+         * Publishes a restored partition's ring layout: the in-frame count, and the ring in a
+         * fresh slab at {@code startOffset}, rebased to index 0. The caller has already put the
+         * five carried sums into slots 0 to 4, by the bits the runtime held. A fresh summation
+         * of the frame would not do: it skips the rounding the incremental adds and drops left
+         * in the sums, and the covariance and correlation formulas subtract nearly equal sums,
+         * which amplifies that difference far beyond the last ULPs - and on cancellation-prone
+         * data turns a value into a NULL or the other way round.
          */
         private void putRestoredState(MapValue value, long startOffset, long count, long size, long capacity) {
-            double sumX = 0.0;
-            double sumXX = 0.0;
-            double sumY = 0.0;
-            double sumYY = 0.0;
-            double sumXY = 0.0;
-            for (long i = 0; i < count; i++) {
-                final long rec = startOffset + i * RECORD_SIZE;
-                final double x = memory.getDouble(rec + Long.BYTES);
-                final double y = memory.getDouble(rec + Long.BYTES + Double.BYTES);
-                sumX += x;
-                sumXX += x * x;
-                sumY += y;
-                sumYY += y * y;
-                sumXY += x * y;
-            }
-            value.putDouble(0, sumX);
-            value.putDouble(1, sumXX);
-            value.putDouble(2, sumY);
-            value.putDouble(3, sumYY);
-            value.putDouble(4, sumXY);
             value.putLong(5, count);
             value.putLong(6, startOffset);
             value.putLong(7, size);
@@ -1183,8 +1202,8 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
         // The shared reader checks only the frame size's sign. The bounded frame start
         // supportsCheckpointState() admits keeps the frame a prefix of the ring, so a count past
-        // the buffered pairs is a corrupt root, not a state to continue from - and the
-        // re-accumulation would read past the ring.
+        // the buffered pairs is a corrupt root, not a state to continue from: the carried sums
+        // would cover pairs the ring does not hold, so no expiry could ever take them out.
         private void validateRestoredFrame(long count, long size) {
             if (count < 0 || count > size) {
                 throw CairoException.critical(0)
@@ -1208,7 +1227,8 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 final double x = Double.longBitsToDouble(xBits);
                 final double y = Double.longBitsToDouble(yBits);
                 // computeNext buffers finite pairs only, so a non-finite half here is a corrupt
-                // value page; the sums re-accumulated from it would never recover.
+                // value page; subtracting it from the carried sums on expiry would poison them
+                // for good.
                 if (!Numbers.isFinite(x) || !Numbers.isFinite(y)) {
                     throw CairoException.critical(0)
                             .put("live view checkpoint bivariate RANGE ring pair is not finite");

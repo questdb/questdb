@@ -63,10 +63,14 @@ import java.util.Arrays;
  * payload owns the ring's value kind, the logical head offset and the exact scalar
  * continuation state.
  * <p>
- * The scalar continuation state is itself one, two or four words wide, independently of
- * the value width: a {@code decimal(20,4)} {@code avg} holds a 64-bit value per row and a
+ * The scalar continuation state is itself one, two, four or five words wide, independently
+ * of the value width: a {@code decimal(20,4)} {@code avg} holds a 64-bit value per row and a
  * 256-bit running sum, while a {@code decimal(38,4)} {@code first_value} holds a 128-bit
- * value per row and no scalar at all.
+ * value per row and no scalar at all. Five words carry the five running sums of
+ * {@code covar_samp}/{@code covar_pop}/{@code corr}, which a restore takes back verbatim
+ * because re-summing the ring would not reproduce the rounding the incremental sums hold.
+ * The width only ever grew: a one-, two- or four-word entry keeps the layout it had before
+ * the five-word width existed, and the header's width byte is what tells them apart.
  * <p>
  * A {@code max}/{@code min} root stores the same {@code (timestamp, value)} frame ring
  * as the value functions, but tags its value pages with the monotonic-deque page kinds
@@ -149,6 +153,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     private long scalarWord1;
     private long scalarWord2;
     private long scalarWord3;
+    private long scalarWord4;
     private int scalarWords = 1;
     private LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
     private int statePageRefCount;
@@ -318,8 +323,10 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                 return scalarWord1;
             case 2:
                 return scalarWord2;
-            default:
+            case 3:
                 return scalarWord3;
+            default:
+                return scalarWord4;
         }
     }
 
@@ -422,6 +429,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         scalarWord1 = scalarWords > 1 ? Unsafe.getLong(scalar + 3 * Long.BYTES) : 0;
         scalarWord2 = scalarWords > 2 ? Unsafe.getLong(scalar + 4 * Long.BYTES) : 0;
         scalarWord3 = scalarWords > 3 ? Unsafe.getLong(scalar + 5 * Long.BYTES) : 0;
+        scalarWord4 = scalarWords > 4 ? Unsafe.getLong(scalar + 6 * Long.BYTES) : 0;
         frameSize = Unsafe.getLong(scalar + (long) (2 + scalarWords) * Long.BYTES);
         lastTimestamp = Unsafe.getLong(scalar + (long) (3 + scalarWords) * Long.BYTES);
 
@@ -498,6 +506,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
             long scalarWord1,
             long scalarWord2,
             long scalarWord3,
+            long scalarWord4,
             long frameSize,
             long lastTimestamp
     ) {
@@ -514,6 +523,9 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         if (scalarWords > 2) {
             Unsafe.putLong(address + 4 * Long.BYTES, scalarWord2);
             Unsafe.putLong(address + 5 * Long.BYTES, scalarWord3);
+        }
+        if (scalarWords > 4) {
+            Unsafe.putLong(address + 6 * Long.BYTES, scalarWord4);
         }
         Unsafe.putLong(address + (2L + scalarWords) * Long.BYTES, frameSize);
         Unsafe.putLong(address + (3L + scalarWords) * Long.BYTES, lastTimestamp);
@@ -572,7 +584,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     }
 
     private static boolean isScalarWordsValid(int scalarWords) {
-        return scalarWords == 1 || scalarWords == 2 || scalarWords == 4;
+        return scalarWords == 1 || scalarWords == 2 || scalarWords == 4 || scalarWords == 5;
     }
 
     private static boolean isValueKindValid(int valueKind) {

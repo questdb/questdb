@@ -93,10 +93,10 @@ import java.io.Closeable;
  * on wrapped rings, on rings that just grew and left a slab on the free list, on empty rings,
  * and on lagged frames whose ring holds rows the frame has not reached yet.
  * <p>
- * Every class but bivariate RANGE carries its running sums verbatim, so those cases use values
- * of mixed magnitude, whose incremental sums carry rounding a re-summation would not reproduce.
- * Bivariate RANGE re-accumulates its five sums from the restored ring by design, so its cases
- * use integer values, over which every summation order produces the same doubles.
+ * Every class carries its running sums verbatim, so every case uses values of mixed magnitude,
+ * whose incremental sums carry rounding a re-summation would not reproduce. Integer values
+ * would hide a restore that re-summed the frame, as every summation order produces the same
+ * doubles over them.
  */
 public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTest {
 
@@ -138,7 +138,7 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
 
     @Test
     public void testBivariateRangeRestoreFuzz() throws Exception {
-        assertRangeFuzz("BivarStatOverPartitionRangeFrameFunction", BIVARIATE_NAMES, true, true, BIVARIATE_RANGE_SLOTS);
+        assertRangeFuzz("BivarStatOverPartitionRangeFrameFunction", BIVARIATE_NAMES, true, false, BIVARIATE_RANGE_SLOTS);
     }
 
     @Test

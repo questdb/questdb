@@ -965,6 +965,11 @@ public class LiveViewCheckpointKSumRangeTest extends AbstractLiveViewTest {
             throw new AssertionError("a ksum ring carries a two-word scalar");
         }
 
+        @Override
+        public void putScalarState(long word0, long word1, long word2, long word3, long word4, long frameSize) {
+            throw new AssertionError("a ksum ring carries a two-word scalar");
+        }
+
         private void assertCaptured(StubRingSource source) {
             Assert.assertEquals(2, scalarWords);
             Assert.assertEquals(source.scalarWord0, scalarWord0);
