@@ -353,6 +353,37 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBracketedBooleanOperand() throws Exception {
+        // an operand that ends in ')' or END used to run the CASE as a searched CASE,
+        // which evaluated each WHEN value as the condition
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::INT i, x > 1 b FROM long_sequence(3))");
+            assertQuery(
+                    "SELECT i," +
+                            " CASE (b) WHEN true THEN 'x' ELSE 'y' END c1," +
+                            " CASE (i > 1) WHEN false THEN 'small' ELSE 'big' END c2," +
+                            " CASE CASE WHEN b THEN true ELSE false END WHEN true THEN 'x' ELSE 'y' END c3," +
+                            " CASE i IN (1, 2) WHEN true THEN 'in' ELSE 'out' END c4" +
+                            " FROM t"
+            )
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tc1\tc2\tc3\tc4
+                            1\ty\tsmall\ty\tin
+                            2\tx\tbig\tx\tin
+                            3\tx\tbig\tx\tout
+                            """);
+            assertQuery("SELECT i FROM t WHERE CASE (b) WHEN false THEN true ELSE false END")
+                    .noLeakCheck()
+                    .returns("""
+                            i
+                            1
+                            """);
+        });
+    }
+
+    @Test
     public void testBranchTypeMismatch() throws Exception {
         assertQuery("SELECT CASE u WHEN 123 THEN 'a' ELSE 'b' END FROM test")
                 .ddl("CREATE TABLE test AS (SELECT rnd_uuid4() u FROM long_sequence(5))")
@@ -1260,6 +1291,24 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testListOperand() throws Exception {
+        // a bracketed list leaves more than one value; the CASE used to drop all but the last
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::INT i FROM long_sequence(3))");
+            assertExceptionNoLeakCheck(
+                    "SELECT CASE (i, 2) WHEN 1 THEN 'one' END FROM t",
+                    19,
+                    "'case' operand must be a single value"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT CASE (1, 2) + 0 WHEN 2 THEN 'two' ELSE 'other' END FROM t",
+                    23,
+                    "'case' operand must be a single value"
+            );
+        });
+    }
+
+    @Test
     public void testLong() throws Exception {
         assertQuery("""
                 select\s
@@ -1426,6 +1475,35 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")")
                 .fails(109, "constant expected");
+    }
+
+    @Test
+    public void testOperandEndingInBracketOrEnd() throws Exception {
+        // these operands used to run the CASE as a searched CASE, which failed with
+        // "BOOLEAN expected" at the first WHEN value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (" +
+                    "SELECT x::INT i, ('s' || x)::SYMBOL s, CASE WHEN x = 2 THEN NULL ELSE x END::INT n" +
+                    " FROM long_sequence(3))");
+            assertQuery(
+                    "SELECT i," +
+                            " CASE (i) WHEN 1 THEN 'one' ELSE 'other' END c1," +
+                            " CASE (s) WHEN 's1' THEN 'one' ELSE 'other' END c2," +
+                            " CASE abs(i) WHEN 1 THEN 'one' ELSE 'other' END c3," +
+                            " CASE coalesce(n, 0) WHEN 0 THEN 'null' ELSE 'set' END c4," +
+                            " CASE cast(i AS LONG) WHEN 1 THEN 'one' ELSE 'other' END c5," +
+                            " CASE CASE i WHEN 1 THEN 10 ELSE 20 END WHEN 10 THEN 'ten' ELSE 'twenty' END c6" +
+                            " FROM t"
+            )
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tc1\tc2\tc3\tc4\tc5\tc6
+                            1\tone\tone\tone\tset\tone\tten
+                            2\tother\tother\tother\tnull\tother\ttwenty
+                            3\tother\tother\tother\tset\tother\ttwenty
+                            """);
+        });
     }
 
     @Test
@@ -1739,6 +1817,19 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")")
                 .fails(118, "duplicate branch");
+    }
+
+    @Test
+    public void testSubQueryOperand() throws Exception {
+        // a sub-query operand used to run the CASE as a searched CASE, which returned 'x' for every row
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::INT i FROM long_sequence(3))");
+            assertExceptionNoLeakCheck(
+                    "SELECT CASE (SELECT false) WHEN true THEN 'x' ELSE 'y' END FROM t",
+                    32,
+                    "type mismatch [expected=CURSOR, actual=BOOLEAN]"
+            );
+        });
     }
 
     @Test

@@ -12882,6 +12882,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSimpleCaseExpressionBracketedOperand() throws SqlException {
+        assertQuery(
+                "select-virtual switch(a, 1, 'A', 2, 'B', 'C') + 1 column, b from (select [a, b] from tab)",
+                "select case (a) when 1 then 'A' when 2 then 'B' else 'C' end + 1, b from tab",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSimpleCaseExpressionFunctionOperand() throws SqlException {
+        assertQuery(
+                "select-virtual switch(abs(a), 1, 'A', 'C') k from (select [a] from tab)",
+                "select case abs(a) when 1 then 'A' else 'C' end k from tab",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSimpleCaseExpressionSubQueryOperand() throws SqlException {
+        assertQuery(
+                "select-virtual switch((select-virtual 1 1 from (long_sequence(1))), 1, 'A', 'C') k from (tab)",
+                "select case (select 1 from long_sequence(1)) when 1 then 'A' else 'C' end k from tab",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testSimpleSubQuery() throws Exception {
         assertQuery(
                 "select-choose y from (select [y] from x where y > 1)",
