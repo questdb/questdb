@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 
@@ -146,6 +147,9 @@ public class GroupByColumnSink implements Mutable {
             case ColumnType.LONG128, ColumnType.UUID:
                 putLong128(function.getLong128Lo(record), function.getLong128Hi(record));
                 break;
+            case ColumnType.LONG256:
+                putLong256(function.getLong256A(record));
+                break;
             case ColumnType.CHAR:
                 putChar(function.getChar(record));
                 break;
@@ -218,6 +222,9 @@ public class GroupByColumnSink implements Mutable {
                 break;
             case ColumnType.LONG128, ColumnType.UUID:
                 putLong128At(index, function.getLong128Lo(record), function.getLong128Hi(record));
+                break;
+            case ColumnType.LONG256:
+                putLong256At(index, function.getLong256A(record));
                 break;
             case ColumnType.CHAR:
                 putCharAt(index, function.getChar(record));
@@ -376,6 +383,16 @@ public class GroupByColumnSink implements Mutable {
         long p = ptr + HEADER_SIZE + offset;
         Unsafe.putLong(p, lo);
         Unsafe.putLong(p + 8, hi);
+    }
+
+    private void putLong256(Long256 value) {
+        Long256.putLong256(value, reserve(Long256.BYTES));
+    }
+
+    private void putLong256At(int index, Long256 value) {
+        long offset = (long) Long256.BYTES * index;
+        assert offset <= size() - Long256.BYTES;
+        Long256.putLong256(value, ptr + HEADER_SIZE + offset);
     }
 
     private void putShort(short value) {

@@ -2788,6 +2788,61 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullFirstObservationNullableTypes() throws Exception {
+        // FILL(NULL) on DATE, STRING, VARCHAR, SYMBOL and LONG256 aggregates. ALIGN TO CALENDAR
+        // runs through the rewritten GROUP BY + fill cursor; ALIGN TO FIRST OBSERVATION runs
+        // through the SampleByFillNull* factories, and FILL(NULL, 0) through
+        // SampleByFillValueRecordCursorFactory. All must give the same result.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, d DATE, s STRING, v VARCHAR, sym SYMBOL, l256 LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('k1', '2020-01-01T00:00:00.000Z', 'str1', 'var1', 'a', '0x01', '2024-01-01T00:00:00.000000Z'),
+                    ('k1', '2020-01-02T00:00:00.000Z', 'str2', 'var2', 'b', '0x02', '2024-01-01T02:30:00.000000Z')
+                    """);
+            final String aggregates = "max(d) d, last(s) s, last(v) v, last(sym) sym, sum(l256) l256";
+            for (String align : new String[]{"ALIGN TO CALENDAR", "ALIGN TO FIRST OBSERVATION"}) {
+                final boolean isCalendar = "ALIGN TO CALENDAR".equals(align);
+                final String fillNullPlan = isCalendar ? "Sample By Fill" : "Sample By\n  fill: null";
+                final String fillValuePlan = isCalendar ? "Sample By Fill" : "Sample By\n  fill: value";
+                assertQuery("SELECT ts, " + aggregates + " FROM x SAMPLE BY 1h FILL(NULL) " + align)
+                        .noLeakCheck()
+                        .withPlanContaining(fillNullPlan)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\td\ts\tv\tsym\tl256
+                                2024-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000Z\tstr1\tvar1\ta\t0x01
+                                2024-01-01T01:00:00.000000Z\t\t\t\t\t
+                                2024-01-01T02:00:00.000000Z\t2020-01-02T00:00:00.000Z\tstr2\tvar2\tb\t0x02
+                                """);
+                assertQuery("SELECT ts, k, " + aggregates + " FROM x SAMPLE BY 1h FILL(NULL) " + align)
+                        .noLeakCheck()
+                        .withPlanContaining(fillNullPlan)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\tk\td\ts\tv\tsym\tl256
+                                2024-01-01T00:00:00.000000Z\tk1\t2020-01-01T00:00:00.000Z\tstr1\tvar1\ta\t0x01
+                                2024-01-01T01:00:00.000000Z\tk1\t\t\t\t\t
+                                2024-01-01T02:00:00.000000Z\tk1\t2020-01-02T00:00:00.000Z\tstr2\tvar2\tb\t0x02
+                                """);
+                assertQuery("SELECT ts, " + aggregates + ", count() n FROM x SAMPLE BY 1h FILL(NULL, NULL, NULL, NULL, NULL, 0) " + align)
+                        .noLeakCheck()
+                        .withPlanContaining(fillValuePlan)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\td\ts\tv\tsym\tl256\tn
+                                2024-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000Z\tstr1\tvar1\ta\t0x01\t1
+                                2024-01-01T01:00:00.000000Z\t\t\t\t\t\t0
+                                2024-01-01T02:00:00.000000Z\t2020-01-02T00:00:00.000Z\tstr2\tvar2\tb\t0x02\t1
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testFillValueAppliesAfterAggregateArithmetic() throws Exception {
         // FILL(v) over sum(col*K) must show v in empty buckets, not v*K. Earlier
         // SqlOptimiser.rewriteAggregate split sum(x*10) into sum(x)*10, so the fill

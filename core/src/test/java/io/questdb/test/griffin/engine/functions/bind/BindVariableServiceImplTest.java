@@ -223,6 +223,20 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testDoubleArrayVarSetToNullStr() throws Exception {
+        assertMemoryLeak(() -> {
+            final int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+            bindVariableService.define(0, type, 0);
+            bindVariableService.setStr(0, "{{1.0,2.0},{3.0,4.0}}");
+            Assert.assertFalse(bindVariableService.getFunction(0).getArray(null).isNull());
+            bindVariableService.setStr(0, null);
+            final Function function = bindVariableService.getFunction(0);
+            Assert.assertEquals(type, function.getType());
+            Assert.assertTrue(function.getArray(null).isNull());
+        });
+    }
+
+    @Test
     public void testDoubleIndexedOverride() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setInt(2, 10);

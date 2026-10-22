@@ -400,12 +400,16 @@ public class RecordToRowCopierUtils {
 
         if (fromTag != toTag) {
             size += CONVERSION_BYTECODE_OVERHEAD;
+        }
 
-            // GeoHash conversions between different sizes need extra bytecode:
-            // i2l + ldc + ldc + invokeStatic + l2i + i2b/i2s = ~20 bytes
-            if (ColumnType.isGeoHash(fromTag) && ColumnType.isGeoHash(toTag)) {
-                size += COMPLEX_TYPE_OVERHEAD;
-            }
+        // The generator converts between geohash precisions and between timestamp units whenever the
+        // encoded types differ, also within one tag (GEOINT 4c -> GEOINT 5c, TIMESTAMP_MICRO -> TIMESTAMP_NANO).
+        // GeoHash: i2l + ldc + ldc + invokeStatic + l2i + i2b/i2s = ~20 bytes; timestamp: ldc + invokeStatic +
+        // ldc + invokeInterface = ~14 bytes
+        if (fromType != toType
+                && ((ColumnType.isGeoHash(fromType) && ColumnType.isGeoHash(toType))
+                || (fromTag == ColumnType.TIMESTAMP && toTag == ColumnType.TIMESTAMP))) {
+            size += COMPLEX_TYPE_OVERHEAD;
         }
 
         // Complex types need more bytecode due to extra method calls and stack manipulation
