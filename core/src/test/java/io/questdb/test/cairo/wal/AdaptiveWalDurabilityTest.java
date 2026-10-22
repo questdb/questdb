@@ -422,6 +422,11 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         // Disable the automatic epoch, so the explicit fsyncMaterializedState() call below is the only
         // durable cut. testApplyWorkerFiresDurableEpoch covers the epoch fired by the apply worker.
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        // The count below is of per-file syncs of the open last partition's mapped columns, which only the
+        // whole-partition path leaves open: with merge-append on (the harness default) the apply leaves the
+        // last partition closed, nothing is mapped, and the flush is the syncfs alone. Pin the production
+        // default.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
 
         final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
         assertMemoryLeak(trackFf, () -> {
@@ -899,6 +904,10 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     public void testEpochFlushesOnlyTheWriteSetOnNonWideSyncfsPlatform() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+        // The direct append at the end writes into the open last partition, which only the whole-partition path
+        // leaves open: with merge-append on (the harness default) the apply leaves it closed and the append
+        // writes through an unmapped column. Pin the production default.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
 
         final EpochOpenTrackingFacade ff = new EpochOpenTrackingFacade();
         assertMemoryLeak(ff, () -> {

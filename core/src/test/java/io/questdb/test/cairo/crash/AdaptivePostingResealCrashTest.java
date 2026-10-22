@@ -473,6 +473,11 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
 
     private static void setUpAdaptive() {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Every test here starts from an in-place commit resealing its partition's POSTING index, so that a .pv the
+        // save point names is superseded and its purge row held open. Only the whole-partition rewrite reseals:
+        // with merge-append on (the harness default) the index grows by a generation per commit and supersedes
+        // nothing. Pin the production default.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // No periodic save point inside a test.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);

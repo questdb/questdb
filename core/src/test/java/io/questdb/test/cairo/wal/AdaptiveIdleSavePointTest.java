@@ -545,6 +545,10 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
         // version that the older save point names. With no write after the change, it goes about one interval later.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        // The O3 rewrite leaves an older version of the partition only as a whole-partition rewrite: with
+        // merge-append on (the harness default) the late row appends a piece to the same version. Pin the
+        // production default.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             startClock();
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
@@ -583,6 +587,10 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
         // they go after the idle save points, at the posting purge's next retry.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        // Only the whole-partition rewrite reseals the index in place: with merge-append on (the harness default)
+        // the covering index grows by a generation per commit and supersedes no value file. Pin the production
+        // default.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 1);
         assertMemoryLeak(() -> {
@@ -628,6 +636,10 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
         // point.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        // The writer's own late row leaves an older version of the partition only as a whole-partition rewrite:
+        // with merge-append on (the harness default) it appends a piece to the same version. Pin the production
+        // default.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             startClock();
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {

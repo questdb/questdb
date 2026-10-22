@@ -137,6 +137,10 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
     public void testSupersededValueFileReclaimedAfterTwoSavePoints() throws Exception {
         Assume.assumeTrue(indexKind.startsWith("POSTING"));
         setUpAdaptive();
+        // The reclaim under test starts from an in-place commit resealing the index and superseding a .pv the save
+        // point reads. Only the whole-partition rewrite reseals: with merge-append on (the harness default) a
+        // covering index grows by a generation per commit and supersedes nothing. Pin the production default.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // Retry a held purge on every job run, so a released one is removed on the next run.
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 1);

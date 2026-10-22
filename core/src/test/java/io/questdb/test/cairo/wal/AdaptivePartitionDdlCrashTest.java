@@ -306,6 +306,13 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, history.cleanRestart() ? "true" : "false");
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
+        if (operation == Operation.DETACH_AFTER_O3 || operation == Operation.SQUASH) {
+            // Both operations start from what only the whole-partition rewrite produces: DETACH_AFTER_O3 from a
+            // superseded version of the partition left by its O3 insert, SQUASH from a split of the last partition.
+            // With merge-append on (the harness default) the O3 insert appends a piece to the same version and the
+            // last partition is never split, so pin the production default for these two.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        }
         killImageRoot = null;
         inputRoot = temp.newFolder().getAbsolutePath();
         inputWorkRoot = temp.newFolder().getAbsolutePath();

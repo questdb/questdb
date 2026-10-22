@@ -197,6 +197,10 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
     public void testPromoteAfterUntrackedIntervalFlushesFullBaseline() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        // The writer's own appends between the epochs write into the open last partition, which only the
+        // whole-partition path leaves open: with merge-append on (the harness default) the apply leaves it closed
+        // and the append writes through an unmapped column. Pin the production default.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         final AdaptiveWalDurabilityTest.EpochOpenTrackingFacade ff = new AdaptiveWalDurabilityTest.EpochOpenTrackingFacade();
         assertMemoryLeak(ff, () -> {
             setCurrentMicros(1_000_000L);
