@@ -47,7 +47,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 
@@ -66,6 +65,9 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
+    // Each extend runs fallocate and mremap under the sequencer write lock, so _txnlog grows in
+    // large steps: 256KB holds ~9k transactions.
+    private static final long TXN_MEM_EXTEND_SEGMENT_SIZE = 256 * 1024;
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
@@ -133,8 +135,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     @Override
     public void create(Path path, long tableCreateTimestamp) {
-        final int pathLength = path.size();
-        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+        openTxnMem(path);
 
         txnMem.jumpTo(0L);
         txnMem.putInt(WAL_SEQUENCER_FORMAT_VERSION_V1);
@@ -207,7 +208,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     public long open(Path path) {
         if (!txnMem.isOpen()) {
             txnMem.close(false);
-            openSmallFile(ff, path, path.size(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+            openTxnMem(path);
         }
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
@@ -216,6 +217,16 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
         txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
         return maxStructureVersion;
+    }
+
+    private void openTxnMem(Path path) {
+        final int pathLen = path.size();
+        try {
+            path.concat(TXNLOG_FILE_NAME);
+            txnMem.of(ff, path.$(), TXN_MEM_EXTEND_SEGMENT_SIZE, ff.length(path.$()), MemoryTag.MMAP_TX_LOG, CairoConfiguration.O_NONE, -1);
+        } finally {
+            path.trimTo(pathLen);
+        }
     }
 
     private void sync0() {

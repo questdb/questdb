@@ -309,7 +309,12 @@ public final class MmapCache {
     }
 
     private static long mremap0(int fd, long address, long previousSize, long newSize, long offset, int flags, int oldMemoryTag, int memoryTag) {
-        address = Files.mremap0(fd, address, previousSize, newSize, offset, flags);
+        // On Linux, a remap that keeps the page count leaves the mapping unchanged, but the kernel
+        // still takes the process-wide mmap_lock for write to find that out. Other platforms
+        // emulate the remap with a fresh mapping, so they keep the call.
+        if (!Os.isLinux() || Files.ceilPageSize(previousSize) != Files.ceilPageSize(newSize)) {
+            address = Files.mremap0(fd, address, previousSize, newSize, offset, flags);
+        }
         if (address != -1) {
             if (oldMemoryTag == memoryTag) {
                 Unsafe.recordMemAlloc(newSize - previousSize, memoryTag);
