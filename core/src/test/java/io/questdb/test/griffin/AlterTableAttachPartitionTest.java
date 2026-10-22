@@ -39,6 +39,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -47,6 +48,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -62,6 +64,7 @@ import org.junit.runners.Parameterized;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
@@ -446,39 +449,101 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
-    public void testAttachParquetPartitionWithUnknownColumnTypeFailsCleanly() throws Exception {
+    public void testAttachParquetPartitionWithStagedMetadataUnknownColumnTypeFails() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-05T00:00:00.000000Z', 100)");
             final java.nio.file.Path attachable = stageForeignParquet();
+            generateParquetMetadata(attachable);
             final java.nio.file.Path pm = attachable.resolve(TableUtils.PARQUET_METADATA_FILE_NAME);
-            // The first attempt generates _pm. Later attempts validate that existing
-            // sidecar, including invalid codes other than the inference sentinel.
-            for (int code : new int[]{-1, -1, 0, 255}) {
-                if (java.nio.file.Files.exists(pm)) {
-                    patchParquetColumnType(pm, code);
-                }
+            // A staged _pm can carry invalid codes other than the inference sentinel.
+            for (int code : new int[]{-1, 0, 255}) {
+                patchParquetColumnType(pm, code);
                 try {
                     execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
                     Assert.fail("unsupported mapped column must prevent attachment");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid parquet column type [column=x, type=" + code + "]");
                 }
-                Assert.assertTrue(java.nio.file.Files.exists(attachable.resolve(TableUtils.PARQUET_PARTITION_NAME)));
+                // The attach keeps the metadata it did not generate.
                 Assert.assertTrue(java.nio.file.Files.exists(pm));
-                assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
-                        ts\tx
-                        2024-01-05T00:00:00.000000Z\t100
-                        """);
                 engine.clear();
                 assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
                         ts\tx
                         2024-01-05T00:00:00.000000Z\t100
                         """);
             }
-            // A failed ATTACH must not leave the writer distressed or column versions dirty.
-            execute("INSERT INTO t VALUES ('2024-01-06T00:00:00.000000Z', 101)");
+        });
+    }
+
+    @Test
+    public void testAttachParquetPartitionWithUnknownColumnTypeFailsCleanly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00.000000Z', 100)");
+            final java.nio.file.Path attachable = stageForeignParquet();
+            try {
+                execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+                Assert.fail("unsupported mapped column must prevent attachment");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid parquet column type [column=x, type=-1]");
+            }
+            // The directory is back as staged, without the _pm the attach generated.
+            Assert.assertTrue(java.nio.file.Files.exists(attachable.resolve(TableUtils.PARQUET_PARTITION_NAME)));
+            Assert.assertFalse(java.nio.file.Files.exists(attachable.resolve(TableUtils.PARQUET_METADATA_FILE_NAME)));
             engine.clear();
+            assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    2024-01-05T00:00:00.000000Z\t100
+                    """);
+
+            // The writer still accepts data after the failed attach.
+            execute("INSERT INTO t VALUES ('2024-01-06T00:00:00.000000Z', 101)");
+
+            // A retry with a corrected file of a different size attaches.
+            execute("CREATE TABLE src (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO src VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1),
+                        ('2024-01-01T12:00:00.000000Z', NULL),
+                        ('2024-01-02T00:00:00.000000Z', 2)
+                    """);
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            java.nio.file.Files.copy(
+                    firstPartitionDir("src", "2024-01-01").resolve(TableUtils.PARQUET_PARTITION_NAME),
+                    attachable.resolve(TableUtils.PARQUET_PARTITION_NAME),
+                    StandardCopyOption.REPLACE_EXISTING
+            );
+            execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+            engine.clear();
+            assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    2024-01-01T00:00:00.000000Z\t1
+                    2024-01-01T12:00:00.000000Z\tnull
+                    2024-01-05T00:00:00.000000Z\t100
+                    2024-01-06T00:00:00.000000Z\t101
+                    """);
+        });
+    }
+
+    @Test
+    public void testAttachParquetPartitionWithUnknownColumnTypeWalSkipped() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00.000000Z', 100)");
+            drainWalQueue();
+            final java.nio.file.Path attachable = stageForeignParquet();
+            execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            // WAL apply skips the rejected attach instead of suspending the table.
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't'").noRandomAccess().returns("""
+                    suspended
+                    false
+                    """);
+            Assert.assertTrue(java.nio.file.Files.exists(attachable.resolve(TableUtils.PARQUET_PARTITION_NAME)));
+            Assert.assertFalse(java.nio.file.Files.exists(attachable.resolve(TableUtils.PARQUET_METADATA_FILE_NAME)));
+            execute("INSERT INTO t VALUES ('2024-01-06T00:00:00.000000Z', 101)");
+            drainWalQueue();
             assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
                     ts\tx
                     2024-01-05T00:00:00.000000Z\t100
@@ -1379,16 +1444,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         ('2024-01-02T00:00:00.000000Z', 101)
                     """);
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            final long partitionNameTxn;
-            try (TableReader reader = getReader("t")) {
-                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
-            }
-            final java.nio.file.Path pm = Paths.get(
-                    configuration.getDbRoot(),
-                    engine.verifyTableName("t").getDirName(),
-                    "2024-01-01." + partitionNameTxn,
-                    TableUtils.PARQUET_METADATA_FILE_NAME
-            );
+            final java.nio.file.Path pm = firstPartitionDir("t", "2024-01-01").resolve(TableUtils.PARQUET_METADATA_FILE_NAME);
             engine.clear();
             final int originalType = patchParquetColumnType(pm, -1);
             for (int code : new int[]{-1, 0, 255}) {
@@ -1409,6 +1465,24 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     2024-01-02T00:00:00.000000Z\t101
                     """);
         });
+    }
+
+    // Replaces the type of the second _pm column descriptor and returns the previous type.
+    private static int patchParquetColumnType(java.nio.file.Path pm, int code) throws Exception {
+        final byte[] bytes = java.nio.file.Files.readAllBytes(pm);
+        final ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        // A 32-byte header precedes 32-byte column descriptors; the type is at offset 12.
+        final int typeOffset = 32 + 32 + 12;
+        final int previousType = buffer.getInt(typeOffset);
+        buffer.putInt(typeOffset, code);
+        // The file ends with the CRC32 and a 4-byte footer length. The CRC covers every
+        // byte after the leading 8-byte file size up to the CRC itself.
+        final int crcOffset = (int) buffer.getLong(0) - 8;
+        final CRC32 crc = new CRC32();
+        crc.update(bytes, 8, crcOffset - 8);
+        buffer.putInt(crcOffset, (int) crc.getValue());
+        java.nio.file.Files.write(pm, bytes);
+        return previousType;
     }
 
     private void assertSchemaMatch(AddColumn tm, int idx) throws Exception {
@@ -1584,30 +1658,50 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         );
     }
 
+    // The Parquet tests use microsecond tables whatever the test parameter, so look the
+    // partition up by index rather than by a timestamp parsed with the parameter's driver.
+    private java.nio.file.Path firstPartitionDir(String tableName, String partitionName) {
+        final long partitionNameTxn;
+        try (TableReader reader = getReader(tableName)) {
+            partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+        }
+        return Paths.get(
+                configuration.getDbRoot(),
+                engine.verifyTableName(tableName).getDirName(),
+                partitionNameTxn > -1 ? partitionName + "." + partitionNameTxn : partitionName
+        );
+    }
+
+    private void generateParquetMetadata(java.nio.file.Path partitionDir) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(partitionDir.toString()).concat(TableUtils.PARQUET_PARTITION_NAME);
+            final long parquetFileSize = ff.length(path.$());
+            final long parquetFd = ff.openRO(path.$());
+            Assert.assertTrue(parquetFd > -1);
+            path.of(partitionDir.toString()).concat(TableUtils.PARQUET_METADATA_FILE_NAME);
+            final long parquetMetaFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+            try {
+                Assert.assertTrue(parquetMetaFd > -1);
+                ParquetMetadataWriter.generate(
+                        Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT),
+                        Files.toOsFd(parquetFd),
+                        parquetFileSize,
+                        Files.toOsFd(parquetMetaFd)
+                );
+            } finally {
+                ff.close(parquetFd);
+                ff.close(parquetMetaFd);
+            }
+        }
+    }
+
     private String getPartitionDirName(String tableName, String partitionName) throws NumericException {
         long partitionTimestamp = timestampType.getDriver().parseFloorLiteral(partitionName + "T00:00:00.000Z");
         try (TableReader reader = getReader(tableName)) {
             long partitionNameTxn = reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
             return partitionNameTxn > -1 ? partitionName + "." + partitionNameTxn : partitionName;
         }
-    }
-
-    // Replaces the type of the second _pm column descriptor and returns the previous type.
-    private static int patchParquetColumnType(java.nio.file.Path pm, int code) throws Exception {
-        final byte[] bytes = java.nio.file.Files.readAllBytes(pm);
-        final ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
-        // A 32-byte header precedes 32-byte column descriptors; the type is at offset 12.
-        final int typeOffset = 32 + 32 + 12;
-        final int previousType = buffer.getInt(typeOffset);
-        buffer.putInt(typeOffset, code);
-        // The file ends with the CRC32 and a 4-byte footer length. The CRC covers every
-        // byte after the leading 8-byte file size up to the CRC itself.
-        final int crcOffset = (int) buffer.getLong(0) - 8;
-        final CRC32 crc = new CRC32();
-        crc.update(bytes, 8, crcOffset - 8);
-        buffer.putInt(crcOffset, (int) crc.getValue());
-        java.nio.file.Files.write(pm, bytes);
-        return previousType;
     }
 
     private int readAllRows(String tableName) {

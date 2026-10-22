@@ -1091,6 +1091,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 final int partitionPathLen = path.size();
+                boolean isParquetMetaGenerated = false;
                 try {
                     // pin column versions
                     // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
@@ -1133,6 +1134,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 ff.close(parquetFd);
                                 ff.close(parquetMetaFd);
                             }
+                            isParquetMetaGenerated = true;
                             if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
                                 path.trimTo(partitionPathLen);
                                 final long dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
@@ -1155,6 +1157,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } finally {
                     path.trimTo(partitionPathLen);
                     if (!checkPassed) {
+                        if (isParquetMetaGenerated) {
+                            // Restore the partition as staged, so a retry with a replaced
+                            // data.parquet does not meet metadata generated for the old file.
+                            removeFileOrLog(ff, path.concat(PARQUET_METADATA_FILE_NAME).$());
+                            path.trimTo(partitionPathLen);
+                        }
                         attachPartitionRevertDir(isCopied, detachedPath.trimTo(detachedRootLen));
                     }
                 }
@@ -5472,7 +5480,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 final int columnType = parquetMetaReader.getColumnType(parquetColumnIndex);
                 if (columnType <= 0 || ColumnType.sizeOf(columnType) == -1) {
-                    throw CairoException.nonCritical().put("invalid parquet column type [column=")
+                    // The table is unchanged, so WAL apply can skip this ATTACH.
+                    throw CairoException.partitionManipulationRecoverable().put("invalid parquet column type [column=")
                             .put(metadata.getColumnName(i)).put(", type=").put(columnType).put(']');
                 }
             }
