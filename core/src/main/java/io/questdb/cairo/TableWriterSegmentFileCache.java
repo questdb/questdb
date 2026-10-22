@@ -32,7 +32,6 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -50,16 +49,21 @@ import static io.questdb.cairo.TableUtils.iFile;
 import static io.questdb.std.Files.SEPARATOR;
 
 // Opens and closes WAL segment column files.
-// This class also reduces file open/close operations by caching file descriptors.
-// when the segment is marked as not last segment usage.
+// A segment that is still being written to (not marked as last segment usage) keeps its
+// column files open AND mapped between apply blocks: the mappings are created with headroom
+// past the current end of file, so the next block's row range usually falls inside them and
+// costs neither an mmap() nor a munmap(). Each munmap() is a process-wide mmap_lock critical
+// section with a TLB shootdown, which is what limits WAL apply on many-core machines.
 public class TableWriterSegmentFileCache {
     private static final Log LOG = LogFactory.getLog(TableWriterSegmentFileCache.class);
     private final CairoConfiguration configuration;
     private final TableToken tableToken;
+    // bytes mapped past the start of each column range so that the next block's range fits the live mapping
+    private static final long COLUMN_MAP_HEADROOM = 16L << 20;
     private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
-    private final LongObjHashMap<LongList> walFdCache = new LongObjHashMap<>();
-    private final WeakClosableObjectPool<LongList> walFdCacheListPool = new WeakClosableObjectPool<>(LongList::new, 5, true);
-    private final LongObjHashMap.LongObjConsumer<LongList> walFdCloseCachedFdAction;
+    private final LongObjHashMap<ObjList<MemoryCMOR>> walFdCache = new LongObjHashMap<>();
+    private final WeakClosableObjectPool<ObjList<MemoryCMOR>> walFdCacheListPool = new WeakClosableObjectPool<>(ObjList::new, 5, true);
+    private final LongObjHashMap.LongObjConsumer<ObjList<MemoryCMOR>> walFdCloseCachedFdAction;
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
     private int walFdCacheSize;
 
@@ -71,16 +75,16 @@ public class TableWriterSegmentFileCache {
                 ? TableWriterSegmentFileCache::openMemoryCMORBypassFdCache
                 : TableWriterSegmentFileCache::openMemoryCMORNormal;
 
-        FilesFacade ff = configuration.getFilesFacade();
         walColumnMemoryPool = new WeakClosableObjectPool<>(memoryFactory, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
-        walFdCloseCachedFdAction = (_, fdList) -> {
-            for (int i = 0, n = fdList.size(); i < n; i++) {
-                long fd = fdList.get(i);
-                LOG.debug().$("closing wal fd cache [fd=").$(fd).I$();
-                ff.close(fd);
+        walFdCloseCachedFdAction = (_, memList) -> {
+            for (int i = 0, n = memList.size(); i < n; i++) {
+                MemoryCMOR mem = memList.getQuick(i);
+                LOG.debug().$("closing cached wal column [fd=").$(mem.getFd()).I$();
+                Misc.free(mem);   // unmaps and closes the fd
+                walColumnMemoryPool.push(mem);
             }
-            fdList.clear();
-            walFdCacheListPool.push(fdList);
+            memList.clear();
+            walFdCacheListPool.push(memList);
         };
     }
 
@@ -95,11 +99,12 @@ public class TableWriterSegmentFileCache {
         boolean cacheIsFull = walFdCacheSize >= configuration.getWalMaxSegmentFileDescriptorsCache();
         if (isLastSegmentUsage || cacheIsFull || cacheIsDisabled) {
             if (key < 0) {
-                LongList fds = walFdCache.valueAt(key);
+                // the mapped columns were handed out by mmapSegments(), the list is empty
+                ObjList<MemoryCMOR> mems = walFdCache.valueAt(key);
                 walFdCache.removeAt(key);
                 walFdCacheSize--;
-                fds.clear();
-                walFdCacheListPool.push(fds);
+                mems.clear();
+                walFdCacheListPool.push(mems);
             }
 
             for (int col = lo, n = walMappedColumns.size(); col < n; col++) {
@@ -111,22 +116,23 @@ public class TableWriterSegmentFileCache {
             }
             walMappedColumns.setPos(lo);
         } else {
-            LongList fds = null;
+            ObjList<MemoryCMOR> mems = null;
             if (key > -1) {
-                // Add FDs to a new FD cache list
-                fds = walFdCacheListPool.pop();
-                walFdCache.putAt(key, walSegmentId, fds);
+                // Keep the column memories open and mapped for the next block of this segment
+                mems = walFdCacheListPool.pop();
+                walFdCache.putAt(key, walSegmentId, mems);
                 walFdCacheSize++;
             }
 
             for (int col = lo, n = walMappedColumns.size(); col < n; col++) {
                 MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
                 if (mappedColumnMem != null) {
-                    long fd = mappedColumnMem.detachFdClose();
-                    if (fds != null) {
-                        fds.add(fd);
+                    if (mems != null) {
+                        mems.add(mappedColumnMem);
+                    } else {
+                        Misc.free(mappedColumnMem);
+                        walColumnMemoryPool.push(mappedColumnMem);
                     }
-                    walColumnMemoryPool.push(mappedColumnMem);
                 }
             }
             walMappedColumns.setPos(lo);
@@ -204,28 +210,31 @@ public class TableWriterSegmentFileCache {
         int walPathLen = walPath.size();
         final int columnCount = metadata.getColumnCount();
         int fdCacheKey = walFdCache.keyIndex(walSegmentId);
-        LongList fds = null;
+        // column memories kept open and mapped by closeWalFiles() for a live segment, in file order
+        ObjList<MemoryCMOR> mems = null;
         if (fdCacheKey < 0) {
-            fds = walFdCache.valueAt(fdCacheKey);
+            mems = walFdCache.valueAt(fdCacheKey);
         }
         int initialSize = walMappedColumns.size();
+        int file = 0;
 
         try {
-            int file = 0;
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final int columnType = metadata.getColumnType(columnIndex);
                 if (columnType > 0) {
                     int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
 
                     if (ColumnType.isVarSize(columnType)) {
-                        MemoryCMOR auxMem = walColumnMemoryPool.pop();
-                        MemoryCMOR dataMem = walColumnMemoryPool.pop();
+                        MemoryCMOR dataMem = mems != null ? mems.getQuick(file) : walColumnMemoryPool.pop();
+                        MemoryCMOR auxMem = mems != null ? mems.getQuick(file + 1) : walColumnMemoryPool.pop();
 
                         walMappedColumns.add(dataMem);
                         walMappedColumns.add(auxMem);
 
-                        final long dataFd = fds != null ? fds.get(file++) : -1;
-                        final long auxFd = fds != null ? fds.get(file++) : -1;
+                        // same fd as the memory already holds: ofOffset() keeps the live mapping when the range fits
+                        final long dataFd = mems != null ? dataMem.getFd() : -1;
+                        final long auxFd = mems != null ? auxMem.getFd() : -1;
+                        file += 2;
 
                         final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
@@ -267,11 +276,12 @@ public class TableWriterSegmentFileCache {
                                 CairoConfiguration.O_NONE
                         );
                     } else {
-                        MemoryCMOR primary = walColumnMemoryPool.pop();
+                        MemoryCMOR primary = mems != null ? mems.getQuick(file) : walColumnMemoryPool.pop();
                         walMappedColumns.add(primary);
                         walMappedColumns.add(null);
 
-                        long fd = fds != null ? fds.get(file++) : -1;
+                        long fd = mems != null ? primary.getFd() : -1;
+                        file++;
                         LPSZ dfile = fd == -1 ? dFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
                         if (fd != -1) {
                             LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fd)
@@ -297,25 +307,30 @@ public class TableWriterSegmentFileCache {
                 }
             }
         } catch (Throwable th) {
+            if (mems != null) {
+                // cached memories not handed out yet are not in walMappedColumns: free them here
+                for (int i = file, n = mems.size(); i < n; i++) {
+                    Misc.free(mems.getQuick(i));
+                    walColumnMemoryPool.push(mems.getQuick(i));
+                }
+            }
             closeWalFiles(true, walSegmentId, initialSize);
             walMappedColumns.setPos(initialSize); // already done by closeWalFiles(); kept for clarity
-            // Avoid double removal/pool push by the finally block when cached FDs were consumed.
-            fds = null;
             throw th;
         } finally {
-            // Now that the FDs are used in the column objects, remove them from the cache.
-            // to avoid double close in case of exceptions.
+            // The memories now live in walMappedColumns; drop the cache entry so nothing is freed twice.
             if (fdCacheKey < 0) {
                 walFdCache.removeAt(fdCacheKey);
                 walFdCacheSize--;
             }
 
-            if (fds != null) {
-                fds.clear();
-                walFdCacheListPool.push(fds);
+            if (mems != null) {
+                mems.clear();
+                walFdCacheListPool.push(mems);
             }
         }
     }
+
 
     public void mmapWalColsEager() {
         for (int i = 0, n = walMappedColumns.size(); i < n; i++) {
@@ -353,10 +368,10 @@ public class TableWriterSegmentFileCache {
     }
 
     private static MemoryCMOR openMemoryCMORBypassFdCache() {
-        return Vm.getMemoryCMOR(true);
+        return Vm.getMemoryCMOR(true, COLUMN_MAP_HEADROOM);
     }
 
     private static MemoryCMOR openMemoryCMORNormal() {
-        return Vm.getMemoryCMOR(false);
+        return Vm.getMemoryCMOR(false, COLUMN_MAP_HEADROOM);
     }
 }

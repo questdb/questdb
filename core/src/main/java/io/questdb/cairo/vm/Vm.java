@@ -111,6 +111,10 @@ public class Vm {
         return new MemoryCMORImpl(bypassFdCache);
     }
 
+    public static MemoryCMOR getMemoryCMOR(boolean bypassFdCache, long mapHeadroom) {
+        return new MemoryCMORImpl(bypassFdCache, mapHeadroom);
+    }
+
     public static MemoryMAR getPMARInstance(CairoConfiguration configuration) {
         return new MemoryPMARImpl(configuration);
     }
