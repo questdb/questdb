@@ -71,9 +71,8 @@ import io.questdb.std.ObjectPool;
  * frames under it. The build input is fixed for an outer join, the input it NULL-extends, and is the table with fewer
  * rows for an INNER join; when an interval scan can change which input holds fewer rows, the decision also records the
  * other build, which each execution may pick. The filters between the aggregate and the join run as the ordinary plan
- * runs them: a runtime constant the join applies to its pairs gates both inputs once per execution, as the ordinary
- * plan gates the join, every other filter runs over the joined rows, and an outer join's ON condition on the build
- * alone runs over the build rows.
+ * runs them: a runtime constant that gates the join gates both inputs once per execution, every other filter runs
+ * over the joined rows, and an outer join's ON condition on the build alone runs over the build rows.
  */
 final class HashJoinAggregationPlanning implements Mutable {
     private static final ExpressionVisitor PARALLEL_STABLE = node -> node instanceof CursorExpression || node instanceof OuterColumnExpression
@@ -212,12 +211,12 @@ final class HashJoinAggregationPlanning implements Mutable {
                 == BoundExpression.STABLE_WITHIN_EXECUTION && expression.walk(PARALLEL_STABLE);
     }
 
-    private boolean addFilter(BoundExpression predicate, boolean isGateAllowed) throws SqlException {
+    private boolean addFilter(BoundExpression predicate) throws SqlException {
         if (predicate == null || predicate instanceof ConstantExpression constant && constant.getLongValue() != 0) {
             return true;
         }
         if (OperatorPlanning.isGate(predicate)) {
-            if (!isGateAllowed || !isParallelStable(predicate)) {
+            if (!isParallelStable(predicate)) {
                 return false;
             }
             gate = context.getRewriter().combineConjunction(gate, predicate, predicate.getPosition());
@@ -387,17 +386,18 @@ final class HashJoinAggregationPlanning implements Mutable {
 
     /**
      * Sorts the filters between the aggregate and the join, and those the join applies to its pairs, as the ordinary
-     * plan evaluates them: a runtime constant into the gate, an outer join's ON condition into the build's filter, and
-     * every other one into the filter over the joined rows, which reads each conjunct from one input. An INNER join
-     * applies its ON condition together with its post-join filter, as one filter. A runtime constant the join applies
-     * to its pairs gates the operator only together with a filter over the joined rows, as the WHERE clause master
-     * fuses holds both; a filter that is a runtime constant alone keeps the ordinary plan. Returns false for a filter
-     * the fused operator cannot run.
+     * plan evaluates them. A runtime constant there gates the join in the ordinary plan, so it goes into the gate of
+     * both inputs: false, neither input serves a row, as the gated join returns none, and no filter of an input runs.
+     * An INNER join applies its ON condition together with its post-join filter, as one filter, so a runtime constant
+     * in it gates both inputs too. An outer join's ON condition runs on the build alone, after the build's own filter,
+     * as the ordinary join applies it to the rows it hashed: false, every probe row comes out NULL-extended. Every
+     * other filter runs over the joined rows and reads each conjunct from one input. Returns false for a filter the
+     * fused operator cannot run.
      */
     private boolean planFilters(JoinPlan join, JoinKind kind) throws SqlException {
         final BoundExpressionRewriter rewriter = context.getRewriter();
         final JoinInput second = join.getOrderedInputs().getQuick(1);
-        if (!addFilter(join.getOrderedInputs().getQuick(0).getPostJoinFilter(), true)) {
+        if (!addFilter(join.getOrderedInputs().getQuick(0).getPostJoinFilter())) {
             return false;
         }
         BoundExpression on = second.getOnResidual();
@@ -408,19 +408,16 @@ final class HashJoinAggregationPlanning implements Mutable {
             on = rewriter.combineConjunction(on, second.getKeyFilter(), on != null ? on.getPosition() : second.getKeyFilter().getPosition());
         }
         if (kind == JoinKind.INNER) {
-            if (!addFilter(on == null ? second.getPostJoinFilter() : rewriter.combineConjunction(on, second.getPostJoinFilter(), on.getPosition()), true)) {
+            if (!addFilter(on == null ? second.getPostJoinFilter() : rewriter.combineConjunction(on, second.getPostJoinFilter(), on.getPosition()))) {
                 return false;
             }
-        } else if (on != null && (onFilter = resolve(on)) == null || !addFilter(second.getPostJoinFilter(), true)) {
+        } else if (on != null && (onFilter = resolve(on)) == null || !addFilter(second.getPostJoinFilter())) {
             return false;
         }
         for (int i = filters.size() - 1; i >= 0; i--) {
-            if (!addFilter(filters.getQuick(i).getPredicate(), false)) {
+            if (!addFilter(filters.getQuick(i).getPredicate())) {
                 return false;
             }
-        }
-        if (gate != null && rowFilters.size() == 0) {
-            return false;
         }
         for (int i = 0, n = rowFilters.size(); i < n; i++) {
             final BoundExpression filter = rowFilters.getQuick(i);
