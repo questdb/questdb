@@ -46,6 +46,25 @@ public class ModeSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testModeAndFirstResolveIndependently() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
+                execute("CREATE TABLE tab (k SYMBOL, s SYMBOL " + cacheFlag + ")");
+                execute("INSERT INTO tab VALUES ('k1', 'abc'), ('k1', 'b'), ('k1', 'b'), ('k2', 'c'), ('k2', 'c')");
+                assertQuery("SELECT k, nullif(mode(s), first(s)) n, strpos(first(s), mode(s)) p FROM tab ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tn\tp
+                                k1\tb\t2
+                                k2\t\t1
+                                """);
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
     public void testModeBasic() throws Exception {
         assertQuery("select mode(f) from tab")
                 .ddl("create table tab as (" +

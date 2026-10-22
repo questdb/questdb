@@ -1151,6 +1151,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.system.writer.data.append.page.size\tQDB_CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +
                                     "cairo.symbol.table.min.allocation.page.size\tQDB_CAIRO_SYMBOL_TABLE_MIN_ALLOCATION_PAGE_SIZE\t" + Files.PAGE_SIZE + "\tdefault\tfalse\tfalse\n" +
                                     "cairo.symbol.table.max.allocation.page.size\tQDB_CAIRO_SYMBOL_TABLE_MAX_ALLOCATION_PAGE_SIZE\t8388608\tdefault\tfalse\tfalse\n" +
+                                    "cairo.symbol.cache.max.size\tQDB_CAIRO_SYMBOL_CACHE_MAX_SIZE\t268435456\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.auto.reload.frequency\tQDB_CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY\t500\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.compaction.threshold\tQDB_CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD\t30\tdefault\tfalse\tfalse\n" +
                                     "cairo.ttl.use.wall.clock\tQDB_CAIRO_TTL_USE_WALL_CLOCK\ttrue\tdefault\tfalse\tfalse\n" +

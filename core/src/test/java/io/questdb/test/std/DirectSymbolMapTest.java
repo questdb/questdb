@@ -246,7 +246,6 @@ public class DirectSymbolMapTest {
                 assertCacheBytes(13_120, map, budget, before);
                 Assert.assertEquals(budget.getLimit(), budget.getUsedBytes());
                 Assert.assertEquals(179, map.size());
-                Assert.assertEquals(17.48046875, 100.0 * map.size() / 1024, 0);
                 Assert.assertFalse(map.isFilling());
                 Assert.assertEquals(DirectIntCharSequenceHashMap.STOP_BUDGET, map.getStopReason());
                 DirectString view = new DirectString();

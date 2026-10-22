@@ -24,124 +24,161 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.NativeMemoryBudget;
+import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.DirectString;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
- * Native copy of the offsets and chars of the first {@link #MAX_KEYS} keys of one dictionary
- * version, guarded by the owning entry's lock. Bytes below a published key count never change
- * and retired blocks stay allocated until close, so bound readers read without the lock.
+ * Values of the keys below {@link #MAX_KEYS} of one dictionary version, each copied on first read
+ * into a slot of one cache line: the length plus one, then up to {@link #MAX_INLINE_CHARS} chars.
+ * A zero header marks a key that is not copied yet. Reads are lock-free; copies and growth take a
+ * try-lock that never waits. Published slots never change and retired arrays stay allocated until
+ * close, so views survive later copies. Every array is charged to the shared budget, and a refused
+ * array stops admission for good.
  */
 final class SymbolMapLowSlice implements QuietCloseable {
+    static final int INSERTED = 0;
+    // (SLOT_SIZE - Integer.BYTES) / Character.BYTES
+    static final int MAX_INLINE_CHARS = 30;
     static final int MAX_KEYS = 4096;
-    private static final int CHARS_BASE_OFFSET = 8;
-    private static final int CHARS_CAPACITY_OFFSET = 16;
-    private static final int CHARS_USED_OFFSET = 24;
-    private static final int HEADER_SIZE = 40;
-    private static final int KEY_CAPACITY_OFFSET = 0;
-    private static final int KEY_COUNT_OFFSET = 4;
-    private static final int RETIRED_BLOCK_OFFSET = 32;
-    private long block;
+    static final int NOT_INSERTED = 1;
+    static final int STOPPED = 2;
+    // The array header takes the first slot, so the slots start on a cache line.
+    private static final int CAPACITY_OFFSET = 0;
+    private static final int MIN_CAPACITY = 64;
+    private static final int RAW_ADDRESS_OFFSET = 8;
+    private static final int RAW_SIZE_OFFSET = 16;
+    private static final int RETIRED_OFFSET = 24;
+    private static final int SLOT_SHIFT = 6;
+    private static final int SLOT_SIZE = 1 << SLOT_SHIFT;
+    private final NativeMemoryBudget budget;
+    private final AtomicBoolean lock = new AtomicBoolean();
+    private volatile long allocatedBytes;
+    private volatile long array;
+    private volatile boolean isFilling = true;
+    private volatile int size;
+
+    SymbolMapLowSlice(NativeMemoryBudget budget) {
+        this.budget = budget;
+    }
 
     @TestOnly
     public long allocatedBytes() {
-        long bytes = 0;
-        for (long b = block; b != 0; b = Unsafe.getLong(b + RETIRED_BLOCK_OFFSET)) {
-            bytes += blockSize(Unsafe.getInt(b + KEY_CAPACITY_OFFSET), Unsafe.getLong(b + CHARS_CAPACITY_OFFSET));
-        }
-        return bytes;
-    }
-
-    public void bind(SymbolMapReaderImpl reader, int want) {
-        if (block == 0) {
-            reader.bindLow(0, 0, 0, 0);
-        } else {
-            long offsets = block + HEADER_SIZE;
-            reader.bindLow(offsets, offsets + (long) Unsafe.getInt(block + KEY_CAPACITY_OFFSET) * Long.BYTES,
-                    Unsafe.getLong(block + CHARS_BASE_OFFSET), Math.min(want, Unsafe.getInt(block + KEY_COUNT_OFFSET)));
-        }
+        return allocatedBytes;
     }
 
     @Override
     public void close() {
-        long b = block;
-        block = 0;
-        while (b != 0) {
-            long next = Unsafe.getLong(b + RETIRED_BLOCK_OFFSET);
-            Unsafe.free(
-                    b,
-                    blockSize(Unsafe.getInt(b + KEY_CAPACITY_OFFSET), Unsafe.getLong(b + CHARS_CAPACITY_OFFSET)),
-                    MemoryTag.NATIVE_SYMBOL_CACHE
-            );
-            b = next;
+        isFilling = false;
+        long a = array;
+        array = 0;
+        while (a != 0) {
+            final long next = Unsafe.getLong(a + RETIRED_OFFSET);
+            final long bytes = Unsafe.getLong(a + RAW_SIZE_OFFSET);
+            Unsafe.free(Unsafe.getLong(a + RAW_ADDRESS_OFFSET), bytes, MemoryTag.NATIVE_SYMBOL_CACHE);
+            budget.release(bytes);
+            a = next;
+        }
+        allocatedBytes = 0;
+        size = 0;
+    }
+
+    public @Nullable DirectString get(int key, @NotNull DirectString view) {
+        assert key >= 0 && key < MAX_KEYS;
+        final long a = array;
+        if (a == 0 || key >= Unsafe.getInt(a + CAPACITY_OFFSET)) {
+            return null;
+        }
+        final long slot = slotAddress(a, key);
+        final int header = Unsafe.getIntVolatile(null, slot);
+        return header > 0 ? view.of(slot + Integer.BYTES, header - 1) : null;
+    }
+
+    public int size() {
+        return size;
+    }
+
+    /**
+     * Returns STOPPED only to the caller whose copy stops admission.
+     */
+    public int tryPut(int key, long charsAddr, int len) {
+        assert key >= 0 && key < MAX_KEYS && len >= 0 && len <= MAX_INLINE_CHARS;
+        if (!isFilling || lock.get() || !lock.compareAndSet(false, true)) {
+            return NOT_INSERTED;
+        }
+        try {
+            if (!isFilling) {
+                return NOT_INSERTED;
+            }
+            long a = array;
+            if (a == 0 || key >= Unsafe.getInt(a + CAPACITY_OFFSET)) {
+                a = grow(a, key);
+                if (a == 0) {
+                    isFilling = false;
+                    return STOPPED;
+                }
+            }
+            final long slot = slotAddress(a, key);
+            if (Unsafe.getInt(slot) != 0) {
+                return NOT_INSERTED;
+            }
+            if (len > 0) {
+                Vect.memcpy(slot + Integer.BYTES, charsAddr, (long) len * Character.BYTES);
+            }
+            // Publishes the chars copied above.
+            Unsafe.putOrderedInt(null, slot, len + 1);
+            //noinspection NonAtomicOperationOnVolatileField
+            size++;
+            return INSERTED;
+        } finally {
+            lock.set(false);
         }
     }
 
-    public boolean ensure(MemoryR offsetMem, MemoryR charMem, int want) {
-        assert want >= 0 && want <= MAX_KEYS;
-        long b = block;
-        int count = b == 0 ? 0 : Unsafe.getInt(b + KEY_COUNT_OFFSET);
-        if (want <= count) {
-            return true;
+    private static long slotAddress(long array, int key) {
+        return array + ((long) (key + 1) << SLOT_SHIFT);
+    }
+
+    private long grow(long current, int key) {
+        final int capacity = current == 0 ? 0 : Unsafe.getInt(current + CAPACITY_OFFSET);
+        final int newCapacity = Math.min(MAX_KEYS, Math.max(MIN_CAPACITY, Math.max(Numbers.ceilPow2(key + 1), 2 * capacity)));
+        // the header slot, the slots and the slack that aligns them to a cache line
+        final long bytes = (newCapacity + 2L) * SLOT_SIZE;
+        if (!budget.tryReserve(bytes)) {
+            return 0;
         }
-        long base = offsetMem.getLong(SymbolMapWriter.keyToOffset(0));
-        long charsNeeded = offsetMem.getLong(SymbolMapWriter.keyToOffset(want)) - base;
-        int keyCapacity = b == 0 ? 0 : Unsafe.getInt(b + KEY_CAPACITY_OFFSET);
-        long charCapacity = b == 0 ? 0 : Unsafe.getLong(b + CHARS_CAPACITY_OFFSET);
-        if (want <= keyCapacity && charsNeeded <= charCapacity) {
-            append(b, count, want, charsNeeded, offsetMem, charMem);
-            return true;
-        }
-        int newKeyCapacity = want > keyCapacity ? Math.min(MAX_KEYS, Math.max(want, 2 * keyCapacity)) : keyCapacity;
-        long newCharCapacity = charsNeeded > charCapacity ? Math.max(charsNeeded, 2 * charCapacity) : charCapacity;
-        long bytes = blockSize(newKeyCapacity, newCharCapacity);
-        long next;
+        final long raw;
         try {
-            next = Unsafe.malloc(bytes, MemoryTag.NATIVE_SYMBOL_CACHE);
-        } catch (CairoException e) {
-            if (e.isOutOfMemory()) {
-                return false;
-            }
-            throw e;
-        }
-        try {
-            long charsUsed = b == 0 ? 0 : Unsafe.getLong(b + CHARS_USED_OFFSET);
-            Unsafe.putInt(next + KEY_CAPACITY_OFFSET, newKeyCapacity);
-            Unsafe.putInt(next + KEY_COUNT_OFFSET, count);
-            Unsafe.putLong(next + CHARS_BASE_OFFSET, base);
-            Unsafe.putLong(next + CHARS_CAPACITY_OFFSET, newCharCapacity);
-            Unsafe.putLong(next + CHARS_USED_OFFSET, charsUsed);
-            Unsafe.putLong(next + RETIRED_BLOCK_OFFSET, b);
-            if (b != 0) {
-                Vect.memcpy(next + HEADER_SIZE, b + HEADER_SIZE, (long) count * Long.BYTES);
-                Vect.memcpy(next + HEADER_SIZE + (long) newKeyCapacity * Long.BYTES,
-                        b + HEADER_SIZE + (long) keyCapacity * Long.BYTES, charsUsed);
-            }
-            append(next, count, want, charsNeeded, offsetMem, charMem);
-            block = next;
+            raw = Unsafe.malloc(bytes, MemoryTag.NATIVE_SYMBOL_CACHE);
         } catch (Throwable e) {
-            Unsafe.free(next, bytes, MemoryTag.NATIVE_SYMBOL_CACHE);
+            budget.release(bytes);
+            if (e instanceof CairoException ce && ce.isOutOfMemory()) {
+                return 0;
+            }
             throw e;
         }
-        return true;
-    }
-
-    private static void append(long b, int count, int want, long charsNeeded, MemoryR offsetMem, MemoryR charMem) {
-        long offsets = b + HEADER_SIZE;
-        long chars = offsets + (long) Unsafe.getInt(b + KEY_CAPACITY_OFFSET) * Long.BYTES;
-        long charsUsed = Unsafe.getLong(b + CHARS_USED_OFFSET);
-        Vect.memcpy(offsets + (long) count * Long.BYTES,
-                offsetMem.addressOf(SymbolMapWriter.keyToOffset(count)), (long) (want - count) * Long.BYTES);
-        Vect.memcpy(chars + charsUsed, charMem.addressOf(Unsafe.getLong(b + CHARS_BASE_OFFSET) + charsUsed), charsNeeded - charsUsed);
-        Unsafe.putLong(b + CHARS_USED_OFFSET, charsNeeded);
-        Unsafe.putInt(b + KEY_COUNT_OFFSET, want);
-    }
-
-    private static long blockSize(int keyCapacity, long charCapacity) {
-        return HEADER_SIZE + (long) keyCapacity * Long.BYTES + charCapacity;
+        final long a = (raw + SLOT_SIZE - 1) & -SLOT_SIZE;
+        Vect.memset(a, (newCapacity + 1L) * SLOT_SIZE, 0);
+        if (current != 0) {
+            Vect.memcpy(a + SLOT_SIZE, current + SLOT_SIZE, (long) capacity * SLOT_SIZE);
+        }
+        Unsafe.putInt(a + CAPACITY_OFFSET, newCapacity);
+        Unsafe.putLong(a + RAW_ADDRESS_OFFSET, raw);
+        Unsafe.putLong(a + RAW_SIZE_OFFSET, bytes);
+        Unsafe.putLong(a + RETIRED_OFFSET, current);
+        //noinspection NonAtomicOperationOnVolatileField
+        allocatedBytes += bytes;
+        // Publishes the header and the copied slots.
+        array = a;
+        return a;
     }
 }

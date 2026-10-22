@@ -334,38 +334,43 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                         Assert.assertEquals(0, budget.getUsedBytes());
                         try (TableReader reader = engine.getReader("scan_symbols")) {
                             SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
-                            Assert.assertEquals(4096, symbols.getLowCacheSize());
+                            Assert.assertEquals(0, symbols.getLowCacheSize());
                             Assert.assertEquals(0, symbols.getCacheSize());
                             String query = "SELECT count() FROM scan_symbols WHERE " + predicates.getQuick(i);
                             String expected = "count\n" + counts[i] + "\n";
                             assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
 
+                            // a slot array does not fit 1KiB, so the tiny budget caches only map keys
+                            boolean isTiny = limit == 1024;
+                            int lowCount = symbols.getLowCacheSize();
                             int cachedCount = symbols.getCacheSize();
-                            if (limit == 1024) {
+                            if (isTiny) {
+                                Assert.assertEquals(predicates.getQuick(i), 0, lowCount);
                                 Assert.assertTrue(predicates.getQuick(i), cachedCount > 0 && cachedCount < 904);
                             } else {
+                                Assert.assertEquals(predicates.getQuick(i), 4096, lowCount);
                                 Assert.assertEquals(predicates.getQuick(i), 904, cachedCount);
                             }
                             long cachedBytes = budget.getUsedBytes();
-                            Assert.assertEquals(symbols.getCacheAllocatedBytes(), cachedBytes);
+                            Assert.assertEquals(symbols.getCacheAllocatedBytes() + symbols.getLowCacheAllocatedBytes(), cachedBytes);
                             Assert.assertTrue(cachedBytes > 0 && cachedBytes <= limit);
+                            // the map admits key 4096 first under either budget
                             long lowAddress = ((DirectString) symbols.valueOf(0)).lo();
-                            long cachedAddress = ((DirectString) symbols.valueOf(4096)).lo();
+                            long highAddress = ((DirectString) symbols.valueOf(4096)).lo();
                             DirectString mapped = new DirectString();
-                            Assert.assertNotEquals(lowAddress, ((DirectString) symbols.valueOf(0, mapped)).lo());
-                            Assert.assertNotEquals(cachedAddress, ((DirectString) symbols.valueOf(4096, mapped)).lo());
-                            if (limit == 1024) {
-                                Assert.assertEquals(
-                                        ((DirectString) symbols.valueOf(4999, mapped)).lo(),
-                                        ((DirectString) symbols.valueOf(4999)).lo()
-                                );
+                            Assert.assertNotEquals(highAddress, ((DirectString) symbols.valueOf(4096, mapped)).lo());
+                            if (isTiny) {
+                                Assert.assertEquals(((DirectString) symbols.valueOf(0, mapped)).lo(), lowAddress);
+                            } else {
+                                Assert.assertNotEquals(((DirectString) symbols.valueOf(0, mapped)).lo(), lowAddress);
                             }
 
                             assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+                            Assert.assertEquals(lowCount, symbols.getLowCacheSize());
                             Assert.assertEquals(cachedCount, symbols.getCacheSize());
                             Assert.assertEquals(cachedBytes, budget.getUsedBytes());
                             Assert.assertEquals(lowAddress, ((DirectString) symbols.valueOf(0)).lo());
-                            Assert.assertEquals(cachedAddress, ((DirectString) symbols.valueOf(4096)).lo());
+                            Assert.assertEquals(highAddress, ((DirectString) symbols.valueOf(4096)).lo());
                             TestUtils.assertEquals("symbol1", symbols.valueOf(0));
                             TestUtils.assertEquals("symbol4097", symbols.valueOf(4096));
                             TestUtils.assertEquals("symbol5000", symbols.valueOf(4999));

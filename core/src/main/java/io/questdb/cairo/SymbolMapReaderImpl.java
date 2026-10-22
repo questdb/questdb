@@ -42,7 +42,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.NativeMemoryBudget;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -64,6 +63,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private final DirectString keyOfView = new DirectString();
     private final MemoryCMR offsetMem = Vm.getCMRInstance();
     private final Path path = new Path();
+    // Not charMem's own A/B views: getSymbolValuesColumn() exposes charMem to other callers.
     private final DirectString valueViewA = new DirectString();
     private final DirectString valueViewB = new DirectString();
     private DirectIntCharSequenceHashMap cache;
@@ -71,9 +71,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private boolean cached;
     private long columnNameTxn;
     private CairoConfiguration configuration;
-    private long lowCharsBase;
-    private int lowCount;
-    private long lowOffsets;
+    private SymbolMapLowSlice low;
     // Racy hint: a stale value only costs extra map calls.
     private int maxCachedKey = Integer.MAX_VALUE;
     private int maxHash;
@@ -137,12 +135,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     @TestOnly
     public long getLowCacheAllocatedBytes() {
-        return cacheEntry == null ? 0 : cacheEntry.getLowAllocatedBytes();
+        return low == null ? 0 : low.allocatedBytes();
     }
 
     @TestOnly
     public int getLowCacheSize() {
-        return lowCount;
+        return low == null ? 0 : low.size();
     }
 
     @Override
@@ -302,12 +300,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
             if (cached && cachePool != null) {
                 cacheEntry = cachePool.acquire(path.trimTo(plen), columnName, columnNameTxn, truncateVersion);
-                cache = cacheEntry == null ? null : cacheEntry.getMap();
-                if (cache != null) {
+                if (cacheEntry != null) {
+                    cache = cacheEntry.getMap();
+                    low = cacheEntry.getLow();
                     updateMaxCachedKey(cache);
                 }
             }
-            refreshLow();
             symbolTableGeneration = symbolTableGeneration == Long.MAX_VALUE ? 0 : symbolTableGeneration + 1;
             LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
                     .$(", fd=").$(offsetMem.getFd())
@@ -344,7 +342,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         // Refresh index reader to avoid memory remapping on keyOf() calls.
         // partition txn does not matter, because symbol is at the root of the table dir (not at partition level)
         indexReader.of(configuration, path, columnNameSink, columnNameTxn, -1, 0, null, null, 0);
-        refreshLow();
     }
 
     @Override
@@ -352,6 +349,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return cachedValueOf(key, valueViewB);
     }
 
+    /**
+     * Returns the reader's A view of the value. The next valueOf() call rebinds it, so a caller
+     * that needs two values at once reads the second through {@link #valueBOf(int)} or a view
+     * of its own.
+     */
     @Override
     public CharSequence valueOf(int key) {
         return cachedValueOf(key, valueViewA);
@@ -374,17 +376,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return null;
     }
 
-    void bindLow(long offsets, long chars, long base, int count) {
-        lowOffsets = offsets;
-        lowCharsBase = chars - base;
-        lowCount = count;
-    }
-
-    void logLowSliceOom() {
-        LOG.info().$("symbol cache low slice allocation failed [table=").$(path)
-                .$(", column=").$(columnNameSink).$(", cachedKeys=").$(lowCount).I$();
-    }
-
     private CharSequence cachedValueOf(int key, DirectString view) {
         if (key > maxCachedKey) {
             return valueOf(key, view);
@@ -393,9 +384,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         if (key < 0 || key >= symbolCount) {
             return null;
         }
-        if (key < lowCount) {
-            long record = lowCharsBase + Unsafe.getLong(lowOffsets + ((long) key << 3));
-            return view.of(record + Integer.BYTES, Unsafe.getInt(record));
+        final SymbolMapLowSlice low = this.low;
+        final boolean isLowKey = low != null && key < SymbolMapLowSlice.MAX_KEYS;
+        if (isLowKey && low.get(key, view) != null) {
+            return view;
         }
         final DirectIntCharSequenceHashMap cache = this.cache;
         if (cache != null && cache.get(key, view) != null) {
@@ -403,7 +395,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
         DirectString value = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
         assert value != null;
-        if (cache != null && maxCachedKey == Integer.MAX_VALUE) {
+        // A low key whose value does not fit a slot goes to the map like any other key.
+        if (isLowKey && value.length() <= SymbolMapLowSlice.MAX_INLINE_CHARS) {
+            if (low.tryPut(key, value.lo(), value.length()) == SymbolMapLowSlice.STOPPED) {
+                logLowSliceStopped();
+            }
+        } else if (cache != null && maxCachedKey == Integer.MAX_VALUE) {
             int result = cache.tryPutIfAbsent(key, value.lo(), value.length());
             if (result != DirectIntCharSequenceHashMap.INSERTED) {
                 updateMaxCachedKey(cache);
@@ -428,19 +425,21 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 .$(", budgetUsed=").$(budget.getUsedBytes()).$(", budgetLimit=").$(budget.getLimit()).I$();
     }
 
-    private void refreshLow() {
-        if (cacheEntry == null) {
-            bindLow(0, 0, 0, 0);
-        } else {
-            cacheEntry.ensureLow(this, offsetMem, charMem, Math.min(SymbolMapLowSlice.MAX_KEYS, symbolCount));
-        }
+    private void logLowSliceStopped() {
+        final NativeMemoryBudget budget = cacheEntry.getBudget();
+        final long budgetUsed = budget.getUsedBytes();
+        final long budgetLimit = budget.getLimit();
+        final int cachedKeys = low.size();
+        LOG.info().$("symbol cache low slice stopped admitting new values [table=").$(path)
+                .$(", column=").$(columnNameSink).$(", cachedKeys=").$(cachedKeys)
+                .$(", budgetUsed=").$(budgetUsed).$(", budgetLimit=").$(budgetLimit).I$();
     }
 
     private void releaseCache() {
         cacheEntry = Misc.free(cacheEntry);
         cache = null;
+        low = null;
         maxCachedKey = Integer.MAX_VALUE;
-        bindLow(0, 0, 0, 0);
     }
 
     private void updateMaxCachedKey(DirectIntCharSequenceHashMap cache) {

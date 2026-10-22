@@ -901,9 +901,12 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                         .expectSize()
                                         .returns("count\n9001\n");
                             }
-                            Assert.assertEquals(4096, symbols.getLowCacheSize());
+                            // workers that lose the try-lock skip a copy, so neither count is exact
+                            Assert.assertTrue(symbols.getLowCacheSize() > 0);
+                            Assert.assertTrue(symbols.getLowCacheSize() <= 4096);
+                            // every value fits a slot, so the map holds only the keys from 4096 up
                             Assert.assertTrue(symbols.getCacheSize() > 0);
-                            Assert.assertTrue(symbols.getCacheSize() <= 10_000 - symbols.getLowCacheSize());
+                            Assert.assertTrue(symbols.getCacheSize() <= 10_000 - 4096);
                         }
                     },
                     configuration,

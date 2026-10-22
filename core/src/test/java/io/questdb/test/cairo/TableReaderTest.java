@@ -4935,9 +4935,10 @@ public class TableReaderTest extends AbstractCairoTest {
                 ) {
                     SymbolMapReaderImpl latestSymbols = (SymbolMapReaderImpl) latest.getSymbolMapReader(0);
                     TestUtils.assertEquals("new", latestSymbols.valueOf(1));
-                    Assert.assertEquals(1, ((SymbolMapReaderImpl) old.getSymbolMapReader(0)).getLowCacheSize());
-                    Assert.assertEquals(1, ((SymbolMapReaderImpl) copy.getSymbolMapReader(0)).getLowCacheSize());
+                    // all three share one entry; the older transactions still cannot see key 1
                     Assert.assertEquals(2, latestSymbols.getLowCacheSize());
+                    Assert.assertEquals(2, ((SymbolMapReaderImpl) old.getSymbolMapReader(0)).getLowCacheSize());
+                    Assert.assertEquals(2, ((SymbolMapReaderImpl) copy.getSymbolMapReader(0)).getLowCacheSize());
                     Assert.assertNull(copy.getSymbolMapReader(0).valueOf(1));
                     Assert.assertNull(old.getSymbolMapReader(0).valueOf(1));
                     Assert.assertEquals(1, engine.getSymbolMapCachePool().getEntryCount());
@@ -5051,8 +5052,8 @@ public class TableReaderTest extends AbstractCairoTest {
                             TestUtils.assertEquals("4097", symbols.valueBOf(4096));
                             TestUtils.assertEquals("1", view.valueOf(0));
                             TestUtils.assertEquals("4097", view.valueBOf(4096));
-                            Assert.assertEquals(4096, symbols.getLowCacheSize());
-                            Assert.assertTrue(symbols.getLowCacheAllocatedBytes() > 0);
+                            Assert.assertEquals(0, symbols.getLowCacheSize());
+                            Assert.assertEquals(0, symbols.getLowCacheAllocatedBytes());
                             Assert.assertEquals(0, symbols.getCacheSize());
                             Assert.assertEquals(0, symbols.getCacheAllocatedBytes());
                             Assert.assertEquals(0, localEngine.getSymbolMapCachePool().getBudget().getUsedBytes());

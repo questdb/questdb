@@ -30,6 +30,59 @@ import org.junit.Test;
 public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testFirstAndLastResolveIndependently() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
+                execute("CREATE TABLE tab (k SYMBOL, s SYMBOL " + cacheFlag + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO tab VALUES
+                        ('k1', 'abc', '2024-01-01T00:00:00.000000Z'),
+                        ('k1', 'b', '2024-01-01T01:00:00.000000Z'),
+                        ('k2', 'c', '2024-01-01T02:00:00.000000Z'),
+                        ('k2', 'c', '2024-01-01T03:00:00.000000Z')
+                        """);
+                assertQuery("""
+                        SELECT k,
+                            nullif(first(s), last(s)) n,
+                            starts_with(first(s), last(s)) sw,
+                            strpos(first(s), last(s)) p,
+                            replace(first(s), last(s), 'Z') r,
+                            split_part(first(s), last(s), 1) sp,
+                            lpad(first(s), 5, last(s)) lp,
+                            rpad(first(s), 5, last(s)) rp,
+                            nullif(first_not_null(s), last_not_null(s)) nn
+                        FROM tab
+                        ORDER BY k
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tn\tsw\tp\tr\tsp\tlp\trp\tnn
+                                k1\tabc\tfalse\t2\taZc\ta\tbbabc\tabcbb\tabc
+                                k2\t\ttrue\t1\tZ\t\tccccc\tccccc\t
+                                """);
+                assertQuery("SELECT nullif(first(s), last(s)) n FROM tab")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                n
+                                abc
+                                """);
+                assertQuery("SELECT ts, nullif(first(s), last(s)) n FROM tab SAMPLE BY 1d")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tn
+                                2024-01-01T00:00:00.000000Z\tabc
+                                """);
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
     public void testKeyed() throws Exception {
         assertMemoryLeak(() -> assertQuery("select a, first(sym) sym from tab order by a")
                 .ddl("create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))")

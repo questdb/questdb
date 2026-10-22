@@ -381,7 +381,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.recentWriteTracker = new RecentWriteTracker(configuration.getRecentWriteTrackerCapacity());
             this.writerPool = new WriterPool(configuration, this, recentWriteTracker);
             this.scoreboardPool = new TxnScoreboardPoolV2(configuration);
-            this.symbolMapCachePool = new SymbolMapCachePool(new NativeMemoryBudget(256L * Numbers.SIZE_1MB));
+            this.symbolMapCachePool = new SymbolMapCachePool(new NativeMemoryBudget(configuration.getSymbolCacheMaxSize()));
             this.readerPool = new ReaderPool(configuration, scoreboardPool, symbolMapCachePool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);

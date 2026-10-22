@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.DirectIntCharSequenceHashMap;
@@ -94,10 +93,9 @@ public class SymbolMapCachePool implements QuietCloseable {
 
     public class Entry implements QuietCloseable {
         private final String key;
-        private final SymbolMapLowSlice lowSlice = new SymbolMapLowSlice();
+        private final SymbolMapLowSlice low = new SymbolMapLowSlice(budget);
         private final DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_SYMBOL_CACHE, budget);
         private final AtomicInteger refCount = new AtomicInteger(1);
-        private boolean hasLoggedLowOom;
 
         private Entry(String key) {
             this.key = key;
@@ -109,7 +107,7 @@ public class SymbolMapCachePool implements QuietCloseable {
             assert count >= 0;
             if (count == 0 && refCount.compareAndSet(0, -1)) {
                 map.close();
-                lowSlice.close();
+                low.close();
                 pool.remove(key, this);
             }
         }
@@ -118,27 +116,12 @@ public class SymbolMapCachePool implements QuietCloseable {
             return map;
         }
 
-        void ensureLow(SymbolMapReaderImpl reader, MemoryR offsetMem, MemoryR charMem, int want) {
-            synchronized (lowSlice) {
-                boolean isReady = lowSlice.ensure(offsetMem, charMem, want);
-                // Bind under the lock so the count cannot include an unpublished append.
-                lowSlice.bind(reader, want);
-                if (!isReady && !hasLoggedLowOom) {
-                    hasLoggedLowOom = true;
-                    reader.logLowSliceOom();
-                }
-            }
-        }
-
         NativeMemoryBudget getBudget() {
             return budget;
         }
 
-        @TestOnly
-        long getLowAllocatedBytes() {
-            synchronized (lowSlice) {
-                return lowSlice.allocatedBytes();
-            }
+        SymbolMapLowSlice getLow() {
+            return low;
         }
 
         private boolean incrementRefCount() {

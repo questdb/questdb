@@ -680,6 +680,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlWindowTreeKeyMaxBytes;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
+    private final long symbolCacheMaxSize;
     private final long symbolTableMaxAllocationPageSize;
     private final long symbolTableMinAllocationPageSize;
     private final int systemO3ColumnMemorySize;
@@ -1938,6 +1939,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerMiscAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_MISC_APPEND_PAGE_SIZE, Files.PAGE_SIZE));
             this.symbolTableMinAllocationPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_MIN_ALLOCATION_PAGE_SIZE, Files.PAGE_SIZE));
             this.symbolTableMaxAllocationPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_MAX_ALLOCATION_PAGE_SIZE, 8 * 1024 * 1024));
+            this.symbolCacheMaxSize = getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_CACHE_MAX_SIZE, 256 * Numbers.SIZE_1MB, 0);
 
             this.sqlSampleByIndexSearchPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 0);
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
@@ -5833,6 +5835,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSubsampleMaxRows() {
             return subsampleMaxRows;
+        }
+
+        @Override
+        public long getSymbolCacheMaxSize() {
+            return symbolCacheMaxSize;
         }
 
         @Override
