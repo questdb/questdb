@@ -203,6 +203,24 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
         });
     }
 
+
+    @Test
+    public void testIPv4ColumnTopShipsNull() throws Exception {
+        // IPv4 column-top rows must surface as NULL, not as 128.0.0.0.
+        // NullMemoryCMR.getInt returns Numbers.INT_NULL (0x80000000) for absent
+        // columns, which differs from Numbers.IPv4_NULL (0). The fix in
+        // appendIPv4OrNull must reconcile both sentinels.
+        runColumnTopTest("IPv4", (batch, rowsBefore) -> {
+            int n = batch.getRowCount();
+            for (int r = 0; r < n; r++) {
+                int abs = rowsBefore + r;
+                Assert.assertTrue(
+                        "IPv4 row " + abs + " (column-top) must report null",
+                        batch.isNull(0, r));
+            }
+        });
+    }
+
     /**
      * Drives the column-top scenario for {@code typeName}: creates a WAL
      * table with only a TIMESTAMP, ingests {@link #COLUMN_TOP_ROWS} rows
