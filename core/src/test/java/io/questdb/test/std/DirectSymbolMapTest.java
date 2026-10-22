@@ -145,7 +145,7 @@ public class DirectSymbolMapTest {
                     } else {
                         try {
                             Assert.assertTrue(entered.await(10, TimeUnit.SECONDS));
-                            Assert.assertEquals(DirectIntCharSequenceHashMap.NOT_INSERTED, map.tryPutIfAbsent(2, 0, 0));
+                            Assert.assertEquals(DirectIntCharSequenceHashMap.BUSY, map.tryPutIfAbsent(2, 0, 0));
                             Assert.assertEquals(0, map.size());
                             Assert.assertEquals(1, reservations.get());
                         } catch (InterruptedException e) {

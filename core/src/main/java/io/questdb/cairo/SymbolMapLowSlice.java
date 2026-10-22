@@ -46,6 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * array stops admission for good.
  */
 final class SymbolMapLowSlice implements QuietCloseable {
+    static final int BUSY = 3;
     static final int INSERTED = 0;
     // (SLOT_SIZE - Integer.BYTES) / Character.BYTES
     static final int MAX_INLINE_CHARS = 30;
@@ -76,6 +77,11 @@ final class SymbolMapLowSlice implements QuietCloseable {
         return allocatedBytes;
     }
 
+    public int capacity() {
+        final long a = array;
+        return a == 0 ? 0 : Unsafe.getInt(a + CAPACITY_OFFSET);
+    }
+
     @Override
     public void close() {
         isFilling = false;
@@ -103,17 +109,25 @@ final class SymbolMapLowSlice implements QuietCloseable {
         return header > 0 ? view.of(slot + Integer.BYTES, header - 1) : null;
     }
 
+    public boolean isFilling() {
+        return isFilling;
+    }
+
     public int size() {
         return size;
     }
 
     /**
-     * Returns STOPPED only to the caller whose copy stops admission.
+     * Returns BUSY while another caller holds the lock, and STOPPED only to the caller whose copy
+     * stops admission.
      */
     public int tryPut(int key, int symbolCount, long charsAddr, int len) {
         assert key >= 0 && key < MAX_KEYS && key < symbolCount && len >= 0 && len <= MAX_INLINE_CHARS;
-        if (!isFilling || lock.get() || !lock.compareAndSet(false, true)) {
+        if (!isFilling) {
             return NOT_INSERTED;
+        }
+        if (lock.get() || !lock.compareAndSet(false, true)) {
+            return BUSY;
         }
         try {
             if (!isFilling) {

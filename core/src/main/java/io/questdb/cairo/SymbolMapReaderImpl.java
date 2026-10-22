@@ -55,6 +55,7 @@ import static io.questdb.cairo.TableUtils.charFileName;
 import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
+    public static final int INSERT_BACKOFF = 1024;
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final MemoryCMR charMem = Vm.getCMRInstance();
     private final StringSink columnNameSink = new StringSink();
@@ -62,18 +63,18 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     // keyOf() must not rebind the valueOf() flyweight supplied by its caller.
     private final DirectString keyOfView = new DirectString();
     private final MemoryCMR offsetMem = Vm.getCMRInstance();
+    private final SymbolTableView ownView = new SymbolTableView();
     private final Path path = new Path();
-    // Not charMem's own A/B views: getSymbolValuesColumn() exposes charMem to other callers.
-    private final DirectString valueViewA = new DirectString();
-    private final DirectString valueViewB = new DirectString();
     private DirectIntCharSequenceHashMap cache;
     private SymbolMapCachePool.Entry cacheEntry;
     private boolean cached;
     private long columnNameTxn;
     private CairoConfiguration configuration;
+    // isLowFilling, lowKeyLimit and maxCachedKey are racy hints: a stale value only costs extra calls.
+    private boolean isLowFilling;
     private SymbolMapLowSlice low;
-    // Racy hint: a stale value only costs extra map calls.
-    private int maxCachedKey = Integer.MAX_VALUE;
+    private int lowKeyLimit;
+    private int maxCachedKey = -1;
     private int maxHash;
     private long maxOffset;
     private boolean nullValue;
@@ -141,6 +142,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     @TestOnly
     public int getLowCacheSize() {
         return low == null ? 0 : low.size();
+    }
+
+    @TestOnly
+    public int getMaxCachedKey() {
+        return maxCachedKey;
     }
 
     @Override
@@ -303,7 +309,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 if (cacheEntry != null) {
                     cache = cacheEntry.getMap();
                     low = cacheEntry.getLow();
-                    updateMaxCachedKey(cache);
+                    isLowFilling = true;
+                    lowKeyLimit = SymbolMapLowSlice.MAX_KEYS;
+                    maxCachedKey = Integer.MAX_VALUE;
+                    refreshCacheBounds();
                 }
             }
             symbolTableGeneration = symbolTableGeneration == Long.MAX_VALUE ? 0 : symbolTableGeneration + 1;
@@ -346,7 +355,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     @Override
     public CharSequence valueBOf(int key) {
-        return cachedValueOf(key, valueViewB);
+        return ownView.valueBOf(key);
     }
 
     /**
@@ -356,7 +365,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
      */
     @Override
     public CharSequence valueOf(int key) {
-        return cachedValueOf(key, valueViewA);
+        return ownView.valueOf(key);
     }
 
     /**
@@ -374,42 +383,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
         }
         return null;
-    }
-
-    private CharSequence cachedValueOf(int key, DirectString view) {
-        if (key > maxCachedKey) {
-            return valueOf(key, view);
-        }
-        // Shared entries may contain keys committed after this reader's transaction.
-        if (key < 0 || key >= symbolCount) {
-            return null;
-        }
-        final SymbolMapLowSlice low = this.low;
-        final boolean isLowKey = low != null && key < SymbolMapLowSlice.MAX_KEYS;
-        if (isLowKey && low.get(key, view) != null) {
-            return view;
-        }
-        final DirectIntCharSequenceHashMap cache = this.cache;
-        if (cache != null && cache.get(key, view) != null) {
-            return view;
-        }
-        DirectString value = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
-        assert value != null;
-        // A low key whose value does not fit a slot goes to the map like any other key.
-        if (isLowKey && value.length() <= SymbolMapLowSlice.MAX_INLINE_CHARS) {
-            if (low.tryPut(key, symbolCount, value.lo(), value.length()) == SymbolMapLowSlice.STOPPED) {
-                logLowSliceStopped();
-            }
-        } else if (cache != null && maxCachedKey == Integer.MAX_VALUE) {
-            int result = cache.tryPutIfAbsent(key, value.lo(), value.length());
-            if (result != DirectIntCharSequenceHashMap.INSERTED) {
-                updateMaxCachedKey(cache);
-                if (result == DirectIntCharSequenceHashMap.STOPPED) {
-                    logCacheStopped();
-                }
-            }
-        }
-        return value;
     }
 
     private void logCacheStopped() {
@@ -435,26 +408,34 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 .$(", budgetUsed=").$(budgetUsed).$(", budgetLimit=").$(budgetLimit).I$();
     }
 
+    private void refreshCacheBounds() {
+        if (isLowFilling && !low.isFilling()) {
+            lowKeyLimit = low.capacity();
+            isLowFilling = false;
+        }
+        final int maxMapKey = cache.getMaxKeyIfStopped();
+        if (maxMapKey != Integer.MAX_VALUE) {
+            final int maxKey = Math.max(lowKeyLimit - 1, maxMapKey);
+            if (maxCachedKey != maxKey) {
+                maxCachedKey = maxKey;
+            }
+        }
+    }
+
     private void releaseCache() {
         cacheEntry = Misc.free(cacheEntry);
         cache = null;
         low = null;
-        maxCachedKey = Integer.MAX_VALUE;
-    }
-
-    private void updateMaxCachedKey(DirectIntCharSequenceHashMap cache) {
-        if (maxCachedKey == Integer.MAX_VALUE) {
-            int maxKey = cache.getMaxKeyIfStopped();
-            if (maxKey != Integer.MAX_VALUE) {
-                maxCachedKey = Math.max(SymbolMapLowSlice.MAX_KEYS - 1, maxKey);
-            }
-        }
+        isLowFilling = false;
+        lowKeyLimit = 0;
+        maxCachedKey = -1;
     }
 
     private class SymbolTableView implements StaticSymbolTable {
         private final DirectString csviewA = new DirectString();
         private final DirectString csviewB = new DirectString();
         private final DirectString csviewInternal = new DirectString();
+        private int insertBackoff;
         private RowCursor rowCursor;
 
         @Override
@@ -500,12 +481,56 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
         @Override
         public CharSequence valueBOf(int key) {
-            return SymbolMapReaderImpl.this.cachedValueOf(key, csviewB);
+            return cachedValueOf(key, csviewB);
         }
 
         @Override
         public CharSequence valueOf(int key) {
-            return SymbolMapReaderImpl.this.cachedValueOf(key, csviewA);
+            return cachedValueOf(key, csviewA);
+        }
+
+        private CharSequence cachedValueOf(int key, DirectString view) {
+            if (key > maxCachedKey) {
+                return SymbolMapReaderImpl.this.valueOf(key, view);
+            }
+            // Shared entries may contain keys committed after this reader's transaction.
+            if (key < 0 || key >= symbolCount) {
+                return null;
+            }
+            final boolean isLowKey = key < lowKeyLimit;
+            if (isLowKey && low.get(key, view) != null) {
+                return view;
+            }
+            if (cache.get(key, view) != null) {
+                return view;
+            }
+            final DirectString value = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
+            assert value != null;
+            if (insertBackoff > 0) {
+                insertBackoff--;
+                return value;
+            }
+            // A low key goes to the map once the slice stops, or when its value does not fit a slot.
+            if (isLowFilling && isLowKey && value.length() <= SymbolMapLowSlice.MAX_INLINE_CHARS) {
+                switch (low.tryPut(key, symbolCount, value.lo(), value.length())) {
+                    case SymbolMapLowSlice.BUSY -> insertBackoff = INSERT_BACKOFF;
+                    case SymbolMapLowSlice.NOT_INSERTED -> refreshCacheBounds();
+                    case SymbolMapLowSlice.STOPPED -> {
+                        logLowSliceStopped();
+                        refreshCacheBounds();
+                    }
+                }
+            } else if (maxCachedKey == Integer.MAX_VALUE) {
+                switch (cache.tryPutIfAbsent(key, value.lo(), value.length())) {
+                    case DirectIntCharSequenceHashMap.BUSY -> insertBackoff = INSERT_BACKOFF;
+                    case DirectIntCharSequenceHashMap.NOT_INSERTED -> refreshCacheBounds();
+                    case DirectIntCharSequenceHashMap.STOPPED -> {
+                        logCacheStopped();
+                        refreshCacheBounds();
+                    }
+                }
+            }
+            return value;
         }
     }
 }

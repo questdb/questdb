@@ -408,13 +408,13 @@ public class SymbolMapTest extends AbstractCairoTest {
                     TestUtils.assertEquals("s100", reader.valueOf(100));
                     budget.setLimit(1024 * 1024);
                     TestUtils.assertEquals("s101", reader.valueOf(101));
-                    // the stop is permanent, and the cached keys stay readable
+                    // the slots stop for good and keep their values; later low keys go to the map
                     for (int key = 0; key < 128; key++) {
                         TestUtils.assertEquals("s" + key, reader.valueBOf(key));
                     }
                     Assert.assertEquals(64, reader.getLowCacheSize());
-                    Assert.assertEquals(0, reader.getCacheSize());
-                    Assert.assertEquals(66 * 64, budget.getUsedBytes());
+                    Assert.assertEquals(64, reader.getCacheSize());
+                    Assert.assertEquals(66 * 64 + reader.getCacheAllocatedBytes(), budget.getUsedBytes());
                     logs.drain();
                     logs.assertOnlyOnce("symbol cache low slice stopped admitting new values.*column=x");
                 } finally {
@@ -694,6 +694,74 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedCacheBusyInsertBacksOff() throws Exception {
+        assertMemoryLeak(() -> {
+            final int symbolCount = SymbolMapReaderImpl.INSERT_BACKOFF + 8;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", symbolCount, true);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
+                    for (int key = 0; key < symbolCount; key++) {
+                        writer.put("s" + key);
+                    }
+                }
+                CountDownLatch growing = new CountDownLatch(1);
+                CountDownLatch released = new CountDownLatch(1);
+                AtomicInteger reservations = new AtomicInteger();
+                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024) {
+                    @Override
+                    public boolean tryReserve(long bytes) {
+                        if (reservations.incrementAndGet() == 1) {
+                            growing.countDown();
+                            try {
+                                Assert.assertTrue(released.await(10, TimeUnit.SECONDS));
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                throw new AssertionError(e);
+                            }
+                        }
+                        return super.tryReserve(bytes);
+                    }
+                };
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, symbolCount, pool, 0)
+                ) {
+                    SymbolTable view = reader.newSymbolTableView();
+                    AtomicReference<Throwable> failure = new AtomicReference<>();
+                    Thread thread = new Thread(() -> {
+                        try {
+                            TestUtils.assertEquals("s0", reader.valueOf(0));
+                        } catch (Throwable e) {
+                            failure.set(e);
+                        }
+                    });
+                    thread.start();
+                    try {
+                        Assert.assertTrue(growing.await(10, TimeUnit.SECONDS));
+                        TestUtils.assertEquals("s1", view.valueOf(1));
+                    } finally {
+                        released.countDown();
+                        TestUtils.joinThreads(thread);
+                    }
+                    if (failure.get() != null) {
+                        throw new AssertionError(failure.get());
+                    }
+                    Assert.assertEquals(1, reader.getLowCacheSize());
+                    for (int key = 2; key < SymbolMapReaderImpl.INSERT_BACKOFF + 2; key++) {
+                        TestUtils.assertEquals("s" + key, view.valueOf(key));
+                    }
+                    Assert.assertEquals(1, reader.getLowCacheSize());
+                    TestUtils.assertEquals("s1", view.valueOf(1));
+                    Assert.assertEquals(2, reader.getLowCacheSize());
+                    TestUtils.assertEquals("s2", reader.valueOf(2));
+                    Assert.assertEquals(3, reader.getLowCacheSize());
+                }
+                Assert.assertEquals(0, budget.getUsedBytes());
+            }
+        });
+    }
+
+    @Test
     public void testSharedCacheReaderWithZeroAndExhaustedBudget() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -711,6 +779,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                             SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 4097, pool, 0)
                     ) {
                         SymbolTable view = reader.newSymbolTableView();
+                        TestUtils.assertEquals("s0", reader.valueOf(0));
+                        Assert.assertEquals(Integer.MAX_VALUE, reader.getMaxCachedKey());
+                        TestUtils.assertEquals("s1", reader.valueBOf(1));
+                        Assert.assertEquals(-1, reader.getMaxCachedKey());
                         for (int i = 0; i < 10; i++) {
                             TestUtils.assertEquals("s0", reader.valueOf(0));
                             TestUtils.assertEquals("s4096", reader.valueBOf(4096));

@@ -39,6 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * view. Close must not run concurrently with any access, including to those views.
  */
 public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRhsPadding implements QuietCloseable {
+    public static final int BUSY = 3;
     public static final int INSERTED = 0;
     public static final int NOT_INSERTED = 1;
     public static final int STOPPED = 2;
@@ -204,12 +205,16 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
     }
 
     /**
-     * Returns STOPPED only to the inserter that stops admission.
+     * Returns BUSY while another inserter holds the lock, and STOPPED only to the inserter that
+     * stops admission.
      */
     public int tryPutIfAbsent(int key, long charsAddr, int len) {
         assert len >= 0 && (len == 0 || charsAddr != 0);
-        if (Integer.BYTES + 2L * len > MAX_RECORD_BYTES || !isFilling || lock.get() || !lock.compareAndSet(false, true)) {
+        if (Integer.BYTES + 2L * len > MAX_RECORD_BYTES || !isFilling) {
             return NOT_INSERTED;
+        }
+        if (lock.get() || !lock.compareAndSet(false, true)) {
+            return BUSY;
         }
         try {
             if (!isFilling) {
