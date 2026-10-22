@@ -259,6 +259,9 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
     private class HashFullOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
         private final Map matchIdsMap;
         private final FullOuterJoinRecord record;
+        // Tells the master scan from the sweep of unmatched slave rows. record.hasMaster() cannot:
+        // when the sides are swapped, it reports the slave side, which the sweep keeps present.
+        private boolean isScanningMaster;
         private MapRecordCursor mapCursor;
         private RecordSink masterCursorSink;
         private RecordSink slaveCursorSink;
@@ -310,6 +313,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveCursorSink, slaveChain, keyRecord);
                 isMapBuilt = true;
                 hasMaster(true);
+                isScanningMaster = true;
                 mapCursor = joinKeyMap.getCursor();
             }
 
@@ -317,7 +321,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
-                    if (record.hasMaster()) {
+                    if (isScanningMaster) {
                         if (filter.getBool(record)) {
                             MapKey keys = matchIdsMap.withKey();
                             keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
@@ -360,6 +364,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
             hasMaster(false);
             hasSlave(true);
+            isScanningMaster = false;
             while (mapCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapRecord mapRecord = mapCursor.getRecord();
@@ -396,6 +401,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 mapCursor.toTop();
             }
             hasMaster(true);
+            isScanningMaster = true;
             if (!isMapBuilt) {
                 matchIdsMap.clear();
             }

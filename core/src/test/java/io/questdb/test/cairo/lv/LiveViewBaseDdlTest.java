@@ -37,7 +37,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -818,7 +817,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                         } catch (Throwable th) {
                             midDrainApplyFailure.set(th);
                         } finally {
-                            Path.clearThreadLocals();
+                            clearWorkerThreadLocals();
                         }
                     });
                     applier.start();

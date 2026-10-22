@@ -2078,7 +2078,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     } catch (Throwable t) {
                         readerError.set(t);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-rewind-reader");
                 reader.start();
