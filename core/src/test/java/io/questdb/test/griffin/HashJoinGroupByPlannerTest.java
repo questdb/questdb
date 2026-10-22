@@ -1046,7 +1046,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 // Every build runs in rounds, with 256 partitions.
                 HashJoinBuildMode.PARALLEL.applyProperties(node1.getConfigurationOverrides());
                 // gb in 39 frames of 1_049 rows on average, and then in 40 frames of 1_023 rows.
-                for (int frameRows : new int[]{1_024, 1_023}) {
+                final int longRunFrameRows = 1_050;
+                for (int frameRows : new int[]{longRunFrameRows, 1_023}) {
                     context.changePageFrameSizes(frameRows, frameRows);
                     for (String on : new String[]{"ga.k = gb.k", "ga.l = gb.l", "ga.vc = gb.vc"}) {
                         for (String where : new String[]{"", " WHERE gb.w > 0"}) {
@@ -1060,7 +1061,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             // frames of 1_049 rows leave four tasks runs of 262 rows on average, which
                             // the count takes, and frames of 1_023 rows leave them runs under the 256
                             // it needs, so the owner counts instead.
-                            final boolean isCountedInRounds = !hasFrameRegions || frameRows == 1_024;
+                            final boolean isCountedInRounds = !hasFrameRegions || frameRows == longRunFrameRows;
                             assertQuery(sql)
                                     .withContext(context)
                                     .noLeakCheck()
@@ -1073,7 +1074,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                 final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
                                 Assert.assertTrue(sql, cursor.hasNext());
                                 Assert.assertEquals(sql, 818_400, cursor.getRecord().getLong(0));
-                                Assert.assertEquals(sql, frameRows == 1_024 ? 39 : 40, atom.getBuildFrameCount());
+                                Assert.assertEquals(sql, frameRows == longRunFrameRows ? 39 : 40, atom.getBuildFrameCount());
                                 Assert.assertTrue(sql, atom.isBuiltInRounds());
                                 Assert.assertEquals(sql, 256, atom.getBuildPartitionCount());
                                 Assert.assertTrue(sql, atom.isCountedByKey());
