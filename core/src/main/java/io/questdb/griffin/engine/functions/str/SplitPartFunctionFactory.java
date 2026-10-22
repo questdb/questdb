@@ -74,6 +74,17 @@ public class SplitPartFunctionFactory implements FunctionFactory {
             return;
         }
 
+        if (delimiter.length() == 0) {
+            // an empty delimiter cannot split the string, so the whole string is treated as a
+            // single field (matching PostgreSQL and Snowflake). Only field 1 (counting from the
+            // start) or -1 (counting from the end) exists; any other position is out of range.
+            // Previously this dropped the input and returned an empty string.
+            if (index == 1 || index == -1) {
+                sink.put(str);
+            }
+            return;
+        }
+
         int start;
         int end;
         if (index > 0) {
