@@ -397,7 +397,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         assert value != null;
         // A low key whose value does not fit a slot goes to the map like any other key.
         if (isLowKey && value.length() <= SymbolMapLowSlice.MAX_INLINE_CHARS) {
-            if (low.tryPut(key, value.lo(), value.length()) == SymbolMapLowSlice.STOPPED) {
+            if (low.tryPut(key, symbolCount, value.lo(), value.length()) == SymbolMapLowSlice.STOPPED) {
                 logLowSliceStopped();
             }
         } else if (cache != null && maxCachedKey == Integer.MAX_VALUE) {

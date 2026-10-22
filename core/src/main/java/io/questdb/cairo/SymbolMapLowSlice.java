@@ -110,8 +110,8 @@ final class SymbolMapLowSlice implements QuietCloseable {
     /**
      * Returns STOPPED only to the caller whose copy stops admission.
      */
-    public int tryPut(int key, long charsAddr, int len) {
-        assert key >= 0 && key < MAX_KEYS && len >= 0 && len <= MAX_INLINE_CHARS;
+    public int tryPut(int key, int symbolCount, long charsAddr, int len) {
+        assert key >= 0 && key < MAX_KEYS && key < symbolCount && len >= 0 && len <= MAX_INLINE_CHARS;
         if (!isFilling || lock.get() || !lock.compareAndSet(false, true)) {
             return NOT_INSERTED;
         }
@@ -121,7 +121,7 @@ final class SymbolMapLowSlice implements QuietCloseable {
             }
             long a = array;
             if (a == 0 || key >= Unsafe.getInt(a + CAPACITY_OFFSET)) {
-                a = grow(a, key);
+                a = grow(a, symbolCount);
                 if (a == 0) {
                     isFilling = false;
                     return STOPPED;
@@ -148,9 +148,9 @@ final class SymbolMapLowSlice implements QuietCloseable {
         return array + ((long) (key + 1) << SLOT_SHIFT);
     }
 
-    private long grow(long current, int key) {
+    private long grow(long current, int symbolCount) {
         final int capacity = current == 0 ? 0 : Unsafe.getInt(current + CAPACITY_OFFSET);
-        final int newCapacity = Math.min(MAX_KEYS, Math.max(MIN_CAPACITY, Math.max(Numbers.ceilPow2(key + 1), 2 * capacity)));
+        final int newCapacity = Math.max(MIN_CAPACITY, Numbers.ceilPow2(Math.min(symbolCount, MAX_KEYS)));
         // the header slot, the slots and the slack that aligns them to a cache line
         final long bytes = (newCapacity + 2L) * SLOT_SIZE;
         if (!budget.tryReserve(bytes)) {

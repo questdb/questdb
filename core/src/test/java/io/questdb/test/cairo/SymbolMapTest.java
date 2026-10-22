@@ -297,6 +297,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(4096, reader.getLowCacheSize());
                     Assert.assertEquals(0, reader.getCacheSize());
+                    Assert.assertEquals(64 * (4096 + 2), reader.getLowCacheAllocatedBytes());
                     for (int key = 0; key < 4096; key++) {
                         TestUtils.assertEquals("s" + key, reader.valueBOf(key));
                     }
@@ -394,7 +395,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                 LogCapture logs = new LogCapture();
                 try (
                         SymbolMapCachePool pool = new SymbolMapCachePool(budget);
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 128, pool, 0)
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 64, pool, 0)
                 ) {
                     logs.start();
                     for (int key = 0; key < 64; key++) {
@@ -403,6 +404,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     Assert.assertEquals(64, reader.getLowCacheSize());
                     Assert.assertEquals(66 * 64, budget.getUsedBytes());
 
+                    reader.updateSymbolCount(128);
                     TestUtils.assertEquals("s100", reader.valueOf(100));
                     budget.setLimit(1024 * 1024);
                     TestUtils.assertEquals("s101", reader.valueOf(101));
