@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -60,6 +61,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -168,6 +170,25 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             }
             Os.pause();
         }
+    }
+
+    /**
+     * Releases the worker-thread-local scratch a test thread may have picked up, and the pairing every
+     * hand-rolled thread in this package owes {@code assertMemoryLeak}. A production worker gets both
+     * halves from {@code WorkerPool} on halt; a bare {@code new Thread(...)} gets neither, so its
+     * {@code finally} has to run them itself.
+     * <p>
+     * {@link Path#clearThreadLocals()} alone is not enough. Any thread that drains the WAL queue can
+     * land in {@code O3PartitionJob}, whose per-worker contexts hold native buffers of their own - a
+     * composite plan's two {@link Path}s, its {@code PartitionGeometry} and its column-version views,
+     * and the parquet merge context's native state. Those are freed by
+     * {@code O3PartitionJob.THREAD_LOCAL_CLEANER}, and a thread that exits without it leaks them.
+     * Harmless on a thread that never reached either context: both cleaners no-op when the
+     * carrier-local was never set.
+     */
+    protected static void clearWorkerThreadLocals() {
+        Path.clearThreadLocals();
+        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
     }
 
     /**

@@ -65,6 +65,7 @@ import io.questdb.std.datetime.nanotime.NanosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -1014,7 +1015,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // F9: differential fuzz under randomized storage / WAL-apply-timing config.
         // None of these properties change the query result - the recompute oracle
         // is unchanged - but they reshape HOW base commits batch into apply cycles:
-        // the apply look-ahead bounds how many base seqTxns one apply cycle folds
+        // the apply block size and look-ahead bound how many base seqTxns one apply cycle folds
         // into a base-table commit, the apply time quota and commit-to-table lag
         // (size / txn count) cap how much buffers before a base-table commit, and
         // the O3 partition-split knobs reshape the physical partition layout the
@@ -1028,6 +1029,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1 + rnd.nextInt(250));
         setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1 + rnd.nextInt(20));
         setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, rnd.nextLong(10L * 1024 * 1024));
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, AbstractFuzzTest.getRndWalApplyBlockSize(rnd));
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, AbstractFuzzTest.getRndWalApplyBlockMaxRows(rnd));
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 200 + rnd.nextInt(19_800));
         setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1 + rnd.nextInt(2));
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (16 + rnd.nextInt(6)));
@@ -2202,7 +2205,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 ticks.forceTermination();
             } finally {
                 ticks.arriveAndDeregister();
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-cw-backfill-writer");
     }
@@ -2242,7 +2245,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-cw-writer-" + writerId);
     }
@@ -2310,7 +2313,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-rvr-reader");
     }
@@ -2378,7 +2381,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             } finally {
                 streamingWritersDone.incrementAndGet();
                 ticks.arriveAndDeregister();
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-cw-stream-writer-" + writerId);
     }
@@ -3303,7 +3306,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                             ticks.forceTermination();
                         }
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-cw-refresh-driver") : null;
 
@@ -4651,7 +4654,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-rvr-refresh-driver");
             final AtomicLong nativeRowsValidated = new AtomicLong();
