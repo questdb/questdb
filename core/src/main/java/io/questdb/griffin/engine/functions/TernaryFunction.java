@@ -77,7 +77,9 @@ public interface TernaryFunction extends Function {
         if (other == this) {
             return true;
         }
-        if (other instanceof TernaryFunction that) {
+        if (other instanceof TernaryFunction that
+                && getClass() == that.getClass()
+                && getName().equals(that.getName())) {
             return getLeft().isEquivalentTo(that.getLeft())
                     && getCenter().isEquivalentTo(that.getCenter())
                     && getRight().isEquivalentTo(that.getRight());
