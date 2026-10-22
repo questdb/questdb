@@ -355,6 +355,9 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         http.put("COMMIT", EXEMPT);
         http.put("ROLLBACK", EXEMPT);
         http.put("VACUUM", EXEMPT);
+        // COMPACT rewrites physical cold storage under its manager tenure and catalog locks;
+        // it does not mint a replicated WAL transaction or change the table's logical data.
+        http.put("COMPACT", EXEMPT);
         http.put("REPAIR", EXEMPT);
         http.put("CHECKPOINT_CREATE", EXEMPT);
         http.put("CHECKPOINT_RELEASE", EXEMPT);
@@ -513,6 +516,9 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         put(pg, "BEGIN", EXEMPT);
         put(pg, "ROLLBACK", EXEMPT);
         put(pg, "VACUUM", EXEMPT);
+        // COMPACT uses the same manager-tenure/catalog maintenance path during compilation
+        // as HTTP, without minting a replicated WAL transaction.
+        put(pg, "COMPACT", EXEMPT);
         put(pg, "REPAIR", EXEMPT);
         put(pg, "CHECKPOINT_CREATE", EXEMPT);
         put(pg, "CHECKPOINT_RELEASE", EXEMPT);

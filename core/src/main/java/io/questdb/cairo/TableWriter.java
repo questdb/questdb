@@ -13450,19 +13450,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // in a frame no commit can reuse: they would keep its disk space, and on Windows block its removal.
                     compositeFrameCache.evict(timestamp, txn);
                 }
+                setPathForNativePartition(other, timestampType, partitionBy, timestamp, txn);
+                other.$();
+                if (deltaWriter != null) {
+                    deltaWriter.cancel(other);
+                }
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as a result of a rollback.
                 // Rollback orphans (txn >= lastCommittedTxn) are not in any txn snapshot,
                 // so no checkpoint or reader can reference them - safe to remove immediately.
                 if ((!anyReadersBeforeCommittedTxn && !checkpointInProgress) || txn >= lastCommittedTxn) {
-                    setPathForNativePartition(
-                            other,
-                            timestampType,
-                            partitionBy,
-                            timestamp,
-                            txn
-                    );
-                    other.$();
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, timestamp, txn, 0);
                     if (deltaWriter != null && !deltaWriter.purge(other)) {
                         // Delta files of this version remain; the async purge retries both.

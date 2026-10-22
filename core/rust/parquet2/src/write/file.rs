@@ -632,6 +632,11 @@ impl<W: Write> FileWriter<W> {
         &self.bloom_bitsets
     }
 
+    /// Takes the bloom bitsets captured since the previous call.
+    pub fn take_bloom_bitsets(&mut self) -> Vec<Vec<Option<Vec<u8>>>> {
+        std::mem::take(&mut self.bloom_bitsets)
+    }
+
     /// Returns the underlying writer.
     pub fn into_inner(self) -> W {
         self.writer
