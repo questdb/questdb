@@ -67,9 +67,10 @@ public class FunctionFactoryDescriptorTest {
         Assert.assertEquals("[arg_max, arg_min, haversine_dist_deg, isOrdered, mode, string_agg, string_distinct_agg]", inputOrder.toString());
         Assert.assertEquals("[approx_count_distinct, approx_median, approx_percentile, array_elem_avg, array_elem_max, array_elem_min, "
                 + "array_elem_sum, avg, bit_and, bit_or, bit_xor, bool_and, bool_or, corr, count, count_distinct, covar_pop, covar_samp, "
-                + "geomean, ksum, kurtosis, kurtosis_pop, kurtosis_samp, max, min, mode, nsum, regr_intercept, regr_r2, regr_slope, "
-                + "skewness, skewness_pop, skewness_samp, stddev, stddev_pop, stddev_samp, sum, sum_t, sumx, var_pop, var_samp, variance, "
-                + "vwap, weighted_avg, weighted_stddev, weighted_stddev_freq, weighted_stddev_rel]", independent.toString());
+                + "geomean, ksum, kurtosis, kurtosis_pop, kurtosis_samp, max, min, mode, nsum, percentile_cont, percentile_disc, "
+                + "quantile_cont, quantile_disc, regr_intercept, regr_r2, regr_slope, skewness, skewness_pop, skewness_samp, stddev, "
+                + "stddev_pop, stddev_samp, sum, sum_t, sumx, var_pop, var_samp, variance, vwap, weighted_avg, weighted_stddev, "
+                + "weighted_stddev_freq, weighted_stddev_rel]", independent.toString());
         Assert.assertEquals(FunctionFactory.OrderDependence.NONE, new FunctionFactoryDescriptor(new ModeBooleanGroupByFunctionFactory()).getOrderDependence());
     }
 
