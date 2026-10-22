@@ -31,8 +31,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -76,6 +78,10 @@ import java.util.Set;
  */
 public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
+    private static final String FOLD_DAY = "2024-01-01";
+    private static final long FOLD_DAY_MICROS = SavedLagWorkload.micros(FOLD_DAY + "T00:00:00.000000Z");
+    private static final String FOLD_TABLE = "sweep_fold";
+
     private static final int ROWS = 6; // v = 0,1,2,3,4,5 (commit order)
 
     /**
@@ -112,6 +118,38 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
      * the applied rows, {@code [0, 1, 2, 3, 4]}, a partial result whatever the number of ops per commit.
      */
     private static final int LAZY_GAP_APPLIED_ROWS = 1;
+    // Set while the fold sweep runs: its check of the restored state goes between recovery and the WAL replay.
+    private FoldUnderSavePointWorkload foldWorkload;
+
+    /**
+     * Folds a day's split partitions into a composite target that only the durable-epoch pin holds, and crashes
+     * at every durability op of that fold. The writer appends past the extent E the save point's geometry record
+     * describes, in place, and publishes a new record beside the old one; recovery restores the save point and
+     * must read exactly the day's rows from before the fold, and the WAL replay must then fold the day.
+     * <p>
+     * Setup takes a save point on the seeded day and then stops periodic save points, so that pin stays inside
+     * the front's range: from its name txn to the split. A split and two narrow backdated writes then make the
+     * front composite, and a manual save point lands on that shape; the seed's pin is now the older of the two.
+     * The commit phase is one insert into a later day; its housekeeping runs the fold, and the save point after
+     * it flushes the fold. The count pass proves the fold went in place: the day ends as one partition, the front
+     * still composite, under its old name txn.
+     */
+    @Test
+    public void testFoldIntoEpochHeldCompositeTargetSurvivesEveryCrashPoint() throws Exception {
+        withAdaptiveW0(() -> runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
+            foldWorkload = new FoldUnderSavePointWorkload();
+            try {
+                final SweepResult r = forEachAdaptiveCrashPoint(foldWorkload);
+                LOG.info().$("[fold under save point sweep] N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
+                        .$(", recoveredByK=").$(Arrays.toString(r.recoveredByK())).$(", ops:\n").$(phaseDurabilityOps()).$();
+                Assert.assertFalse("the sweep must cover every crash point of the fold", r.truncated);
+                Assert.assertEquals(r.n, r.sweptPoints);
+            } finally {
+                foldWorkload = null;
+            }
+        }));
+    }
 
     /**
      * The O3 sweep: every commit-phase durability op is crashed at least once; recovery must leave an
@@ -250,6 +288,21 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     @Test
     public void testSavedLagSurvivesEveryKillPointSplitLastPartition() throws Exception {
         assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.splitLastPartition());
+    }
+
+    @Override
+    protected void recoverAfterCrash(TableToken[] tokens) {
+        if (foldWorkload == null) {
+            super.recoverAfterCrash(tokens);
+            return;
+        }
+        simulateRestart(tokens);
+        new RecoveryCoordinator(engine).recover();
+        foldWorkload.assertRestoredStateBeforeReplay();
+        for (TableToken tt : tokens) {
+            engine.notifyWalTxnRepublisher(tt);
+        }
+        drainWalQueue();
     }
 
     /**
@@ -430,6 +483,225 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             }
         }
         return true;
+    }
+
+    /**
+     * The fold of a day's split partitions into a composite target held only by the durable-epoch pin; see
+     * {@link #testFoldIntoEpochHeldCompositeTargetSurvivesEveryCrashPoint}. Every iteration rebuilds the same
+     * shape, so the day's row count, its sum and its cursor-order fingerprint from setup are the values every
+     * recovered state must show.
+     */
+    private final class FoldUnderSavePointWorkload implements AdaptiveCrashWorkload {
+        private String dayFingerprint;
+        private long dayRows;
+        private long daySum;
+        private long frontExtent;
+        private long frontNameTxn;
+        private int iteration;
+        private TableToken tt;
+
+        @Override
+        public void commit() throws Exception {
+            // The fold is the opportunistic one: one split allowed, and the siblings count as cold at once.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+            setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+            // The apply job's save point follows the commit, so the fold still runs under the setup's pins, and
+            // the save point then flushes it: a crash inside that save point leaves the fold's bytes past E on
+            // disk while recovery restores the setup's save point.
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+            execute("insert into " + FOLD_TABLE + " (i, ts) values (999_999, '2024-01-06T00:00:00.000000Z')");
+            drainWalQueue();
+            if (iteration == 0) {
+                // The count pass, no crash armed: prove the fold ran, and ran in place.
+                Assert.assertFalse("the uncrashed fold suspended the table", anyTableSuspended(tt));
+                try (TableReader reader = engine.getReader(tt)) {
+                    final TxReader txFile = reader.getTxFile();
+                    Assert.assertEquals("the fold did not run", 1, dayPartitionCount(txFile));
+                    final int front = txFile.getPartitionIndex(FOLD_DAY_MICROS);
+                    Assert.assertTrue("the fold flattened the composite target", txFile.isPartitionComposite(front));
+                    Assert.assertEquals("the fold copied the target instead of appending in place",
+                            frontNameTxn, txFile.getPartitionNameTxn(front));
+                    Assert.assertTrue("the fold appended nothing past the target's extent",
+                            reader.getPartitionPhysicalRowCount(front) > frontExtent);
+                }
+                assertDayUnchanged("after the uncrashed fold");
+                engine.releaseAllReaders();
+            }
+        }
+
+        @Override
+        public int oracle(int k, int n) throws Exception {
+            Assert.assertFalse(
+                    "k=" + k + ": table must NOT be suspended after recovery",
+                    engine.getTableSequencerAPI().isSuspended(tt)
+            );
+            assertDayUnchanged("k=" + k + " of " + n + " after the replay");
+            final int recovered = (int) rowCount(FOLD_TABLE);
+            // A crash on the insert's own WAL fsync loses the insert, and with it the commit that runs the fold:
+            // a follow-up write in a later day drives the housekeeping, and must land on the recovered table.
+            execute("insert into " + FOLD_TABLE + " (i, ts) values (888_888, '2024-01-09T00:00:00.000000Z')");
+            drainWalQueue();
+            Assert.assertFalse("k=" + k + ": the follow-up write suspended the table", anyTableSuspended(tt));
+            Assert.assertEquals("k=" + k + ": the follow-up write did not land", recovered + 1, rowCount(FOLD_TABLE));
+            assertDayUnchanged("k=" + k + " of " + n + " after the follow-up write");
+            try (TableReader reader = engine.getReader(tt)) {
+                Assert.assertEquals("k=" + k + ": the day was not folded", 1, dayPartitionCount(reader.getTxFile()));
+            }
+            engine.releaseAllReaders();
+            return recovered;
+        }
+
+        @Override
+        public TableToken[] setup(int iteration) throws Exception {
+            this.iteration = iteration;
+            execute("drop table if exists " + FOLD_TABLE);
+            drainWalQueue();
+            // Hold the siblings still until the commit phase; the previous iteration's commit lowered the limits.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1_000);
+            setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1_000);
+            setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 10);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+            execute("create table " + FOLD_TABLE + " as (select x::int i, timestamp_sequence('" + FOLD_DAY
+                    + "', 1_000_000L) ts from long_sequence(4_000)) timestamp(ts) partition by day wal");
+            // The last periodic save point: its pin falls in the front's range, which ends at the split, and
+            // stays there until two more save points.
+            drainWalQueue();
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            // Cut a sibling off the day's tail with an O3 write inside it; merge-append would rewrite in place.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+            execute("insert into " + FOLD_TABLE + " (i, ts) select x::int + 200_000, timestamp_sequence('"
+                    + FOLD_DAY + "T00:50:00', 1_000L) from long_sequence(200)");
+            drainWalQueue();
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // Two narrow backdated writes over the same rows make the front composite: merge-append rewrites
+            // the owning piece at the file tail and leaves dead space behind.
+            for (int i = 0; i < 2; i++) {
+                execute("insert into " + FOLD_TABLE + " (i, ts) select x::int + 400_000, timestamp_sequence('"
+                        + FOLD_DAY + "T00:10:00', 1_000_000L) from long_sequence(200)");
+                drainWalQueue();
+            }
+            // A later day, so neither sibling is the last partition: the fold leaves a composite last one alone.
+            execute("insert into " + FOLD_TABLE + " (i, ts) select x::int + 900_000,"
+                    + " timestamp_sequence('2024-01-05', 1_000_000L) from long_sequence(100)");
+            drainWalQueue();
+            tt = engine.verifyTableName(FOLD_TABLE);
+            // The save point recovery restores: it names the front's composite geometry record and its extent E.
+            try (TableWriter writer = getWriter(tt)) {
+                writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+            }
+
+            final long fromTxn;
+            final long toTxn;
+            try (TableReader reader = engine.getReader(tt)) {
+                final TxReader txFile = reader.getTxFile();
+                Assert.assertEquals("fixture must leave the day split in two", 2, dayPartitionCount(txFile));
+                final int front = txFile.getPartitionIndex(FOLD_DAY_MICROS);
+                Assert.assertTrue("fixture left the fold target plain", txFile.isPartitionComposite(front));
+                frontExtent = reader.getPartitionPhysicalRowCount(front);
+                Assert.assertTrue("fixture left the composite target with no dead space [E=" + frontExtent
+                                + ", liveRows=" + txFile.getPartitionSize(front) + ']',
+                        frontExtent > txFile.getPartitionSize(front));
+                frontNameTxn = txFile.getPartitionNameTxn(front);
+                // The range TableWriter.scanSquashRangeHolders checks for a target followed by its own sibling.
+                fromTxn = Math.max(0, frontNameTxn);
+                toTxn = Math.max(fromTxn + 1, txFile.getPartitionNameTxn(front + 1) + 1);
+            }
+            dayRows = scalar("select count() from " + FOLD_TABLE + " where ts in '" + FOLD_DAY + "'");
+            daySum = scalar("select sum(i) from " + FOLD_TABLE + " where ts in '" + FOLD_DAY + "'");
+            dayFingerprint = fingerprintOfDay();
+            engine.releaseAllReaders();
+            Assert.assertEquals("a reader holds the fold target, the fold would wait for it", 0, engine.getBusyReaderCount());
+            Assert.assertFalse("the durable-epoch pin does not hold the fold target's range [" + fromTxn + ", " + toTxn
+                            + "), so the fold would not run under it",
+                    engine.getTableSequencerAPI().getTxnTracker(tt).isRangeAvailableToEpoch(fromTxn, toTxn));
+            return new TableToken[]{tt};
+        }
+
+        @Override
+        public void teardown() throws Exception {
+            try {
+                execute("drop table if exists " + FOLD_TABLE);
+                drainWalQueue();
+            } catch (Exception e) {
+                LOG.info().$("[fold under save point sweep] teardown drop skipped: ").$(e.getMessage()).$();
+            }
+        }
+
+        private static int dayPartitionCount(TxReader txFile) {
+            int count = 0;
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                final long ts = txFile.getPartitionTimestampByIndex(i);
+                if (ts >= FOLD_DAY_MICROS && ts < FOLD_DAY_MICROS + 86_400_000_000L) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private static String fingerprintOfDay() throws Exception {
+            long count = 0;
+            long hash = 0;
+            try (RecordCursorFactory f = select("select ts, i from " + FOLD_TABLE + " where ts in '" + FOLD_DAY + "'")) {
+                try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                    final Record r = c.getRecord();
+                    while (c.hasNext()) {
+                        count++;
+                        hash = hash * 1_000_003L + r.getTimestamp(0);
+                        hash = hash * 1_000_003L + r.getInt(1);
+                    }
+                }
+            }
+            return count + "/" + hash;
+        }
+
+        private static long scalar(String sql) throws Exception {
+            try (RecordCursorFactory f = select(sql)) {
+                try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue("query returned no row: " + sql, c.hasNext());
+                    return c.getRecord().getLong(0);
+                }
+            }
+        }
+
+        private void assertDayUnchanged(String when) throws Exception {
+            Assert.assertEquals(when + ": the day's row count changed", dayRows,
+                    scalar("select count() from " + FOLD_TABLE + " where ts in '" + FOLD_DAY + "'"));
+            Assert.assertEquals(when + ": the day's values changed", daySum,
+                    scalar("select sum(i) from " + FOLD_TABLE + " where ts in '" + FOLD_DAY + "'"));
+            Assert.assertEquals(when + ": the day's rows or their order changed", dayFingerprint, fingerprintOfDay());
+        }
+
+        /**
+         * Runs between recovery and the WAL replay. Recovery restores the setup's save point, which names the
+         * front's composite record: the day must read exactly as before the fold, and the restored {@code _txn}
+         * must not name the fold's new record, whose pieces reach past that save point's extent E. A state in
+         * which the fold survived whole, one partition for the day, is accepted too.
+         */
+        void assertRestoredStateBeforeReplay() {
+            try {
+                try (TableReader reader = engine.getReader(tt)) {
+                    final TxReader txFile = reader.getTxFile();
+                    final int dayPartitions = dayPartitionCount(txFile);
+                    LOG.info().$("[fold under save point sweep] restored before replay [dayPartitions=").$(dayPartitions)
+                            .$(", txn=").$(txFile.getTxn()).I$();
+                    if (dayPartitions != 1) {
+                        Assert.assertEquals("recovery left the day in neither the save point's shape nor the fold's",
+                                2, dayPartitions);
+                        final int front = txFile.getPartitionIndex(FOLD_DAY_MICROS);
+                        Assert.assertTrue("recovery left the fold target plain", txFile.isPartitionComposite(front));
+                        Assert.assertEquals("recovery moved the fold target to another directory",
+                                frontNameTxn, txFile.getPartitionNameTxn(front));
+                        Assert.assertEquals("the restored _txn names a geometry record past the save point's extent",
+                                frontExtent, reader.getPartitionPhysicalRowCount(front));
+                    }
+                }
+                assertDayUnchanged("before the replay");
+                engine.releaseAllReaders();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
     }
 
     /**
