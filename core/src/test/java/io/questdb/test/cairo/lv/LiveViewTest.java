@@ -582,7 +582,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
                         } catch (Throwable th) {
                             queryError.set(th);
                         } finally {
-                            Path.clearThreadLocals();
+                            clearWorkerThreadLocals();
                         }
                     });
                     reader.start();

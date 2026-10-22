@@ -1116,7 +1116,8 @@ public interface WindowFunction extends Function {
 
     /**
      * Binds the per-query native memory tracker on this function's tracker-aware
-     * state: the per-partition map, and the ring buffers (plus the Max/Min monotonic
+     * state: the per-partition map, the value lists of the two-pass percentile/quantile
+     * functions, and the ring buffers (plus the Max/Min monotonic
      * deque) of RANGE frames, of partitioned ROWS frames, and of partitioned
      * lag()/lead(). The owning window cursor calls this before reopen() at cursor
      * start, so the state allocates against the bound tracker and frees against it at

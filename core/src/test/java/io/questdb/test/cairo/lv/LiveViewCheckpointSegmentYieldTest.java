@@ -237,7 +237,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-invalidator");
             final Thread closer = new Thread(() -> {
@@ -246,7 +246,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-worker-close");
             try {
@@ -546,7 +546,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-refresh-worker");
                 final Thread dropper = new Thread(() -> {
@@ -556,7 +556,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-dropper");
                 ff.arm(worker, checkpointMetaDir("lv2"));
@@ -638,7 +638,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-worker-close");
             final Thread dropper = new Thread(() -> {
@@ -647,7 +647,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-dropper");
             try {
@@ -1258,7 +1258,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                     } finally {
                         // The seal goes on only once the drop is over, whichever way it ended.
                         ff.release();
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-dropper");
                 writer.setRepairScratchReleaseHookForTest(() -> {
@@ -1348,7 +1348,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-dropper");
                 dropper.start();
@@ -1450,7 +1450,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-worker-close");
             try {
@@ -2207,7 +2207,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
             } catch (Throwable t) {
                 errors.add(t);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, threadName);
         worker.start();

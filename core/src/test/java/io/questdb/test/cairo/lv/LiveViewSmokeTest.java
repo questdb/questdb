@@ -8665,8 +8665,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // earlier flush's block, not the block this flush just committed - the flushed lead is
         // still off disk while the published slot holds it.
         //
-        // Reaching that shape takes two test-side settings, because the harness suppresses it
-        // twice over. The apply loop stops when it crosses its per-table time quota
+        // Reaching that shape takes three test-side settings. The harness suppresses it twice
+        // over, and block-sized WAL apply a third time. The apply loop stops when it crosses its per-table time quota
         // (cairo.wal.apply.table.time.quota - in production the 1000 ms default, or a shutdown
         // terminating the loop the same way), and Overrides pins that quota to -1 for every test,
         // which makes the loop unbounded; the tests also freeze the clock, which would make even a
@@ -8674,7 +8674,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // advances one microsecond per read, armed for the single pass under test. The loop's
         // firstRun guard still lands one transaction; every iteration after it reads a clock that
         // has already passed the deadline, so the loop exits with the rest of the backlog
-        // outstanding and commitSeqTxn publishes exactly that one transaction.
+        // outstanding and commitSeqTxn publishes exactly that one transaction. The test also
+        // sets cairo.wal.apply.block.size to zero: a positive block size makes the look-ahead
+        // load every visible transaction past the deadline to fill one block, and the first
+        // iteration then lands the whole backlog as that block.
         //
         // Without the second half of the guard flushLead falls through to restampSlotAfterFlush,
         // which asserts that the slot's band IS the LV table's trailing rows at the applied
@@ -8684,6 +8687,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         final DriftingMicrosClock clock = new DriftingMicrosClock();
         testMicrosClock = clock;
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 0);
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -8789,7 +8793,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testFlushLeadPartialApplyOfAKeptLeadLeavesTheRestageToTheNextDrain() throws Exception {
         // The shape of testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot, with the
-        // same two test-side settings for an apply that stops part-way. Two held cycles leave two
+        // same test-side settings for an apply that stops part-way. Two held cycles leave two
         // blocks of the view's WAL pending, and the next drain keeps its row from readers over them.
         // The cadence flush due in that turn commits the kept row, and its apply spends its time
         // quota after one transaction: it lands the oldest pending block and leaves two. The flush
@@ -8801,6 +8805,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         final DriftingMicrosClock clock = new DriftingMicrosClock();
         testMicrosClock = clock;
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 0);
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");

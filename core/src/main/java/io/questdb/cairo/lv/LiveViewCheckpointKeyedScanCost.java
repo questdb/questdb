@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
@@ -279,9 +280,10 @@ public final class LiveViewCheckpointKeyedScanCost {
 
     /**
      * Counts the page frames one whole partition splits into, which is how many times the
-     * scan rebuilds each key's index-backed row cursor inside it.
+     * scan rebuilds each key's index-backed row cursor inside it. A composite partition's
+     * frames also end at every piece boundary, so each piece starts a frame of its own.
      */
-    private long countPartitionFrames(long partitionRows) {
+    private long countPartitionFrames(int partitionIndex, long partitionRows) {
         // Clamped the way calculatePageFrameRowLimit clamps its own worker count. A row
         // bound of zero reaches it as a divisor, and PropServerConfiguration rejects one -
         // but a hand-built CairoConfiguration is under no such rule.
@@ -292,18 +294,59 @@ public final class LiveViewCheckpointKeyedScanCost {
                 Math.max(1, pageFrameMaxRows),
                 sharedQueryWorkerCount
         );
-        return (partitionRows + rowsPerFrame - 1) / rowsPerFrame;
+        if (!reader.getTxFile().isPartitionComposite(partitionIndex)) {
+            return (partitionRows + rowsPerFrame - 1) / rowsPerFrame;
+        }
+        final PartitionGeometry geometry = reader.getGeometry();
+        long frames = 0;
+        for (int piece = 0, n = geometry.getPieceCount(partitionIndex); piece < n; piece++) {
+            final long pieceRows = geometry.getPieceRowCount(partitionIndex, piece);
+            frames += (pieceRows + rowsPerFrame - 1) / rowsPerFrame;
+        }
+        return frames;
     }
 
     /**
-     * Counts one key's postings inside one partition, in constant time where the index can
-     * and by walking where it cannot.
+     * Counts one key's postings inside one partition.
+     * <p>
+     * The index keys a posting by FILE row. An ordinary partition's live rows are file rows
+     * {@code [0, partitionRows)}, but a composite partition's are the pieces its geometry
+     * lists: a rewritten piece parks at the tail of the column files and leaves the rows it
+     * superseded behind as dead space, so counting {@code [0, partitionRows)} there would
+     * count dead postings and miss live ones.
      */
-    private long countPostings(IndexReader indexReader, int symbolKey, long partitionRows, long budgetRows) {
+    private long countPostings(IndexReader indexReader, int symbolKey, int partitionIndex, long partitionRows, long budgetRows) {
+        if (!reader.getTxFile().isPartitionComposite(partitionIndex)) {
+            return countRangePostings(indexReader, symbolKey, 0, partitionRows - 1, budgetRows);
+        }
+        final PartitionGeometry geometry = reader.getGeometry();
+        final int pieceCount = geometry.getPieceCount(partitionIndex);
+        long rows = 0;
+        for (int piece = 0; piece < pieceCount; piece++) {
+            final long pieceRows = geometry.getPieceRowCount(partitionIndex, piece);
+            if (pieceRows <= 0) {
+                continue;
+            }
+            if (rows >= budgetRows) {
+                // The pieces left are uncounted, which the caller's budget check cannot see.
+                isSaturated = true;
+                break;
+            }
+            final long rowLo = geometry.getPieceRowOffset(partitionIndex, piece);
+            rows += countRangePostings(indexReader, symbolKey, rowLo, rowLo + pieceRows - 1, budgetRows - rows);
+        }
+        return rows;
+    }
+
+    /**
+     * Counts one key's postings in the file rows {@code [rowLo, rowHi]}, in constant time
+     * where the index can and by walking where it cannot.
+     */
+    private long countRangePostings(IndexReader indexReader, int symbolKey, long rowLo, long rowHi, long budgetRows) {
         // The index keys its postings by symbolKey + 1, with 0 reserved for the null value,
         // which is what SymbolIndexRowCursorFactory converts on the way in. Passing the
         // table-local key straight through would count the neighbouring key's rows.
-        try (RowCursor cursor = indexReader.getCursor(TableUtils.toIndexKey(symbolKey), 0, partitionRows - 1)) {
+        try (RowCursor cursor = indexReader.getCursor(TableUtils.toIndexKey(symbolKey), rowLo, rowHi)) {
             final long size = cursor.size();
             if (size > -1) {
                 return size;
@@ -378,7 +421,7 @@ public final class LiveViewCheckpointKeyedScanCost {
                 if (partitionRows <= 0) {
                     continue;
                 }
-                partitionSeeks = countPartitionFrames(partitionRows);
+                partitionSeeks = countPartitionFrames(i, partitionRows);
                 if (isSetupBudgeted) {
                     // This partition's setup - its open, and a seek per key per frame - is
                     // known before its index is opened or a key looked up. Where it carries
@@ -417,7 +460,7 @@ public final class LiveViewCheckpointKeyedScanCost {
             indexOpens++;
             for (int k = 0; k < keyCount; k++) {
                 indexSeeks += partitionSeeks;
-                rows += countPostings(indexReader, symbolKeys.getQuick(k), partitionRows, budgetRows - rows);
+                rows += countPostings(indexReader, symbolKeys.getQuick(k), i, partitionRows, budgetRows - rows);
                 if (rows >= budgetRows) {
                     // The verdict is settled. Report what is known and stop paying for an
                     // answer nothing reads - but say that it is what is known and not what
