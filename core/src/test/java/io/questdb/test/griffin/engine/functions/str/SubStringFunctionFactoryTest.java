@@ -35,6 +35,17 @@ import org.junit.Test;
 public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testLengthNearIntMax() throws Exception {
+        // start + length overflows int; the substring must still run to the end of the string
+        call("foo", 2, Integer.MAX_VALUE).andAssert("oo");
+        call("foo", 3, Integer.MAX_VALUE).andAssert("o");
+        call("foo", 4, Integer.MAX_VALUE).andAssert("");
+        assertQuery("select substring('foo', 2, 2147483647) s, length(substring('foo', 2, 2147483647)) l")
+                .expectSize()
+                .returns("s\tl\noo\t2\n");
+    }
+
+    @Test
     public void testNonPositiveStart() throws Exception {
         call("foo", -3, 4).andAssert("");
         call("foo", -3, 5).andAssert("f");

@@ -88,7 +88,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
             this.lenFunc = lenFunc;
 
             this.isSimplifiable = startFunc.isConstant() && lenFunc.isConstant()
-                    && startFunc.getInt(null) + lenFunc.getInt(null) < 1;
+                    && (long) startFunc.getInt(null) + lenFunc.getInt(null) < 1;
         }
 
         @Override
@@ -140,10 +140,10 @@ public class SubStringFunctionFactory implements FunctionFactory {
             int start = Math.max(0, rawStart - 1);
             if (len == 0
                     || start > strLen
-                    || rawStart + len < 1) {
+                    || (long) rawStart + len < 1) {
                 return 0;
             }
-            int end = Math.min(strLen, rawStart + len - 1);
+            int end = (int) Math.min(strLen, (long) rawStart + len - 1);
             return Math.max(0, end - start);
         }
 
@@ -169,7 +169,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
 
             sink.clear();
             int start = Math.max(0, rawStart - 1);
-            int end = Math.min(str.length(), rawStart + len - 1);
+            int end = (int) Math.min(str.length(), (long) rawStart + len - 1);
             if (len == 0 || start >= end) {
                 return sink;
             }
