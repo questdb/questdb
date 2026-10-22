@@ -216,18 +216,39 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
-    public void testAsyncConvertToParquetWalFailedSquashFsyncIsNotFailStop() throws Exception {
-        // The fd-copy path fsyncs under ASYNC. Never force mixed I/O on a filesystem that cannot support it.
-        Assume.assumeTrue(configuration.getFilesFacade().allowMixedIO(root));
-        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, true);
-        assertConvertToParquetSquashSyncFailure("async", new FsyncFailureFacade("squashPartitionForce", 0, false));
-    }
-
-    @Test
     public void testAsyncConvertToParquetWalFailedSquashMsyncIsNotFailStop() throws Exception {
         // ZFS and other non-mixed-I/O filesystems copy through mappings and use MS_ASYNC, not fsync.
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, false);
         assertConvertToParquetSquashSyncFailure("async", new FsyncFailureFacade("squashPartitionForce", 0, true, true));
+    }
+
+    @Test
+    public void testAsyncConvertToParquetWalSquashTakesNoFsync() throws Exception {
+        // The fd-copy path of the squash flushes a column file only under SYNC: ASYNC leaves the dirty pages to the
+        // kernel's writeback (ContiguousFileFixFrameColumn.markWritten), so no failed fsync can stop the engine
+        // there. Never force mixed I/O on a filesystem that cannot support it.
+        Assume.assumeTrue(configuration.getFilesFacade().allowMixedIO(root));
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, true);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
+        setUpActivePartitionSplit();
+        final FsyncFailureFacade ff = new FsyncFailureFacade("squashPartitionForce", 0, false);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            splitActivePartition();
+            ff.isArmed = true;
+            try {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-03'");
+                drainWalQueue();
+            } finally {
+                ff.isArmed = false;
+            }
+            Assert.assertEquals("ASYNC must take no fsync in the squash", 0, ff.failureCount);
+            Assert.assertFalse(engine.isDurabilityFailed());
+            execute("INSERT INTO x (ts, s) VALUES ('2024-01-04T00:00:00.000000Z', 'c')");
+            drainWalQueue();
+            assertNotSuspended(engine.verifyTableName("x"));
+            releaseEngineHandles();
+        });
     }
 
     @Test
@@ -620,6 +641,12 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, isEpochAfterFirstPartition ? 0 : -1);
+        if (isPartitionRewritten) {
+            // The rewritten variant needs the O3 insert to leave a new version of the first partition, which only
+            // the whole-partition rewrite produces: with merge-append on (the harness default) the insert appends
+            // a piece to the same version. Pin the production default.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        }
         runWithFacade(facade, () -> {
             crashFf.modelSharedJournal = false;
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -774,20 +801,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      * data sync of the conversion itself; otherwise the apply fails and the engine keeps taking writes.
      */
     private void assertConvertToParquetSquashSyncFailure(String commitMode, FsyncFailureFacade ff) throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
-        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+        setUpActivePartitionSplit();
         assertSyncFailure(
                 commitMode,
                 true,
-                () -> {
-                    execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T00:01', 60_000_000L), 'a', x FROM long_sequence(1320)");
-                    drainWalQueue();
-                    execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T20:01', 1_000_000L), 'b', x FROM long_sequence(200)");
-                    drainWalQueue();
-                    try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
-                        Assert.assertEquals("the active partition must be split", 4, reader.getTxFile().getPartitionCount());
-                    }
-                },
+                this::splitActivePartition,
                 () -> execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-03'"),
                 ff,
                 "sync".equals(commitMode) || "adaptive".equals(commitMode)
@@ -1539,6 +1557,36 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         crashFf = facade;
         crashFf.setDbRoot(root);
         assertMemoryLeak(crashFf, body);
+    }
+
+    /**
+     * Before the table is created: lets {@link #splitActivePartition()} split the active partition of table
+     * {@code x} with a small out-of-order insert.
+     */
+    private void setUpActivePartitionSplit() {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+        // Only the whole-partition rewrite splits: with merge-append on (the harness default) the insert appends a
+        // piece and nothing is split, so the squash under test never runs. Pin the production default.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    }
+
+    /**
+     * Fills the 2024-01-03 partition of WAL table {@code x} and splits it with a late insert, so that a CONVERT TO
+     * PARQUET of that partition has parts to squash first. Needs {@link #setUpActivePartitionSplit()}.
+     */
+    private void splitActivePartition() throws Exception {
+        execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T00:01', 60_000_000L), 'a', x FROM long_sequence(1320)");
+        drainWalQueue();
+        final int partitions;
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+            partitions = reader.getTxFile().getPartitionCount();
+        }
+        execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T20:01', 1_000_000L), 'b', x FROM long_sequence(200)");
+        drainWalQueue();
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+            Assert.assertEquals("the active partition must be split", partitions + 1, reader.getTxFile().getPartitionCount());
+        }
     }
 
     /**
