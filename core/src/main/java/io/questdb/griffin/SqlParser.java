@@ -7523,9 +7523,11 @@ public class SqlParser {
                 lim = -1;
             }
 
-            // args are in inverted order, hence last list item is the first arg
+            // args are in inverted order, hence last list item is the first arg. The expression parser
+            // marks 'case when' with a LITERAL that has no token. Any other first arg is the operand of
+            // a simple 'case', including a sub-query, whose QUERY node has no token either.
             ExpressionNode first = node.args.getQuick(paramCount - 1);
-            if (first.token != null) {
+            if (first.type != ExpressionNode.LITERAL || first.token != null) {
                 // simple case of 'case' :) e.g.
                 // case x
                 //   when 1 then 'A'
