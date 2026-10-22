@@ -36,8 +36,7 @@ import java.time.temporal.ChronoUnit;
  * Pins what {@link RestartableQwpServer#stop()} counts: a connection whose WebSocket upgrade
  * has completed and that the client still holds when the workers halt counts as one live
  * drop; a connection the client closed first, which the worker has already removed from the
- * live set, counts as zero. The reconnect fuzz test's DISCONNECTED floor is asserted against
- * this count.
+ * live set, counts as zero.
  */
 public class RestartableQwpServerLiveTrackingTest extends AbstractCairoTest {
     private static final String TABLE_NAME = "restartable_qwp_server_live_tracking";
