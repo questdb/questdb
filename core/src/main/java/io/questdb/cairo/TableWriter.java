@@ -1472,6 +1472,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             byte existingIndexType = ColumnType.isSymbol(existingType) ? metadata.getColumnIndexType(existingColIndex) : IndexType.NONE;
             convertOperator.convertColumn(columnName, existingColIndex, existingType, existingIndexType, columnIndex, newType);
+            final int commitMode = configuration.getCommitMode();
+            if (ColumnType.isSymbol(newType) && commitMode != CommitMode.NOSYNC) {
+                getSymbolMapWriter(columnIndex).sync(commitMode == CommitMode.ASYNC);
+                syncDirectory(pathSize);
+            }
 
             // Column converted, add new one to _meta file and remove the existing column
             metadata.removeColumn(existingColIndex);
@@ -7481,6 +7486,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 ddlMem.truncate();
                 IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
+                if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                    ddlMem.sync(configuration.getCommitMode() == CommitMode.ASYNC);
+                }
             } catch (CairoException e) {
                 // looks like we could not create the key file properly;
                 // let's not leave a half-baked file sitting around
@@ -7499,11 +7507,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 ddlMem.close();
             }
-            if (!ff.touch(valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, 0L))) {
+            valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, 0L);
+            if (!ff.touch(path.$())) {
                 LOG.error().$("could not create index [name=").$(path)
                         .$(", errno=").$(ff.errno())
                         .I$();
                 throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
+            }
+            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                ff.fsyncAndClose(TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts()));
+                syncDirectory(plen);
             }
         } finally {
             path.trimTo(plen);
@@ -9818,6 +9831,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
                 indexer.seal();
+                syncIndexAndDirectory(indexer, plen);
             } finally {
                 indexer.releaseIndexWriter();
             }
@@ -9843,6 +9857,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // find no sidecar data. Future writes create new sparse generations
         // that the next seal merges.
         indexer.seal();
+        syncIndexAndDirectory(indexer, plen);
 
         if (isLastPartitionComposite()) {
             // rowHwm came off the partition's PHYSICAL extent, so the index built above already covers
@@ -9892,6 +9907,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
                 indexer.index(ff, columnDataFd, columnTop, partitionSize);
                 indexer.seal();
+                syncIndexAndDirectory(indexer, plen);
             } finally {
                 ff.close(columnDataFd);
             }
@@ -10053,6 +10069,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 indexWriter.setMaxValue(partitionSize - 1);
                 indexer.seal();
+                syncIndexAndDirectory(indexer, plen);
             } finally {
                 if (hasCovering) {
                     coveredColumnAccumulator.releaseScratchFiles(indexer, ff, path, plen);
@@ -18080,6 +18097,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // current committed txn. Future finite ranges stay in the indexer and
         // are retried after txWriter.commit makes the new txn durable.
         publishPendingPostingSealPurges(txWriter.getTxn());
+    }
+
+    private void syncDirectory(int pathLen) {
+        if (!Os.isWindows()) {
+            final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathLen).$(), LOG);
+            if (dirFd != -1) {
+                ff.fsyncAndClose(dirFd);
+            }
+        }
+    }
+
+    private void syncIndexAndDirectory(SymbolColumnIndexer indexer, int partitionPathLen) {
+        final int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            indexer.sync(commitMode == CommitMode.ASYNC);
+            syncDirectory(partitionPathLen);
+        }
     }
 
     private void syncColumns0(boolean async) {
