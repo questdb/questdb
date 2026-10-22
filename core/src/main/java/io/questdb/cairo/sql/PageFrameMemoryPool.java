@@ -282,6 +282,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     @TestOnly
+    public boolean isPartitionFrameWindowPrepared() {
+        return partitionFrameWindowContext != null && partitionFrameWindowContext.isWindowPrepared();
+    }
+
+    @TestOnly
     public ParquetDecodeHint getDecodeHint() {
         return decodeHint;
     }

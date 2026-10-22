@@ -30,6 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import org.junit.Assert;
@@ -85,6 +86,30 @@ public class CompositeReaderMetadataTransitionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("c\tcv\tsv\n110\t110\t8005105\n");
+        });
+    }
+
+    @Test
+    public void testLazyPageFrameColumnCoversCompositeFileExtent() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tt = createCompositeQuotes();
+            try (TableReader reader = engine.getReader(tt)) {
+                final int timestampIndex = reader.getMetadata().getTimestampIndex();
+                final int valueIndex = reader.getMetadata().getColumnIndex("v");
+                final IntList activeColumns = new IntList();
+                activeColumns.add(timestampIndex);
+                reader.setActiveColumns(activeColumns);
+                reader.openPartition(0);
+
+                final int columnBase = reader.getColumnBase(0);
+                final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, valueIndex);
+                Assert.assertNull(reader.getColumn(primaryIndex));
+                reader.openPageFrameColumn(0, valueIndex);
+                Assert.assertEquals(
+                        reader.getGeometry().getLiveFileExtent(0) * Integer.BYTES,
+                        reader.getColumn(primaryIndex).size()
+                );
+            }
         });
     }
 

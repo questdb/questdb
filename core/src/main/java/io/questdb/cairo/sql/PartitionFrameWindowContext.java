@@ -107,6 +107,10 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         return state != 0;
     }
 
+    boolean isWindowPrepared() {
+        return preparedWindow >= 0;
+    }
+
     void prepareWindow(PageFrameAddressCache addressCache, int frameIndex, RowGroupBuffers targetBuffers) {
         final long frameState = addressCache.getPartitionFrameState(frameIndex);
         if (frameState == 0 || frameState != state) {

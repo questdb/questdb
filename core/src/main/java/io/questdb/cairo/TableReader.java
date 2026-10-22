@@ -855,7 +855,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     indexes,
                     columnBase,
                     columnIndex,
-                    partitionSize
+                    mappedRowCount(partitionIndex, partitionSize)
             );
         } catch (Throwable th) {
             closePartitionColumn(columnBase, columnIndex);
